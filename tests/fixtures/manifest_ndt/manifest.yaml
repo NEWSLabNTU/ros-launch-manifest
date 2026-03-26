@@ -1,0 +1,121 @@
+# NDT localization with state feedback, required endpoints.
+# Tests: state edges, required markers, feedback cycle (not a causal cycle).
+version: 1
+
+nodes:
+  voxel_grid:
+    sub:
+      raw_points:
+        min_rate_hz: 10
+        required: true
+    pub:
+      downsampled:
+        min_rate_hz: 10
+    paths:
+      main:
+        input: raw_points
+        output: [downsampled]
+        max_latency_ms: 3
+
+  ndt_scan_matcher:
+    sub:
+      input_points:
+        min_rate_hz: 10
+      initial_pose:
+        state: true
+        required: true
+      map:
+        state: true
+        required: true
+    pub:
+      ndt_pose:
+        min_rate_hz: 10
+    paths:
+      main:
+        input: input_points
+        output: [ndt_pose]
+        max_latency_ms: 30
+    srv:
+      trigger_node:
+        request: std_srvs/srv/Trigger
+
+  ekf_localizer:
+    sub:
+      ndt_pose:
+        min_rate_hz: 10
+      imu:
+        min_rate_hz: 50
+        state: true
+    pub:
+      ekf_pose:
+        min_rate_hz: 50
+    paths:
+      main:
+        input: ndt_pose
+        output: [ekf_pose]
+        max_latency_ms: 5
+      imu_update:
+        input: imu
+        output: [ekf_pose]
+        max_latency_ms: 2
+
+topics:
+  downsampled_points:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [voxel_grid/downsampled]
+    sub: [ndt_scan_matcher/input_points]
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  ndt_pose:
+    type: geometry_msgs/msg/PoseWithCovarianceStamped
+    pub: [ndt_scan_matcher/ndt_pose]
+    sub: [ekf_localizer/ndt_pose]
+    rate_hz: 10
+    qos:
+      reliability: reliable
+
+  # State topic — feedback from EKF to NDT (initial_pose). Not a causal edge.
+  ekf_initial_pose:
+    type: geometry_msgs/msg/PoseWithCovarianceStamped
+    pub: [ekf_localizer/ekf_pose]
+    sub: [ndt_scan_matcher/initial_pose]
+    rate_hz: 50
+    qos:
+      reliability: reliable
+      durability: transient_local
+
+  imu_data:
+    type: sensor_msgs/msg/Imu
+    pub: []
+    sub: [ekf_localizer/imu]
+    rate_hz: 50
+    qos:
+      reliability: best_effort
+
+  pointcloud_map:
+    type: sensor_msgs/msg/PointCloud2
+    pub: []
+    sub: [ndt_scan_matcher/map]
+    qos:
+      reliability: reliable
+      durability: transient_local
+
+services:
+  trigger_ndt:
+    type: std_srvs/srv/Trigger
+    server: [ndt_scan_matcher/trigger_node]
+
+imports:
+  raw_lidar: [voxel_grid/raw_points]
+
+exports:
+  localization: [ekf_localizer/ekf_pose]
+
+paths:
+  localization:
+    input: raw_lidar
+    output: [localization]
+    max_latency_ms: 50
+    max_age_ms: 100
