@@ -90,10 +90,14 @@ impl DataflowGraph {
             }
         }
 
-        // Add edges from topic wiring
+        // Add edges from topic wiring (skip state endpoints — they don't carry causality)
         for (topic_name, topic_decl) in &manifest.topics {
             for pub_ref in &topic_decl.publishers {
                 for sub_ref in &topic_decl.subscribers {
+                    // Skip edges where the subscriber endpoint is marked state: true
+                    if is_state_endpoint(sub_ref, manifest) {
+                        continue;
+                    }
                     let pub_vertex = resolve_vertex(pub_ref, &endpoint_to_vertex, &index_map);
                     let sub_vertex = resolve_vertex(sub_ref, &endpoint_to_vertex, &index_map);
 
@@ -112,6 +116,18 @@ impl DataflowGraph {
 
         Self { graph, index_map }
     }
+}
+
+/// Check if an endpoint reference points to a state endpoint (read-latest, not causal).
+fn is_state_endpoint(endpoint_ref: &str, manifest: &Manifest) -> bool {
+    if let Some((node_name, ep_name)) = endpoint_ref.split_once('/') {
+        if let Some(node) = manifest.nodes.get(node_name) {
+            if let Some(props) = node.subscribers.get(ep_name) {
+                return props.state.unwrap_or(false);
+            }
+        }
+    }
+    false
 }
 
 /// Resolve an endpoint reference like "node/endpoint" or "scope/group" to a vertex.
