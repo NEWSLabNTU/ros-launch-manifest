@@ -17,20 +17,21 @@ impl ValidationRule for RateChainRule {
             for member in members {
                 if let Some((node_name, ep_name)) = member.split_once('/')
                     && let Some(node) = manifest.nodes.get(node_name)
-                        && let Some(props) = node.publishers.get(ep_name) {
-                            // If endpoint declares min_rate_hz, check it's achievable
-                            // from the node's path inputs
-                            if let Some(pub_rate) = props.min_rate_hz {
-                                check_rate_achievable(
-                                    manifest,
-                                    node_name,
-                                    pub_rate,
-                                    group_name,
-                                    ctx,
-                                    self.id(),
-                                );
-                            }
-                        }
+                    && let Some(props) = node.publishers.get(ep_name)
+                {
+                    // If endpoint declares min_rate_hz, check it's achievable
+                    // from the node's path inputs
+                    if let Some(pub_rate) = props.min_rate_hz {
+                        check_rate_achievable(
+                            manifest,
+                            node_name,
+                            pub_rate,
+                            group_name,
+                            ctx,
+                            self.id(),
+                        );
+                    }
+                }
             }
         }
     }
@@ -66,15 +67,16 @@ fn check_rate_achievable(
             for (topic_name, topic) in &manifest.topics {
                 if topic.subscribers.contains(&full_ref)
                     && let Some(topic_rate) = topic.rate_hz
-                        && topic_rate < required_rate {
-                            ctx.warning(
+                    && topic_rate < required_rate
+                {
+                    ctx.warning(
                                 rule_id,
                                 &format!("exports.{export_group}"),
                                 format!(
                                     "export requires {required_rate} Hz but upstream topic '{topic_name}' only provides {topic_rate} Hz"
                                 ),
                             );
-                        }
+                }
             }
         }
     }

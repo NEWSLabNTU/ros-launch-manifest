@@ -1,7 +1,7 @@
 //! Integration tests for the manifest static checker.
 
-use ros_launch_manifest_check::{Severity, run_checks};
-use ros_launch_manifest_types::parse_manifest_str;
+use ros_launch_manifest_check::{Severity, run_checks, run_checks_with_spans};
+use ros_launch_manifest_types::{parse_manifest_str, parse_manifest_str_with_spans};
 
 fn errors(yaml: &str) -> Vec<String> {
     let m = parse_manifest_str(yaml).unwrap();
@@ -54,7 +54,11 @@ topics:
 "#;
     let m = parse_manifest_str(yaml).unwrap();
     let result = run_checks(&m);
-    assert!(!result.has_errors(), "expected no errors: {:?}", errors(yaml));
+    assert!(
+        !result.has_errors(),
+        "expected no errors: {:?}",
+        errors(yaml)
+    );
 }
 
 #[test]
@@ -112,7 +116,8 @@ fn test_endpoint_duplicate() {
     use std::collections::BTreeMap;
 
     let mut node = NodeDecl::default();
-    node.publishers.insert("data".into(), EndpointProps::default());
+    node.publishers
+        .insert("data".into(), EndpointProps::default());
     node.cli.insert("data".into(), EndpointProps::default());
 
     let mut m = Manifest::default();
@@ -179,7 +184,8 @@ topics:
 "#;
     let errs = errors(yaml);
     assert!(
-        errs.iter().any(|e| e.contains("min_rate_hz (5) < topic rate_hz (10)")),
+        errs.iter()
+            .any(|e| e.contains("min_rate_hz (5) < topic rate_hz (10)")),
         "expected rate hierarchy error: {errs:?}"
     );
 }
@@ -201,7 +207,8 @@ topics:
 "#;
     let errs = errors(yaml);
     assert!(
-        errs.iter().any(|e| e.contains("topic rate_hz (10) < subscriber")),
+        errs.iter()
+            .any(|e| e.contains("topic rate_hz (10) < subscriber")),
         "expected rate hierarchy error: {errs:?}"
     );
 }
@@ -278,7 +285,8 @@ paths:
 "#;
     let errs = errors(yaml);
     assert!(
-        errs.iter().any(|e| e.contains("max_age_ms (50) < max_latency_ms (100)")),
+        errs.iter()
+            .any(|e| e.contains("max_age_ms (50) < max_latency_ms (100)")),
         "expected age error: {errs:?}"
     );
 }
@@ -362,7 +370,10 @@ paths:
 "#;
     let errs = errors(yaml);
     let drop_errs: Vec<_> = errs.iter().filter(|e| e.contains("drop-rate")).collect();
-    assert!(drop_errs.is_empty(), "unexpected drop errors: {drop_errs:?}");
+    assert!(
+        drop_errs.is_empty(),
+        "unexpected drop errors: {drop_errs:?}"
+    );
 }
 
 #[test]
@@ -451,7 +462,8 @@ paths:
 "#;
     let errs = errors(yaml);
     assert!(
-        errs.iter().any(|e| e.contains("scope max_consecutive (3) < node max_consecutive (5)")),
+        errs.iter()
+            .any(|e| e.contains("scope max_consecutive (3) < node max_consecutive (5)")),
         "expected consecutive error: {errs:?}"
     );
 }
@@ -540,4 +552,122 @@ paths:
         "expected no errors on clean pipeline: {:?}",
         errs.iter().map(|d| d.to_string()).collect::<Vec<_>>()
     );
+}
+
+// ── Source span tests ──
+
+#[test]
+fn test_span_qos_error_has_byte_range() {
+    let yaml = r#"version: 1
+topics:
+  pointcloud:
+    type: PointCloud2
+    qos:
+      reliability: maybe
+"#;
+    let parsed = parse_manifest_str_with_spans(yaml).unwrap();
+    let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
+
+    let qos_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "qos-compat" && d.severity == Severity::Error)
+        .collect();
+    assert!(!qos_errs.is_empty());
+
+    // At least one diagnostic should have a span
+    let with_span: Vec<_> = qos_errs.iter().filter(|d| d.span.is_some()).collect();
+    assert!(
+        !with_span.is_empty(),
+        "expected at least one QoS diagnostic with span, got: {:?}",
+        qos_errs
+            .iter()
+            .map(|d| (&d.path, &d.span))
+            .collect::<Vec<_>>()
+    );
+
+    // The span should point at actual source text
+    let span = with_span[0].span.as_ref().unwrap();
+    let source_slice = &yaml[span.clone()];
+    assert!(
+        !source_slice.is_empty(),
+        "span should point at non-empty source text"
+    );
+}
+
+#[test]
+fn test_span_rate_hierarchy_error_has_byte_range() {
+    let yaml = r#"version: 1
+nodes:
+  driver:
+    pub:
+      pointcloud:
+        min_rate_hz: 5
+topics:
+  pointcloud:
+    type: PointCloud2
+    pub: [driver/pointcloud]
+    rate_hz: 10
+"#;
+    let parsed = parse_manifest_str_with_spans(yaml).unwrap();
+    let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
+
+    let rate_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "rate-hierarchy")
+        .collect();
+    assert!(!rate_errs.is_empty());
+
+    let with_span: Vec<_> = rate_errs.iter().filter(|d| d.span.is_some()).collect();
+    assert!(
+        !with_span.is_empty(),
+        "expected rate-hierarchy diagnostic with span"
+    );
+}
+
+#[test]
+fn test_span_scope_budget_error_has_byte_range() {
+    let yaml = r#"version: 1
+paths:
+  main:
+    input: raw
+    output: [out]
+    max_latency_ms: 100
+    max_age_ms: 50
+"#;
+    let parsed = parse_manifest_str_with_spans(yaml).unwrap();
+    let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
+
+    let budget_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "scope-budget" && d.severity == Severity::Error)
+        .collect();
+    assert!(!budget_errs.is_empty());
+
+    let with_span: Vec<_> = budget_errs.iter().filter(|d| d.span.is_some()).collect();
+    assert!(
+        !with_span.is_empty(),
+        "expected scope-budget diagnostic with span"
+    );
+}
+
+#[test]
+fn test_no_spans_without_index() {
+    // run_checks (no spans) should produce diagnostics with span=None
+    let yaml = r#"version: 1
+topics:
+  pc:
+    type: PointCloud2
+    qos:
+      reliability: maybe
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+
+    assert!(result.has_errors());
+    for diag in &result.diagnostics {
+        assert!(diag.span.is_none(), "expected no spans without index");
+    }
 }

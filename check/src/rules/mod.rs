@@ -10,8 +10,7 @@ mod rate_hierarchy;
 mod scope_budget;
 mod wiring;
 
-use crate::check::CheckContext;
-use crate::graph::DataflowGraph;
+use crate::{check::CheckContext, graph::DataflowGraph};
 use ros_launch_manifest_types::Manifest;
 
 /// A validation rule that checks one aspect of the manifest.

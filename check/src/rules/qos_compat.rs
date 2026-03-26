@@ -21,21 +21,29 @@ impl ValidationRule for QosCompatRule {
             // If topic declares QoS, check that it's internally consistent
             // (reliability and durability are valid values)
             if let Some(rel) = &qos.reliability
-                && rel != "reliable" && rel != "best_effort" {
-                    ctx.error(
-                        self.id(),
-                        &format!("topics.{topic_name}.qos.reliability"),
-                        format!("invalid reliability value '{rel}', expected 'reliable' or 'best_effort'"),
-                    );
-                }
+                && rel != "reliable"
+                && rel != "best_effort"
+            {
+                ctx.error(
+                    self.id(),
+                    &format!("topics.{topic_name}.qos.reliability"),
+                    format!(
+                        "invalid reliability value '{rel}', expected 'reliable' or 'best_effort'"
+                    ),
+                );
+            }
             if let Some(dur) = &qos.durability
-                && dur != "volatile" && dur != "transient_local" {
-                    ctx.error(
-                        self.id(),
-                        &format!("topics.{topic_name}.qos.durability"),
-                        format!("invalid durability value '{dur}', expected 'volatile' or 'transient_local'"),
-                    );
-                }
+                && dur != "volatile"
+                && dur != "transient_local"
+            {
+                ctx.error(
+                    self.id(),
+                    &format!("topics.{topic_name}.qos.durability"),
+                    format!(
+                        "invalid durability value '{dur}', expected 'volatile' or 'transient_local'"
+                    ),
+                );
+            }
         }
     }
 }

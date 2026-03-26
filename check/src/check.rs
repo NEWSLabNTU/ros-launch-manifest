@@ -1,8 +1,8 @@
 //! Check context and diagnostic types.
 
-use crate::graph::DataflowGraph;
-use crate::rules;
-use ros_launch_manifest_types::Manifest;
+use crate::{graph::DataflowGraph, rules};
+use ros_launch_manifest_types::{Manifest, SpanIndex};
+use std::ops::Range;
 
 /// Severity level for diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -30,6 +30,8 @@ pub struct Diagnostic {
     pub message: String,
     /// YAML path where the issue was found (e.g., "nodes.ndt.paths.localization").
     pub path: String,
+    /// Byte range in the source text (if source spans are available).
+    pub span: Option<Range<usize>>,
 }
 
 impl std::fmt::Display for Diagnostic {
@@ -45,21 +47,34 @@ impl std::fmt::Display for Diagnostic {
 /// Accumulates diagnostics during checking.
 pub struct CheckContext {
     pub diagnostics: Vec<Diagnostic>,
+    /// Span index for resolving YAML paths to byte ranges.
+    pub spans: Option<SpanIndex>,
 }
 
 impl CheckContext {
     pub fn new() -> Self {
         Self {
             diagnostics: Vec::new(),
+            spans: None,
+        }
+    }
+
+    /// Create a context with span resolution support.
+    pub fn with_spans(spans: SpanIndex) -> Self {
+        Self {
+            diagnostics: Vec::new(),
+            spans: Some(spans),
         }
     }
 
     pub fn emit(&mut self, rule_id: &str, severity: Severity, path: &str, message: String) {
+        let span = self.spans.as_ref().and_then(|idx| idx.get(path));
         self.diagnostics.push(Diagnostic {
             rule_id: rule_id.to_string(),
             severity,
             message,
             path: path.to_string(),
+            span,
         });
     }
 
@@ -114,6 +129,21 @@ impl CheckResult {
 pub fn run_checks(manifest: &Manifest) -> CheckResult {
     let graph = DataflowGraph::build(manifest);
     let mut ctx = CheckContext::new();
+
+    for rule in rules::default_rules() {
+        rule.check(manifest, &graph, &mut ctx);
+    }
+
+    CheckResult {
+        diagnostics: ctx.diagnostics,
+        graph,
+    }
+}
+
+/// Run all validation rules with span resolution support.
+pub fn run_checks_with_spans(manifest: &Manifest, spans: SpanIndex) -> CheckResult {
+    let graph = DataflowGraph::build(manifest);
+    let mut ctx = CheckContext::with_spans(spans);
 
     for rule in rules::default_rules() {
         rule.check(manifest, &graph, &mut ctx);

@@ -8,4 +8,6 @@ pub mod emit;
 pub mod graph;
 pub mod rules;
 
-pub use check::{CheckContext, CheckResult, Diagnostic, Severity, run_checks};
+pub use check::{
+    CheckContext, CheckResult, Diagnostic, Severity, run_checks, run_checks_with_spans,
+};

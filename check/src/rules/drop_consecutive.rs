@@ -63,8 +63,7 @@ impl ValidationRule for DropConsecutiveRule {
                 let mut min_k = scope_k;
                 loop {
                     min_k += 1;
-                    let lam =
-                        (w - min_k as f64 + 1.0) * d.powf(min_k as f64) * (1.0 - d);
+                    let lam = (w - min_k as f64 + 1.0) * d.powf(min_k as f64) * (1.0 - d);
                     if 1.0 - (-lam).exp() <= EPSILON || min_k > 100 {
                         break;
                     }

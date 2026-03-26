@@ -8,13 +8,9 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum GraphNode {
     /// A ROS node from the manifest.
-    Node {
-        name: String,
-    },
+    Node { name: String },
     /// A child scope (include).
-    Scope {
-        name: String,
-    },
+    Scope { name: String },
 }
 
 impl GraphNode {
@@ -48,17 +44,13 @@ impl DataflowGraph {
 
         // Add nodes
         for name in manifest.nodes.keys() {
-            let idx = graph.add_node(GraphNode::Node {
-                name: name.clone(),
-            });
+            let idx = graph.add_node(GraphNode::Node { name: name.clone() });
             index_map.insert(name.clone(), idx);
         }
 
         // Add includes as scope vertices
         for name in manifest.includes.keys() {
-            let idx = graph.add_node(GraphNode::Scope {
-                name: name.clone(),
-            });
+            let idx = graph.add_node(GraphNode::Scope { name: name.clone() });
             index_map.insert(name.clone(), idx);
         }
 
@@ -69,12 +61,10 @@ impl DataflowGraph {
         for (node_name, node_decl) in &manifest.nodes {
             if let Some(idx) = index_map.get(node_name) {
                 for ep_name in node_decl.publishers.keys() {
-                    endpoint_to_vertex
-                        .insert(format!("{node_name}/{ep_name}"), *idx);
+                    endpoint_to_vertex.insert(format!("{node_name}/{ep_name}"), *idx);
                 }
                 for ep_name in node_decl.subscribers.keys() {
-                    endpoint_to_vertex
-                        .insert(format!("{node_name}/{ep_name}"), *idx);
+                    endpoint_to_vertex.insert(format!("{node_name}/{ep_name}"), *idx);
                 }
             }
         }
@@ -120,12 +110,11 @@ impl DataflowGraph {
 
 /// Check if an endpoint reference points to a state endpoint (read-latest, not causal).
 fn is_state_endpoint(endpoint_ref: &str, manifest: &Manifest) -> bool {
-    if let Some((node_name, ep_name)) = endpoint_ref.split_once('/') {
-        if let Some(node) = manifest.nodes.get(node_name) {
-            if let Some(props) = node.subscribers.get(ep_name) {
-                return props.state.unwrap_or(false);
-            }
-        }
+    if let Some((node_name, ep_name)) = endpoint_ref.split_once('/')
+        && let Some(node) = manifest.nodes.get(node_name)
+        && let Some(props) = node.subscribers.get(ep_name)
+    {
+        return props.state.unwrap_or(false);
     }
     false
 }

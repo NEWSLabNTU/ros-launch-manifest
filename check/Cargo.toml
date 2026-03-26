@@ -7,3 +7,4 @@ edition = "2024"
 ros-launch-manifest-types = { path = "../types" }
 petgraph = "0.8"
 thiserror = "2"
+codespan-reporting = "0.11"

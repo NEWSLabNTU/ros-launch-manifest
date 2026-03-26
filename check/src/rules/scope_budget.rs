@@ -64,16 +64,17 @@ impl ValidationRule for ScopeBudgetRule {
             // Check max_age_ms if declared
             if let Some(declared_age) = path.max_age_ms
                 && let Some(declared_latency) = path.max_latency_ms
-                    && declared_age < declared_latency {
-                        ctx.error(
-                            self.id(),
-                            &format!("paths.{path_name}"),
-                            format!(
-                                "max_age_ms ({declared_age}) < max_latency_ms ({declared_latency}). \
+                && declared_age < declared_latency
+            {
+                ctx.error(
+                    self.id(),
+                    &format!("paths.{path_name}"),
+                    format!(
+                        "max_age_ms ({declared_age}) < max_latency_ms ({declared_latency}). \
                                  Age must be >= latency since age includes upstream delays."
-                            ),
-                        );
-                    }
+                    ),
+                );
+            }
         }
     }
 }

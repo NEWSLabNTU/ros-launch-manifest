@@ -57,11 +57,10 @@ impl ValidationRule for WiringRule {
         for (group_name, members) in &manifest.imports {
             for member in members {
                 // Check if any topic wires this import
-                let is_wired = manifest.topics.values().any(|t| {
-                    t.subscribers
-                        .iter()
-                        .any(|s| s == member || s == group_name)
-                });
+                let is_wired = manifest
+                    .topics
+                    .values()
+                    .any(|t| t.subscribers.iter().any(|s| s == member || s == group_name));
                 if !is_wired {
                     ctx.warning(
                         self.id(),

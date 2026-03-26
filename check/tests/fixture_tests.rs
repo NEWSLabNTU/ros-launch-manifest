@@ -40,7 +40,11 @@ fn fixture_simple_clean() {
 #[test]
 fn fixture_pipeline_parses() {
     let m = parse_manifest(&fixture_path("manifest_pipeline")).unwrap();
-    assert_eq!(m.nodes.len(), 4, "cropbox + ground_filter + fusion + tracker");
+    assert_eq!(
+        m.nodes.len(),
+        4,
+        "cropbox + ground_filter + fusion + tracker"
+    );
     assert_eq!(m.topics.len(), 5);
     assert!(!m.imports.is_empty());
     assert!(!m.exports.is_empty());
@@ -63,7 +67,10 @@ fn fixture_pipeline_state_endpoint() {
     let m = parse_manifest(&fixture_path("manifest_pipeline")).unwrap();
     let fusion = &m.nodes["fusion"];
     let camera = &fusion.subscribers["camera_objects"];
-    assert!(camera.state.unwrap_or(false), "camera_objects should be state");
+    assert!(
+        camera.state.unwrap_or(false),
+        "camera_objects should be state"
+    );
 }
 
 // ── manifest_ndt: NDT localization with feedback cycle ──
@@ -71,7 +78,11 @@ fn fixture_pipeline_state_endpoint() {
 #[test]
 fn fixture_ndt_parses() {
     let m = parse_manifest(&fixture_path("manifest_ndt")).unwrap();
-    assert_eq!(m.nodes.len(), 3, "voxel_grid + ndt_scan_matcher + ekf_localizer");
+    assert_eq!(
+        m.nodes.len(),
+        3,
+        "voxel_grid + ndt_scan_matcher + ekf_localizer"
+    );
     assert!(m.services.contains_key("trigger_ndt"));
 }
 
@@ -111,7 +122,10 @@ fn fixture_ndt_service() {
     let m = parse_manifest(&fixture_path("manifest_ndt")).unwrap();
     let svc = &m.services["trigger_ndt"];
     assert_eq!(svc.srv_type, "std_srvs/srv/Trigger");
-    assert!(svc.server.contains(&"ndt_scan_matcher/trigger_node".to_string()));
+    assert!(
+        svc.server
+            .contains(&"ndt_scan_matcher/trigger_node".to_string())
+    );
 }
 
 // ── manifest_periodic: timer-driven nodes ──
@@ -147,7 +161,11 @@ fn fixture_periodic_all_state_subs() {
     let m = parse_manifest(&fixture_path("manifest_periodic")).unwrap();
     let controller = &m.nodes["controller"];
     assert!(controller.subscribers["trajectory"].state.unwrap_or(false));
-    assert!(controller.subscribers["current_velocity"].state.unwrap_or(false));
+    assert!(
+        controller.subscribers["current_velocity"]
+            .state
+            .unwrap_or(false)
+    );
 }
 
 // ── manifest_violations: intentional violations ──
@@ -197,7 +215,10 @@ fn fixture_violations_causal_cycle() {
         .iter()
         .filter(|d| d.rule_id == "causal-dag" && d.severity == Severity::Error)
         .collect();
-    assert!(!cycle_errs.is_empty(), "expected causal cycle error from a↔b");
+    assert!(
+        !cycle_errs.is_empty(),
+        "expected causal cycle error from a↔b"
+    );
 }
 
 #[test]
@@ -230,7 +251,10 @@ fn fixture_violations_drop_rate() {
         .iter()
         .filter(|d| d.rule_id == "drop-rate" && d.severity == Severity::Error)
         .collect();
-    assert!(!drop_errs.is_empty(), "expected drop rate infeasibility error");
+    assert!(
+        !drop_errs.is_empty(),
+        "expected drop rate infeasibility error"
+    );
 }
 
 #[test]
@@ -265,11 +289,18 @@ fn fixture_violations_wiring() {
 fn fixture_violations_has_many_errors() {
     let m = parse_manifest(&fixture_path("manifest_violations")).unwrap();
     let result = run_checks(&m);
-    let error_count = result.diagnostics.iter().filter(|d| d.severity == Severity::Error).count();
+    let error_count = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
     assert!(
         error_count >= 5,
         "expected at least 5 distinct errors, got {error_count}: {:?}",
-        result.errors().map(|d| format!("[{}] {}", d.rule_id, d.message)).collect::<Vec<_>>()
+        result
+            .errors()
+            .map(|d| format!("[{}] {}", d.rule_id, d.message))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -300,8 +331,16 @@ fn fixture_multi_scope_inline_structure() {
     match &m.includes["planning"] {
         ros_launch_manifest_types::IncludeDecl::Inline(inner) => {
             assert_eq!(inner.nodes.len(), 1, "planner");
-            assert!(inner.nodes["planner"].subscribers["route"].state.unwrap_or(false));
-            assert!(inner.nodes["planner"].subscribers["route"].required.unwrap_or(false));
+            assert!(
+                inner.nodes["planner"].subscribers["route"]
+                    .state
+                    .unwrap_or(false)
+            );
+            assert!(
+                inner.nodes["planner"].subscribers["route"]
+                    .required
+                    .unwrap_or(false)
+            );
         }
         ros_launch_manifest_types::IncludeDecl::External { .. } => {
             panic!("planning should be inline, not external");

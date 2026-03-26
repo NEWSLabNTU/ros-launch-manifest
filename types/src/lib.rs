@@ -7,6 +7,9 @@ pub mod parse;
 pub mod span;
 pub mod types;
 
-pub use parse::{parse_manifest, parse_manifest_str};
-pub use span::Spanned;
+pub use parse::{
+    ParseResult, parse_manifest, parse_manifest_str, parse_manifest_str_with_spans,
+    parse_manifest_with_spans,
+};
+pub use span::{SpanIndex, Spanned};
 pub use types::*;

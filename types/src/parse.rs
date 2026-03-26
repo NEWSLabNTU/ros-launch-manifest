@@ -3,7 +3,7 @@
 //! Parses YAML into typed [`Manifest`] AST. Handles both plain list
 //! and map forms for endpoints (e.g., `pub: [a, b]` vs `pub: {a: {min_rate_hz: 10}}`).
 
-use crate::types::*;
+use crate::{span::SpanIndex, types::*};
 use std::{collections::BTreeMap, path::Path};
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -18,10 +18,27 @@ pub enum ParseError {
     Field { path: String, message: String },
 }
 
+/// Result of parsing a manifest, including source text and span index
+/// for diagnostic reporting.
+#[derive(Debug, Clone)]
+pub struct ParseResult {
+    pub manifest: Manifest,
+    /// Original source text (for codespan-reporting).
+    pub source: String,
+    /// Span index mapping YAML key paths to byte ranges.
+    pub spans: SpanIndex,
+}
+
 /// Parse a manifest file from disk.
 pub fn parse_manifest(path: &Path) -> Result<Manifest, ParseError> {
     let content = std::fs::read_to_string(path)?;
     parse_manifest_str(&content)
+}
+
+/// Parse a manifest file from disk, returning source and spans.
+pub fn parse_manifest_with_spans(path: &Path) -> Result<ParseResult, ParseError> {
+    let content = std::fs::read_to_string(path)?;
+    parse_manifest_str_with_spans(&content)
 }
 
 /// Parse a manifest from a YAML string.
@@ -35,6 +52,17 @@ pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
         });
     }
     parse_manifest_yaml(&docs[0], "")
+}
+
+/// Parse a manifest from a YAML string, returning source and spans.
+pub fn parse_manifest_str_with_spans(source: &str) -> Result<ParseResult, ParseError> {
+    let manifest = parse_manifest_str(source)?;
+    let spans = SpanIndex::build(source);
+    Ok(ParseResult {
+        manifest,
+        source: source.to_string(),
+        spans,
+    })
 }
 
 fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
@@ -297,7 +325,12 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
         let name = yaml_str_owned(k);
         let path = format_path(ctx, &format!("includes.{name}"));
         if let Some(manifest_path) = yaml_string(v, "manifest") {
-            out.insert(name, IncludeDecl::External { manifest: manifest_path });
+            out.insert(
+                name,
+                IncludeDecl::External {
+                    manifest: manifest_path,
+                },
+            );
         } else {
             // Inline scope
             let inner = parse_manifest_yaml(v, &path)?;
@@ -393,9 +426,7 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
     }
     // Shorthand: "5 / 100"
     if let Some(s) = section.as_str() {
-        let count: DropCount = s
-            .parse()
-            .map_err(|e: String| field_err(ctx, key, &e))?;
+        let count: DropCount = s.parse().map_err(|e: String| field_err(ctx, key, &e))?;
         return Ok(Some(DropSpec {
             max_count: Some(count),
             max_consecutive: None,
