@@ -18,11 +18,11 @@ A manifest file describes what one launch file contributes to the
 communication graph: its nodes and the topics they create. Manifest files
 are organized by package and launch file in a manifest directory.
 
-The parser loads manifests alongside launch files. When it encounters
-`<include pkg="X" file="Y.launch.xml">`, it looks up
-`<manifest_dir>/X/Y.yaml`. The parser applies the namespace from the
-include context, so manifest files use relative names and are reusable
-across different namespace contexts.
+The executor loads manifests at startup using the scope table from
+`record.json`. For each file scope in the launch tree, it looks up
+`<manifest_dir>/<pkg>/<stem>.yaml` and applies the scope's namespace
+to relative names, so manifest files are reusable across different
+namespace contexts.
 
 **Five concepts:**
 
@@ -104,9 +104,10 @@ exports:
 ### Nodes
 
 Nodes declare **endpoints** — named pub/sub/service/action ports.
-Endpoint names are the node's pre-remap topic names (before launch
-file `<remap>` is applied). Each endpoint must have a corresponding
-`<remap from="...">` in the launch file; warn if missing.
+Endpoint names are **local identifiers within the manifest** used for
+wiring (referenced in `topics:` as `node_name/endpoint_name`) and
+diagnostics. They don't need to match the node's internal C++ topic
+name or the launch file's `<remap from="...">`.
 
 Endpoint names must be **unique per node** across pub, sub, srv, cli.
 
@@ -137,11 +138,17 @@ nodes:
       regularization_pose:
         state: true
 
-  # With services
+  # With service servers
   map_loader:
     srv:
       get_map:
         max_response_ms: 1000
+
+  # With service clients
+  mrm_handler:
+    cli:
+      comfortable_stop_operate: {}
+      emergency_stop_operate: {}
 
   # Minimal — just registers existence
   evaluator:
@@ -164,15 +171,19 @@ nodes:
 | `max_rate_hz` | Ceiling — "something is wrong if faster"       |
 | `jitter_ms`   | Max deviation from ideal period (timer-driven) |
 
-**Service endpoint properties** (all optional, applies to both `srv:` and `cli:`):
+**Service endpoint properties** (all optional):
+
+- `srv:` — this node **serves** the service (receives requests)
+- `cli:` — this node **calls** the service (sends requests)
 
 | Field              | Meaning                                                            |
 |--------------------|--------------------------------------------------------------------|
 | `max_response_ms`  | Max time from request to response (runtime monitoring, no DDS mechanism) |
 
-Note: `required` is not needed on service endpoints — unlike topic subscribers
-which silently receive nothing, service clients explicitly fail when the server
-is unavailable. Service QoS is always `reliable/volatile/depth10`
+On `srv:`, `max_response_ms` is the server's commitment. On `cli:`, it's the
+client's expectation. `required` is not needed — service clients explicitly
+fail when the server is unavailable (unlike topic subscribers which silently
+receive nothing). Service QoS is always `reliable/volatile/depth10`
 (`rmw_qos_profile_services_default`) and not configurable per-service in ROS 2.
 
 ### Composable Nodes
@@ -311,9 +322,9 @@ Includes represent `<include>` (separate manifest) or `<group>` blocks
 includes:
   # External — loaded from separate manifest file
   lidar:
-    manifest: tier4_perception_launch/lidar_perception.launch.yaml
+    manifest: tier4_perception_launch/lidar_perception.yaml
   camera:
-    manifest: tier4_perception_launch/camera_perception.launch.yaml
+    manifest: tier4_perception_launch/camera_perception.yaml
 
   # Inline — from <group> block
   safety:
@@ -449,7 +460,7 @@ nodes:
       exe_time_ms:
     srv:
       trigger_node:
-        max_latency_ms: 100
+        max_response_ms: 100
     paths:
       localization:
         input: sensor_points
@@ -527,8 +538,8 @@ The endpoint properties, paths, and topic rate/drop form an
 assume-guarantee contract system. Node paths compose to scope paths
 via series/parallel rules.
 
-See `docs/design/contract-theory.md` for the formal foundations and
-`docs/design/contract-verification.md` for implementation tooling.
+See `docs/contract-theory.md` for the formal foundations and
+`docs/contract-verification.md` for implementation tooling.
 
 ## Pipeline Example
 
@@ -545,18 +556,18 @@ sensing.launch.xml ──→ camera_perception.launch.xml ──┘
 ```
 manifests/
 ├── tier4_sensing_launch/
-│   └── sensing.launch.yaml
+│   └── sensing.yaml
 ├── tier4_perception_launch/
-│   ├── perception.launch.yaml
-│   ├── lidar_perception.launch.yaml
-│   └── camera_perception.launch.yaml
+│   ├── perception.yaml
+│   ├── lidar_perception.yaml
+│   └── camera_perception.yaml
 ├── tier4_planning_launch/
-│   └── planning.launch.yaml
+│   └── planning.yaml
 └── autoware_launch/
-    └── planning_simulator.launch.yaml
+    └── planning_simulator.yaml
 ```
 
-**`tier4_sensing_launch/sensing.launch.yaml`**:
+**`tier4_sensing_launch/sensing.yaml`**:
 ```yaml
 version: 1
 
@@ -587,7 +598,7 @@ exports:
   image: [camera_driver/image]
 ```
 
-**`tier4_perception_launch/lidar_perception.launch.yaml`**:
+**`tier4_perception_launch/lidar_perception.yaml`**:
 ```yaml
 version: 1
 
@@ -632,7 +643,7 @@ paths:
   main: { input: raw_data, output: [detections], max_latency_ms: 50 }
 ```
 
-**`tier4_perception_launch/camera_perception.launch.yaml`**:
+**`tier4_perception_launch/camera_perception.yaml`**:
 ```yaml
 version: 1
 
@@ -666,15 +677,15 @@ paths:
   main: { input: raw_data, output: [detections], max_latency_ms: 30 }
 ```
 
-**`tier4_perception_launch/perception.launch.yaml`**:
+**`tier4_perception_launch/perception.yaml`**:
 ```yaml
 version: 1
 
 includes:
   lidar:
-    manifest: tier4_perception_launch/lidar_perception.launch.yaml
+    manifest: tier4_perception_launch/lidar_perception.yaml
   camera:
-    manifest: tier4_perception_launch/camera_perception.launch.yaml
+    manifest: tier4_perception_launch/camera_perception.yaml
 
 nodes:
   fusion_node:
@@ -735,7 +746,7 @@ paths:
   main: { input: raw_data, output: [detections], max_latency_ms: 85, max_age_ms: 150 }
 ```
 
-**`tier4_planning_launch/planning.launch.yaml`**:
+**`tier4_planning_launch/planning.yaml`**:
 ```yaml
 version: 1
 
@@ -770,7 +781,7 @@ paths:
   main: { input: tracked_data, output: [plan], max_latency_ms: 100 }
 ```
 
-**`autoware_launch/planning_simulator.launch.yaml`**:
+**`autoware_launch/planning_simulator.yaml`**:
 ```yaml
 version: 1
 exclude_patterns: [/rosout, /parameter_events]
@@ -781,11 +792,11 @@ global_topics:
 
 includes:
   sensing:
-    manifest: tier4_sensing_launch/sensing.launch.yaml
+    manifest: tier4_sensing_launch/sensing.yaml
   perception:
-    manifest: tier4_perception_launch/perception.launch.yaml
+    manifest: tier4_perception_launch/perception.yaml
   planning:
-    manifest: tier4_planning_launch/planning.launch.yaml
+    manifest: tier4_planning_launch/planning.yaml
 
 topics:
   pointcloud:
