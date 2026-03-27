@@ -1,0 +1,22 @@
+# Test fixture: manifest with args and $(var ...) substitutions.
+args:
+  input_topic: /default/input
+  output_topic: /default/output
+  node_enabled: "true"
+
+version: 1
+
+nodes:
+  processor:
+    sub: [input]
+    pub: [output]
+
+topics:
+  input_data:
+    type: $(var input_topic)
+    pub: []
+    sub: [processor/input]
+  output_data:
+    type: $(var output_topic)
+    pub: [processor/output]
+    sub: []

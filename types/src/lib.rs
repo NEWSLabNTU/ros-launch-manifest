@@ -5,6 +5,7 @@
 
 pub mod parse;
 pub mod span;
+pub mod subst;
 pub mod types;
 
 pub use parse::{
@@ -12,4 +13,5 @@ pub use parse::{
     parse_manifest_with_spans,
 };
 pub use span::{SpanIndex, Spanned};
+pub use subst::{SubstError, resolve_args, substitute_manifest, substitute_str};
 pub use types::*;

@@ -68,6 +68,7 @@ pub fn parse_manifest_str_with_spans(source: &str) -> Result<ParseResult, ParseE
 fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     Ok(Manifest {
         version: yaml_u32(doc, "version").unwrap_or(1),
+        args: parse_args(doc),
         exclude_patterns: yaml_string_list(doc, "exclude_patterns"),
         global_topics: parse_global_topics(doc)?,
         nodes: parse_nodes(doc, ctx)?,
@@ -338,6 +339,29 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
         }
     }
     Ok(out)
+}
+
+// ── Args ──
+
+/// Parse `args:` section. Value = default string, null = required.
+fn parse_args(doc: &Yaml) -> BTreeMap<String, Option<String>> {
+    let mut out = BTreeMap::new();
+    let section = &doc["args"];
+    if section.is_badvalue() {
+        return out;
+    }
+    if let Some(hash) = section.as_hash() {
+        for (k, v) in hash {
+            let name = yaml_str_owned(k);
+            let default = if v.is_null() || v.is_badvalue() {
+                None // required arg
+            } else {
+                Some(yaml_str_owned(v))
+            };
+            out.insert(name, default);
+        }
+    }
+    out
 }
 
 // ── Global Topics ──
