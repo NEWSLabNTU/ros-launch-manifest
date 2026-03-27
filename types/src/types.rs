@@ -44,6 +44,10 @@ pub struct GlobalTopicDecl {
 /// Node declaration.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct NodeDecl {
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    pub if_condition: Option<String>,
+    #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
+    pub unless_condition: Option<String>,
     #[serde(rename = "pub", skip_serializing_if = "BTreeMap::is_empty")]
     pub publishers: BTreeMap<String, EndpointProps>,
     #[serde(rename = "sub", skip_serializing_if = "BTreeMap::is_empty")]
@@ -84,6 +88,10 @@ pub struct SrvEndpointProps {
 /// Topic declaration.
 #[derive(Debug, Clone, Serialize)]
 pub struct TopicDecl {
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    pub if_condition: Option<String>,
+    #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
+    pub unless_condition: Option<String>,
     #[serde(rename = "type")]
     pub msg_type: String,
     #[serde(rename = "pub", skip_serializing_if = "Vec::is_empty")]
@@ -101,6 +109,10 @@ pub struct TopicDecl {
 /// Service declaration.
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceDecl {
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    pub if_condition: Option<String>,
+    #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
+    pub unless_condition: Option<String>,
     #[serde(rename = "type")]
     pub srv_type: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -112,6 +124,10 @@ pub struct ServiceDecl {
 /// Action declaration.
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionDecl {
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    pub if_condition: Option<String>,
+    #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
+    pub unless_condition: Option<String>,
     #[serde(rename = "type")]
     pub action_type: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -149,6 +165,10 @@ pub struct QosDecl {
 /// Named causal path.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PathDecl {
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    pub if_condition: Option<String>,
+    #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
+    pub unless_condition: Option<String>,
     /// Single endpoint name or list of endpoint names (from sub).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<String>,

@@ -100,22 +100,42 @@ pub fn substitute_manifest(
 ) -> Result<crate::Manifest, SubstError> {
     let mut m = manifest.clone();
 
-    // Topics: pub/sub lists, msg_type
+    // Nodes: conditions
+    for node in m.nodes.values_mut() {
+        node.if_condition = substitute_opt(&node.if_condition, args)?;
+        node.unless_condition = substitute_opt(&node.unless_condition, args)?;
+        // Node-level paths: conditions + fields
+        for path in node.paths.values_mut() {
+            path.if_condition = substitute_opt(&path.if_condition, args)?;
+            path.unless_condition = substitute_opt(&path.unless_condition, args)?;
+            path.input = substitute_vec(&path.input, args)?;
+            path.output = substitute_vec(&path.output, args)?;
+            path.correlation = substitute_opt(&path.correlation, args)?;
+        }
+    }
+
+    // Topics: conditions + fields
     for topic in m.topics.values_mut() {
+        topic.if_condition = substitute_opt(&topic.if_condition, args)?;
+        topic.unless_condition = substitute_opt(&topic.unless_condition, args)?;
         topic.msg_type = substitute_str(&topic.msg_type, args)?;
         topic.publishers = substitute_vec(&topic.publishers, args)?;
         topic.subscribers = substitute_vec(&topic.subscribers, args)?;
     }
 
-    // Services: type, server/client lists
+    // Services: conditions + fields
     for svc in m.services.values_mut() {
+        svc.if_condition = substitute_opt(&svc.if_condition, args)?;
+        svc.unless_condition = substitute_opt(&svc.unless_condition, args)?;
         svc.srv_type = substitute_str(&svc.srv_type, args)?;
         svc.server = substitute_vec(&svc.server, args)?;
         svc.client = substitute_vec(&svc.client, args)?;
     }
 
-    // Actions: type, server/client lists
+    // Actions: conditions + fields
     for act in m.actions.values_mut() {
+        act.if_condition = substitute_opt(&act.if_condition, args)?;
+        act.unless_condition = substitute_opt(&act.unless_condition, args)?;
         act.action_type = substitute_str(&act.action_type, args)?;
         act.server = substitute_vec(&act.server, args)?;
         act.client = substitute_vec(&act.client, args)?;
@@ -131,20 +151,13 @@ pub fn substitute_manifest(
         *members = substitute_vec(members, args)?;
     }
 
-    // Paths: input/output lists, correlation
+    // Scope paths: conditions + fields
     for path in m.paths.values_mut() {
+        path.if_condition = substitute_opt(&path.if_condition, args)?;
+        path.unless_condition = substitute_opt(&path.unless_condition, args)?;
         path.input = substitute_vec(&path.input, args)?;
         path.output = substitute_vec(&path.output, args)?;
         path.correlation = substitute_opt(&path.correlation, args)?;
-    }
-
-    // Node paths: same treatment
-    for node in m.nodes.values_mut() {
-        for path in node.paths.values_mut() {
-            path.input = substitute_vec(&path.input, args)?;
-            path.output = substitute_vec(&path.output, args)?;
-            path.correlation = substitute_opt(&path.correlation, args)?;
-        }
     }
 
     // Includes: external manifest path

@@ -105,16 +105,18 @@ fn parse_nodes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, NodeDecl>, Pars
 }
 
 fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
-    let mut node = NodeDecl::default();
     if yaml.is_null() || yaml.is_badvalue() {
-        return Ok(node);
+        return Ok(NodeDecl::default());
     }
-    node.publishers = parse_endpoints(yaml, "pub", ctx)?;
-    node.subscribers = parse_endpoints(yaml, "sub", ctx)?;
-    node.srv = parse_srv_endpoints(yaml, "srv", ctx)?;
-    node.cli = parse_endpoints(yaml, "cli", ctx)?;
-    node.paths = parse_paths(yaml, ctx)?;
-    Ok(node)
+    Ok(NodeDecl {
+        if_condition: yaml_string(yaml, "if"),
+        unless_condition: yaml_string(yaml, "unless"),
+        publishers: parse_endpoints(yaml, "pub", ctx)?,
+        subscribers: parse_endpoints(yaml, "sub", ctx)?,
+        srv: parse_srv_endpoints(yaml, "srv", ctx)?,
+        cli: parse_endpoints(yaml, "cli", ctx)?,
+        paths: parse_paths(yaml, ctx)?,
+    })
 }
 
 /// Parse endpoints: either a list `[a, b]` or a map `{a: {min_rate_hz: 10}, b: null}`.
@@ -244,6 +246,8 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
     // Shorthand: just a type string
     if let Some(s) = yaml.as_str() {
         return Ok(TopicDecl {
+            if_condition: None,
+            unless_condition: None,
             msg_type: s.to_string(),
             publishers: vec![],
             subscribers: vec![],
@@ -253,6 +257,8 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         });
     }
     Ok(TopicDecl {
+        if_condition: yaml_string(yaml, "if"),
+        unless_condition: yaml_string(yaml, "unless"),
         msg_type: yaml_string(yaml, "type")
             .ok_or_else(|| field_err(ctx, "type", "topic must have a type"))?,
         publishers: yaml_string_list(yaml, "pub"),
@@ -279,6 +285,8 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
         out.insert(
             name,
             ServiceDecl {
+                if_condition: yaml_string(v, "if"),
+                unless_condition: yaml_string(v, "unless"),
                 srv_type: yaml_string(v, "type").unwrap_or_default(),
                 server: yaml_string_list(v, "server"),
                 client: yaml_string_list(v, "client"),
@@ -302,6 +310,8 @@ fn parse_actions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ActionDecl>, 
         out.insert(
             name,
             ActionDecl {
+                if_condition: yaml_string(v, "if"),
+                unless_condition: yaml_string(v, "unless"),
                 action_type: yaml_string(v, "type").unwrap_or_default(),
                 server: yaml_string_list(v, "server"),
                 client: yaml_string_list(v, "client"),
@@ -430,6 +440,8 @@ fn parse_paths(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, PathDecl>, Pars
 
 fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
     Ok(PathDecl {
+        if_condition: yaml_string(yaml, "if"),
+        unless_condition: yaml_string(yaml, "unless"),
         input: parse_string_or_list(yaml, "input"),
         output: yaml_string_list(yaml, "output"),
         max_latency_ms: yaml_f64(yaml, "max_latency_ms"),

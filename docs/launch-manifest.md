@@ -137,12 +137,56 @@ imports:
 2. Merge scope args from `record.json` over defaults (overrides take priority)
 3. Error if a required arg has no default and is not in scope args
 4. Replace all `$(var name)` with resolved values
-5. Proceed to namespace resolution and static checks
+5. Evaluate `if:`/`unless:` conditions and filter excluded entities
+6. Proceed to namespace resolution and static checks
 
 This mirrors ROS 2 launch file `<arg>` and `$(var ...)` semantics. The scope
 table already captures all resolved launch arguments (both `<arg>` declarations
 and `<let>` assignments) per scope, so the manifest doesn't need to model
 `<let>` separately.
+
+### Conditions
+
+Any node, topic, service, action, or path can have `if:` or `unless:`
+fields. These are evaluated after `$(var ...)` substitution and before
+static checks. Entities where the condition is false are removed.
+
+```yaml
+nodes:
+  obstacle_stop_module:
+    if: $(var launch_obstacle_stop_module)
+    sub: [trajectory]
+    pub: [modified_trajectory]
+
+  legacy_planner:
+    unless: $(var use_new_planner)
+    sub: [route]
+    pub: [trajectory]
+
+topics:
+  obstacle_trajectory:
+    if: $(var launch_obstacle_stop_module) == 'true'
+    type: autoware_planning_msgs/msg/Trajectory
+    pub: [obstacle_stop_module/modified_trajectory]
+```
+
+**Two forms:**
+
+- **Boolean** — bare value: `if: $(var x)` → included when resolved
+  value is `"true"` (case-sensitive), excluded otherwise. Matches
+  ROS 2 launch XML `if="$(var x)"`.
+- **Expression** — comparison: `if: $(var x) == 'value'` → string
+  equality. Supports `==`, `!=`, `and`, `or`, parentheses.
+
+`unless:` is the inverse — entity included when condition is **not** true.
+
+```yaml
+if: $(var use_sim_time)                          # boolean
+if: $(var sensor_model) == 'velodyne'            # string comparison
+unless: $(var use_legacy_mode)                   # boolean negation
+if: $(var a) == 'x' and $(var b) == 'y'         # compound
+if: ($(var a) == 'x' or $(var a) == 'y') and $(var b) == 'z'  # parentheses
+```
 
 ### Nodes
 
