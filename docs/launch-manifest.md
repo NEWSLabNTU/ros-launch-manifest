@@ -101,6 +101,49 @@ exports:
 | `version`          | yes      | Manifest format version (currently `1`)                            |
 | `exclude_patterns` | no       | Topic prefixes to ignore (default: `/rosout`, `/parameter_events`) |
 
+### Args and Substitutions
+
+Manifests can declare **args** — named parameters with optional defaults.
+At check time, the scope's launch arguments override these defaults, and
+`$(var name)` references in string fields are replaced with resolved values.
+
+```yaml
+args:
+  input_objects_topic_name: /perception/object_recognition/objects   # default
+  input_pointcloud_topic_name: /perception/obstacle_segmentation/pointcloud
+  launch_obstacle_stop_module: "true"
+  vehicle_model:              # required — no default, must be provided
+```
+
+Value present = default. Null = required (error if not provided by scope args).
+
+**`$(var name)`** substitutions work in any string field — topic types,
+endpoint references, import/export lists, include paths:
+
+```yaml
+topics:
+  predicted_objects:
+    type: autoware_perception_msgs/msg/PredictedObjects
+    sub: [motion_velocity_planner/predicted_objects]
+
+imports:
+  objects_input:
+    - motion_velocity_planner/predicted_objects   # actual: $(var input_objects_topic_name)
+```
+
+**Resolution order**:
+
+1. Parse manifest (args declared with defaults)
+2. Merge scope args from `record.json` over defaults (overrides take priority)
+3. Error if a required arg has no default and is not in scope args
+4. Replace all `$(var name)` with resolved values
+5. Proceed to namespace resolution and static checks
+
+This mirrors ROS 2 launch file `<arg>` and `$(var ...)` semantics. The scope
+table already captures all resolved launch arguments (both `<arg>` declarations
+and `<let>` assignments) per scope, so the manifest doesn't need to model
+`<let>` separately.
+
 ### Nodes
 
 Nodes declare **endpoints** — named pub/sub/service/action ports.
