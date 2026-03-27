@@ -304,6 +304,36 @@ fn fixture_violations_has_many_errors() {
     );
 }
 
+#[test]
+fn fixture_violations_service_wiring() {
+    let m = parse_manifest(&fixture_path("manifest_violations")).unwrap();
+    let result = run_checks(&m);
+    let svc_warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "service-wiring")
+        .collect();
+    assert!(
+        !svc_warns.is_empty(),
+        "expected service-wiring warning for orphan_client"
+    );
+}
+
+#[test]
+fn fixture_violations_service_type() {
+    let m = parse_manifest(&fixture_path("manifest_violations")).unwrap();
+    let result = run_checks(&m);
+    let type_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "service-type" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !type_errs.is_empty(),
+        "expected service-type error for typeless_service"
+    );
+}
+
 // ── manifest_multi_scope: nested includes ──
 
 #[test]

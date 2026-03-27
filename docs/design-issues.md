@@ -428,53 +428,13 @@ source of truth for how endpoints map to ROS topics.
 
 ---
 
-## 6. Import Topic Mapping
+## ~~6. Import Topic Mapping~~ — Dropped
 
-### Problem
-
-The current import format only lists endpoints:
-
-```yaml
-imports:
-  raw_data: [cropbox_filter/input]
-```
-
-This doesn't capture what actual ROS topic the import maps to. When the topic
-name depends on a launch arg (`$(var input_objects_topic_name)`), there's no
-way to express the mapping.
-
-### Proposed solution
-
-Add an optional `topic:` field to imports that captures the resolved topic name:
-
-```yaml
-imports:
-  objects_input:
-    topic: $(var input_objects_topic_name)
-    endpoints: [motion_velocity_planner/predicted_objects]
-  pointcloud_input:
-    topic: $(var input_pointcloud_topic_name)
-    endpoints: [motion_velocity_planner/pointcloud]
-```
-
-The short form (list of endpoints) remains valid for imports where the topic
-name is obvious or matches the endpoint name:
-
-```yaml
-imports:
-  raw_data: [cropbox_filter/input]     # short form — topic name inferred
-```
-
-At check time, the `topic:` field is resolved via `$(var ...)` substitution,
-then used for wiring verification against the runtime graph.
-
-### Implementation
-
-1. Change `imports` type from `BTreeMap<String, Vec<String>>` to
-   `BTreeMap<String, ImportDecl>` where `ImportDecl` is either a list
-   (shorthand) or a struct with `topic` + `endpoints` fields
-2. Parser handles both forms (same pattern as endpoint list vs map)
-3. Manifest loader resolves `$(var ...)` in `topic:` field from scope args
+The parent manifest's `topics:` section already wires child imports to actual
+topic names via `sub: [child_scope/import_group]`. The child import only
+declares the scope boundary — the resolved topic name is the parent's job.
+Adding `topic:` to imports would be redundant with the existing composition
+model.
 
 ---
 
@@ -554,6 +514,6 @@ This matches the actual file naming convention in `autoware-contract/`.
 | Stale descriptions (3a-3c)      | Doc fix                 | Trivial | High — misleading                                              |
 | Missing `cli:` docs (4)         | Doc fix                 | Trivial | Medium                                                         |
 | Endpoint name clarification (5) | Doc fix                 | Small   | High — source of confusion                                     |
-| Import topic mapping (6)        | Format extension        | Small   | High — needed for args/substitution                            |
+| ~~Import topic mapping (6)~~    | ~~Dropped~~             | —       | Parent topics: section handles this already                    |
 | Global topics wiring (7)        | Design decision         | Small   | Low — keep as documentation only                               |
 | External include naming (8)     | Doc fix                 | Trivial | Medium — inconsistent examples                                 |

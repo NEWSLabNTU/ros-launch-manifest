@@ -671,3 +671,103 @@ topics:
         assert!(diag.span.is_none(), "expected no spans without index");
     }
 }
+
+// ── Service wiring and type checks ──
+
+#[test]
+fn test_service_wiring_clean() {
+    let yaml = r#"
+version: 1
+nodes:
+  server_node:
+    srv:
+      my_service: {}
+  client_node:
+    cli:
+      my_service: {}
+services:
+  my_service:
+    type: std_srvs/srv/Trigger
+    server: [server_node/my_service]
+    client: [client_node/my_service]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let svc_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id.starts_with("service"))
+        .collect();
+    assert!(
+        svc_diags.is_empty(),
+        "expected no service issues: {svc_diags:?}"
+    );
+}
+
+#[test]
+fn test_service_wiring_missing_server() {
+    let yaml = r#"
+version: 1
+nodes:
+  client_node:
+    cli:
+      orphan_service: {}
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "service-wiring")
+        .collect();
+    assert!(
+        !warns.is_empty(),
+        "expected service-wiring warning for orphan client"
+    );
+}
+
+#[test]
+fn test_service_type_missing() {
+    let yaml = r#"
+version: 1
+services:
+  bad_service:
+    server: [node/srv]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "service-type" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected service-type error for missing type"
+    );
+}
+
+#[test]
+fn test_service_type_server_not_on_node() {
+    let yaml = r#"
+version: 1
+nodes:
+  my_node:
+    pub: [output]
+services:
+  my_service:
+    type: std_srvs/srv/Trigger
+    server: [my_node/nonexistent_srv]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "service-type" && d.severity == Severity::Warning)
+        .collect();
+    assert!(
+        !warns.is_empty(),
+        "expected warning for server not found on node"
+    );
+}

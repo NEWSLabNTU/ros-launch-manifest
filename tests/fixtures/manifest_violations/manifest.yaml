@@ -73,6 +73,11 @@ nodes:
         output: [lonely_output]
         max_latency_ms: 10
 
+  # Service violation: client with no matching server
+  orphan_client:
+    cli:
+      missing_service: {}
+
 topics:
   sensor_data:
     type: sensor_msgs/msg/PointCloud2
@@ -98,6 +103,11 @@ topics:
     pub: [node_b/output]
     sub: [greedy_consumer/data]
     rate_hz: 8
+
+# Service violation: no type declared
+services:
+  typeless_service:
+    server: [node_a/to_b]
 
 imports:
   raw: [slow_driver/input]

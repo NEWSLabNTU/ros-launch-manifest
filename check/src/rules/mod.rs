@@ -8,6 +8,8 @@ mod qos_compat;
 mod rate_chain;
 mod rate_hierarchy;
 mod scope_budget;
+mod service_type;
+mod service_wiring;
 mod wiring;
 
 use crate::{check::CheckContext, graph::DataflowGraph};
@@ -31,5 +33,7 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(causal_dag::CausalDagRule),
         Box::new(drop_rate::DropRateRule),
         Box::new(drop_consecutive::DropConsecutiveRule),
+        Box::new(service_wiring::ServiceWiringRule),
+        Box::new(service_type::ServiceTypeRule),
     ]
 }
