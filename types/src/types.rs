@@ -73,8 +73,9 @@ pub struct EndpointProps {
 /// Service endpoint properties.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SrvEndpointProps {
+    /// Max time from request to response (runtime monitoring only).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_latency_ms: Option<f64>,
+    pub max_response_ms: Option<f64>,
 }
 
 /// Topic declaration.

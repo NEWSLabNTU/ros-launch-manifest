@@ -133,7 +133,7 @@ existence.
 
 ### Proposed Solution: Service Contract Properties
 
-Extend `SrvEndpointProps` with optional contract fields:
+Extend `SrvEndpointProps` with an optional latency contract:
 
 ```yaml
 nodes:
@@ -141,16 +141,14 @@ nodes:
     srv:
       initialize:
         max_response_ms: 5000       # server must respond within 5s
-        required: true              # service must be available before node is operational
 
   mrm_handler:
     cli:
       comfortable_stop_operate:
         max_response_ms: 100        # client expects response within 100ms
-        required: true              # client won't function without this service
 ```
 
-And at scope level:
+At scope level, `services:` already declares type and wiring:
 
 ```yaml
 services:
@@ -158,43 +156,43 @@ services:
     type: autoware_localization_srvs/srv/Initialize
     server: [pose_initializer/initialize]
     client: [adapi/localization_node/initialize]
-    qos:
-      reliability: reliable         # services are always reliable (rmw_qos_profile_services_default)
-      depth: 10                     # service QoS default depth
 ```
+
+`required` is not needed on service endpoints. Unlike topic subscribers
+(which silently receive nothing if no publisher exists), service clients
+explicitly fail when the server is unavailable — the request-response
+pattern inherently requires the server to exist. The `service_wiring`
+static rule catches missing servers at authoring time.
+
+Service QoS is always `reliable/volatile/depth10`
+(`rmw_qos_profile_services_default`) and is not configurable per-service
+in ROS 2, so no `qos:` field is needed on services.
 
 ### Contract Semantics
 
-| Field | Meaning | Enforcement |
-|-------|---------|-------------|
+| Field             | Meaning                               | Enforcement                                |
+|-------------------|---------------------------------------|--------------------------------------------|
 | `max_response_ms` | Maximum time from request to response | Runtime monitoring only (no DDS mechanism) |
-| `required` | Service must be discoverable before operational | Static: warn if server not declared; Runtime: service discovery check |
-| `qos` | DDS QoS profile | Static: check compatibility; default is reliable/volatile/depth10 |
 
 ### What Can Be Checked Statically
 
-- **Wiring**: every client has a matching server in the scope (or imported)
+- **Wiring**: every `cli:` endpoint has a matching `services:` entry with a server
 - **Type compatibility**: client and server use the same service type
-- **Required services**: warn if a `required: true` client's server is not
-  declared in any loaded manifest
 
 ### What Requires Runtime
 
 - **max_response_ms**: measured via service call interception (future work —
   would need to hook `rcl_send_request`/`rcl_take_response` similar to
-  topic interception in Phase 29)
-- **Service availability timing**: how long after launch before each service
-  is available
+  topic interception)
 
 ### Implementation Path
 
-1. Add `max_response_ms: Option<f64>` and `required: Option<bool>` to
-   `SrvEndpointProps` in the types crate (parser already handles `srv:` maps)
+1. Add `max_response_ms: Option<f64>` to `SrvEndpointProps` in the types crate
 2. Add a `service_wiring` validation rule: check that every `cli:` endpoint
    has a matching `services:` entry with a `server:` list
 3. Add a `service_type` validation rule: check that service type matches
    between client and server declarations
-4. Defer `max_response_ms` enforcement to runtime monitoring (Phase 31.6+)
+4. Defer `max_response_ms` enforcement to runtime monitoring
 
 ### Scope
 
@@ -205,8 +203,8 @@ Step 4 is runtime work that depends on service call interception.
 
 ## Summary
 
-| Issue | Type | Effort | Priority |
-|-------|------|--------|----------|
-| REP-149 conditions | Format extension + loader change | Medium | High — enables accurate variable topic checking |
-| Service wiring check | New static rule | Small | Medium — catches missing service providers |
-| Service latency contracts | Format + runtime | Large | Low — no ROS 2 native support, needs interception |
+| Issue                     | Type                             | Effort | Priority                                          |
+|---------------------------|----------------------------------|--------|---------------------------------------------------|
+| REP-149 conditions        | Format extension + loader change | Medium | High — enables accurate variable topic checking   |
+| Service wiring check      | New static rule                  | Small  | Medium — catches missing service providers        |
+| Service latency contracts | Format + runtime                 | Large  | Low — no ROS 2 native support, needs interception |

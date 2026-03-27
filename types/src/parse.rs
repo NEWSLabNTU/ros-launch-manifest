@@ -183,10 +183,10 @@ fn parse_srv_endpoints(
             for (k, v) in hash {
                 let name = yaml_str_owned(k);
                 let props = SrvEndpointProps {
-                    max_latency_ms: if v.is_null() || v.is_badvalue() {
+                    max_response_ms: if v.is_null() || v.is_badvalue() {
                         None
                     } else {
-                        yaml_f64(v, "max_latency_ms")
+                        yaml_f64(v, "max_response_ms")
                     },
                 };
                 eps.insert(name, props);
@@ -587,7 +587,7 @@ nodes:
       exe_time_ms:
     srv:
       trigger_node:
-        max_latency_ms: 100
+        max_response_ms: 100
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let ndt = &m.nodes["ndt"];
@@ -597,7 +597,7 @@ nodes:
         assert_eq!(ndt.subscribers["regularization_pose"].state, Some(true));
         assert_eq!(ndt.publishers["ndt_pose"].min_rate_hz, Some(10.0));
         assert!(ndt.publishers.contains_key("exe_time_ms"));
-        assert_eq!(ndt.srv["trigger_node"].max_latency_ms, Some(100.0));
+        assert_eq!(ndt.srv["trigger_node"].max_response_ms, Some(100.0));
     }
 
     #[test]

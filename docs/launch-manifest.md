@@ -141,7 +141,7 @@ nodes:
   map_loader:
     srv:
       get_map:
-        max_latency_ms: 1000
+        max_response_ms: 1000
 
   # Minimal — just registers existence
   evaluator:
@@ -164,11 +164,16 @@ nodes:
 | `max_rate_hz` | Ceiling — "something is wrong if faster"       |
 | `jitter_ms`   | Max deviation from ideal period (timer-driven) |
 
-**Service endpoint properties** (all optional):
+**Service endpoint properties** (all optional, applies to both `srv:` and `cli:`):
 
-| Field            | Meaning                      |
-|------------------|------------------------------|
-| `max_latency_ms` | Max request-to-response time |
+| Field              | Meaning                                                            |
+|--------------------|--------------------------------------------------------------------|
+| `max_response_ms`  | Max time from request to response (runtime monitoring, no DDS mechanism) |
+
+Note: `required` is not needed on service endpoints — unlike topic subscribers
+which silently receive nothing, service clients explicitly fail when the server
+is unavailable. Service QoS is always `reliable/volatile/depth10`
+(`rmw_qos_profile_services_default`) and not configurable per-service in ROS 2.
 
 ### Composable Nodes
 
