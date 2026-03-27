@@ -24,22 +24,28 @@ The executor loads manifests at startup using the scope table from
 to relative names, so manifest files are reusable across different
 namespace contexts.
 
-**Five concepts:**
+**Seven concepts:**
 
-1. **Node** — a leaf execution entity. Declares named endpoints
-   (pub/sub/srv ports) with optional rate/jitter properties.
+1. **Args** — named parameters with defaults. `$(var name)` substitutions
+   are resolved from scope args before checking.
+
+2. **Conditions** — `if:` / `unless:` on any entity. Entities where the
+   condition is false are excluded from checking.
+
+3. **Node** — a leaf execution entity. Declares named endpoints
+   (pub/sub/srv/cli ports) with optional rate/jitter properties.
    Optionally declares causal `paths:` with timing constraints.
 
-2. **Topic** — wires node endpoints together. Carries message type,
+4. **Topic** — wires node endpoints together. Carries message type,
    QoS, and optional channel properties (rate, transport drops).
 
-3. **Include** — a child scope (separate manifest or inline group).
+5. **Include** — a child scope (separate manifest or inline group).
    Name = ROS namespace. Has its own nodes, topics, and imports/exports.
 
-4. **Imports / Exports** — the scope's boundary. Named groups of
+6. **Imports / Exports** — the scope's boundary. Named groups of
    endpoints that parent scopes use to wire children together.
 
-5. **Paths** — named causal relations (input→output) with timing
+7. **Paths** — named causal relations (input→output) with timing
    constraints. Declared on nodes and scopes.
 
 ![Manifest for perception.launch.xml](img/manifest-perception.svg)
@@ -92,6 +98,29 @@ topics:
 
 exports:
   output: [talker/chatter]
+```
+
+```yaml
+# With args and conditions
+args:
+  input_topic: /perception/objects
+  use_debug_node: "false"
+
+version: 1
+
+nodes:
+  processor:
+    sub: [input]
+    pub: [output]
+  debug_viewer:
+    if: $(var use_debug_node)
+    sub: [output]
+
+topics:
+  data:
+    type: $(var input_topic)
+    pub: [processor/output]
+    sub: [debug_viewer/output]
 ```
 
 ### Metadata
@@ -618,6 +647,24 @@ All measurements use the existing Phase 29 interception infrastructure.
 Burstiness diagnostics are always-on (negligible cost) but reported
 selectively — full detail for topics with `drop:` declared, discovery
 alerts for undeclared topics with anomalies.
+
+### Static Validation Rules
+
+The checker runs 11 rules on each manifest:
+
+| Rule | What it catches | Severity |
+|------|----------------|----------|
+| `endpoint-unique` | Duplicate endpoint names within a node | Error |
+| `wiring` | Path endpoints not connected by any topic | Warning |
+| `qos-compat` | Invalid QoS values (reliability, durability) | Error |
+| `rate-hierarchy` | Publisher rate < topic rate < subscriber rate | Error |
+| `rate-chain` | Export rate unachievable from upstream | Warning |
+| `scope-budget` | Scope latency < sum of node latencies; age < latency | Warning/Error |
+| `causal-dag` | Cycles in the dataflow graph (`state:` breaks cycles) | Error |
+| `drop-rate` | Scope drop budget tighter than chain delivery rate | Error |
+| `drop-consecutive` | Consecutive drop bound statistically infeasible | Error/Warning |
+| `service-wiring` | Service client with no matching server | Warning |
+| `service-type` | Service with no type; server/client not on node | Error/Warning |
 
 ### Formal Foundations
 
