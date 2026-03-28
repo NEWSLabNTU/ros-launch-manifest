@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Manifest {
     pub version: u32,
-    /// Manifest arguments. Value = default, None = required (must be provided by caller).
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub args: BTreeMap<String, Option<String>>,
+    /// Manifest arguments — all mandatory. Values provided by scope args from record.json.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exclude_patterns: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]

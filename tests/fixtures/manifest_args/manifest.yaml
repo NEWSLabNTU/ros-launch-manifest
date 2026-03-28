@@ -1,8 +1,9 @@
 # Test fixture: manifest with args and $(var ...) substitutions.
+# All args are mandatory — values provided by scope args at check time.
 args:
-  input_topic: /default/input
-  output_topic: /default/output
-  node_enabled: "true"
+  input_topic:
+  output_topic:
+  node_enabled:
 
 version: 1
 

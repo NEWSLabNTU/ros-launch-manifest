@@ -353,25 +353,18 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
 
 // ── Args ──
 
-/// Parse `args:` section. Value = default string, null = required.
-fn parse_args(doc: &Yaml) -> BTreeMap<String, Option<String>> {
-    let mut out = BTreeMap::new();
+/// Parse `args:` section. All args are mandatory — values from scope table.
+/// Accepts both list form `args: [a, b]` and map form `args: { a:, b: }`.
+fn parse_args(doc: &Yaml) -> Vec<String> {
     let section = &doc["args"];
     if section.is_badvalue() {
-        return out;
+        return vec![];
     }
-    if let Some(hash) = section.as_hash() {
-        for (k, v) in hash {
-            let name = yaml_str_owned(k);
-            let default = if v.is_null() || v.is_badvalue() {
-                None // required arg
-            } else {
-                Some(yaml_str_owned(v))
-            };
-            out.insert(name, default);
-        }
+    match section {
+        Yaml::Array(arr) => arr.iter().map(yaml_str_owned).collect(),
+        Yaml::Hash(hash) => hash.keys().map(yaml_str_owned).collect(),
+        _ => vec![],
     }
-    out
 }
 
 // ── Global Topics ──

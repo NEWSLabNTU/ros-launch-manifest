@@ -1,8 +1,9 @@
 # Test fixture: manifest with if:/unless: conditions.
+# All args are mandatory — values provided by scope args at check time.
 args:
-  use_feature_a: "true"
-  use_feature_b: "false"
-  sensor_model: velodyne
+  use_feature_a:
+  use_feature_b:
+  sensor_model:
 
 version: 1
 

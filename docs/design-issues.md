@@ -43,17 +43,22 @@ describes. Three features, matching ROS 2 launch XML:
 
 ```yaml
 args:
-  input_objects_topic_name: /perception/object_recognition/objects   # has default
-  input_pointcloud_topic_name: /perception/obstacle_segmentation/pointcloud
-  launch_obstacle_stop_module: "true"
-  use_multithread: "true"
-  vehicle_model:              # required — no default, must be provided by caller
-  sensor_model:               # required
+  input_objects_topic_name:     # required — value from record.json scope
+  input_pointcloud_topic_name:  # required
+  launch_obstacle_stop_module:  # required
+  use_multithread:              # required
+  vehicle_model:                # required
 ```
 
-Plain value = default. Null (empty) = required — must be provided by the
-scope's args or the check fails. Same shorthand pattern as endpoint
-properties (`sub: { topic_a: {}, topic_b: null }`).
+**Decision (Option B)**: All args should be declared as **required** (null /
+no default). `record.json` is the single source of truth for arg values —
+the scope table captures all resolved launch arguments, `<let>` assignments,
+and YAML config parameters. Hardcoding defaults in the manifest duplicates
+values from launch files and creates maintenance drift.
+
+Defaults are syntactically supported (value present = default) but
+discouraged. The manifest declares *which* args it needs; the scope table
+provides the values.
 
 At check time, the scope's `args` from the launch tree override these defaults.
 The scope table in `record.json` already captures all resolved values —
@@ -193,9 +198,9 @@ namespace resolution. The checker itself doesn't change.
 
 ```yaml
 args:
-  input_objects_topic_name: /perception/object_recognition/objects
-  input_pointcloud_topic_name: /perception/obstacle_segmentation/pointcloud
-  launch_obstacle_stop_module: "true"
+  input_objects_topic_name:     # required — value from record.json
+  input_pointcloud_topic_name:  # required
+  launch_obstacle_stop_module:  # required
 
 version: 1
 
@@ -231,8 +236,8 @@ actual topic name matches the runtime graph.
 
 | Launch XML                    | Manifest YAML           | Notes                                              |
 |-------------------------------|-------------------------|----------------------------------------------------|
-| `<arg name="x" default="v"/>` | `args: { x: v }`       | Value = default; null = required                   |
-| `<arg name="x"/>` (required)  | `args: { x: }`         | Null means no default                              |
+| `<arg name="x" default="v"/>` | `args: { x: }`         | Recommended: required. record.json has the value   |
+| `<arg name="x"/>` (required)  | `args: { x: }`         | Same — all args are required                       |
 | `$(var x)`                    | `$(var x)`              | Same syntax                                        |
 | `if="$(var x)"`               | `if: $(var x)`          | Same semantics — boolean ("true" = true)           |
 | `unless="$(var x)"`           | `unless: $(var x)`      | Same semantics — boolean negation                  |

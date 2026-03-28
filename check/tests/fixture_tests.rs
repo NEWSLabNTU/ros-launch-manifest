@@ -396,9 +396,9 @@ fn fixture_multi_scope_clean() {
 fn fixture_args_parses() {
     let m = parse_manifest(&fixture_path("manifest_args")).unwrap();
     assert_eq!(m.args.len(), 3);
-    assert_eq!(m.args["input_topic"], Some("/default/input".into()));
-    assert_eq!(m.args["output_topic"], Some("/default/output".into()));
-    assert_eq!(m.args["node_enabled"], Some("true".into()));
+    assert!(m.args.contains(&"input_topic".to_string()));
+    assert!(m.args.contains(&"output_topic".to_string()));
+    assert!(m.args.contains(&"node_enabled".to_string()));
 }
 
 #[test]
@@ -427,14 +427,19 @@ fn fixture_conditions_parses() {
 }
 
 #[test]
-fn fixture_conditions_filter_with_defaults() {
+fn fixture_conditions_filter_with_scope_args() {
     use ros_launch_manifest_types::{filter_manifest, resolve_args, substitute_manifest};
     use std::collections::HashMap;
 
     let mut m = parse_manifest(&fixture_path("manifest_conditions")).unwrap();
 
-    // Resolve with defaults only (no caller args)
-    let args = resolve_args(&m.args, &HashMap::new()).unwrap();
+    // Provide scope args (simulating record.json scope table)
+    let scope_args = HashMap::from([
+        ("use_feature_a".into(), "true".into()),
+        ("use_feature_b".into(), "false".into()),
+        ("sensor_model".into(), "velodyne".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
     m = substitute_manifest(&m, &args).unwrap();
     filter_manifest(&mut m);
 

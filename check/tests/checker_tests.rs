@@ -781,8 +781,8 @@ fn test_args_conditions_combined() {
 
     let yaml = r#"
 args:
-  use_sensor: "true"
-  sensor_topic: sensor_msgs/msg/PointCloud2
+  use_sensor:
+  sensor_topic:
 
 version: 1
 nodes:
@@ -805,7 +805,11 @@ topics:
     let mut m = parse_manifest_str(yaml).unwrap();
 
     // Case 1: use_sensor=true — sensor_driver and sensor_data present
-    let args = resolve_args(&m.args, &HashMap::new()).unwrap();
+    let scope_args = HashMap::from([
+        ("use_sensor".into(), "true".into()),
+        ("sensor_topic".into(), "sensor_msgs/msg/PointCloud2".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
     let mut m1 = substitute_manifest(&m, &args).unwrap();
     filter_manifest(&mut m1);
 
@@ -825,8 +829,11 @@ topics:
     );
 
     // Case 2: use_sensor=false — sensor_driver and sensor_data filtered out
-    let override_args = HashMap::from([("use_sensor".into(), "false".into())]);
-    let args2 = resolve_args(&m.args, &override_args).unwrap();
+    let scope_args2 = HashMap::from([
+        ("use_sensor".into(), "false".into()),
+        ("sensor_topic".into(), "sensor_msgs/msg/PointCloud2".into()),
+    ]);
+    let args2 = resolve_args(&m.args, &scope_args2).unwrap();
     let mut m2 = substitute_manifest(&m, &args2).unwrap();
     filter_manifest(&mut m2);
 

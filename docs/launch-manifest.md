@@ -101,10 +101,10 @@ exports:
 ```
 
 ```yaml
-# With args and conditions
+# With args and conditions (args are required — values from record.json)
 args:
-  input_topic: /perception/objects
-  use_debug_node: "false"
+  input_topic:                  # required — resolved from scope table
+  use_debug_node:               # required
 
 version: 1
 
@@ -132,47 +132,66 @@ topics:
 
 ### Args and Substitutions
 
-Manifests can declare **args** — named parameters with optional defaults.
-At check time, the scope's launch arguments override these defaults, and
-`$(var name)` references in string fields are replaced with resolved values.
+Manifests declare **args** — named parameters that the manifest needs from
+its launch file context. `$(var name)` references in string fields are
+replaced with resolved values at check time.
 
 ```yaml
 args:
-  input_objects_topic_name: /perception/object_recognition/objects   # default
-  input_pointcloud_topic_name: /perception/obstacle_segmentation/pointcloud
-  launch_obstacle_stop_module: "true"
-  vehicle_model:              # required — no default, must be provided
+  input_objects_topic_name:     # from launch <arg> or <let>
+  input_pointcloud_topic_name:  # from launch <arg> or <let>
+  use_multithread:              # from launch <arg>
 ```
 
-Value present = default. Null = required (error if not provided by scope args).
+**Recommended practice**: declare all args as **required** (null / no
+default). The scope table in `record.json` is the single source of truth
+for arg values — it captures all resolved launch arguments (`<arg>`
+declarations, `<let>` assignments, and expanded YAML config parameters)
+per scope. Hardcoding defaults in the manifest duplicates values from
+launch files and creates maintenance drift.
+
+Both list and map forms are supported:
+
+```yaml
+# Map form (recommended — one key per line)
+args:
+  input_topic:
+  output_topic:
+  use_feature:
+
+# List form
+args: [input_topic, output_topic, use_feature]
+```
 
 **`$(var name)`** substitutions work in any string field — topic types,
-endpoint references, import/export lists, include paths:
+endpoint references, import/export lists, include paths, condition
+expressions:
 
 ```yaml
 topics:
-  predicted_objects:
-    type: autoware_perception_msgs/msg/PredictedObjects
-    sub: [motion_velocity_planner/predicted_objects]
+  input_objects:
+    type: $(var input_objects_topic_name)
+    sub: [planner/predicted_objects]
 
-imports:
-  objects_input:
-    - motion_velocity_planner/predicted_objects   # actual: $(var input_objects_topic_name)
+nodes:
+  optional_node:
+    if: $(var use_feature)
+    pub: [output]
 ```
 
 **Resolution order**:
 
-1. Parse manifest (args declared with defaults)
-2. Merge scope args from `record.json` over defaults (overrides take priority)
-3. Error if a required arg has no default and is not in scope args
+1. Parse manifest (args declared, mostly required)
+2. Merge scope args from `record.json` over any defaults
+3. Error if a required arg is not in scope args
 4. Replace all `$(var name)` with resolved values
 5. Evaluate `if:`/`unless:` conditions and filter excluded entities
 6. Proceed to namespace resolution and static checks
 
-This mirrors ROS 2 launch file `<arg>` and `$(var ...)` semantics. The scope
-table already captures all resolved launch arguments (both `<arg>` declarations
-and `<let>` assignments) per scope, so the manifest doesn't need to model
-`<let>` separately.
+The scope table captures all resolved values from the launch tree —
+`<arg>` declarations, `<let>` assignments, and YAML config file
+parameters expanded by the parser. The manifest doesn't need to model
+`<let>` or config file loading separately.
 
 ### Conditions
 
