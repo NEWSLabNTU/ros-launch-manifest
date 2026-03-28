@@ -390,6 +390,65 @@ fn fixture_multi_scope_clean() {
     );
 }
 
+// ── manifest_args: args and substitution ──
+
+#[test]
+fn fixture_args_parses() {
+    let m = parse_manifest(&fixture_path("manifest_args")).unwrap();
+    assert_eq!(m.args.len(), 3);
+    assert_eq!(m.args["input_topic"], Some("/default/input".into()));
+    assert_eq!(m.args["output_topic"], Some("/default/output".into()));
+    assert_eq!(m.args["node_enabled"], Some("true".into()));
+}
+
+#[test]
+fn fixture_args_clean() {
+    let m = parse_manifest(&fixture_path("manifest_args")).unwrap();
+    let result = run_checks(&m);
+    // Args with $(var ...) in type fields — checker sees the unsubstituted string
+    // but should not error (type is a free-form string)
+    assert!(
+        !result.has_errors(),
+        "args fixture should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+// ── manifest_conditions: if/unless conditions ──
+
+#[test]
+fn fixture_conditions_parses() {
+    let m = parse_manifest(&fixture_path("manifest_conditions")).unwrap();
+    assert_eq!(m.args.len(), 3);
+    // Nodes should have conditions before filtering
+    assert!(m.nodes["feature_a_node"].if_condition.is_some());
+    assert!(m.nodes["legacy_node"].unless_condition.is_some());
+    assert!(m.nodes["sensor_specific"].if_condition.is_some());
+}
+
+#[test]
+fn fixture_conditions_filter_with_defaults() {
+    use ros_launch_manifest_types::{filter_manifest, resolve_args, substitute_manifest};
+    use std::collections::HashMap;
+
+    let mut m = parse_manifest(&fixture_path("manifest_conditions")).unwrap();
+
+    // Resolve with defaults only (no caller args)
+    let args = resolve_args(&m.args, &HashMap::new()).unwrap();
+    m = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut m);
+
+    // use_feature_a=true → feature_a_node present, legacy_node excluded
+    assert!(m.nodes.contains_key("feature_a_node"));
+    assert!(!m.nodes.contains_key("legacy_node"));
+    // use_feature_b=false → feature_b_node excluded
+    assert!(!m.nodes.contains_key("feature_b_node"));
+    // sensor_model=velodyne → sensor_specific present
+    assert!(m.nodes.contains_key("sensor_specific"));
+    // always_present has no condition
+    assert!(m.nodes.contains_key("always_present"));
+}
+
 // ── Cross-fixture: parse all fixtures via parse_manifest_str round-trip ──
 
 #[test]
@@ -401,6 +460,8 @@ fn all_fixtures_round_trip() {
         "manifest_periodic",
         "manifest_violations",
         "manifest_multi_scope",
+        "manifest_args",
+        "manifest_conditions",
     ];
     for name in fixtures {
         let path = fixture_path(name);

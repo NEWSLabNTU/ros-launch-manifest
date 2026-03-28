@@ -771,3 +771,73 @@ services:
         "expected warning for server not found on node"
     );
 }
+
+// ── Combined args + conditions ──
+
+#[test]
+fn test_args_conditions_combined() {
+    use ros_launch_manifest_types::{filter_manifest, resolve_args, substitute_manifest};
+    use std::collections::HashMap;
+
+    let yaml = r#"
+args:
+  use_sensor: "true"
+  sensor_topic: sensor_msgs/msg/PointCloud2
+
+version: 1
+nodes:
+  sensor_driver:
+    if: $(var use_sensor)
+    pub:
+      pointcloud:
+        min_rate_hz: 10
+  processor:
+    sub: [input]
+    pub: [output]
+topics:
+  sensor_data:
+    if: $(var use_sensor)
+    type: $(var sensor_topic)
+    pub: [sensor_driver/pointcloud]
+    sub: [processor/input]
+    rate_hz: 10
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+
+    // Case 1: use_sensor=true — sensor_driver and sensor_data present
+    let args = resolve_args(&m.args, &HashMap::new()).unwrap();
+    let mut m1 = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut m1);
+
+    assert!(m1.nodes.contains_key("sensor_driver"));
+    assert!(m1.nodes.contains_key("processor"));
+    assert!(m1.topics.contains_key("sensor_data"));
+    assert_eq!(
+        m1.topics["sensor_data"].msg_type,
+        "sensor_msgs/msg/PointCloud2"
+    );
+
+    let result = run_checks(&m1);
+    assert!(
+        !result.has_errors(),
+        "case 1 (sensor enabled) should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+
+    // Case 2: use_sensor=false — sensor_driver and sensor_data filtered out
+    let override_args = HashMap::from([("use_sensor".into(), "false".into())]);
+    let args2 = resolve_args(&m.args, &override_args).unwrap();
+    let mut m2 = substitute_manifest(&m, &args2).unwrap();
+    filter_manifest(&mut m2);
+
+    assert!(!m2.nodes.contains_key("sensor_driver"));
+    assert!(m2.nodes.contains_key("processor"));
+    assert!(!m2.topics.contains_key("sensor_data"));
+
+    let result2 = run_checks(&m2);
+    assert!(
+        !result2.has_errors(),
+        "case 2 (sensor disabled) should be clean: {:?}",
+        result2.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
