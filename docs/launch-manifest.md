@@ -40,10 +40,11 @@ namespace contexts.
    QoS, and optional channel properties (rate, transport drops).
 
 5. **Include** — a child scope (separate manifest or inline group).
-   Name = ROS namespace. Has its own nodes, topics, and imports/exports.
+   Name = ROS namespace. Has its own nodes, topics, and scope interface.
 
-6. **Imports / Exports** — the scope's boundary. Named groups of
-   endpoints that parent scopes use to wire children together.
+6. **Scope Interface** — the scope's boundary. Top-level `pub:`, `sub:`,
+   `srv:`, `cli:` declare named groups of endpoints that parent scopes
+   use to wire children together. (Replaces `imports:`/`exports:`.)
 
 7. **Paths** — named causal relations (input→output) with timing
    constraints. Declared on nodes and scopes.
@@ -150,17 +151,39 @@ declarations, `<let>` assignments, and expanded YAML config parameters)
 per scope. Hardcoding defaults in the manifest duplicates values from
 launch files and creates maintenance drift.
 
-Both list and map forms are supported:
+**Arg type declarations** (optional — enables satisfiability checking):
 
 ```yaml
-# Map form (recommended — one key per line)
 args:
-  input_topic:
-  output_topic:
-  use_feature:
+  # Free string — no constraint (default)
+  input_objects_topic_name:
 
-# List form
-args: [input_topic, output_topic, use_feature]
+  # Boolean — only "true" or "false"
+  launch_collision_detector:
+    type: bool
+
+  # Enum — explicit valid values (mirrors ROS 2 <choice>)
+  pose_source:
+    choices: [ndt, eagleye]
+```
+
+Args with `type: bool` or `choices:` enable the checker to enumerate all
+valid configurations and verify no combination produces dangling entities
+(see Satisfiability Checking below). Free-string args can't be enumerated.
+
+**Shorthand forms:**
+
+```yaml
+# Map form — one key per line
+args:
+  input_topic:                    # free string
+  launch_feature:
+    type: bool                    # boolean
+  mode:
+    choices: [fast, slow]         # enum
+
+# List form — all free strings
+args: [input_topic, output_topic]
 ```
 
 **`$(var name)`** substitutions work in any string field — topic types,
@@ -429,42 +452,69 @@ actions:
     client: [planner/navigate]
 ```
 
-### Imports and Exports
+### Scope Interface
 
-Imports and exports are the scope's boundary — named groups of
-endpoints that parent scopes use to wire children together.
+> **Note**: This section describes the planned unified interface design.
+> The current implementation still uses `imports:`/`exports:`. Migration
+> is tracked in design-issues.md #12.
 
-- **`exports:`** — publisher endpoints this scope provides to its parent
-- **`imports:`** — subscriber endpoints this scope needs from its parent
+A scope declares its external interface using the same endpoint types as
+a node: top-level `pub:`, `sub:`, `srv:`, `cli:`. The scope is a
+**composite component** — its interface declares what flows in and out.
 
 ```yaml
-imports:
-  raw_data: [cropbox_filter/input]
-
-exports:
-  detections: [centerpoint/objects]
+# Scope-level interface — typed endpoint groups
+pub:
+  control_output:
+    - controller/control_cmd
+    - controller/predicted_trajectory
+sub:
+  trajectory_input:
+    - controller/trajectory
+  localization:
+    - controller/kinematic_state
+    - lane_departure_checker/kinematic_state?    # when launch_lane_departure_checker
+srv:
+  operate:
+    - mrm_operator/operate
+cli:
+  operate_mrm:
+    - mrm_handler/comfortable_stop_operate
+    - mrm_handler/emergency_stop_operate
 ```
 
-**Cross-scope aggregation**: imports/exports can reference child
-scope's imports/exports:
+Each entry is a **named group** of endpoint references. The parent scope
+wires children using `child_scope/group_name` in topic/service declarations.
+
+**Actions** use `action_server:` and `action_client:` at scope level:
 
 ```yaml
-imports:
-  raw_data:
-    - lidar/raw_data
-    - camera/raw_data
-exports:
+action_server:
+  navigate: [navigator/navigate]
+action_client:
+  navigate: [planner/navigate]
+```
+
+**`?` suffix**: individual members can be optional (referenced node is
+conditional). After condition filtering, `?` members whose node was
+filtered are silently removed. If the group becomes empty, the group
+itself is removed.
+
+**Cross-scope aggregation**: groups can reference child scope groups:
+
+```yaml
+pub:
   detections:
     - lidar/detections
     - camera/detections
 ```
 
-**Constraint**: imports/exports in the same scope cannot reference each
-other (prevents cycles). Deep paths (`lidar/cropbox_filter/output`)
-are allowed but imports/exports are preferred for encapsulation.
+**Current implementation** (`imports:`/`exports:`):
 
-**Unresolved imports**: if a parent scope does not wire a child's import
-via a topic, the auditor warns "unresolved import."
+The current code uses `imports:` (= top-level `sub:` + `cli:`) and
+`exports:` (= top-level `pub:` + `srv:`). These will be migrated to the
+unified interface in a future release. Both forms are topic-only — service
+and action boundary endpoints are not yet supported.
 
 ### Includes
 
@@ -703,6 +753,40 @@ The checker runs 11 rules on each manifest:
 | `drop-consecutive` | Consecutive drop bound statistically infeasible | Error/Warning |
 | `service-wiring` | Service client with no matching server | Warning |
 | `service-type` | Service with no type; server/client not on node | Error/Warning |
+| `optional-ref` | `?` suffix must match node conditionality | Error |
+
+**Planned rules** (not yet implemented):
+
+| Rule | What it catches | Severity |
+|------|----------------|----------|
+| `dangling-entity` | Topic with 0 pub after filtering; service/action with 0 server | Error/Warning |
+| `satisfiability` | Arg combination that produces dangling entities | Error |
+| `unreachable` | Node/topic condition always false for all valid arg values | Warning |
+
+### Dangling Entity Checks
+
+After condition filtering removes nodes and `?` endpoint references are
+cleaned up, some entities may become structurally invalid:
+
+- **Topic with 0 publishers** — no data source (warning; may be wired by parent)
+- **Topic with 0 publishers and 0 subscribers** — empty, silently removed
+- **Service with 0 servers** — calls will fail (error)
+- **Action with 0 servers** — goals can't be processed (error)
+- **Scope endpoint group empty** — all `?` members filtered (group removed)
+
+### Satisfiability Checking
+
+When args have `type: bool` or `choices:`, the checker can enumerate all
+valid configurations and verify no combination produces dangling entities.
+
+For small arg spaces (≤15 finite-domain args), brute-force enumeration
+is used. For larger spaces, Z3 SMT solver can find counterexamples
+symbolically without enumerating all 2^N combinations.
+
+A manifest that passes satisfiability checking is **variant-complete**:
+every valid arg combination produces a structurally sound manifest.
+
+See `docs/design-issues.md` #14 for the full algorithm and Z3 encoding.
 
 ### Formal Foundations
 

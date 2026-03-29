@@ -700,6 +700,481 @@ services:
 
 ---
 
+## 11. Parser Should Record All Resolved Args in Scope Table
+
+### Problem
+
+The play_launch parser only records args in `scope.args` that were
+explicitly passed from a parent via `<arg name="x" value="..."/>` in the
+`<include>` tag. Args with defaults in the launch XML (`<arg name="x"
+default="v"/>`) that are never overridden by the parent are resolved
+locally but **not stored** in `scope.args`.
+
+This causes manifest arg resolution to fail: the manifest declares
+`args: [input_traffic_light_topic_name]` (required), but the scope table
+doesn't have it because the parser used the launch XML default without
+recording it.
+
+### Impact
+
+Discovered during Phase 4 end-to-end validation:
+- `behavior_planning.yaml` had to remove 2 args that weren't in scope.args
+- Any arg with a default in the launch XML that isn't passed from the parent
+  is invisible to the manifest system
+
+### Fix
+
+**In the parser** (`play_launch_parser`): when processing `<arg name="x"
+default="v"/>`, always store the resolved value in the scope's args map,
+regardless of whether it was passed from the parent or resolved from the
+default.
+
+This ensures `scope.args` contains **all** resolved arg values — matching
+the principle that record.json is the single source of truth.
+
+### Scope
+
+This is a parser change, not a manifest format change. Affects:
+- `src/play_launch_parser/` — scope arg recording during include processing
+- All downstream consumers of `scope.args` benefit automatically
+
+---
+
+## 12. Unified Scope Interface (`pub:`/`sub:`/`srv:`/`cli:` at Top Level)
+
+### Problem
+
+The current `imports:`/`exports:` only handle topic endpoints. Services and
+actions have no scope boundary mechanism. The naming is directional
+(`imports` = in, `exports` = out) which doesn't fit bidirectional actions.
+
+### Proposed Solution: Scope as Component
+
+A scope declares its external interface using the same fields as a node:
+top-level `pub:`, `sub:`, `srv:`, `cli:`. The scope **is** a composite
+component with typed ports.
+
+```yaml
+version: 1
+
+# Scope-level interface — this launch file's external ports
+pub:
+  control_output:
+    - controller/control_cmd
+    - controller/predicted_trajectory
+sub:
+  trajectory_input:
+    - controller/trajectory
+  localization:
+    - controller/kinematic_state
+    - lane_departure_checker/kinematic_state?   # when launch_lane_departure_checker
+srv:
+  operate:
+    - mrm_operator/operate
+cli:
+  operate_mrm:
+    - mrm_handler/comfortable_stop_operate
+    - mrm_handler/emergency_stop_operate
+
+nodes:
+  controller:
+    pub: [control_cmd, predicted_trajectory]
+    sub: [trajectory, kinematic_state]
+  # ...
+```
+
+**Replaces**: `imports:` (→ top-level `sub:` + `cli:`) and `exports:`
+(→ top-level `pub:` + `srv:`).
+
+**Groups**: each entry is a named group of endpoints (list form). The parent
+references `child_scope/group_name`.
+
+**Actions**: actions are bidirectional — an action server both receives goals
+and sends feedback. Use the node-level declaration type:
+
+```yaml
+# Child scope with action server
+action_server:
+  navigate:
+    - navigator/navigate
+
+# Child scope with action client
+action_client:
+  navigate:
+    - mission_planner/navigate
+```
+
+The parent wires them in `actions:`:
+
+```yaml
+actions:
+  navigation:
+    type: nav2_msgs/action/NavigateToPose
+    server: [navigator_scope/navigate]
+    client: [planner_scope/navigate]
+```
+
+### `?` on Group Members
+
+The `?` suffix applies to individual members within a group, not to the
+group name. After condition filtering:
+
+- Members with `?` whose node was filtered → removed from group
+- Group becomes empty → group itself is removed
+- Parent ref to removed group → dangling (parent should use `?`)
+
+Optionality propagates upward through the tree automatically.
+
+---
+
+## 13. Dangling Entity Checks After Condition Filtering
+
+### Problem
+
+After condition filtering removes nodes and `cleanup_dangling_refs` removes
+`?` endpoint refs, some entities may become structurally invalid:
+
+- A topic with no publishers (no data source)
+- A service with no server (calls will fail)
+- An action with no server (goals can't be sent)
+- A scope endpoint group that is empty
+
+### Proposed Rules
+
+**Topics:**
+
+| Situation | Severity | Rationale |
+|-----------|----------|-----------|
+| 0 pub, ≥1 sub | Warning | No data source — may be wired by parent |
+| ≥1 pub, 0 sub | Warning | Output unused — may be an export |
+| 0 pub, 0 sub | Remove | Empty after filtering — silent cleanup |
+
+**Services:**
+
+| Situation | Severity | Rationale |
+|-----------|----------|-----------|
+| 0 server, ≥1 client | Error | Service calls will fail |
+| ≥1 server, 0 client | Warning | Server unused — may be an export |
+| 0 server, 0 client | Remove | Empty after filtering — silent cleanup |
+
+**Actions:**
+
+| Situation | Severity | Rationale |
+|-----------|----------|-----------|
+| 0 server, ≥1 client | Error | Goals can't be processed |
+| ≥1 server, 0 client | Warning | Action server unused — may be an export |
+| 0 server, 0 client | Remove | Empty after filtering — silent cleanup |
+
+**Scope endpoint groups:**
+
+| Situation | Action |
+|-----------|--------|
+| Group non-empty | Keep |
+| Group empty (all `?` members filtered) | Remove group |
+
+**Parent wiring:**
+
+When a parent references `child/group` and the group was removed:
+- If parent ref has `?` → silently dropped
+- If parent ref has no `?` → error (required group missing)
+
+### "May be wired by parent" Cases
+
+Single-scope manifests always have unwired endpoints — that's the purpose
+of the scope interface (top-level `pub:`/`sub:`/etc.). The parent manifest
+completes the wiring. Warnings for "no pub" or "no sub" on a topic only
+apply to **fully intra-scope** topics (both pub and sub declared within
+the same manifest). Topics that reference scope interface groups are
+expected to be partially wired.
+
+### Implementation
+
+1. Add `dangling_entity` validation rule that runs **after** condition
+   filtering and `cleanup_dangling_refs`:
+   - Check topics: 0 pub or 0 sub → warning; 0 pub + 0 sub → remove
+   - Check services: 0 server → error; 0 server + 0 client → remove
+   - Check actions: same as services
+2. Add empty group removal to `cleanup_dangling_refs()`
+3. Tests for each case
+
+---
+
+## 14. Arg Types, Choices, and Satisfiability Checking
+
+### Problem
+
+Manifest args are untyped strings. The checker can't distinguish a boolean
+flag (`launch_collision_detector`) from a topic name (`input_objects_topic_name`)
+from an enum (`pose_source`). Without type information:
+
+1. The checker can't enumerate valid configurations
+2. Typos in boolean args (`"True"` vs `"true"`) go undetected
+3. Variant consistency can't be verified — there's no way to prove that
+   every valid arg combination produces a manifest without dangling entities
+
+### Prior Art: ROS 2 Launch
+
+ROS 2 `DeclareLaunchArgument` already supports typed constraints:
+
+```xml
+<arg name="prediction_model_type" default="map_based">
+  <choice value="map_based"/>
+  <choice value="simpl"/>
+</arg>
+```
+
+Python API: `DeclareLaunchArgument('x', choices=['ndt', 'eagleye'])`.
+
+At launch time, values not in the choice list produce an error. Autoware
+uses `<choice>` in perception launch files (e.g., `prediction.launch.xml`).
+
+### Proposed Solution: Arg Type Declarations
+
+Extend the manifest `args:` syntax with optional type/choice constraints:
+
+```yaml
+args:
+  # Boolean arg — shorthand for choices: ["true", "false"]
+  launch_collision_detector:
+    type: bool
+
+  # Enum arg — explicit valid values
+  pose_source:
+    choices: [ndt, eagleye]
+
+  # Free string — no constraint (default behavior)
+  input_objects_topic_name:
+
+  # Boolean with shorthand (most common case)
+  use_multithread:
+    type: bool
+```
+
+**Shorthand for simple cases** — bare name means free string (current behavior):
+
+```yaml
+args:
+  input_objects_topic_name:       # free string
+  launch_collision_detector:      # free string (unless type: bool declared)
+```
+
+**Full form:**
+
+```yaml
+args:
+  pose_source:
+    choices: [ndt, eagleye]       # enum — only these values allowed
+  launch_collision_detector:
+    type: bool                    # boolean — only "true" or "false"
+  input_objects_topic_name:
+    type: string                  # explicit free string (default)
+```
+
+### Satisfiability Checking
+
+With typed args, the checker can **enumerate all valid configurations** and
+verify that no combination produces dangling entities.
+
+**Two-tier approach:**
+
+#### Tier 1: Enumeration (small arg spaces)
+
+For manifests with few finite-domain args, enumerate all valid
+configurations:
+
+1. Collect all args with finite value sets:
+   - `type: bool` → `{"true", "false"}`
+   - `choices: [a, b, c]` → `{"a", "b", "c"}`
+   - Free string → skip (infinite domain)
+
+2. Compute Cartesian product. For each configuration:
+   - Substitute args → evaluate conditions → filter manifest
+   - Run dangling entity checks (Issue #13)
+   - If any configuration produces an error → report the specific arg
+     values that trigger the problem
+
+3. If all pass → manifest is **variant-complete**.
+
+Practical for ≤15 finite-domain args (2^15 = 32K configs, <1s).
+
+#### Tier 2: Z3 SMT Solver (large arg spaces)
+
+For manifests with many finite-domain args (>15) or complex conditions,
+use Z3 to find violating configurations without enumerating all of them.
+
+**Z3 Rust crate**: `z3 = "0.12"` (MIT, FFI to libz3).
+Install: `apt install libz3-dev` or use `features = ["vendored"]`.
+
+**Encoding:**
+
+1. For each finite-domain arg, create a Z3 **enum sort**:
+
+   ```rust
+   // type: bool → enum {"true", "false"}
+   let (bool_sort, bool_consts, _) = Sort::enumeration(&ctx,
+       "launch_collision_detector".into(),
+       &["true".into(), "false".into()]);
+
+   // choices: [ndt, eagleye] → enum {"ndt", "eagleye"}
+   let (pose_sort, pose_consts, _) = Sort::enumeration(&ctx,
+       "pose_source".into(),
+       &["ndt".into(), "eagleye".into()]);
+   ```
+
+2. For each `if:` condition, translate to Z3 constraints:
+
+   ```
+   if: $(var x) == 'ndt'   →   z3_x._eq(&ndt_const)
+   if: $(var x)             →   z3_x._eq(&true_const)   [boolean shorthand]
+   unless: $(var x)         →   z3_x._eq(&true_const).not()
+   and / or                 →   z3 Bool::and / Bool::or
+   ```
+
+3. For each potential dangling entity (topic with all `?` publishers,
+   service with all `?` servers), construct a Z3 query:
+
+   "Is there an arg assignment where ALL publishers of this topic are
+   filtered out?"
+
+   ```rust
+   // Topic has pub: [ndt_node/pose?, eagleye_node/pose?]
+   // ndt_node has if: $(var pose_source) == 'ndt'
+   // eagleye_node has if: $(var pose_source) == 'eagleye'
+   //
+   // Dangling = both filtered = neither condition is true
+   let ndt_active = pose_var._eq(&ndt_const);
+   let eagleye_active = pose_var._eq(&eagleye_const);
+   let topic_dangling = ndt_active.not().and(&[&eagleye_active.not()]);
+
+   solver.push();
+   solver.assert(&topic_dangling);
+   if solver.check() == SatResult::Sat {
+       // Found a violating assignment
+       let model = solver.get_model().unwrap();
+       // Extract the arg values that cause the problem
+   }
+   solver.pop(1);
+   ```
+
+4. If Z3 returns UNSAT → no valid arg combination causes the dangling.
+   If SAT → report the counterexample.
+
+**Why Z3 over brute force:**
+
+- Z3's enum sorts are internally small integers — constraint solving is
+  extremely fast (microseconds per query).
+- Complex conditions with `and`/`or`/`!=` map directly to Z3 boolean
+  algebra — no need to evaluate the manifest for each combination.
+- Z3 finds counterexamples directly — no enumeration of the 2^N space.
+- For conditions that reference free-string args (`$(var topic_name) == ...`),
+  Z3 can still reason about the boolean structure without knowing the
+  string value.
+
+**Invalid value detection:**
+
+Z3 also catches conditions that are always false on a typed arg:
+
+```yaml
+args:
+  launch_feature:
+    type: bool
+
+nodes:
+  bad_node:
+    if: $(var launch_feature) == 'wtf'    # always false — "wtf" ∉ {"true", "false"}
+```
+
+After substitution, the condition becomes `"true" == 'wtf'` or
+`"false" == 'wtf'` — both false. Z3 proves `bad_node` is **unreachable**:
+no valid arg value makes its condition true. The checker can report this
+as a warning: "node `bad_node` is unreachable — condition is always false
+for all valid values of `launch_feature`."
+
+**Dependency consideration:**
+
+Z3 adds a native dependency (`libz3-dev`). Options:
+- Required: `apt install libz3-dev` — simple on Ubuntu
+- Vendored: `z3 = { version = "0.12", features = ["vendored"] }` — builds
+  from source, ~5-10 min first build, needs CMake + C++17
+- Feature-gated: `z3` feature flag on the checker crate — opt-in, fallback
+  to Tier 1 enumeration when Z3 is not available
+
+**Recommendation**: feature-gate Z3 behind `--features z3` on the checker
+crate. Tier 1 enumeration is the default (no native deps). Z3 is opt-in
+for users who need it.
+
+### Example: Variant Consistency
+
+```yaml
+args:
+  pose_source:
+    choices: [ndt, eagleye]
+
+nodes:
+  ndt_node:
+    if: $(var pose_source) == 'ndt'
+    pub: [pose]
+  eagleye_node:
+    if: $(var pose_source) == 'eagleye'
+    pub: [pose]
+
+topics:
+  localization_pose:
+    type: geometry_msgs/msg/PoseStamped
+    pub:
+      - ndt_node/pose?
+      - eagleye_node/pose?
+    sub: [controller/pose_input]
+```
+
+The checker enumerates `{ndt, eagleye}`:
+- `pose_source=ndt` → `ndt_node` active, `eagleye_node` filtered.
+  Topic has 1 pub. ✓
+- `pose_source=eagleye` → `eagleye_node` active, `ndt_node` filtered.
+  Topic has 1 pub. ✓
+
+Both configurations have ≥1 publisher. Manifest is variant-complete.
+
+If someone adds `pose_source: choices: [ndt, eagleye, gnss]` but forgets
+a `gnss_node`:
+- `pose_source=gnss` → both nodes filtered. Topic has 0 pub. ✗
+- Checker reports: "with `pose_source=gnss`, topic `localization_pose`
+  has no publishers"
+
+### Implementation Path
+
+1. **Types crate**: extend `args` from `Vec<String>` to support typed
+   declarations:
+   ```rust
+   enum ArgDecl {
+       Required,                        // bare name — free string
+       Typed { arg_type: ArgType },     // with type/choices
+   }
+   enum ArgType {
+       String,                          // free string (default)
+       Bool,                            // "true" or "false"
+       Choices(Vec<String>),            // enum values
+   }
+   ```
+
+2. **Parser**: handle both forms:
+   - `arg_name:` → `Required` (free string, backward compatible)
+   - `arg_name: { type: bool }` → `Typed { arg_type: Bool }`
+   - `arg_name: { choices: [a, b] }` → `Typed { arg_type: Choices([a, b]) }`
+
+3. **Checker**: add `satisfiability` rule:
+   - Enumerate finite-domain arg combinations
+   - For each: substitute → filter → check dangling entities
+   - Report specific arg values that cause problems
+
+4. **Manifest loader**: validate arg values against declared types at
+   check time (before substitution)
+
+5. **Tests**: variant-complete manifest, variant-incomplete manifest,
+   mixed bool + enum + free string
+
+---
+
 ## Summary
 
 | Issue                              | Type                    | Effort  | Status                           |
@@ -714,4 +1189,8 @@ services:
 | Global topics wiring (7)           | Design decision         | Small   | Kept as documentation only       |
 | External include naming (8)        | Doc fix                 | Trivial | Done (Phase 32.1)                |
 | Optional refs `?` suffix (9)       | Format + rule + cleanup | Small   | Done — `optional-ref` rule + `cleanup_dangling_refs` |
-| Service imports/exports (10)       | Format extension        | Medium  | Proposed — mirrors topic pattern |
+| ~~Service imports/exports (10)~~   | ~~Superseded by #12~~   | —       | Replaced by unified scope interface |
+| Parser scope.args incomplete (11)  | Parser bug              | Small   | Filed — parser should record all resolved args |
+| Unified scope interface (12)       | Format redesign         | Medium  | Proposed — scope as component with typed ports |
+| Dangling entity checks (13)        | New validation rule     | Small   | Proposed — topics/services/actions post-filter |
+| Arg types + satisfiability (14)    | Format + analysis       | Medium  | Proposed — enum all valid configs, check for dangling |
