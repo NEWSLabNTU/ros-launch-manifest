@@ -241,10 +241,8 @@ mod tests {
 
     #[test]
     fn test_resolve_args_all_present() {
-        let manifest_args = BTreeMap::from([
-            ("a".into(), ArgDecl::String),
-            ("b".into(), ArgDecl::String),
-        ]);
+        let manifest_args =
+            BTreeMap::from([("a".into(), ArgDecl::String), ("b".into(), ArgDecl::String)]);
         let caller_args =
             HashMap::from([("a".into(), "val_a".into()), ("b".into(), "val_b".into())]);
         let resolved = resolve_args(&manifest_args, &caller_args).unwrap();

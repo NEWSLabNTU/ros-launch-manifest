@@ -1,6 +1,7 @@
 //! Validation rules for manifest checking.
 
 mod causal_dag;
+mod dangling_entity;
 mod drop_consecutive;
 mod drop_rate;
 mod endpoint_unique;
@@ -37,5 +38,6 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(service_wiring::ServiceWiringRule),
         Box::new(service_type::ServiceTypeRule),
         Box::new(optional_ref::OptionalRefRule),
+        Box::new(dangling_entity::DanglingEntityRule),
     ]
 }

@@ -122,6 +122,49 @@ fn cleanup_dangling_refs(manifest: &mut crate::Manifest) {
         cleanup_ref_list(&mut svc.server, &node_names);
         cleanup_ref_list(&mut svc.client, &node_names);
     }
+    for act in manifest.actions.values_mut() {
+        cleanup_ref_list(&mut act.server, &node_names);
+        cleanup_ref_list(&mut act.client, &node_names);
+    }
+
+    // Remove empty entities (both pub and sub / both server and client gone)
+    manifest
+        .topics
+        .retain(|_, t| !t.publishers.is_empty() || !t.subscribers.is_empty());
+    manifest
+        .services
+        .retain(|_, s| !s.server.is_empty() || !s.client.is_empty());
+    manifest
+        .actions
+        .retain(|_, a| !a.server.is_empty() || !a.client.is_empty());
+
+    // Clean up scope interface group members (? refs to filtered nodes)
+    for members in manifest.scope_pub.values_mut() {
+        cleanup_ref_list(members, &node_names);
+    }
+    for members in manifest.scope_sub.values_mut() {
+        cleanup_ref_list(members, &node_names);
+    }
+    for members in manifest.scope_srv.values_mut() {
+        cleanup_ref_list(members, &node_names);
+    }
+    for members in manifest.scope_cli.values_mut() {
+        cleanup_ref_list(members, &node_names);
+    }
+    for members in manifest.action_server.values_mut() {
+        cleanup_ref_list(members, &node_names);
+    }
+    for members in manifest.action_client.values_mut() {
+        cleanup_ref_list(members, &node_names);
+    }
+
+    // Remove empty scope interface groups
+    manifest.scope_pub.retain(|_, v| !v.is_empty());
+    manifest.scope_sub.retain(|_, v| !v.is_empty());
+    manifest.scope_srv.retain(|_, v| !v.is_empty());
+    manifest.scope_cli.retain(|_, v| !v.is_empty());
+    manifest.action_server.retain(|_, v| !v.is_empty());
+    manifest.action_client.retain(|_, v| !v.is_empty());
 }
 
 /// Remove `?`-suffixed refs whose node is not in `node_names`.
@@ -389,9 +432,11 @@ topics:
   enabled_topic:
     if: "true"
     type: std_msgs/msg/String
+    pub: [enabled_node/output]
   disabled_topic:
     if: "false"
     type: std_msgs/msg/String
+    pub: [disabled_node/output]
 "#;
         let mut m = crate::parse_manifest_str(yaml).unwrap();
         assert_eq!(m.nodes.len(), 5);
@@ -520,5 +565,61 @@ topics:
         assert_eq!(subs[0], "required_node/input"); // required — kept
         assert_eq!(subs[1], "optional_node_b/input"); // optional, node present — kept, ? stripped
         // optional_node_a filtered out — ref dropped
+    }
+
+    // ── Empty entity and scope group removal ──
+
+    #[test]
+    fn test_empty_topic_removed_after_filtering() {
+        let yaml = r#"
+version: 1
+nodes:
+  opt_pub:
+    if: "false"
+    pub: [out]
+  opt_sub:
+    if: "false"
+    sub: [in_data]
+topics:
+  gone_topic:
+    type: std_msgs/msg/String
+    pub: [opt_pub/out?]
+    sub: [opt_sub/in_data?]
+  half_topic:
+    type: std_msgs/msg/String
+    pub: [opt_pub/out?]
+    sub: []
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+
+        // gone_topic: both sides empty → removed
+        assert!(!m.topics.contains_key("gone_topic"));
+        // half_topic: pub empty but sub also empty → removed
+        assert!(!m.topics.contains_key("half_topic"));
+    }
+
+    #[test]
+    fn test_empty_scope_group_removed() {
+        let yaml = r#"
+version: 1
+nodes:
+  opt_node:
+    if: "false"
+    pub: [output]
+sub:
+  input_group:
+    - opt_node/output?
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        assert!(m.scope_sub.contains_key("input_group"));
+
+        filter_manifest(&mut m);
+
+        // Group becomes empty after opt_node is filtered → removed
+        assert!(
+            !m.scope_sub.contains_key("input_group"),
+            "empty scope group should be removed"
+        );
     }
 }

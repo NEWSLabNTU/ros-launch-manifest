@@ -930,3 +930,109 @@ topics:
         "? on unconditional node should be an error"
     );
 }
+
+// ── Dangling entity checks ──
+
+#[test]
+fn test_dangling_topic_no_pub() {
+    let yaml = r#"
+version: 1
+nodes:
+  consumer:
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: []
+    sub: [consumer/input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("no publishers"))
+        .collect();
+    assert!(!warns.is_empty(), "expected warning for topic with no pub");
+}
+
+#[test]
+fn test_dangling_topic_no_sub() {
+    let yaml = r#"
+version: 1
+nodes:
+  producer:
+    pub: [output]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [producer/output]
+    sub: []
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("no subscribers"))
+        .collect();
+    assert!(!warns.is_empty(), "expected warning for topic with no sub");
+}
+
+#[test]
+fn test_dangling_service_no_server() {
+    let yaml = r#"
+version: 1
+nodes:
+  caller:
+    cli:
+      my_service: {}
+services:
+  my_service:
+    type: std_srvs/srv/Trigger
+    server: []
+    client: [caller/my_service]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "expected error for service with no server"
+    );
+}
+
+#[test]
+fn test_dangling_topic_both_empty_removed() {
+    // After filtering, if both pub and sub are empty, the topic should be removed
+    // by cleanup. The dangling rule shouldn't see it.
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  optional_pub:
+    if: "false"
+    pub: [output]
+  optional_sub:
+    if: "false"
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [optional_pub/output?]
+    sub: [optional_sub/input?]
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+
+    // Topic should have been removed (both sides empty after filtering)
+    assert!(
+        !m.topics.contains_key("data"),
+        "empty topic should be removed by cleanup"
+    );
+}
