@@ -2,8 +2,8 @@
 # Modeled after tier4_control_launch/control.yaml.
 #
 # Pattern: One always-present controller + 4 optional checker nodes,
-# each gated by a bool arg. Topic subscribers use ? suffix for
-# conditional node refs. Scope interface groups also use ? refs.
+# each gated by a bool arg. Refs to conditional nodes are inferred
+# as optional — silently dropped when the node is filtered out.
 args:
   launch_validator:
     type: bool
@@ -87,7 +87,7 @@ topics:
   control_cmd:
     type: autoware_control_msgs/msg/Control
     pub: [controller/control_cmd]
-    sub: [control_validator/control_cmd?]
+    sub: [control_validator/control_cmd]
     rate_hz: 30
     qos:
       reliability: reliable
@@ -98,9 +98,9 @@ topics:
     type: autoware_planning_msgs/msg/Trajectory
     pub: [controller/predicted_trajectory]
     sub:
-      - control_validator/predicted_trajectory?
-      - aeb/predicted_trajectory?
-      - lane_checker/predicted_trajectory?
+      - control_validator/predicted_trajectory
+      - aeb/predicted_trajectory
+      - lane_checker/predicted_trajectory
     rate_hz: 30
     qos:
       reliability: reliable
@@ -111,20 +111,20 @@ sub:
     - controller/trajectory
   kinematic_state:
     - controller/kinematic_state
-    - control_validator/kinematic_state?
-    - lane_checker/kinematic_state?
-    - collision_detector/kinematic_state?
+    - control_validator/kinematic_state
+    - lane_checker/kinematic_state
+    - collision_detector/kinematic_state
   steering_status:
     - controller/steering_status
   operation_mode:
     - controller/operation_mode
   pointcloud:
-    - aeb/pointcloud?
-    - collision_detector/pointcloud?
+    - aeb/pointcloud
+    - collision_detector/pointcloud
   velocity_status:
-    - aeb/velocity_status?
+    - aeb/velocity_status
   vector_map:
-    - lane_checker/vector_map?
+    - lane_checker/vector_map
 
 pub:
   control_output:

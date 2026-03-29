@@ -86,29 +86,29 @@ topics:
   localization_pose:
     type: geometry_msgs/msg/PoseStamped
     pub:
-      - ndt_node/pose?
-      - eagleye_node/pose?
-      - gnss_node/pose?
+      - ndt_node/pose
+      - eagleye_node/pose
+      - gnss_node/pose
     sub: [ekf/pose_input]
 
   twist_data:
     type: geometry_msgs/msg/TwistStamped
     pub:
-      - eagleye_node/twist?
-      - twist_estimator/twist?
+      - eagleye_node/twist
+      - twist_estimator/twist
     sub: []
 
 sub:
   pointcloud:
-    - ndt_node/pointcloud?
+    - ndt_node/pointcloud
   gnss:
-    - eagleye_node/gnss_fix?
-    - gnss_node/gnss_fix?
+    - eagleye_node/gnss_fix
+    - gnss_node/gnss_fix
   imu:
-    - eagleye_node/imu?
-    - twist_estimator/imu?
+    - eagleye_node/imu
+    - twist_estimator/imu
   map:
-    - ndt_node/map?
+    - ndt_node/map
 
 pub:
   pose_output:

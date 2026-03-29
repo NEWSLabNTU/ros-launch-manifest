@@ -7,7 +7,7 @@
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
 use ros_launch_manifest_types::Manifest;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use z3::ast::Ast;
 
 pub struct SatisfiabilityRule;
@@ -51,62 +51,76 @@ impl ValidationRule for SatisfiabilityRule {
             arg_vars.insert(name, ArgVar { var, consts: const_map });
         }
 
-        // Check topics with all-optional publishers
+        // Collect conditional node names — refs to these are optional
+        let conditional_nodes: HashSet<&str> = manifest
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.if_condition.is_some() || n.unless_condition.is_some())
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        // Check topics with all-conditional publishers
         for (topic_name, topic) in &manifest.topics {
             if topic.subscribers.is_empty() {
                 continue;
             }
-            let optional_pubs: Vec<&str> = topic
+            let conditional_pubs: Vec<&str> = topic
                 .publishers
                 .iter()
-                .filter(|r| r.ends_with('?'))
-                .map(|r| r.strip_suffix('?').unwrap_or(r))
+                .filter(|r| is_conditional_ref(r, &conditional_nodes))
+                .map(|s| s.as_str())
                 .collect();
-            if optional_pubs.is_empty() || topic.publishers.iter().any(|r| !r.ends_with('?')) {
+            if conditional_pubs.is_empty()
+                || topic.publishers.iter().any(|r| !is_conditional_ref(r, &conditional_nodes))
+            {
                 continue;
             }
             check_all_filtered(
-                &z3_ctx, &arg_vars, manifest, &optional_pubs,
+                &z3_ctx, &arg_vars, manifest, &conditional_pubs,
                 &format!("topic '{topic_name}' has 0 publishers"), ctx, self.id(),
             );
         }
 
-        // Check services with all-optional servers
+        // Check services with all-conditional servers
         for (svc_name, svc) in &manifest.services {
             if svc.client.is_empty() {
                 continue;
             }
-            let optional_servers: Vec<&str> = svc
+            let conditional_servers: Vec<&str> = svc
                 .server
                 .iter()
-                .filter(|r| r.ends_with('?'))
-                .map(|r| r.strip_suffix('?').unwrap_or(r))
+                .filter(|r| is_conditional_ref(r, &conditional_nodes))
+                .map(|s| s.as_str())
                 .collect();
-            if optional_servers.is_empty() || svc.server.iter().any(|r| !r.ends_with('?')) {
+            if conditional_servers.is_empty()
+                || svc.server.iter().any(|r| !is_conditional_ref(r, &conditional_nodes))
+            {
                 continue;
             }
             check_all_filtered(
-                &z3_ctx, &arg_vars, manifest, &optional_servers,
+                &z3_ctx, &arg_vars, manifest, &conditional_servers,
                 &format!("service '{svc_name}' has 0 servers"), ctx, self.id(),
             );
         }
 
-        // Check actions with all-optional servers
+        // Check actions with all-conditional servers
         for (act_name, act) in &manifest.actions {
             if act.client.is_empty() {
                 continue;
             }
-            let optional_servers: Vec<&str> = act
+            let conditional_servers: Vec<&str> = act
                 .server
                 .iter()
-                .filter(|r| r.ends_with('?'))
-                .map(|r| r.strip_suffix('?').unwrap_or(r))
+                .filter(|r| is_conditional_ref(r, &conditional_nodes))
+                .map(|s| s.as_str())
                 .collect();
-            if optional_servers.is_empty() || act.server.iter().any(|r| !r.ends_with('?')) {
+            if conditional_servers.is_empty()
+                || act.server.iter().any(|r| !is_conditional_ref(r, &conditional_nodes))
+            {
                 continue;
             }
             check_all_filtered(
-                &z3_ctx, &arg_vars, manifest, &optional_servers,
+                &z3_ctx, &arg_vars, manifest, &conditional_servers,
                 &format!("action '{act_name}' has 0 servers"), ctx, self.id(),
             );
         }
@@ -265,4 +279,10 @@ fn extract_literal(s: &str) -> &str {
         .and_then(|s| s.strip_suffix('\''))
         .or_else(|| t.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
         .unwrap_or(t)
+}
+
+/// Check if a ref points to a node that has a condition (if:/unless:).
+fn is_conditional_ref(r: &str, conditional_nodes: &HashSet<&str>) -> bool {
+    r.split_once('/')
+        .map_or(false, |(node, _)| conditional_nodes.contains(node))
 }

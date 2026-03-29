@@ -5,7 +5,6 @@ mod dangling_entity;
 mod drop_consecutive;
 mod drop_rate;
 mod endpoint_unique;
-mod optional_ref;
 mod qos_compat;
 mod rate_chain;
 mod satisfiability;
@@ -38,7 +37,6 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(drop_consecutive::DropConsecutiveRule),
         Box::new(service_wiring::ServiceWiringRule),
         Box::new(service_type::ServiceTypeRule),
-        Box::new(optional_ref::OptionalRefRule),
         Box::new(dangling_entity::DanglingEntityRule),
         Box::new(satisfiability::SatisfiabilityRule),
     ]

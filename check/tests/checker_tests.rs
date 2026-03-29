@@ -1108,8 +1108,8 @@ nodes:
 sub:
   mixed_group:
     - always/input
-    - opt_a/input?
-    - opt_b/input?
+    - opt_a/input
+    - opt_b/input
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
     filter_manifest(&mut m);
@@ -1117,7 +1117,7 @@ sub:
     let group = &m.scope_sub["mixed_group"];
     assert_eq!(group.len(), 2, "always + opt_b, opt_a filtered out");
     assert_eq!(group[0], "always/input");
-    assert_eq!(group[1], "opt_b/input"); // ? stripped
+    assert_eq!(group[1], "opt_b/input"); // conditional node present — ref kept
 }
 
 #[test]
@@ -1198,7 +1198,7 @@ nodes:
 topics:
   sensor:
     type: sensor_msgs/msg/PointCloud2
-    pub: [optional_pub/data?]
+    pub: [optional_pub/data]
     sub: [consumer/input]
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
@@ -1235,7 +1235,7 @@ nodes:
 services:
   trigger_svc:
     type: std_srvs/srv/Trigger
-    server: [server_node/trigger?]
+    server: [server_node/trigger]
     client: [client_node/trigger]
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
@@ -1275,8 +1275,8 @@ nodes:
 services:
   gone_svc:
     type: std_srvs/srv/Trigger
-    server: [opt_server/svc?]
-    client: [opt_client/svc?]
+    server: [opt_server/svc]
+    client: [opt_client/svc]
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
     filter_manifest(&mut m);
@@ -1305,8 +1305,8 @@ nodes:
 actions:
   gone_act:
     type: nav2_msgs/action/Navigate
-    server: [opt_server/act?]
-    client: [opt_client/act?]
+    server: [opt_server/act]
+    client: [opt_client/act]
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
     filter_manifest(&mut m);
@@ -1335,7 +1335,7 @@ nodes:
 topics:
   data:
     type: std_msgs/msg/String
-    pub: [a/out?]
+    pub: [a/out]
     sub: [b/in_data]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -1371,7 +1371,7 @@ nodes:
 services:
   trigger_svc:
     type: std_srvs/srv/Trigger
-    server: [server_a/trigger?]
+    server: [server_a/trigger]
     client: [client/trigger]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -1411,7 +1411,7 @@ nodes:
 actions:
   navigate:
     type: nav2_msgs/action/NavigateToPose
-    server: [nav_server/navigate?]
+    server: [nav_server/navigate]
     client: [client/navigate]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -1454,7 +1454,7 @@ topics:
     type: std_msgs/msg/String
     pub:
       - always_pub/data
-      - extra_pub/data?
+      - extra_pub/data
     sub: [consumer/input]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -1529,9 +1529,9 @@ topics:
   detection:
     type: std_msgs/msg/String
     pub:
-      - lidar_fast/result?
-      - lidar_accurate/result?
-      - camera_fast/result?
+      - lidar_fast/result
+      - lidar_accurate/result
+      - camera_fast/result
     sub: [consumer/input]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -1579,9 +1579,9 @@ topics:
   detections:
     type: std_msgs/msg/String
     pub:
-      - gpu_detector/objects?
-      - cpu_detector/objects?
-      - fallback/objects?
+      - gpu_detector/objects
+      - cpu_detector/objects
+      - fallback/objects
     sub: [tracker/input]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -1651,7 +1651,7 @@ nodes:
 topics:
   pose:
     type: geometry_msgs/msg/PoseStamped
-    pub: [not_ndt/pose?]
+    pub: [not_ndt/pose]
     sub: [consumer/input]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -1673,15 +1673,18 @@ topics:
     );
 }
 
-// ── Optional ref edge cases ──
+// ── Conditional ref inference for services ──
 
 #[test]
-fn test_optional_ref_in_service_refs() {
+fn test_conditional_service_server_inferred() {
+    // Conditional server ref — no ? needed, optionality inferred from node condition
+    use ros_launch_manifest_types::filter_manifest;
+
     let yaml = r#"
 version: 1
 nodes:
   cond_server:
-    if: "true"
+    if: "false"
     srv:
       trigger: {}
   client:
@@ -1690,47 +1693,16 @@ nodes:
 services:
   svc:
     type: std_srvs/srv/Trigger
-    server: [cond_server/trigger?]
+    server: [cond_server/trigger]
     client: [client/trigger]
 "#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let result = run_checks(&m);
-    let ref_errs: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.rule_id == "optional-ref")
-        .collect();
-    assert!(
-        ref_errs.is_empty(),
-        "? on conditional server ref should be accepted: {ref_errs:?}"
-    );
-}
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
 
-#[test]
-fn test_optional_ref_missing_on_conditional_service_server() {
-    let yaml = r#"
-version: 1
-nodes:
-  cond_server:
-    if: "true"
-    srv:
-      trigger: {}
-services:
-  svc:
-    type: std_srvs/srv/Trigger
-    server: [cond_server/trigger]
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let result = run_checks(&m);
-    let ref_errs: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.rule_id == "optional-ref" && d.severity == Severity::Error)
-        .collect();
-    assert!(
-        !ref_errs.is_empty(),
-        "ref to conditional server without ? should error"
-    );
+    // cond_server filtered → server ref silently dropped
+    assert!(m.services["svc"].server.is_empty());
+    // client ref kept (unconditional node)
+    assert_eq!(m.services["svc"].client.len(), 1);
 }
 
 // ── Substitution in scope interface ──
@@ -1806,19 +1778,19 @@ topics:
   pose:
     type: geometry_msgs/msg/PoseStamped
     pub:
-      - ndt_node/pose?
-      - eagleye_node/pose?
+      - ndt_node/pose
+      - eagleye_node/pose
     sub: [ekf/pose_in]
     rate_hz: 10
   twist:
     type: geometry_msgs/msg/TwistStamped
-    pub: [twist_node/twist?]
+    pub: [twist_node/twist]
     sub: []
 
 sub:
-  pointcloud: [ndt_node/pointcloud?]
-  gnss: [eagleye_node/gnss?]
-  imu: [twist_node/imu?]
+  pointcloud: [ndt_node/pointcloud]
+  gnss: [eagleye_node/gnss]
+  imu: [twist_node/imu]
 pub:
   localization: [ekf/output]
 paths:
@@ -1908,7 +1880,7 @@ topics:
   sensor_data:
     if: $(var use_sensor)
     type: $(var sensor_topic)
-    pub: [sensor_driver/pointcloud?]
+    pub: [sensor_driver/pointcloud]
     sub: [processor/input]
     rate_hz: 10
 "#;
@@ -1956,88 +1928,6 @@ topics:
         !result2.has_errors(),
         "case 2 (sensor disabled) should be clean: {:?}",
         result2.errors().map(|d| d.to_string()).collect::<Vec<_>>()
-    );
-}
-
-// ── Optional ref (?) validation ──
-
-#[test]
-fn test_optional_ref_correct_usage() {
-    let yaml = r#"
-version: 1
-nodes:
-  always_node:
-    pub: [output]
-  conditional_node:
-    if: "true"
-    sub: [input]
-topics:
-  data:
-    type: std_msgs/msg/String
-    pub: [always_node/output]
-    sub: [conditional_node/input?]
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let result = run_checks(&m);
-    let ref_errs: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.rule_id == "optional-ref")
-        .collect();
-    assert!(
-        ref_errs.is_empty(),
-        "correct usage should have no errors: {ref_errs:?}"
-    );
-}
-
-#[test]
-fn test_optional_ref_missing_suffix_on_conditional() {
-    let yaml = r#"
-version: 1
-nodes:
-  conditional_node:
-    if: "true"
-    sub: [input]
-topics:
-  data:
-    type: std_msgs/msg/String
-    sub: [conditional_node/input]
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let result = run_checks(&m);
-    let ref_errs: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.rule_id == "optional-ref" && d.severity == Severity::Error)
-        .collect();
-    assert!(
-        !ref_errs.is_empty(),
-        "ref to conditional node without ? should be an error"
-    );
-}
-
-#[test]
-fn test_optional_ref_suffix_on_unconditional() {
-    let yaml = r#"
-version: 1
-nodes:
-  always_node:
-    pub: [output]
-topics:
-  data:
-    type: std_msgs/msg/String
-    pub: [always_node/output?]
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let result = run_checks(&m);
-    let ref_errs: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.rule_id == "optional-ref" && d.severity == Severity::Error)
-        .collect();
-    assert!(
-        !ref_errs.is_empty(),
-        "? on unconditional node should be an error"
     );
 }
 
@@ -2134,8 +2024,8 @@ nodes:
 topics:
   data:
     type: std_msgs/msg/String
-    pub: [optional_pub/output?]
-    sub: [optional_sub/input?]
+    pub: [optional_pub/output]
+    sub: [optional_sub/input]
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
     filter_manifest(&mut m);
@@ -2170,8 +2060,8 @@ topics:
   localization_pose:
     type: geometry_msgs/msg/PoseStamped
     pub:
-      - ndt_node/pose?
-      - eagleye_node/pose?
+      - ndt_node/pose
+      - eagleye_node/pose
     sub: [consumer/pose_input]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -2208,8 +2098,8 @@ topics:
   localization_pose:
     type: geometry_msgs/msg/PoseStamped
     pub:
-      - ndt_node/pose?
-      - eagleye_node/pose?
+      - ndt_node/pose
+      - eagleye_node/pose
     sub: [consumer/pose_input]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -2291,7 +2181,7 @@ nodes:
 topics:
   data_a:
     type: std_msgs/msg/String
-    pub: [node_a/out_a?]
+    pub: [node_a/out_a]
     sub: [always/in]
 "#;
     let m = parse_manifest_str(yaml).unwrap();

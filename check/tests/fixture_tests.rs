@@ -488,10 +488,9 @@ fn fixture_control_conditional_all_enabled() {
     filter_manifest(&mut filtered);
 
     assert_eq!(filtered.nodes.len(), 5, "all nodes present when all enabled");
-    // ? refs should be stripped (nodes present)
+    // Conditional nodes present — refs kept
     let pred_subs = &filtered.topics["predicted_trajectory"].subscribers;
     assert_eq!(pred_subs.len(), 3, "3 subscribers to predicted_trajectory");
-    assert!(pred_subs.iter().all(|s| !s.ends_with('?')), "? should be stripped");
 
     let result = run_checks(&filtered);
     assert!(
@@ -612,19 +611,14 @@ fn fixture_control_conditional_satisfiability_clean() {
 }
 
 #[test]
-fn fixture_control_conditional_optional_ref_correct() {
-    // Pre-filter: optional-ref rule should see ? on conditional nodes
-    // and accept it (node has if: condition, ref has ?).
+fn fixture_control_conditional_no_checker_errors() {
+    // Pre-filter: refs to conditional nodes are accepted without markers
     let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
     let result = run_checks(&m);
-    let ref_errs: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.rule_id == "optional-ref")
-        .collect();
     assert!(
-        ref_errs.is_empty(),
-        "all ? refs match conditional nodes: {ref_errs:?}"
+        !result.has_errors(),
+        "pre-filter should have no errors: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
     );
 }
 

@@ -379,11 +379,10 @@ topics:
 Topic names are **relative** — the parser applies the namespace from
 the include context. The real topic name becomes `<ns>/topic_name`.
 
-**Optional endpoint references** — a trailing `?` marks an endpoint ref
-as optional. The referenced node may be conditional (`if:`/`unless:`).
-After condition filtering, optional refs to filtered-out nodes are silently
-dropped. Unmarked refs are required — the checker errors if the node
-doesn't exist.
+**Conditional endpoint references** — refs to nodes with `if:`/`unless:`
+conditions are automatically treated as optional. After condition filtering,
+refs to filtered-out conditional nodes are silently dropped. Refs to
+unconditional nodes are always required — the checker errors if missing.
 
 ```yaml
 topics:
@@ -391,12 +390,12 @@ topics:
     type: autoware_planning_msgs/msg/Trajectory
     pub: [controller/predicted_trajectory]
     sub:
-      - validator/predicted_trajectory?       # optional — node has if: condition
-      - checker/predicted_trajectory?         # optional
+      - validator/predicted_trajectory        # auto-optional — node has if: condition
+      - checker/predicted_trajectory          # auto-optional
 ```
 
-`?` is unambiguous — ROS 2 names only allow alphanumeric, underscore, and
-slash characters.
+No explicit marker is needed — the tool infers optionality from node
+conditions.
 
 **Undeclared topics**: if a node endpoint is not wired by any topic in
 the manifest, the auditor emits a warning (not an error). This allows
@@ -469,7 +468,7 @@ sub:
     - controller/trajectory
   localization:
     - controller/kinematic_state
-    - lane_departure_checker/kinematic_state?    # when launch_lane_departure_checker
+    - lane_departure_checker/kinematic_state     # conditional — auto-dropped if node filtered
 srv:
   operate:
     - mrm_operator/operate
@@ -491,10 +490,10 @@ action_client:
   navigate: [planner/navigate]
 ```
 
-**`?` suffix**: individual members can be optional (referenced node is
-conditional). After condition filtering, `?` members whose node was
-filtered are silently removed. If the group becomes empty, the group
-itself is removed.
+**Conditional members**: group members that reference conditional nodes
+are automatically treated as optional. After condition filtering, refs
+to filtered-out nodes are silently removed. If the group becomes empty,
+the group itself is removed.
 
 **Cross-scope aggregation**: groups can reference child scope groups:
 
@@ -727,7 +726,7 @@ alerts for undeclared topics with anomalies.
 
 ### Static Validation Rules
 
-The checker runs 14 rules on each manifest:
+The checker runs 13 rules on each manifest:
 
 | Rule | What it catches | Severity |
 |------|----------------|----------|
@@ -742,7 +741,6 @@ The checker runs 14 rules on each manifest:
 | `drop-consecutive` | Consecutive drop bound statistically infeasible | Error/Warning |
 | `service-wiring` | Service client with no matching server | Warning |
 | `service-type` | Service with no type; server/client not on node | Error/Warning |
-| `optional-ref` | `?` suffix must match node conditionality | Error |
 | `dangling-entity` | Topic with 0 pub after filtering; service/action with 0 server | Error/Warning |
 | `satisfiability` | Arg combination that produces dangling entities; unreachable nodes | Error/Warning |
 
@@ -755,7 +753,7 @@ cleaned up, some entities may become structurally invalid:
 - **Topic with 0 publishers and 0 subscribers** — empty, silently removed
 - **Service with 0 servers** — calls will fail (error)
 - **Action with 0 servers** — goals can't be processed (error)
-- **Scope endpoint group empty** — all `?` members filtered (group removed)
+- **Scope endpoint group empty** — all conditional members filtered (group removed)
 
 ### Satisfiability Checking
 

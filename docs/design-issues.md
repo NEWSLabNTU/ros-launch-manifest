@@ -1187,6 +1187,134 @@ commonly available via `apt install libz3-dev`.
 
 ---
 
+## 15. `?` Suffix Breaks Standard YAML Parsers
+
+### Problem
+
+The `?` suffix on optional endpoint references (design issue #9) works
+in yaml-rust2 (the Rust parser) but breaks standard YAML parsers when
+used inside **flow sequences** (`[...]`):
+
+```yaml
+# Works in yaml-rust2, fails in PyYAML / yamllint / yq / IDE linting
+sub: [control_validator/control_cmd?]
+
+# Works everywhere
+sub:
+  - control_validator/control_cmd?
+```
+
+`?` is a YAML mapping key indicator. In flow context, `[foo?]` is
+ambiguous — is it a sequence item `foo?` or the start of a mapping key?
+yaml-rust2 treats it as a plain scalar; strict parsers reject it.
+
+### Impact
+
+- IDEs with YAML validation show errors on every `?` ref in flow form
+- `yamllint`, `yq`, `python3 -c 'yaml.safe_load(...)'` all fail
+- Users can't validate manifests with standard YAML tooling
+- 15+ occurrences in `control.yaml` alone (Autoware contracts)
+
+### Options
+
+| Option | Pros | Cons |
+|--------|------|------|
+| A. Quote flow refs | `["node/ep?"]` — standard compliant | Verbose, easy to forget |
+| B. Block form only for `?` | Always use `- node/ep?` | Inconsistent formatting |
+| C. Different marker | `node/ep~` or `node/ep!optional` | Breaking change, less intuitive |
+| D. Accept it | Works with our parser | Breaks ecosystem tools |
+
+**Resolution**: Eliminated `?` entirely. Optionality is now inferred
+from node conditions — refs to nodes with `if:`/`unless:` are
+automatically treated as optional during `filter_manifest()`. The
+`optional-ref` validation rule was removed (13 → 13 rules). All
+YAML is now standard-compliant.
+
+---
+
+## 16. Satisfiability Rule Should Skip State-Only Subscribers
+
+### Problem
+
+The `satisfiability` rule flags topics where all publishers are optional
+and at least one subscriber exists. However, when the only subscribers
+are `state: true` (polled, not causal), having 0 publishers is harmless —
+the subscriber just reads nothing.
+
+Example: a `twist_data` topic with optional publishers (eagleye, twist_estimator)
+and a single `state: true` subscriber (ekf/twist_input). When both
+publishers are filtered, the topic has 0 pub + 1 state sub. The rule
+reports an error, but the system works fine — EKF just has no twist data.
+
+### Proposed Fix
+
+Before checking satisfiability for a topic, check whether all subscribers
+are `state: true`. If so, skip — no publisher is needed for correctness.
+
+This requires the satisfiability rule to look up subscriber endpoint
+properties from the node declarations, which it doesn't currently do
+(it only examines topic pub/sub lists and node conditions).
+
+---
+
+## 17. Cross-Scope Service Wiring Has No Suppression Mechanism
+
+### Problem
+
+The unified scope interface (design issue #12) added scope-level `srv:`
+and `cli:` groups. However, cross-scope service wiring still has no
+enforcement path:
+
+1. `mrm_handler` declares `cli:` with 3 cross-scope service clients
+2. `mrm_comfortable_stop_operator` declares `srv:` with 1 server
+3. No parent manifest exists to wire them in a `services:` section
+4. The `service-wiring` rule warns about orphan `cli:` endpoints
+5. There is no way to mark these as "expected cross-scope" to suppress
+
+This creates **permanent noise** in check output — 3+ warnings per run
+that can never be resolved without a parent manifest.
+
+### Options
+
+| Option | Effort | Description |
+|--------|--------|-------------|
+| A. `# nolint: service-wiring` | Small | Inline suppression comment |
+| B. `--suppress` CLI flag | Small | Suppress specific rules/paths |
+| C. Cross-manifest wiring | Large | Checker loads multiple manifests and wires across scopes |
+| D. Accept the noise | None | Document as known limitation |
+
+**Recommendation**: Option A or B. A lightweight suppression mechanism
+would benefit other expected-warning scenarios too (e.g., unwired scope
+interface endpoints).
+
+---
+
+## 18. CLI Should Support Per-Rule Filtering
+
+### Problem
+
+The `play_launch check` CLI runs all 14 validation rules and outputs
+all diagnostics. Users interested in a specific rule (e.g., satisfiability
+results only) must grep the output. The `just check-sat` recipe in
+autoware-contract does exactly this — a shell grep wrapper.
+
+### Proposed Solution
+
+Add `--rule <RULE_ID>` filter to the CLI:
+
+```bash
+# Show only satisfiability results
+play_launch check --rule satisfiability --manifest-dir . autoware_launch planning_simulator.launch.xml
+
+# Show only errors from specific rules
+play_launch check --rule dangling-entity --rule optional-ref --manifest-dir . ...
+```
+
+This is a small CLI change — filter `CheckResult.diagnostics` by
+`rule_id` before rendering.
+
+---
+
 ## Summary
 
 | Issue                              | Type                    | Effort  | Status                           |
@@ -1200,9 +1328,13 @@ commonly available via `apt install libz3-dev`.
 | ~~Import topic mapping (6)~~       | ~~Dropped~~             | —       | Parent topics: handles this      |
 | Global topics wiring (7)           | Design decision         | Small   | Kept as documentation only       |
 | External include naming (8)        | Doc fix                 | Trivial | Done (Phase 32.1)                |
-| Optional refs `?` suffix (9)       | Format + rule + cleanup | Small   | Done — `optional-ref` rule + `cleanup_dangling_refs` |
+| ~~Optional refs `?` suffix (9)~~   | ~~Format + rule~~       | Small   | Superseded by #15 — `?` removed, optionality inferred |
 | ~~Service imports/exports (10)~~   | ~~Superseded by #12~~   | —       | Replaced by unified scope interface |
 | Parser scope.args incomplete (11)  | Parser bug              | Small   | Done (Phase 33.1) — `update_args()` at all 6 include paths |
 | Unified scope interface (12)       | Format redesign         | Medium  | Done (Phase 33.2) — top-level `pub:`/`sub:`/`srv:`/`cli:` |
 | Dangling entity checks (13)        | New validation rule     | Small   | Done (Phase 33.4) — `dangling-entity` rule |
 | Arg types + satisfiability (14)    | Format + analysis       | Medium  | Done (Phase 33.3 + 33.5) — `ArgDecl` types + Z3 satisfiability |
+| ~~`?` in flow sequences (15)~~    | ~~YAML compat~~         | Small   | Done — `?` removed, optionality inferred from node conditions |
+| State-only sub skip (16)          | Satisfiability refinement| Small   | Open — false positives on state-only subscribers |
+| Cross-scope suppression (17)      | UX / CLI                | Small   | Open — no way to suppress expected cross-scope warnings |
+| Per-rule CLI filter (18)          | UX / CLI                | Small   | Open — `--rule <ID>` flag for focused output |
