@@ -738,6 +738,12 @@ This is a parser change, not a manifest format change. Affects:
 - `src/play_launch_parser/` — scope arg recording during include processing
 - All downstream consumers of `scope.args` benefit automatically
 
+### Implementation — Done (Phase 33.1)
+
+Added `ScopeTable::update_args()` method. All 6 include paths now call
+`update_args()` after traversal to capture locally-resolved defaults.
+Autoware `behavior_planning` scope went from 166 to 174 args.
+
 ---
 
 ## 12. Unified Scope Interface (`pub:`/`sub:`/`srv:`/`cli:` at Top Level)
@@ -825,6 +831,13 @@ group name. After condition filtering:
 
 Optionality propagates upward through the tree automatically.
 
+### Implementation — Done (Phase 33.2)
+
+Replaced `imports:`/`exports:` with top-level `pub:`/`sub:`/`srv:`/`cli:`
+plus `action_server:`/`action_client:`. Updated types, parser, substitution
+engine, condition filter, checker rules, all 8 fixture YAMLs, and 36
+Autoware contract manifests. Total: 6 scope interface fields on `Manifest`.
+
 ---
 
 ## 13. Dangling Entity Checks After Condition Filtering
@@ -896,6 +909,12 @@ expected to be partially wired.
    - Check actions: same as services
 2. Add empty group removal to `cleanup_dangling_refs()`
 3. Tests for each case
+
+### Implementation — Done (Phase 33.4)
+
+`dangling_entity.rs` (13th rule). Empty entity removal added to
+`cleanup_dangling_refs()` in `cond.rs`. Scope group `?` cleanup + empty
+group removal for all 6 scope fields. 6 new tests.
 
 ---
 
@@ -1141,37 +1160,30 @@ a `gnss_node`:
 - Checker reports: "with `pose_source=gnss`, topic `localization_pose`
   has no publishers"
 
-### Implementation Path
+### Implementation — Done (Phase 33.3 + 33.5)
 
-1. **Types crate**: extend `args` from `Vec<String>` to support typed
-   declarations:
-   ```rust
-   enum ArgDecl {
-       Required,                        // bare name — free string
-       Typed { arg_type: ArgType },     // with type/choices
-   }
-   enum ArgType {
-       String,                          // free string (default)
-       Bool,                            // "true" or "false"
-       Choices(Vec<String>),            // enum values
-   }
-   ```
+**Arg types (33.3)**:
 
-2. **Parser**: handle both forms:
-   - `arg_name:` → `Required` (free string, backward compatible)
-   - `arg_name: { type: bool }` → `Typed { arg_type: Bool }`
-   - `arg_name: { choices: [a, b] }` → `Typed { arg_type: Choices([a, b]) }`
+`ArgDecl` enum with three variants: `String` (free), `Bool` ("true"/"false"),
+`Choices(Vec<String>)` (enum). `valid_values()` method returns the finite
+domain. `resolve_args()` validates values against type constraints.
 
-3. **Checker**: add `satisfiability` rule:
-   - Enumerate finite-domain arg combinations
-   - For each: substitute → filter → check dangling entities
-   - Report specific arg values that cause problems
+**Z3 satisfiability (33.5)**:
 
-4. **Manifest loader**: validate arg values against declared types at
-   check time (before substitution)
+`satisfiability.rs` (14th rule) uses `z3 = "0.12"`:
 
-5. **Tests**: variant-complete manifest, variant-incomplete manifest,
-   mixed bool + enum + free string
+1. Creates Z3 enum sorts per finite-domain arg
+2. Translates `if:`/`unless:` conditions to Z3 constraints (`and`, `or`,
+   `==`, `!=`, parenthesized expressions, boolean shorthand)
+3. For topics with all-optional publishers: asserts all conditional nodes
+   inactive, checks SAT → reports specific arg values
+4. Same for services/actions with all-optional servers
+5. Unreachable node detection: builds constraint from condition, checks
+   if satisfiable. Unsat → warning. Invalid domain reference → also
+   unreachable.
+
+Z3 is a required dependency (not feature-gated) — it's fast and
+commonly available via `apt install libz3-dev`.
 
 ---
 
@@ -1190,7 +1202,7 @@ a `gnss_node`:
 | External include naming (8)        | Doc fix                 | Trivial | Done (Phase 32.1)                |
 | Optional refs `?` suffix (9)       | Format + rule + cleanup | Small   | Done — `optional-ref` rule + `cleanup_dangling_refs` |
 | ~~Service imports/exports (10)~~   | ~~Superseded by #12~~   | —       | Replaced by unified scope interface |
-| Parser scope.args incomplete (11)  | Parser bug              | Small   | Filed — parser should record all resolved args |
-| Unified scope interface (12)       | Format redesign         | Medium  | Proposed — scope as component with typed ports |
-| Dangling entity checks (13)        | New validation rule     | Small   | Proposed — topics/services/actions post-filter |
-| Arg types + satisfiability (14)    | Format + analysis       | Medium  | Proposed — enum all valid configs, check for dangling |
+| Parser scope.args incomplete (11)  | Parser bug              | Small   | Done (Phase 33.1) — `update_args()` at all 6 include paths |
+| Unified scope interface (12)       | Format redesign         | Medium  | Done (Phase 33.2) — top-level `pub:`/`sub:`/`srv:`/`cli:` |
+| Dangling entity checks (13)        | New validation rule     | Small   | Done (Phase 33.4) — `dangling-entity` rule |
+| Arg types + satisfiability (14)    | Format + analysis       | Medium  | Done (Phase 33.3 + 33.5) — `ArgDecl` types + Z3 satisfiability |

@@ -454,10 +454,6 @@ actions:
 
 ### Scope Interface
 
-> **Note**: This section describes the planned unified interface design.
-> The current implementation still uses `imports:`/`exports:`. Migration
-> is tracked in design-issues.md #12.
-
 A scope declares its external interface using the same endpoint types as
 a node: top-level `pub:`, `sub:`, `srv:`, `cli:`. The scope is a
 **composite component** — its interface declares what flows in and out.
@@ -508,13 +504,6 @@ pub:
     - lidar/detections
     - camera/detections
 ```
-
-**Current implementation** (`imports:`/`exports:`):
-
-The current code uses `imports:` (= top-level `sub:` + `cli:`) and
-`exports:` (= top-level `pub:` + `srv:`). These will be migrated to the
-unified interface in a future release. Both forms are topic-only — service
-and action boundary endpoints are not yet supported.
 
 ### Includes
 
@@ -738,7 +727,7 @@ alerts for undeclared topics with anomalies.
 
 ### Static Validation Rules
 
-The checker runs 11 rules on each manifest:
+The checker runs 14 rules on each manifest:
 
 | Rule | What it catches | Severity |
 |------|----------------|----------|
@@ -754,14 +743,8 @@ The checker runs 11 rules on each manifest:
 | `service-wiring` | Service client with no matching server | Warning |
 | `service-type` | Service with no type; server/client not on node | Error/Warning |
 | `optional-ref` | `?` suffix must match node conditionality | Error |
-
-**Planned rules** (not yet implemented):
-
-| Rule | What it catches | Severity |
-|------|----------------|----------|
 | `dangling-entity` | Topic with 0 pub after filtering; service/action with 0 server | Error/Warning |
-| `satisfiability` | Arg combination that produces dangling entities | Error |
-| `unreachable` | Node/topic condition always false for all valid arg values | Warning |
+| `satisfiability` | Arg combination that produces dangling entities; unreachable nodes | Error/Warning |
 
 ### Dangling Entity Checks
 
@@ -776,17 +759,24 @@ cleaned up, some entities may become structurally invalid:
 
 ### Satisfiability Checking
 
-When args have `type: bool` or `choices:`, the checker can enumerate all
-valid configurations and verify no combination produces dangling entities.
-
-For small arg spaces (≤15 finite-domain args), brute-force enumeration
-is used. For larger spaces, Z3 SMT solver can find counterexamples
-symbolically without enumerating all 2^N combinations.
+When args have `type: bool` or `choices:`, the checker uses the
+**Z3 SMT solver** to verify no valid arg combination produces dangling
+entities. Z3 creates enum sorts for each finite-domain arg and translates
+`if:`/`unless:` conditions to boolean constraints. For each topic with
+all-optional publishers (or service/action with all-optional servers),
+Z3 checks whether any arg assignment filters all providers.
 
 A manifest that passes satisfiability checking is **variant-complete**:
 every valid arg combination produces a structurally sound manifest.
 
-See `docs/design-issues.md` #14 for the full algorithm and Z3 encoding.
+The `satisfiability` rule also detects **unreachable nodes** — nodes
+whose conditions are always false for all valid arg values (e.g.,
+`if: $(var flag) == 'wtf'` when `flag` is `type: bool`).
+
+Free-string args (no type constraint) are ignored by the satisfiability
+rule — they have infinite domains and can't be enumerated.
+
+See `docs/design-issues.md` #14 for the Z3 encoding details.
 
 ### Formal Foundations
 
