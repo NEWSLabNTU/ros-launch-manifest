@@ -8,6 +8,7 @@ mod endpoint_unique;
 mod optional_ref;
 mod qos_compat;
 mod rate_chain;
+mod satisfiability;
 mod rate_hierarchy;
 mod scope_budget;
 mod service_type;
@@ -39,5 +40,6 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(service_type::ServiceTypeRule),
         Box::new(optional_ref::OptionalRefRule),
         Box::new(dangling_entity::DanglingEntityRule),
+        Box::new(satisfiability::SatisfiabilityRule),
     ]
 }

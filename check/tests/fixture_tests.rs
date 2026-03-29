@@ -1,7 +1,10 @@
 //! Integration tests that load YAML fixture files and run the static checker.
 
 use ros_launch_manifest_check::{Severity, run_checks};
-use ros_launch_manifest_types::{parse_manifest, parse_manifest_str};
+use ros_launch_manifest_types::{
+    filter_manifest, parse_manifest, parse_manifest_str, resolve_args, substitute_manifest,
+};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -454,6 +457,390 @@ fn fixture_conditions_filter_with_scope_args() {
     assert!(m.nodes.contains_key("always_present"));
 }
 
+// ── manifest_control_conditional: Autoware-style conditional checkers ──
+
+#[test]
+fn fixture_control_conditional_parses() {
+    let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
+    assert_eq!(m.nodes.len(), 5, "controller + 4 conditional checkers");
+    assert_eq!(m.topics.len(), 2, "control_cmd + predicted_trajectory");
+    assert_eq!(m.args.len(), 4, "4 bool args");
+    // All args should be Bool type
+    for (name, decl) in &m.args {
+        assert!(
+            matches!(decl, ros_launch_manifest_types::ArgDecl::Bool),
+            "arg {name} should be Bool"
+        );
+    }
+}
+
+#[test]
+fn fixture_control_conditional_all_enabled() {
+    let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
+    let scope_args = HashMap::from([
+        ("launch_validator".into(), "true".into()),
+        ("launch_aeb".into(), "true".into()),
+        ("launch_lane_checker".into(), "true".into()),
+        ("launch_collision".into(), "true".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
+    let mut filtered = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut filtered);
+
+    assert_eq!(filtered.nodes.len(), 5, "all nodes present when all enabled");
+    // ? refs should be stripped (nodes present)
+    let pred_subs = &filtered.topics["predicted_trajectory"].subscribers;
+    assert_eq!(pred_subs.len(), 3, "3 subscribers to predicted_trajectory");
+    assert!(pred_subs.iter().all(|s| !s.ends_with('?')), "? should be stripped");
+
+    let result = run_checks(&filtered);
+    assert!(
+        !result.has_errors(),
+        "all-enabled should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn fixture_control_conditional_all_disabled() {
+    let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
+    let scope_args = HashMap::from([
+        ("launch_validator".into(), "false".into()),
+        ("launch_aeb".into(), "false".into()),
+        ("launch_lane_checker".into(), "false".into()),
+        ("launch_collision".into(), "false".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
+    let mut filtered = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut filtered);
+
+    // Only controller remains
+    assert_eq!(filtered.nodes.len(), 1);
+    assert!(filtered.nodes.contains_key("controller"));
+
+    // predicted_trajectory should have 0 subscribers (all optional, all filtered)
+    // but still have 1 publisher → topic survives
+    let pred = &filtered.topics["predicted_trajectory"];
+    assert!(pred.subscribers.is_empty(), "all optional subs filtered out");
+    assert_eq!(pred.publishers.len(), 1, "controller still publishes");
+
+    // Scope groups: kinematic_state should only have controller's ref
+    let ks = &filtered.scope_sub["kinematic_state"];
+    assert_eq!(ks.len(), 1, "only controller kinematic_state remains");
+    assert_eq!(ks[0], "controller/kinematic_state");
+
+    // Scope groups that were entirely optional should be removed
+    assert!(
+        !filtered.scope_sub.contains_key("pointcloud"),
+        "pointcloud group should be removed (all refs optional + filtered)"
+    );
+    assert!(
+        !filtered.scope_sub.contains_key("velocity_status"),
+        "velocity_status group should be removed"
+    );
+    assert!(
+        !filtered.scope_sub.contains_key("vector_map"),
+        "vector_map group should be removed"
+    );
+
+    let result = run_checks(&filtered);
+    assert!(
+        !result.has_errors(),
+        "all-disabled should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn fixture_control_conditional_partial_enable() {
+    let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
+    let scope_args = HashMap::from([
+        ("launch_validator".into(), "true".into()),
+        ("launch_aeb".into(), "false".into()),
+        ("launch_lane_checker".into(), "true".into()),
+        ("launch_collision".into(), "false".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
+    let mut filtered = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut filtered);
+
+    assert_eq!(filtered.nodes.len(), 3, "controller + validator + lane_checker");
+    assert!(filtered.nodes.contains_key("controller"));
+    assert!(filtered.nodes.contains_key("control_validator"));
+    assert!(filtered.nodes.contains_key("lane_checker"));
+    assert!(!filtered.nodes.contains_key("aeb"));
+    assert!(!filtered.nodes.contains_key("collision_detector"));
+
+    // predicted_trajectory: validator + lane_checker subscribe
+    let pred_subs = &filtered.topics["predicted_trajectory"].subscribers;
+    assert_eq!(pred_subs.len(), 2);
+
+    // pointcloud group: aeb and collision both disabled → group removed
+    assert!(!filtered.scope_sub.contains_key("pointcloud"));
+    // vector_map: lane_checker enabled → group kept
+    assert!(filtered.scope_sub.contains_key("vector_map"));
+
+    let result = run_checks(&filtered);
+    assert!(
+        !result.has_errors(),
+        "partial enable should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn fixture_control_conditional_satisfiability_clean() {
+    // Pre-filter: run satisfiability on the raw manifest with typed args.
+    // All topics have the controller as unconditional publisher, so no
+    // arg combination produces 0 publishers. Should pass.
+    let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
+    let result = run_checks(&m);
+    let sat_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability")
+        .collect();
+    // No satisfiability errors — controller always publishes
+    let sat_errs: Vec<_> = sat_diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(
+        sat_errs.is_empty(),
+        "controller always publishes, no satisfiability errors: {sat_errs:?}"
+    );
+}
+
+#[test]
+fn fixture_control_conditional_optional_ref_correct() {
+    // Pre-filter: optional-ref rule should see ? on conditional nodes
+    // and accept it (node has if: condition, ref has ?).
+    let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
+    let result = run_checks(&m);
+    let ref_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "optional-ref")
+        .collect();
+    assert!(
+        ref_errs.is_empty(),
+        "all ? refs match conditional nodes: {ref_errs:?}"
+    );
+}
+
+#[test]
+fn fixture_control_conditional_reject_invalid_bool() {
+    let m = parse_manifest(&fixture_path("manifest_control_conditional")).unwrap();
+    let scope_args = HashMap::from([
+        ("launch_validator".into(), "yes".into()), // invalid for bool
+        ("launch_aeb".into(), "true".into()),
+        ("launch_lane_checker".into(), "true".into()),
+        ("launch_collision".into(), "true".into()),
+    ]);
+    let err = resolve_args(&m.args, &scope_args).unwrap_err();
+    assert!(
+        matches!(err, ros_launch_manifest_types::SubstError::InvalidArgValue { .. }),
+        "bool arg should reject 'yes': {err}"
+    );
+}
+
+// ── manifest_service_scope: intra-scope service wiring ──
+
+#[test]
+fn fixture_service_scope_parses() {
+    let m = parse_manifest(&fixture_path("manifest_service_scope")).unwrap();
+    assert_eq!(m.nodes.len(), 2, "mission_planner + route_selector");
+    assert_eq!(m.services.len(), 3, "3 service pairs");
+    assert_eq!(m.topics.len(), 2, "planner_route + planner_state");
+}
+
+#[test]
+fn fixture_service_scope_clean() {
+    let m = parse_manifest(&fixture_path("manifest_service_scope")).unwrap();
+    let result = run_checks(&m);
+    assert!(
+        !result.has_errors(),
+        "service scope should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn fixture_service_scope_wiring_correct() {
+    let m = parse_manifest(&fixture_path("manifest_service_scope")).unwrap();
+    let result = run_checks(&m);
+    let svc_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id.starts_with("service"))
+        .collect();
+    assert!(
+        svc_diags.is_empty(),
+        "all services correctly wired: {svc_diags:?}"
+    );
+}
+
+#[test]
+fn fixture_service_scope_interface() {
+    let m = parse_manifest(&fixture_path("manifest_service_scope")).unwrap();
+    // Scope sub interface
+    assert!(m.scope_sub.contains_key("vector_map"));
+    assert!(m.scope_sub.contains_key("odometry"));
+    assert!(m.scope_sub.contains_key("modified_goal"));
+    // Scope pub interface
+    assert!(m.scope_pub.contains_key("route"));
+    // Scope srv interface
+    assert!(m.scope_srv.contains_key("clear_route_api"));
+    assert!(m.scope_srv.contains_key("set_route_api"));
+    assert_eq!(m.scope_srv["set_route_api"].len(), 2, "two endpoints in set_route_api group");
+}
+
+// ── manifest_satisfiability: multi-variant localization ──
+
+#[test]
+fn fixture_satisfiability_parses() {
+    let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
+    assert_eq!(m.nodes.len(), 5, "3 pose sources + twist_estimator + ekf");
+    assert_eq!(m.args.len(), 2, "pose_source + use_twist");
+    match &m.args["pose_source"] {
+        ros_launch_manifest_types::ArgDecl::Choices(v) => {
+            assert_eq!(v, &["ndt", "eagleye", "gnss"]);
+        }
+        other => panic!("expected Choices, got {other:?}"),
+    }
+}
+
+#[test]
+fn fixture_satisfiability_variant_complete() {
+    // All 3 pose sources provide a publisher for localization_pose.
+    // Z3 should find no arg combination that leaves it dangling.
+    let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        sat_errs.is_empty(),
+        "all variants covered, no satisfiability errors: {sat_errs:?}"
+    );
+}
+
+#[test]
+fn fixture_satisfiability_no_unreachable() {
+    let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
+    let result = run_checks(&m);
+    let unreachable: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.message.contains("unreachable"))
+        .collect();
+    assert!(
+        unreachable.is_empty(),
+        "no unreachable nodes: {unreachable:?}"
+    );
+}
+
+#[test]
+fn fixture_satisfiability_ndt_filter() {
+    let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
+    let scope_args = HashMap::from([
+        ("pose_source".into(), "ndt".into()),
+        ("use_twist".into(), "false".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
+    let mut filtered = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut filtered);
+
+    assert!(filtered.nodes.contains_key("ndt_node"));
+    assert!(!filtered.nodes.contains_key("eagleye_node"));
+    assert!(!filtered.nodes.contains_key("gnss_node"));
+    assert!(!filtered.nodes.contains_key("twist_estimator"));
+    assert!(filtered.nodes.contains_key("ekf"));
+
+    // localization_pose: only ndt_node/pose
+    let pose_pubs = &filtered.topics["localization_pose"].publishers;
+    assert_eq!(pose_pubs, &["ndt_node/pose"]);
+
+    let result = run_checks(&filtered);
+    assert!(
+        !result.has_errors(),
+        "ndt config should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn fixture_satisfiability_eagleye_with_twist() {
+    let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
+    let scope_args = HashMap::from([
+        ("pose_source".into(), "eagleye".into()),
+        ("use_twist".into(), "true".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
+    let mut filtered = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut filtered);
+
+    assert!(filtered.nodes.contains_key("eagleye_node"));
+    assert!(filtered.nodes.contains_key("twist_estimator"));
+    // twist_data: eagleye + twist_estimator both publish
+    let twist_pubs = &filtered.topics["twist_data"].publishers;
+    assert_eq!(twist_pubs.len(), 2);
+
+    let result = run_checks(&filtered);
+    assert!(
+        !result.has_errors(),
+        "eagleye+twist should be clean: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn fixture_satisfiability_gnss_minimal() {
+    let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
+    let scope_args = HashMap::from([
+        ("pose_source".into(), "gnss".into()),
+        ("use_twist".into(), "false".into()),
+    ]);
+    let args = resolve_args(&m.args, &scope_args).unwrap();
+    let mut filtered = substitute_manifest(&m, &args).unwrap();
+    filter_manifest(&mut filtered);
+
+    // Minimal config: gnss_node + ekf only
+    assert_eq!(
+        filtered.nodes.len(),
+        2,
+        "gnss_node + ekf: {:?}",
+        filtered.nodes.keys().collect::<Vec<_>>()
+    );
+
+    // twist_data: 0 pub + 0 sub after filter → removed
+    assert!(
+        !filtered.topics.contains_key("twist_data"),
+        "twist_data should be removed (0 pub, 0 sub after filter)"
+    );
+
+    // scope groups: pointcloud removed (ndt only), imu removed (eagleye+twist only)
+    assert!(!filtered.scope_sub.contains_key("pointcloud"));
+    assert!(!filtered.scope_sub.contains_key("imu"));
+    assert!(filtered.scope_sub.contains_key("gnss"));
+}
+
+#[test]
+fn fixture_satisfiability_reject_invalid_choice() {
+    let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
+    let scope_args = HashMap::from([
+        ("pose_source".into(), "lidar".into()), // not in [ndt, eagleye, gnss]
+        ("use_twist".into(), "true".into()),
+    ]);
+    let err = resolve_args(&m.args, &scope_args).unwrap_err();
+    assert!(
+        matches!(err, ros_launch_manifest_types::SubstError::InvalidArgValue { .. }),
+        "choices arg should reject 'lidar': {err}"
+    );
+}
+
 // ── Cross-fixture: parse all fixtures via parse_manifest_str round-trip ──
 
 #[test]
@@ -467,6 +854,9 @@ fn all_fixtures_round_trip() {
         "manifest_multi_scope",
         "manifest_args",
         "manifest_conditions",
+        "manifest_control_conditional",
+        "manifest_service_scope",
+        "manifest_satisfiability",
     ];
     for name in fixtures {
         let path = fixture_path(name);

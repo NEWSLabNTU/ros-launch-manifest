@@ -113,8 +113,6 @@ fn test_endpoint_duplicate() {
     // Construct a manifest programmatically with duplicate endpoints
     // (parser catches this from YAML, but checker also validates)
     use ros_launch_manifest_types::*;
-    use std::collections::BTreeMap;
-
     let mut node = NodeDecl::default();
     node.publishers
         .insert("data".into(), EndpointProps::default());
@@ -772,6 +770,1118 @@ services:
     );
 }
 
+// ── Arg type validation ──
+
+#[test]
+fn test_arg_types_bool_valid_values() {
+    use ros_launch_manifest_types::{resolve_args, ArgDecl};
+    use std::collections::{BTreeMap, HashMap};
+
+    let manifest_args = BTreeMap::from([("flag".into(), ArgDecl::Bool)]);
+
+    // "true" and "false" are valid
+    for val in &["true", "false"] {
+        let caller = HashMap::from([("flag".into(), val.to_string())]);
+        assert!(resolve_args(&manifest_args, &caller).is_ok(), "{val} should be valid for Bool");
+    }
+
+    // "yes", "1", "True", "FALSE" are all invalid
+    for val in &["yes", "no", "1", "0", "True", "FALSE", ""] {
+        let caller = HashMap::from([("flag".into(), val.to_string())]);
+        assert!(resolve_args(&manifest_args, &caller).is_err(), "'{val}' should be invalid for Bool");
+    }
+}
+
+#[test]
+fn test_arg_types_choices_validation() {
+    use ros_launch_manifest_types::{resolve_args, ArgDecl};
+    use std::collections::{BTreeMap, HashMap};
+
+    let manifest_args = BTreeMap::from([(
+        "mode".into(),
+        ArgDecl::Choices(vec!["ndt".into(), "eagleye".into(), "gnss".into()]),
+    )]);
+
+    for val in &["ndt", "eagleye", "gnss"] {
+        let caller = HashMap::from([("mode".into(), val.to_string())]);
+        assert!(resolve_args(&manifest_args, &caller).is_ok());
+    }
+
+    let caller = HashMap::from([("mode".into(), "lidar".into())]);
+    let err = resolve_args(&manifest_args, &caller).unwrap_err();
+    assert!(matches!(err, ros_launch_manifest_types::SubstError::InvalidArgValue { .. }));
+}
+
+#[test]
+fn test_arg_types_mixed_free_and_typed() {
+    use ros_launch_manifest_types::{resolve_args, ArgDecl};
+    use std::collections::{BTreeMap, HashMap};
+
+    let manifest_args = BTreeMap::from([
+        ("free_arg".into(), ArgDecl::String),
+        ("bool_arg".into(), ArgDecl::Bool),
+        ("choice_arg".into(), ArgDecl::Choices(vec!["a".into(), "b".into()])),
+    ]);
+
+    // All valid
+    let caller = HashMap::from([
+        ("free_arg".into(), "anything goes here".into()),
+        ("bool_arg".into(), "true".into()),
+        ("choice_arg".into(), "a".into()),
+    ]);
+    let resolved = resolve_args(&manifest_args, &caller).unwrap();
+    assert_eq!(resolved["free_arg"], "anything goes here");
+    assert_eq!(resolved["bool_arg"], "true");
+    assert_eq!(resolved["choice_arg"], "a");
+
+    // Bool invalid but others fine → error on bool
+    let caller2 = HashMap::from([
+        ("free_arg".into(), "ok".into()),
+        ("bool_arg".into(), "maybe".into()),
+        ("choice_arg".into(), "a".into()),
+    ]);
+    assert!(resolve_args(&manifest_args, &caller2).is_err());
+}
+
+#[test]
+fn test_arg_types_parse_all_forms() {
+    // List form: all String
+    let yaml = "args: [x, y, z]\nversion: 1\n";
+    let m = parse_manifest_str(yaml).unwrap();
+    assert_eq!(m.args.len(), 3);
+    assert!(m.args.values().all(|d| matches!(d, ros_launch_manifest_types::ArgDecl::String)));
+
+    // Map with null: String
+    let yaml2 = "args:\n  x:\n  y:\nversion: 1\n";
+    let m2 = parse_manifest_str(yaml2).unwrap();
+    assert_eq!(m2.args.len(), 2);
+
+    // Map with types
+    let yaml3 = r#"
+args:
+  flag:
+    type: bool
+  mode:
+    choices: [a, b, c]
+  name:
+version: 1
+"#;
+    let m3 = parse_manifest_str(yaml3).unwrap();
+    assert!(matches!(m3.args["flag"], ros_launch_manifest_types::ArgDecl::Bool));
+    match &m3.args["mode"] {
+        ros_launch_manifest_types::ArgDecl::Choices(v) => assert_eq!(v, &["a", "b", "c"]),
+        _ => panic!("expected Choices"),
+    }
+    assert!(matches!(m3.args["name"], ros_launch_manifest_types::ArgDecl::String));
+}
+
+// ── Condition edge cases ──
+
+#[test]
+fn test_condition_compound_and_or() {
+    use ros_launch_manifest_types::{filter_manifest, resolve_args, substitute_manifest};
+    use std::collections::HashMap;
+
+    let yaml = r#"
+args:
+  x:
+  y:
+version: 1
+nodes:
+  both_true:
+    if: $(var x) == 'a' and $(var y) == 'b'
+    pub: [output]
+  either_true:
+    if: $(var x) == 'a' or $(var y) == 'b'
+    pub: [output]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+
+    // x=a, y=b → both nodes present
+    let args = HashMap::from([("x".into(), "a".into()), ("y".into(), "b".into())]);
+    let resolved = resolve_args(&m.args, &args).unwrap();
+    let mut m1 = substitute_manifest(&m, &resolved).unwrap();
+    filter_manifest(&mut m1);
+    assert!(m1.nodes.contains_key("both_true"));
+    assert!(m1.nodes.contains_key("either_true"));
+
+    // x=a, y=c → only either_true (x == 'a' matches)
+    let args2 = HashMap::from([("x".into(), "a".into()), ("y".into(), "c".into())]);
+    let resolved2 = resolve_args(&m.args, &args2).unwrap();
+    let mut m2 = substitute_manifest(&m, &resolved2).unwrap();
+    filter_manifest(&mut m2);
+    assert!(!m2.nodes.contains_key("both_true"));
+    assert!(m2.nodes.contains_key("either_true"));
+
+    // x=z, y=z → neither
+    let args3 = HashMap::from([("x".into(), "z".into()), ("y".into(), "z".into())]);
+    let resolved3 = resolve_args(&m.args, &args3).unwrap();
+    let mut m3 = substitute_manifest(&m, &resolved3).unwrap();
+    filter_manifest(&mut m3);
+    assert!(!m3.nodes.contains_key("both_true"));
+    assert!(!m3.nodes.contains_key("either_true"));
+}
+
+#[test]
+fn test_condition_unless_with_expression() {
+    use ros_launch_manifest_types::{filter_manifest, resolve_args, substitute_manifest};
+    use std::collections::HashMap;
+
+    let yaml = r#"
+args:
+  mode:
+version: 1
+nodes:
+  legacy:
+    unless: $(var mode) == 'new'
+    pub: [output]
+  modern:
+    if: $(var mode) == 'new'
+    pub: [output]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+
+    let args = HashMap::from([("mode".into(), "new".into())]);
+    let resolved = resolve_args(&m.args, &args).unwrap();
+    let mut filtered = substitute_manifest(&m, &resolved).unwrap();
+    filter_manifest(&mut filtered);
+    assert!(!filtered.nodes.contains_key("legacy"), "unless should exclude when expr is true");
+    assert!(filtered.nodes.contains_key("modern"));
+
+    let args2 = HashMap::from([("mode".into(), "old".into())]);
+    let resolved2 = resolve_args(&m.args, &args2).unwrap();
+    let mut filtered2 = substitute_manifest(&m, &resolved2).unwrap();
+    filter_manifest(&mut filtered2);
+    assert!(filtered2.nodes.contains_key("legacy"), "unless should include when expr is false");
+    assert!(!filtered2.nodes.contains_key("modern"));
+}
+
+#[test]
+fn test_condition_on_service_and_action() {
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  server:
+    srv:
+      my_srv: {}
+services:
+  conditional_svc:
+    if: "false"
+    type: std_srvs/srv/Trigger
+    server: [server/my_srv]
+actions:
+  conditional_act:
+    unless: "true"
+    type: nav2_msgs/action/Navigate
+    server: []
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+    assert!(!m.services.contains_key("conditional_svc"), "service if=false → filtered");
+    assert!(!m.actions.contains_key("conditional_act"), "action unless=true → filtered");
+}
+
+#[test]
+fn test_condition_parenthesized() {
+    use ros_launch_manifest_types::{filter_manifest, resolve_args, substitute_manifest};
+    use std::collections::HashMap;
+
+    let yaml = r#"
+args:
+  a:
+  b:
+  c:
+version: 1
+nodes:
+  complex:
+    if: ($(var a) == 'x' or $(var b) == 'y') and $(var c) == 'z'
+    pub: [output]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+
+    // a=x, b=n, c=z → (true or false) and true → true
+    let args = HashMap::from([
+        ("a".into(), "x".into()),
+        ("b".into(), "n".into()),
+        ("c".into(), "z".into()),
+    ]);
+    let resolved = resolve_args(&m.args, &args).unwrap();
+    let mut m1 = substitute_manifest(&m, &resolved).unwrap();
+    filter_manifest(&mut m1);
+    assert!(m1.nodes.contains_key("complex"));
+
+    // a=n, b=n, c=z → (false or false) and true → false
+    let args2 = HashMap::from([
+        ("a".into(), "n".into()),
+        ("b".into(), "n".into()),
+        ("c".into(), "z".into()),
+    ]);
+    let resolved2 = resolve_args(&m.args, &args2).unwrap();
+    let mut m2 = substitute_manifest(&m, &resolved2).unwrap();
+    filter_manifest(&mut m2);
+    assert!(!m2.nodes.contains_key("complex"));
+}
+
+#[test]
+fn test_condition_on_scope_path() {
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  a:
+    sub: [input]
+    pub: [output]
+paths:
+  debug_path:
+    if: "false"
+    input: raw
+    output: [out]
+    max_latency_ms: 100
+  active_path:
+    if: "true"
+    input: raw
+    output: [out]
+    max_latency_ms: 50
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+    assert!(!m.paths.contains_key("debug_path"));
+    assert!(m.paths.contains_key("active_path"));
+    // Condition cleared on surviving path
+    assert!(m.paths["active_path"].if_condition.is_none());
+}
+
+// ── Unified scope interface edge cases ──
+
+#[test]
+fn test_scope_interface_all_types() {
+    let yaml = r#"
+version: 1
+nodes:
+  n:
+    pub: [out]
+    sub: [in_data]
+    srv:
+      my_srv: {}
+    cli:
+      my_cli: {}
+pub:
+  output_group: [n/out]
+sub:
+  input_group: [n/in_data]
+srv:
+  srv_group: [n/my_srv]
+cli:
+  cli_group: [n/my_cli]
+action_server:
+  act_srv: [n/out]
+action_client:
+  act_cli: [n/in_data]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    assert_eq!(m.scope_pub.len(), 1);
+    assert_eq!(m.scope_sub.len(), 1);
+    assert_eq!(m.scope_srv.len(), 1);
+    assert_eq!(m.scope_cli.len(), 1);
+    assert_eq!(m.action_server.len(), 1);
+    assert_eq!(m.action_client.len(), 1);
+}
+
+#[test]
+fn test_scope_interface_optional_refs_in_groups() {
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  always:
+    sub: [input]
+  opt_a:
+    if: "false"
+    sub: [input]
+  opt_b:
+    if: "true"
+    sub: [input]
+sub:
+  mixed_group:
+    - always/input
+    - opt_a/input?
+    - opt_b/input?
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+
+    let group = &m.scope_sub["mixed_group"];
+    assert_eq!(group.len(), 2, "always + opt_b, opt_a filtered out");
+    assert_eq!(group[0], "always/input");
+    assert_eq!(group[1], "opt_b/input"); // ? stripped
+}
+
+#[test]
+fn test_scope_interface_multiple_groups() {
+    let yaml = r#"
+version: 1
+nodes:
+  driver:
+    pub: [lidar, camera, radar]
+  planner:
+    sub: [objects, trajectory]
+sub:
+  perception_in:
+    - driver/lidar
+    - driver/camera
+  radar_in:
+    - driver/radar
+pub:
+  planning_out:
+    - planner/objects
+  trajectory_out:
+    - planner/trajectory
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    assert_eq!(m.scope_sub.len(), 2);
+    assert_eq!(m.scope_pub.len(), 2);
+    assert_eq!(m.scope_sub["perception_in"].len(), 2);
+    assert_eq!(m.scope_sub["radar_in"].len(), 1);
+}
+
+// ── Dangling entity edge cases ──
+
+#[test]
+fn test_dangling_action_no_server() {
+    let yaml = r#"
+version: 1
+nodes:
+  client:
+    cli:
+      navigate: {}
+actions:
+  navigate:
+    type: nav2_msgs/action/NavigateToPose
+    server: []
+    client: [client/navigate]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "action with no server should be error"
+    );
+    assert!(
+        errs[0].message.contains("no server"),
+        "message should mention no server: {}",
+        errs[0].message
+    );
+}
+
+#[test]
+fn test_dangling_cascading_from_condition_filter() {
+    // After filtering a conditional node, a topic loses its only publisher.
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  optional_pub:
+    if: "false"
+    pub: [data]
+  consumer:
+    sub: [input]
+topics:
+  sensor:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [optional_pub/data?]
+    sub: [consumer/input]
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+
+    // optional_pub filtered → topic has 0 pub, 1 sub
+    assert!(m.topics.contains_key("sensor"), "topic survives (has subscriber)");
+    assert!(m.topics["sensor"].publishers.is_empty());
+
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("no publishers"))
+        .collect();
+    assert!(!warns.is_empty(), "should warn about 0 publishers after filter");
+}
+
+#[test]
+fn test_dangling_service_cascading() {
+    // Filtered node removes server from service → dangling service
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  server_node:
+    if: "false"
+    srv:
+      trigger: {}
+  client_node:
+    cli:
+      trigger: {}
+services:
+  trigger_svc:
+    type: std_srvs/srv/Trigger
+    server: [server_node/trigger?]
+    client: [client_node/trigger]
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+
+    // Service still exists (client present) but server gone
+    assert!(m.services.contains_key("trigger_svc"));
+    assert!(m.services["trigger_svc"].server.is_empty());
+
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "service with 0 servers should be error"
+    );
+}
+
+#[test]
+fn test_dangling_empty_service_removed() {
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  opt_server:
+    if: "false"
+    srv:
+      svc: {}
+  opt_client:
+    if: "false"
+    cli:
+      svc: {}
+services:
+  gone_svc:
+    type: std_srvs/srv/Trigger
+    server: [opt_server/svc?]
+    client: [opt_client/svc?]
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+
+    assert!(
+        !m.services.contains_key("gone_svc"),
+        "service with 0 server + 0 client should be removed"
+    );
+}
+
+#[test]
+fn test_dangling_empty_action_removed() {
+    use ros_launch_manifest_types::filter_manifest;
+
+    let yaml = r#"
+version: 1
+nodes:
+  opt_server:
+    if: "false"
+    srv:
+      act: {}
+  opt_client:
+    if: "false"
+    cli:
+      act: {}
+actions:
+  gone_act:
+    type: nav2_msgs/action/Navigate
+    server: [opt_server/act?]
+    client: [opt_client/act?]
+"#;
+    let mut m = parse_manifest_str(yaml).unwrap();
+    filter_manifest(&mut m);
+
+    assert!(
+        !m.actions.contains_key("gone_act"),
+        "action with 0 server + 0 client should be removed"
+    );
+}
+
+// ── Satisfiability edge cases ──
+
+#[test]
+fn test_satisfiability_no_finite_args_skipped() {
+    // Only free (String) args — satisfiability rule should skip silently
+    let yaml = r#"
+version: 1
+args:
+  topic_name:
+nodes:
+  a:
+    if: $(var topic_name) == 'foo'
+    pub: [out]
+  b:
+    sub: [in_data]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [a/out?]
+    sub: [b/in_data]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability")
+        .collect();
+    assert!(
+        sat.is_empty(),
+        "no finite args → satisfiability rule should produce no diagnostics"
+    );
+}
+
+#[test]
+fn test_satisfiability_service_all_optional_servers() {
+    // Service where all servers are on conditional nodes.
+    // If no config activates a server, that's an error.
+    let yaml = r#"
+version: 1
+args:
+  mode:
+    choices: [a, b]
+nodes:
+  server_a:
+    if: $(var mode) == 'a'
+    srv:
+      trigger: {}
+  client:
+    cli:
+      trigger: {}
+services:
+  trigger_svc:
+    type: std_srvs/srv/Trigger
+    server: [server_a/trigger?]
+    client: [client/trigger]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // mode=b → server_a filtered → 0 servers
+    assert!(
+        !sat_errs.is_empty(),
+        "mode=b leaves service with 0 servers: {sat_errs:?}"
+    );
+    assert!(
+        sat_errs[0].message.contains("mode=b"),
+        "should mention mode=b: {}",
+        sat_errs[0].message
+    );
+}
+
+#[test]
+fn test_satisfiability_action_all_optional_servers() {
+    let yaml = r#"
+version: 1
+args:
+  use_nav:
+    type: bool
+nodes:
+  nav_server:
+    if: $(var use_nav)
+    srv:
+      navigate: {}
+  client:
+    cli:
+      navigate: {}
+actions:
+  navigate:
+    type: nav2_msgs/action/NavigateToPose
+    server: [nav_server/navigate?]
+    client: [client/navigate]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // use_nav=false → nav_server filtered → 0 servers
+    assert!(
+        !sat_errs.is_empty(),
+        "use_nav=false leaves action with 0 servers"
+    );
+    assert!(
+        sat_errs[0].message.contains("use_nav=false"),
+        "should mention use_nav=false: {}",
+        sat_errs[0].message
+    );
+}
+
+#[test]
+fn test_satisfiability_unconditional_publisher_prevents_error() {
+    // One unconditional + optional publishers → always at least 1 pub → no error
+    let yaml = r#"
+version: 1
+args:
+  extra:
+    type: bool
+nodes:
+  always_pub:
+    pub: [data]
+  extra_pub:
+    if: $(var extra)
+    pub: [data]
+  consumer:
+    sub: [input]
+topics:
+  stream:
+    type: std_msgs/msg/String
+    pub:
+      - always_pub/data
+      - extra_pub/data?
+    sub: [consumer/input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        sat_errs.is_empty(),
+        "unconditional publisher prevents dangling: {sat_errs:?}"
+    );
+}
+
+#[test]
+fn test_satisfiability_unreachable_unless_always_true() {
+    // unless condition that's always true → node unreachable
+    let yaml = r#"
+version: 1
+args:
+  flag:
+    type: bool
+nodes:
+  always_there:
+    pub: [out]
+  never_there:
+    unless: $(var flag) == 'true' or $(var flag) == 'false'
+    pub: [out]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.message.contains("unreachable"))
+        .collect();
+    assert!(
+        !warns.is_empty(),
+        "unless (always true) → unreachable: {:?}",
+        result.diagnostics.iter()
+            .filter(|d| d.rule_id == "satisfiability")
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_satisfiability_multiple_choices_cross_product() {
+    // Two choice args create a cross product. Only one combination is bad.
+    let yaml = r#"
+version: 1
+args:
+  sensor:
+    choices: [lidar, camera]
+  mode:
+    choices: [fast, accurate]
+nodes:
+  lidar_fast:
+    if: $(var sensor) == 'lidar' and $(var mode) == 'fast'
+    pub: [result]
+  lidar_accurate:
+    if: $(var sensor) == 'lidar' and $(var mode) == 'accurate'
+    pub: [result]
+  camera_fast:
+    if: $(var sensor) == 'camera' and $(var mode) == 'fast'
+    pub: [result]
+  # Missing: camera + accurate
+  consumer:
+    sub: [input]
+topics:
+  detection:
+    type: std_msgs/msg/String
+    pub:
+      - lidar_fast/result?
+      - lidar_accurate/result?
+      - camera_fast/result?
+    sub: [consumer/input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !sat_errs.is_empty(),
+        "camera+accurate has 0 publishers"
+    );
+    // Error message should mention the specific failing combination
+    let msg = &sat_errs[0].message;
+    assert!(
+        msg.contains("sensor=camera") && msg.contains("mode=accurate"),
+        "should report camera+accurate: {msg}"
+    );
+}
+
+#[test]
+fn test_satisfiability_bool_and_choices_mixed() {
+    // Bool + choices args. The bool controls an extra node.
+    let yaml = r#"
+version: 1
+args:
+  backend:
+    choices: [gpu, cpu]
+  use_fallback:
+    type: bool
+nodes:
+  gpu_detector:
+    if: $(var backend) == 'gpu'
+    pub: [objects]
+  cpu_detector:
+    if: $(var backend) == 'cpu'
+    pub: [objects]
+  fallback:
+    if: $(var use_fallback)
+    pub: [objects]
+  tracker:
+    sub: [input]
+topics:
+  detections:
+    type: std_msgs/msg/String
+    pub:
+      - gpu_detector/objects?
+      - cpu_detector/objects?
+      - fallback/objects?
+    sub: [tracker/input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // Every combination has at least 1 pub:
+    // gpu+false=gpu_detector, gpu+true=gpu_detector+fallback,
+    // cpu+false=cpu_detector, cpu+true=cpu_detector+fallback
+    assert!(
+        sat_errs.is_empty(),
+        "all combinations have a publisher: {sat_errs:?}"
+    );
+}
+
+#[test]
+fn test_satisfiability_unreachable_impossible_value() {
+    // Condition references a value not in the enum domain
+    let yaml = r#"
+version: 1
+args:
+  mode:
+    choices: [a, b]
+nodes:
+  normal:
+    if: $(var mode) == 'a'
+    pub: [out]
+  impossible:
+    if: $(var mode) == 'c'
+    pub: [out]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.message.contains("unreachable"))
+        .collect();
+    assert!(
+        warns.iter().any(|w| w.message.contains("impossible")),
+        "node with mode=='c' should be unreachable when choices are [a,b]: {warns:?}"
+    );
+    // normal node should NOT be unreachable
+    assert!(
+        !warns.iter().any(|w| w.message.contains("normal")),
+        "normal node should be reachable"
+    );
+}
+
+#[test]
+fn test_satisfiability_not_equal_condition() {
+    // != condition — satisfiability rule should handle it
+    let yaml = r#"
+version: 1
+args:
+  mode:
+    choices: [ndt, eagleye]
+nodes:
+  not_ndt:
+    if: $(var mode) != 'ndt'
+    pub: [pose]
+  consumer:
+    sub: [input]
+topics:
+  pose:
+    type: geometry_msgs/msg/PoseStamped
+    pub: [not_ndt/pose?]
+    sub: [consumer/input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // mode=ndt → not_ndt filtered → 0 publishers
+    assert!(
+        !sat_errs.is_empty(),
+        "mode=ndt leaves topic with 0 publishers"
+    );
+    assert!(
+        sat_errs[0].message.contains("mode=ndt"),
+        "should mention mode=ndt: {}",
+        sat_errs[0].message
+    );
+}
+
+// ── Optional ref edge cases ──
+
+#[test]
+fn test_optional_ref_in_service_refs() {
+    let yaml = r#"
+version: 1
+nodes:
+  cond_server:
+    if: "true"
+    srv:
+      trigger: {}
+  client:
+    cli:
+      trigger: {}
+services:
+  svc:
+    type: std_srvs/srv/Trigger
+    server: [cond_server/trigger?]
+    client: [client/trigger]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let ref_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "optional-ref")
+        .collect();
+    assert!(
+        ref_errs.is_empty(),
+        "? on conditional server ref should be accepted: {ref_errs:?}"
+    );
+}
+
+#[test]
+fn test_optional_ref_missing_on_conditional_service_server() {
+    let yaml = r#"
+version: 1
+nodes:
+  cond_server:
+    if: "true"
+    srv:
+      trigger: {}
+services:
+  svc:
+    type: std_srvs/srv/Trigger
+    server: [cond_server/trigger]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let ref_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "optional-ref" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !ref_errs.is_empty(),
+        "ref to conditional server without ? should error"
+    );
+}
+
+// ── Substitution in scope interface ──
+
+#[test]
+fn test_substitution_in_scope_interface() {
+    use ros_launch_manifest_types::{resolve_args, substitute_manifest};
+    use std::collections::HashMap;
+
+    let yaml = r#"
+args:
+  input_topic:
+version: 1
+nodes:
+  n:
+    sub: [data]
+sub:
+  $(var input_topic)_input:
+    - n/data
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let args = HashMap::from([("input_topic".into(), "lidar".into())]);
+    let resolved = resolve_args(&m.args, &args).unwrap();
+    let subst = substitute_manifest(&m, &resolved).unwrap();
+
+    // The scope group key is NOT substituted (it's a YAML key, not a value)
+    // But the members ARE substituted
+    assert!(subst.scope_sub.contains_key("$(var input_topic)_input"));
+}
+
+// ── Full pipeline: substitute → filter → check ──
+
+#[test]
+fn test_full_pipeline_substitute_filter_check() {
+    use ros_launch_manifest_types::{filter_manifest, resolve_args, substitute_manifest};
+    use std::collections::HashMap;
+
+    let yaml = r#"
+args:
+  mode:
+    choices: [ndt, eagleye]
+  use_twist:
+    type: bool
+
+version: 1
+nodes:
+  ndt_node:
+    if: $(var mode) == 'ndt'
+    pub: [pose]
+    sub: [pointcloud]
+    paths:
+      main: { input: pointcloud, output: [pose], max_latency_ms: 30 }
+  eagleye_node:
+    if: $(var mode) == 'eagleye'
+    pub: [pose]
+    sub: [gnss]
+    paths:
+      main: { input: gnss, output: [pose], max_latency_ms: 15 }
+  twist_node:
+    if: $(var use_twist)
+    pub: [twist]
+    sub: [imu]
+  ekf:
+    sub:
+      pose_in: {}
+      twist_in:
+        state: true
+    pub: [output]
+    paths:
+      main: { input: pose_in, output: [output], max_latency_ms: 5 }
+
+topics:
+  pose:
+    type: geometry_msgs/msg/PoseStamped
+    pub:
+      - ndt_node/pose?
+      - eagleye_node/pose?
+    sub: [ekf/pose_in]
+    rate_hz: 10
+  twist:
+    type: geometry_msgs/msg/TwistStamped
+    pub: [twist_node/twist?]
+    sub: []
+
+sub:
+  pointcloud: [ndt_node/pointcloud?]
+  gnss: [eagleye_node/gnss?]
+  imu: [twist_node/imu?]
+pub:
+  localization: [ekf/output]
+paths:
+  main:
+    input: pointcloud
+    output: [localization]
+    max_latency_ms: 40
+    max_age_ms: 200
+"#;
+
+    let m = parse_manifest_str(yaml).unwrap();
+
+    // Test ndt+twist
+    let args1 = HashMap::from([
+        ("mode".into(), "ndt".into()),
+        ("use_twist".into(), "true".into()),
+    ]);
+    let resolved1 = resolve_args(&m.args, &args1).unwrap();
+    let mut m1 = substitute_manifest(&m, &resolved1).unwrap();
+    filter_manifest(&mut m1);
+
+    assert_eq!(m1.nodes.len(), 3, "ndt + twist + ekf");
+    let result1 = run_checks(&m1);
+    assert!(
+        !result1.has_errors(),
+        "ndt+twist should be clean: {:?}",
+        result1.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+
+    // Test eagleye without twist
+    let args2 = HashMap::from([
+        ("mode".into(), "eagleye".into()),
+        ("use_twist".into(), "false".into()),
+    ]);
+    let resolved2 = resolve_args(&m.args, &args2).unwrap();
+    let mut m2 = substitute_manifest(&m, &resolved2).unwrap();
+    filter_manifest(&mut m2);
+
+    assert_eq!(m2.nodes.len(), 2, "eagleye + ekf");
+    // twist topic: 0 pub + 0 sub after filter → removed
+    assert!(!m2.topics.contains_key("twist"), "twist topic removed (0 pub, 0 sub)");
+
+    let result2 = run_checks(&m2);
+    assert!(
+        !result2.has_errors(),
+        "eagleye without twist should be clean: {:?}",
+        result2.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+
+    // Pre-filter satisfiability should pass — pose topic is variant-complete,
+    // twist topic has 0 subscribers so satisfiability doesn't check it
+    let result_raw = run_checks(&m);
+    let sat_errs: Vec<_> = result_raw
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        sat_errs.is_empty(),
+        "variant-complete: {sat_errs:?}"
+    );
+}
+
 // ── Combined args + conditions ──
 
 #[test]
@@ -802,7 +1912,7 @@ topics:
     sub: [processor/input]
     rate_hz: 10
 "#;
-    let mut m = parse_manifest_str(yaml).unwrap();
+    let m = parse_manifest_str(yaml).unwrap();
 
     // Case 1: use_sensor=true — sensor_driver and sensor_data present
     let scope_args = HashMap::from([
@@ -1034,5 +2144,166 @@ topics:
     assert!(
         !m.topics.contains_key("data"),
         "empty topic should be removed by cleanup"
+    );
+}
+
+// ── Satisfiability checks ──
+
+#[test]
+fn test_satisfiability_variant_complete() {
+    // Two variants of pose_source — each provides a publisher. All configs are safe.
+    let yaml = r#"
+version: 1
+args:
+  pose_source:
+    choices: [ndt, eagleye]
+nodes:
+  ndt_node:
+    if: $(var pose_source) == 'ndt'
+    pub: [pose]
+  eagleye_node:
+    if: $(var pose_source) == 'eagleye'
+    pub: [pose]
+  consumer:
+    sub: [pose_input]
+topics:
+  localization_pose:
+    type: geometry_msgs/msg/PoseStamped
+    pub:
+      - ndt_node/pose?
+      - eagleye_node/pose?
+    sub: [consumer/pose_input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        sat_errs.is_empty(),
+        "variant-complete manifest should have no satisfiability errors: {sat_errs:?}"
+    );
+}
+
+#[test]
+fn test_satisfiability_variant_incomplete() {
+    // Three choices but only two nodes — gnss has no publisher.
+    let yaml = r#"
+version: 1
+args:
+  pose_source:
+    choices: [ndt, eagleye, gnss]
+nodes:
+  ndt_node:
+    if: $(var pose_source) == 'ndt'
+    pub: [pose]
+  eagleye_node:
+    if: $(var pose_source) == 'eagleye'
+    pub: [pose]
+  consumer:
+    sub: [pose_input]
+topics:
+  localization_pose:
+    type: geometry_msgs/msg/PoseStamped
+    pub:
+      - ndt_node/pose?
+      - eagleye_node/pose?
+    sub: [consumer/pose_input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !sat_errs.is_empty(),
+        "variant-incomplete should report satisfiability error"
+    );
+    // Should mention gnss
+    assert!(
+        sat_errs[0].message.contains("pose_source=gnss"),
+        "error should mention gnss: {}",
+        sat_errs[0].message
+    );
+}
+
+#[test]
+fn test_satisfiability_unreachable_node() {
+    // Bool arg but condition compares to invalid value — always false.
+    let yaml = r#"
+version: 1
+args:
+  flag:
+    type: bool
+nodes:
+  normal_node:
+    pub: [output]
+  unreachable_node:
+    if: $(var flag) == 'wtf'
+    pub: [output]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [normal_node/output]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.message.contains("unreachable"))
+        .collect();
+    assert!(
+        !warns.is_empty(),
+        "should detect unreachable node: {:?}",
+        result
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "satisfiability")
+            .map(|d| d.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_satisfiability_bool_args() {
+    // Two bool flags controlling two nodes — both present in at least one config.
+    let yaml = r#"
+version: 1
+args:
+  use_a:
+    type: bool
+  use_b:
+    type: bool
+nodes:
+  node_a:
+    if: $(var use_a)
+    pub: [out_a]
+  node_b:
+    if: $(var use_b)
+    pub: [out_b]
+  always:
+    sub: [in]
+topics:
+  data_a:
+    type: std_msgs/msg/String
+    pub: [node_a/out_a?]
+    sub: [always/in]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // When use_a=false, topic data_a has 0 pub but 1 sub — error
+    assert!(
+        !sat_errs.is_empty(),
+        "should detect dangling when use_a=false"
     );
 }
