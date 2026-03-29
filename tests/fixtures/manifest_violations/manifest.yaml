@@ -109,10 +109,10 @@ services:
   typeless_service:
     server: [node_a/to_b]
 
-imports:
+sub:
   raw: [slow_driver/input]
 
-exports:
+pub:
   results: [node_b/output]
 
 paths:

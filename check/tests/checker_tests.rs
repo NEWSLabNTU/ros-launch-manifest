@@ -90,9 +90,9 @@ topics:
     type: PointCloud2
     pub: [ground/output]
     sub: [centerpoint/pointcloud]
-imports:
+sub:
   raw_data: [cropbox/input]
-exports:
+pub:
   detections: [centerpoint/objects]
 paths:
   main:
@@ -532,9 +532,9 @@ topics:
     pub: [ground/output]
     sub: [centerpoint/pointcloud]
     rate_hz: 10
-imports:
+sub:
   raw_data: [cropbox/input]
-exports:
+pub:
   detections: [centerpoint/objects]
 paths:
   main:

@@ -24,10 +24,24 @@ pub struct Manifest {
     pub actions: BTreeMap<String, ActionDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub includes: BTreeMap<String, IncludeDecl>,
+    /// Scope interface — publisher endpoint groups (scope provides to parent).
+    #[serde(rename = "pub", skip_serializing_if = "BTreeMap::is_empty")]
+    pub scope_pub: BTreeMap<String, Vec<String>>,
+    /// Scope interface — subscriber endpoint groups (scope needs from parent).
+    #[serde(rename = "sub", skip_serializing_if = "BTreeMap::is_empty")]
+    pub scope_sub: BTreeMap<String, Vec<String>>,
+    /// Scope interface — service server endpoint groups.
+    #[serde(rename = "srv", skip_serializing_if = "BTreeMap::is_empty")]
+    pub scope_srv: BTreeMap<String, Vec<String>>,
+    /// Scope interface — service client endpoint groups.
+    #[serde(rename = "cli", skip_serializing_if = "BTreeMap::is_empty")]
+    pub scope_cli: BTreeMap<String, Vec<String>>,
+    /// Scope interface — action server endpoint groups.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub imports: BTreeMap<String, Vec<String>>,
+    pub action_server: BTreeMap<String, Vec<String>>,
+    /// Scope interface — action client endpoint groups.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub exports: BTreeMap<String, Vec<String>>,
+    pub action_client: BTreeMap<String, Vec<String>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, PathDecl>,
 }

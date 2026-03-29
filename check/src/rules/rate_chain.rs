@@ -12,8 +12,8 @@ impl ValidationRule for RateChainRule {
     }
 
     fn check(&self, manifest: &Manifest, _graph: &DataflowGraph, ctx: &mut CheckContext) {
-        // Check that export endpoints have achievable rates
-        for (group_name, members) in &manifest.exports {
+        // Check that scope pub (export) endpoints have achievable rates
+        for (group_name, members) in &manifest.scope_pub {
             for member in members {
                 if let Some((node_name, ep_name)) = member.split_once('/')
                     && let Some(node) = manifest.nodes.get(node_name)

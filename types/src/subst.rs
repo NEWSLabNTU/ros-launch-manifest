@@ -140,13 +140,23 @@ pub fn substitute_manifest(
         act.client = substitute_vec(&act.client, args)?;
     }
 
-    // Imports: endpoint lists
-    for members in m.imports.values_mut() {
+    // Scope interface: endpoint lists
+    for members in m.scope_pub.values_mut() {
         *members = substitute_vec(members, args)?;
     }
-
-    // Exports: endpoint lists
-    for members in m.exports.values_mut() {
+    for members in m.scope_sub.values_mut() {
+        *members = substitute_vec(members, args)?;
+    }
+    for members in m.scope_srv.values_mut() {
+        *members = substitute_vec(members, args)?;
+    }
+    for members in m.scope_cli.values_mut() {
+        *members = substitute_vec(members, args)?;
+    }
+    for members in m.action_server.values_mut() {
+        *members = substitute_vec(members, args)?;
+    }
+    for members in m.action_client.values_mut() {
         *members = substitute_vec(members, args)?;
     }
 

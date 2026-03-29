@@ -64,10 +64,10 @@ includes:
         sub: [detector/points]
         rate_hz: 10
 
-    imports:
+    sub:
       lidar_input: [cropbox/input]
 
-    exports:
+    pub:
       detected_objects: [detector/objects]
 
     paths:
@@ -105,10 +105,10 @@ includes:
           reliability: reliable
           durability: transient_local
 
-    imports:
+    sub:
       obstacle_input: [planner/obstacles]
 
-    exports:
+    pub:
       planned_trajectory: [planner/trajectory]
 
     paths:
@@ -117,7 +117,7 @@ includes:
         output: [planned_trajectory]
         max_latency_ms: 25
 
-exports:
+pub:
   trajectory: [planning/planner/trajectory]
 
 paths:

@@ -76,8 +76,12 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         services: parse_services(doc, ctx)?,
         actions: parse_actions(doc, ctx)?,
         includes: parse_includes(doc, ctx)?,
-        imports: parse_groups(doc, "imports"),
-        exports: parse_groups(doc, "exports"),
+        scope_pub: parse_groups(doc, "pub"),
+        scope_sub: parse_groups(doc, "sub"),
+        scope_srv: parse_groups(doc, "srv"),
+        scope_cli: parse_groups(doc, "cli"),
+        action_server: parse_groups(doc, "action_server"),
+        action_client: parse_groups(doc, "action_client"),
         paths: parse_paths(doc, ctx)?,
     })
 }
@@ -578,14 +582,14 @@ topics:
     type: std_msgs/msg/String
     pub: [talker/chatter]
     sub: [listener/chatter]
-exports:
+pub:
   output: [talker/chatter]
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         assert_eq!(m.version, 1);
         assert_eq!(m.nodes.len(), 2);
         assert_eq!(m.topics.len(), 1);
-        assert_eq!(m.exports.len(), 1);
+        assert_eq!(m.scope_pub.len(), 1);
 
         let talker = &m.nodes["talker"];
         assert!(talker.publishers.contains_key("chatter"));
@@ -716,7 +720,7 @@ includes:
       emergency_stop:
         pub: [stop_cmd]
         sub: [diagnostics]
-    exports:
+    pub:
       commands: [emergency_stop/stop_cmd]
 "#;
         let m = parse_manifest_str(yaml).unwrap();
@@ -735,7 +739,7 @@ includes:
         match &m.includes["safety"] {
             IncludeDecl::Inline(inner) => {
                 assert!(inner.nodes.contains_key("emergency_stop"));
-                assert!(inner.exports.contains_key("commands"));
+                assert!(inner.scope_pub.contains_key("commands"));
             }
             _ => panic!("expected Inline"),
         }
@@ -745,9 +749,9 @@ includes:
     fn test_scope_paths() {
         let yaml = r#"
 version: 1
-imports:
+sub:
   raw_data: [cropbox_filter/input]
-exports:
+pub:
   detections: [centerpoint/objects]
 paths:
   main:
@@ -757,8 +761,8 @@ paths:
     max_age_ms: 120
 "#;
         let m = parse_manifest_str(yaml).unwrap();
-        assert_eq!(m.imports["raw_data"], vec!["cropbox_filter/input"]);
-        assert_eq!(m.exports["detections"], vec!["centerpoint/objects"]);
+        assert_eq!(m.scope_sub["raw_data"], vec!["cropbox_filter/input"]);
+        assert_eq!(m.scope_pub["detections"], vec!["centerpoint/objects"]);
 
         let main = &m.paths["main"];
         assert_eq!(main.input, vec!["raw_data"]);

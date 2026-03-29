@@ -27,7 +27,7 @@ impl ValidationRule for WiringRule {
                 for input_ep in &path.input {
                     let full_ref = format!("{node_name}/{input_ep}");
                     if !wired_endpoints.contains(&full_ref)
-                        && !is_import_ref(input_ep, &manifest.imports)
+                        && !is_scope_interface_ref(input_ep, manifest)
                     {
                         ctx.warning(
                             self.id(),
@@ -53,10 +53,9 @@ impl ValidationRule for WiringRule {
             }
         }
 
-        // Check unresolved imports
-        for (group_name, members) in &manifest.imports {
+        // Check unresolved scope sub (incoming) interface endpoints
+        for (group_name, members) in &manifest.scope_sub {
             for member in members {
-                // Check if any topic wires this import
                 let is_wired = manifest
                     .topics
                     .values()
@@ -64,8 +63,8 @@ impl ValidationRule for WiringRule {
                 if !is_wired {
                     ctx.warning(
                         self.id(),
-                        &format!("imports.{group_name}"),
-                        format!("import member '{member}' is not wired by any topic's sub list"),
+                        &format!("sub.{group_name}"),
+                        format!("scope sub member '{member}' is not wired by any topic's sub list"),
                     );
                 }
             }
@@ -73,6 +72,7 @@ impl ValidationRule for WiringRule {
     }
 }
 
-fn is_import_ref(name: &str, imports: &std::collections::BTreeMap<String, Vec<String>>) -> bool {
-    imports.contains_key(name)
+/// Check if a name is referenced in the scope interface (sub or cli groups).
+fn is_scope_interface_ref(name: &str, manifest: &Manifest) -> bool {
+    manifest.scope_sub.contains_key(name) || manifest.scope_cli.contains_key(name)
 }

@@ -46,8 +46,8 @@ fn fixture_pipeline_parses() {
         "cropbox + ground_filter + fusion + tracker"
     );
     assert_eq!(m.topics.len(), 5);
-    assert!(!m.imports.is_empty());
-    assert!(!m.exports.is_empty());
+    assert!(!m.scope_sub.is_empty());
+    assert!(!m.scope_pub.is_empty());
     assert!(!m.paths.is_empty());
 }
 
@@ -350,8 +350,8 @@ fn fixture_multi_scope_inline_structure() {
         ros_launch_manifest_types::IncludeDecl::Inline(inner) => {
             assert_eq!(inner.nodes.len(), 2, "cropbox + detector");
             assert!(inner.topics.contains_key("filtered_points"));
-            assert!(!inner.imports.is_empty());
-            assert!(!inner.exports.is_empty());
+            assert!(!inner.scope_sub.is_empty());
+            assert!(!inner.scope_pub.is_empty());
             assert!(!inner.paths.is_empty());
         }
         ros_launch_manifest_types::IncludeDecl::External { .. } => {

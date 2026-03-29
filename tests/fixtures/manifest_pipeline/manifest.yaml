@@ -98,10 +98,10 @@ topics:
     sub: []
     rate_hz: 10
 
-imports:
+sub:
   sensor_input: [cropbox/raw_points]
 
-exports:
+pub:
   tracking_output: [tracker/tracked_objects]
 
 paths:

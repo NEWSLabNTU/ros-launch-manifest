@@ -107,10 +107,10 @@ services:
     type: std_srvs/srv/Trigger
     server: [ndt_scan_matcher/trigger_node]
 
-imports:
+sub:
   raw_lidar: [voxel_grid/raw_points]
 
-exports:
+pub:
   localization: [ekf_localizer/ekf_pose]
 
 paths:
