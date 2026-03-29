@@ -356,6 +356,25 @@ topics:
 Topic names are **relative** — the parser applies the namespace from
 the include context. The real topic name becomes `<ns>/topic_name`.
 
+**Optional endpoint references** — a trailing `?` marks an endpoint ref
+as optional. The referenced node may be conditional (`if:`/`unless:`).
+After condition filtering, optional refs to filtered-out nodes are silently
+dropped. Unmarked refs are required — the checker errors if the node
+doesn't exist.
+
+```yaml
+topics:
+  predicted_trajectory:
+    type: autoware_planning_msgs/msg/Trajectory
+    pub: [controller/predicted_trajectory]
+    sub:
+      - validator/predicted_trajectory?       # optional — node has if: condition
+      - checker/predicted_trajectory?         # optional
+```
+
+`?` is unambiguous — ROS 2 names only allow alphanumeric, underscore, and
+slash characters.
+
 **Undeclared topics**: if a node endpoint is not wired by any topic in
 the manifest, the auditor emits a warning (not an error). This allows
 gradual adoption.

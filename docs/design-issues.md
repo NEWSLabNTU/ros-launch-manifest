@@ -509,16 +509,209 @@ This matches the actual file naming convention in `autoware-contract/`.
 
 ---
 
+## 9. Dangling Endpoint References After Condition Filtering
+
+### Problem
+
+When `filter_manifest()` removes a conditional node, topics that reference
+its endpoints are left with dangling references:
+
+```yaml
+nodes:
+  lane_departure_checker:
+    if: $(var launch_lane_departure_checker)
+    sub: [predicted_trajectory]
+
+topics:
+  predicted_trajectory:
+    sub:
+      - control_validator/predicted_trajectory
+      - lane_departure_checker/predicted_trajectory  # ← dangling if node filtered
+```
+
+Users may assume every endpoint in a topic's `pub:`/`sub:` list exists at
+runtime. Dangling refs are confusing and may trigger false wiring warnings.
+
+### Why Not `if:` on Individual Endpoint References?
+
+The `if:` condition uses args from the manifest where the node is declared.
+In cross-scope scenarios, the parent manifest wires child imports/exports —
+the condition context of the child node is not available in the parent's
+`topics:` section. Conditions can't cross manifest boundaries.
+
+Even intra-scope, adding `if:` to individual `pub:`/`sub:` entries would
+duplicate the condition already on the node. This violates DRY and creates
+a maintenance burden.
+
+Prior art supports this constraint:
+- **AUTOSAR**: variation points on connectors use the same mechanism as
+  components, but in practice the connector condition matches the endpoint's
+  component condition — it's the same `SW-SYSCOND` expression.
+- **AADL**: `in modes (...)` on connections must be consistent with the
+  subcomponent's mode membership — the language enforces this.
+- Both systems accept that the full topology is a **superset** — variant
+  resolution selects the active subset.
+
+### Solution: Post-Filter Cleanup + Comment Convention
+
+**Tool behavior** — after `filter_manifest()` removes conditional nodes,
+a second pass removes dangling endpoint references from topic `pub:`/`sub:`
+and service `server:`/`client:` lists:
+
+```rust
+fn cleanup_dangling_refs(manifest: &mut Manifest) {
+    let node_names: HashSet<&str> = manifest.nodes.keys().map(|s| s.as_str()).collect();
+    for topic in manifest.topics.values_mut() {
+        topic.publishers.retain(|r| {
+            r.split_once('/').map_or(true, |(node, _)| node_names.contains(node))
+        });
+        topic.subscribers.retain(|r| {
+            r.split_once('/').map_or(true, |(node, _)| node_names.contains(node))
+        });
+    }
+    for svc in manifest.services.values_mut() {
+        svc.server.retain(|r| {
+            r.split_once('/').map_or(true, |(node, _)| node_names.contains(node))
+        });
+        svc.client.retain(|r| {
+            r.split_once('/').map_or(true, |(node, _)| node_names.contains(node))
+        });
+    }
+}
+```
+
+**`?` suffix on endpoint references** — a trailing `?` marks an endpoint
+ref as optional (the referenced node may be conditional):
+
+```yaml
+topics:
+  predicted_trajectory:
+    type: autoware_planning_msgs/msg/Trajectory
+    pub: [controller_node_exe/predicted_trajectory]
+    sub:
+      - control_validator/predicted_trajectory?                  # when launch_control_validator
+      - lane_departure_checker/predicted_trajectory?             # when launch_lane_departure_checker
+      - autonomous_emergency_braking/predicted_trajectory?       # when launch_autonomous_emergency_braking
+```
+
+- **Unmarked** ref → required. Checker errors if the node doesn't exist
+  after condition filtering.
+- **`?` suffix** → optional. Silently dropped during post-filter cleanup
+  if the referenced node was filtered out.
+
+`?` is unambiguous — it's not a valid character in ROS 2 topic, service,
+or node names (only alphanumeric, underscore, slash allowed per REP-144
+and rcl validation).
+
+### Validation Rule: `optional-ref`
+
+The checker enforces `?` correctness (12th rule, total now 12):
+
+- Ref to a node with `if:`/`unless:` **must** have `?` suffix → error if missing
+- Ref to a node without condition **must not** have `?` suffix → error if present
+
+This rule runs on the raw (pre-filter) manifest. After `filter_manifest()`,
+conditions are cleared on surviving entities and `?` is stripped — so the
+rule is a no-op on the filtered manifest.
+
+### Implementation — Done
+
+1. `cleanup_dangling_refs()` in `cond.rs` — called from `filter_manifest()`
+2. `filter_manifest()` clears `if_condition`/`unless_condition` on surviving
+   entities after evaluation
+3. `optional_ref.rs` validation rule — enforces `?` matches conditionality
+4. 7 new tests: 4 in `cond::tests` (cleanup behavior), 3 in `checker_tests`
+   (rule validation)
+
+---
+
+## 10. Cross-Scope Service Wiring (`service_imports:` / `service_exports:`)
+
+### Problem
+
+The manifest has `imports:`/`exports:` for topic endpoints at scope
+boundaries, but no equivalent for services. MRM handler's `cli:` targets
+are servers in different scopes — the `service-wiring` rule can't verify
+cross-scope calls.
+
+### Proposed Solution: `service_imports:` / `service_exports:`
+
+Mirror the topic import/export pattern:
+
+**Child scope (mrm_handler.yaml)**:
+```yaml
+nodes:
+  mrm_handler:
+    cli:
+      comfortable_stop_operate: {}
+      emergency_stop_operate: {}
+
+service_imports:
+  # cli endpoints that call servers in other scopes
+  comfortable_stop:
+    - mrm_handler/comfortable_stop_operate
+  emergency_stop:
+    - mrm_handler/emergency_stop_operate
+```
+
+**Child scope (mrm_comfortable_stop_operator.yaml)**:
+```yaml
+nodes:
+  mrm_comfortable_stop_operator:
+    srv:
+      operate: {}
+
+service_exports:
+  # srv endpoints available to other scopes
+  comfortable_stop:
+    - mrm_comfortable_stop_operator/operate
+```
+
+**Parent scope (system.yaml, if it existed)**:
+```yaml
+services:
+  comfortable_stop_operate:
+    type: tier4_system_msgs/srv/OperateMrm
+    server: [mrm_comfortable_stop_operator/comfortable_stop]  # via service_exports
+    client: [mrm_handler/comfortable_stop]                     # via service_imports
+```
+
+### Semantics
+
+- `service_imports:` — `cli:` endpoints that **call** servers outside this scope
+- `service_exports:` — `srv:` endpoints that **serve** clients outside this scope
+- Parent scope wires them in `services:` using `child_name/export_group_name`
+
+### Checker Rules
+
+- `service-wiring`: if a `cli:` endpoint is in `service_imports:`, don't warn
+  about missing `services:` entry (the parent handles the wiring)
+- `service-type`: parent's `services:` entry must have `type:` matching both sides
+
+### Implementation
+
+1. Add `service_imports: BTreeMap<String, Vec<String>>` and
+   `service_exports: BTreeMap<String, Vec<String>>` to `Manifest` type
+2. Parser handles the same list-of-endpoints format as topic imports/exports
+3. Update `service-wiring` rule to exclude `cli:` endpoints that appear in
+   `service_imports:` (those are wired by the parent)
+4. Substitution engine walks `service_imports`/`service_exports` strings
+5. Test: cross-scope service wiring with parent manifest
+
+---
+
 ## Summary
 
-| Issue                           | Type                    | Effort  | Priority                                                       |
-|---------------------------------|-------------------------|---------|----------------------------------------------------------------|
-| Args + substitutions + `if:`    | Format + types + loader | Medium  | High — enables exact topic name matching and conditional nodes |
-| Service wiring check            | New static rule         | Small   | Medium — catches missing service providers                     |
-| Service `max_response_ms`       | Format + runtime        | Large   | Low — no DDS mechanism, needs service call interception        |
-| Stale descriptions (3a-3c)      | Doc fix                 | Trivial | High — misleading                                              |
-| Missing `cli:` docs (4)         | Doc fix                 | Trivial | Medium                                                         |
-| Endpoint name clarification (5) | Doc fix                 | Small   | High — source of confusion                                     |
-| ~~Import topic mapping (6)~~    | ~~Dropped~~             | —       | Parent topics: section handles this already                    |
-| Global topics wiring (7)        | Design decision         | Small   | Low — keep as documentation only                               |
-| External include naming (8)     | Doc fix                 | Trivial | Medium — inconsistent examples                                 |
+| Issue                              | Type                    | Effort  | Status                           |
+|------------------------------------|-------------------------|---------|----------------------------------|
+| Args + substitutions + `if:` (1-3) | Format + types + loader | Medium  | Done (Phase 32)                  |
+| Service wiring check (2)           | New static rule         | Small   | Done (Phase 32.5)                |
+| Service `max_response_ms` (2)      | Format + runtime        | Large   | Done (format); runtime deferred  |
+| Stale descriptions (3a-3c)         | Doc fix                 | Trivial | Done (Phase 32.1)                |
+| Missing `cli:` docs (4)            | Doc fix                 | Trivial | Done (Phase 32.1)                |
+| Endpoint name clarification (5)    | Doc fix                 | Small   | Done (Phase 32.1)                |
+| ~~Import topic mapping (6)~~       | ~~Dropped~~             | —       | Parent topics: handles this      |
+| Global topics wiring (7)           | Design decision         | Small   | Kept as documentation only       |
+| External include naming (8)        | Doc fix                 | Trivial | Done (Phase 32.1)                |
+| Optional refs `?` suffix (9)       | Format + rule + cleanup | Small   | Done — `optional-ref` rule + `cleanup_dangling_refs` |
+| Service imports/exports (10)       | Format extension        | Medium  | Proposed — mirrors topic pattern |

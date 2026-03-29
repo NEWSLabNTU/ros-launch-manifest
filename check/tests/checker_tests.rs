@@ -798,7 +798,7 @@ topics:
   sensor_data:
     if: $(var use_sensor)
     type: $(var sensor_topic)
-    pub: [sensor_driver/pointcloud]
+    pub: [sensor_driver/pointcloud?]
     sub: [processor/input]
     rate_hz: 10
 "#;
@@ -846,5 +846,87 @@ topics:
         !result2.has_errors(),
         "case 2 (sensor disabled) should be clean: {:?}",
         result2.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+// ── Optional ref (?) validation ──
+
+#[test]
+fn test_optional_ref_correct_usage() {
+    let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+  conditional_node:
+    if: "true"
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output]
+    sub: [conditional_node/input?]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let ref_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "optional-ref")
+        .collect();
+    assert!(
+        ref_errs.is_empty(),
+        "correct usage should have no errors: {ref_errs:?}"
+    );
+}
+
+#[test]
+fn test_optional_ref_missing_suffix_on_conditional() {
+    let yaml = r#"
+version: 1
+nodes:
+  conditional_node:
+    if: "true"
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    sub: [conditional_node/input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let ref_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "optional-ref" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !ref_errs.is_empty(),
+        "ref to conditional node without ? should be an error"
+    );
+}
+
+#[test]
+fn test_optional_ref_suffix_on_unconditional() {
+    let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output?]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let ref_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "optional-ref" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !ref_errs.is_empty(),
+        "? on unconditional node should be an error"
     );
 }

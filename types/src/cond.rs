@@ -77,6 +77,78 @@ pub fn filter_manifest(manifest: &mut crate::Manifest) {
             )
         });
     }
+
+    // Clear conditions on surviving entities — they've been evaluated
+    for node in manifest.nodes.values_mut() {
+        node.if_condition = None;
+        node.unless_condition = None;
+        for path in node.paths.values_mut() {
+            path.if_condition = None;
+            path.unless_condition = None;
+        }
+    }
+    for topic in manifest.topics.values_mut() {
+        topic.if_condition = None;
+        topic.unless_condition = None;
+    }
+    for svc in manifest.services.values_mut() {
+        svc.if_condition = None;
+        svc.unless_condition = None;
+    }
+    for act in manifest.actions.values_mut() {
+        act.if_condition = None;
+        act.unless_condition = None;
+    }
+    for path in manifest.paths.values_mut() {
+        path.if_condition = None;
+        path.unless_condition = None;
+    }
+
+    // Clean up dangling endpoint references
+    cleanup_dangling_refs(manifest);
+}
+
+/// Remove optional (`?`-suffixed) endpoint references whose nodes were filtered out.
+/// Required (unmarked) references are left intact — the checker will error on those.
+fn cleanup_dangling_refs(manifest: &mut crate::Manifest) {
+    let node_names: std::collections::HashSet<&str> =
+        manifest.nodes.keys().map(|s| s.as_str()).collect();
+
+    for topic in manifest.topics.values_mut() {
+        cleanup_ref_list(&mut topic.publishers, &node_names);
+        cleanup_ref_list(&mut topic.subscribers, &node_names);
+    }
+    for svc in manifest.services.values_mut() {
+        cleanup_ref_list(&mut svc.server, &node_names);
+        cleanup_ref_list(&mut svc.client, &node_names);
+    }
+}
+
+/// Remove `?`-suffixed refs whose node is not in `node_names`.
+/// Strip the `?` suffix from refs whose node IS present.
+fn cleanup_ref_list(refs: &mut Vec<String>, node_names: &std::collections::HashSet<&str>) {
+    refs.retain_mut(|r| {
+        if let Some(bare) = r.strip_suffix('?') {
+            // Optional ref — check if node exists
+            if let Some((node, _)) = bare.split_once('/') {
+                if node_names.contains(node) {
+                    // Node present — strip the ? and keep
+                    *r = bare.to_string();
+                    true
+                } else {
+                    // Node filtered out — drop silently
+                    false
+                }
+            } else {
+                // No slash — not a node/endpoint ref, keep as-is
+                *r = bare.to_string();
+                true
+            }
+        } else {
+            // Required ref — always keep (checker validates existence)
+            true
+        }
+    });
 }
 
 // ── Expression parser ──
@@ -336,5 +408,117 @@ topics:
 
         assert_eq!(m.topics.len(), 1);
         assert!(m.topics.contains_key("enabled_topic"));
+    }
+
+    // ── Optional endpoint refs (? suffix) ──
+
+    #[test]
+    fn test_optional_ref_dropped_when_node_filtered() {
+        let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+  conditional_node:
+    if: "false"
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output]
+    sub:
+      - conditional_node/input?
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+
+        assert!(!m.nodes.contains_key("conditional_node"));
+        // Optional ref should be dropped
+        let subs = &m.topics["data"].subscribers;
+        assert!(subs.is_empty(), "optional ref should be dropped: {subs:?}");
+    }
+
+    #[test]
+    fn test_optional_ref_kept_when_node_present() {
+        let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+  conditional_node:
+    if: "true"
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output]
+    sub:
+      - conditional_node/input?
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+
+        assert!(m.nodes.contains_key("conditional_node"));
+        // Optional ref kept — ? stripped
+        let subs = &m.topics["data"].subscribers;
+        assert_eq!(subs, &vec!["conditional_node/input".to_string()]);
+    }
+
+    #[test]
+    fn test_required_ref_kept_even_when_node_missing() {
+        let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+  conditional_node:
+    if: "false"
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output]
+    sub:
+      - conditional_node/input
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+
+        assert!(!m.nodes.contains_key("conditional_node"));
+        // Required ref (no ?) is NOT dropped — checker will error
+        let subs = &m.topics["data"].subscribers;
+        assert_eq!(subs, &vec!["conditional_node/input".to_string()]);
+    }
+
+    #[test]
+    fn test_mixed_required_and_optional_refs() {
+        let yaml = r#"
+version: 1
+nodes:
+  required_node:
+    sub: [input]
+  optional_node_a:
+    if: "false"
+    sub: [input]
+  optional_node_b:
+    if: "true"
+    sub: [input]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: []
+    sub:
+      - required_node/input
+      - optional_node_a/input?
+      - optional_node_b/input?
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+
+        let subs = &m.topics["data"].subscribers;
+        assert_eq!(subs.len(), 2);
+        assert_eq!(subs[0], "required_node/input"); // required — kept
+        assert_eq!(subs[1], "optional_node_b/input"); // optional, node present — kept, ? stripped
+        // optional_node_a filtered out — ref dropped
     }
 }
