@@ -358,17 +358,54 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
 // ── Args ──
 
 /// Parse `args:` section. All args are mandatory — values from scope table.
-/// Accepts both list form `args: [a, b]` and map form `args: { a:, b: }`.
-fn parse_args(doc: &Yaml) -> Vec<String> {
+///
+/// Accepts:
+/// - List form: `args: [a, b]` → all free strings
+/// - Map form with null values: `args: { a:, b: }` → all free strings
+/// - Map form with type: `args: { x: { type: bool } }` → typed
+/// - Map form with choices: `args: { x: { choices: [a, b] } }` → enum
+fn parse_args(doc: &Yaml) -> BTreeMap<String, ArgDecl> {
+    let mut out = BTreeMap::new();
     let section = &doc["args"];
     if section.is_badvalue() {
-        return vec![];
+        return out;
     }
     match section {
-        Yaml::Array(arr) => arr.iter().map(yaml_str_owned).collect(),
-        Yaml::Hash(hash) => hash.keys().map(yaml_str_owned).collect(),
-        _ => vec![],
+        Yaml::Array(arr) => {
+            for item in arr {
+                out.insert(yaml_str_owned(item), ArgDecl::String);
+            }
+        }
+        Yaml::Hash(hash) => {
+            for (k, v) in hash {
+                let name = yaml_str_owned(k);
+                let decl = parse_arg_decl(v);
+                out.insert(name, decl);
+            }
+        }
+        _ => {}
     }
+    out
+}
+
+fn parse_arg_decl(yaml: &Yaml) -> ArgDecl {
+    if yaml.is_null() || yaml.is_badvalue() {
+        return ArgDecl::String;
+    }
+    // Check for { type: bool }
+    if let Some(type_str) = yaml_string(yaml, "type") {
+        if type_str == "bool" {
+            return ArgDecl::Bool;
+        }
+        // "string" or any other type → free string
+        return ArgDecl::String;
+    }
+    // Check for { choices: [a, b, c] }
+    let choices = yaml_string_list(yaml, "choices");
+    if !choices.is_empty() {
+        return ArgDecl::Choices(choices);
+    }
+    ArgDecl::String
 }
 
 // ── Global Topics ──

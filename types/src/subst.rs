@@ -3,7 +3,8 @@
 //! Resolves `$(var name)` references in all string fields of a manifest
 //! using a provided args map. Runs before static checks and namespace resolution.
 
-use std::collections::HashMap;
+use crate::types::ArgDecl;
+use std::collections::{BTreeMap, HashMap};
 
 /// Error during substitution.
 #[derive(Debug, thiserror::Error)]
@@ -12,6 +13,12 @@ pub enum SubstError {
     Unresolved { name: String },
     #[error("required arg '{name}' has no default and was not provided")]
     RequiredArgMissing { name: String },
+    #[error("arg '{name}' has invalid value '{value}' — expected one of {expected}")]
+    InvalidArgValue {
+        name: String,
+        value: String,
+        expected: String,
+    },
     #[error("malformed substitution: {expr}")]
     Malformed { expr: String },
 }
@@ -19,16 +26,26 @@ pub enum SubstError {
 /// Resolve manifest args from caller-provided scope args.
 ///
 /// All manifest args are mandatory. Errors if any declared arg is missing
-/// from `caller_args`. Caller args not declared in the manifest are passed
-/// through (available for `$(var ...)` substitution).
+/// from `caller_args`. Validates values against type constraints (bool, choices).
+/// Caller args not declared in the manifest are passed through.
 pub fn resolve_args(
-    manifest_args: &[String],
+    manifest_args: &BTreeMap<String, ArgDecl>,
     caller_args: &HashMap<String, String>,
 ) -> Result<HashMap<String, String>, SubstError> {
     let mut resolved = HashMap::new();
 
-    for name in manifest_args {
+    for (name, decl) in manifest_args {
         if let Some(value) = caller_args.get(name) {
+            // Validate against type constraint
+            if let Some(valid) = decl.valid_values()
+                && !valid.contains(&value.as_str())
+            {
+                return Err(SubstError::InvalidArgValue {
+                    name: name.clone(),
+                    value: value.clone(),
+                    expected: format!("{:?}", valid),
+                });
+            }
             resolved.insert(name.clone(), value.clone());
         } else {
             return Err(SubstError::RequiredArgMissing { name: name.clone() });
@@ -224,7 +241,10 @@ mod tests {
 
     #[test]
     fn test_resolve_args_all_present() {
-        let manifest_args = vec!["a".into(), "b".into()];
+        let manifest_args = BTreeMap::from([
+            ("a".into(), ArgDecl::String),
+            ("b".into(), ArgDecl::String),
+        ]);
         let caller_args =
             HashMap::from([("a".into(), "val_a".into()), ("b".into(), "val_b".into())]);
         let resolved = resolve_args(&manifest_args, &caller_args).unwrap();
@@ -234,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_resolve_args_missing() {
-        let manifest_args = vec!["req".into()];
+        let manifest_args = BTreeMap::from([("req".into(), ArgDecl::String)]);
         let caller_args = HashMap::new();
         let err = resolve_args(&manifest_args, &caller_args).unwrap_err();
         assert!(matches!(err, SubstError::RequiredArgMissing { .. }));
@@ -242,10 +262,48 @@ mod tests {
 
     #[test]
     fn test_resolve_args_passthrough() {
-        let manifest_args = vec![];
+        let manifest_args = BTreeMap::new();
         let caller_args = HashMap::from([("extra".into(), "val".into())]);
         let resolved = resolve_args(&manifest_args, &caller_args).unwrap();
         assert_eq!(resolved["extra"], "val");
+    }
+
+    #[test]
+    fn test_resolve_args_bool_valid() {
+        let manifest_args = BTreeMap::from([("flag".into(), ArgDecl::Bool)]);
+        let caller_args = HashMap::from([("flag".into(), "true".into())]);
+        let resolved = resolve_args(&manifest_args, &caller_args).unwrap();
+        assert_eq!(resolved["flag"], "true");
+    }
+
+    #[test]
+    fn test_resolve_args_bool_invalid() {
+        let manifest_args = BTreeMap::from([("flag".into(), ArgDecl::Bool)]);
+        let caller_args = HashMap::from([("flag".into(), "yes".into())]);
+        let err = resolve_args(&manifest_args, &caller_args).unwrap_err();
+        assert!(matches!(err, SubstError::InvalidArgValue { .. }));
+    }
+
+    #[test]
+    fn test_resolve_args_choices_valid() {
+        let manifest_args = BTreeMap::from([(
+            "mode".into(),
+            ArgDecl::Choices(vec!["ndt".into(), "eagleye".into()]),
+        )]);
+        let caller_args = HashMap::from([("mode".into(), "ndt".into())]);
+        let resolved = resolve_args(&manifest_args, &caller_args).unwrap();
+        assert_eq!(resolved["mode"], "ndt");
+    }
+
+    #[test]
+    fn test_resolve_args_choices_invalid() {
+        let manifest_args = BTreeMap::from([(
+            "mode".into(),
+            ArgDecl::Choices(vec!["ndt".into(), "eagleye".into()]),
+        )]);
+        let caller_args = HashMap::from([("mode".into(), "gnss".into())]);
+        let err = resolve_args(&manifest_args, &caller_args).unwrap_err();
+        assert!(matches!(err, SubstError::InvalidArgValue { .. }));
     }
 
     #[test]
@@ -265,7 +323,8 @@ topics:
     sub: [planner/objects]
 "#;
         let manifest = crate::parse_manifest_str(yaml).unwrap();
-        assert_eq!(manifest.args, vec!["topic_name"]);
+        assert_eq!(manifest.args.len(), 1);
+        assert!(manifest.args.contains_key("topic_name"));
 
         // Parse with list form
         let yaml_list = r#"
@@ -273,7 +332,9 @@ args: [topic_name, other_arg]
 version: 1
 "#;
         let m2 = crate::parse_manifest_str(yaml_list).unwrap();
-        assert_eq!(m2.args, vec!["topic_name", "other_arg"]);
+        assert_eq!(m2.args.len(), 2);
+        assert!(m2.args.contains_key("topic_name"));
+        assert!(m2.args.contains_key("other_arg"));
 
         // Substitution on a manifest with $(var ...) in fields
         let yaml_with_var = r#"
@@ -291,5 +352,26 @@ topics:
         let args = HashMap::from([("topic_name".into(), "/resolved/topic".into())]);
         let substituted = substitute_manifest(&m, &args).unwrap();
         assert_eq!(substituted.topics["input"].msg_type, "/resolved/topic");
+    }
+
+    #[test]
+    fn test_parse_typed_args() {
+        let yaml = r#"
+args:
+  free_arg:
+  bool_arg:
+    type: bool
+  enum_arg:
+    choices: [ndt, eagleye, gnss]
+version: 1
+"#;
+        let m = crate::parse_manifest_str(yaml).unwrap();
+        assert_eq!(m.args.len(), 3);
+        assert!(matches!(m.args["free_arg"], ArgDecl::String));
+        assert!(matches!(m.args["bool_arg"], ArgDecl::Bool));
+        match &m.args["enum_arg"] {
+            ArgDecl::Choices(v) => assert_eq!(v, &vec!["ndt", "eagleye", "gnss"]),
+            _ => panic!("expected Choices"),
+        }
     }
 }

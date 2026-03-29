@@ -3,13 +3,36 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+/// Argument declaration with optional type constraint.
+#[derive(Debug, Clone, Default, Serialize)]
+pub enum ArgDecl {
+    /// Free string — no constraint (default).
+    #[default]
+    String,
+    /// Boolean — only "true" or "false".
+    Bool,
+    /// Enum — one of the listed values.
+    Choices(Vec<String>),
+}
+
+impl ArgDecl {
+    /// Valid values for this arg type. None = unconstrained (free string).
+    pub fn valid_values(&self) -> Option<Vec<&str>> {
+        match self {
+            ArgDecl::String => None,
+            ArgDecl::Bool => Some(vec!["true", "false"]),
+            ArgDecl::Choices(choices) => Some(choices.iter().map(|s| s.as_str()).collect()),
+        }
+    }
+}
+
 /// Top-level manifest.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Manifest {
     pub version: u32,
     /// Manifest arguments — all mandatory. Values provided by scope args from record.json.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub args: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub args: BTreeMap<String, ArgDecl>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exclude_patterns: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]

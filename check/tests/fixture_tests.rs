@@ -396,9 +396,9 @@ fn fixture_multi_scope_clean() {
 fn fixture_args_parses() {
     let m = parse_manifest(&fixture_path("manifest_args")).unwrap();
     assert_eq!(m.args.len(), 3);
-    assert!(m.args.contains(&"input_topic".to_string()));
-    assert!(m.args.contains(&"output_topic".to_string()));
-    assert!(m.args.contains(&"node_enabled".to_string()));
+    assert!(m.args.contains_key("input_topic"));
+    assert!(m.args.contains_key("output_topic"));
+    assert!(m.args.contains_key("node_enabled"));
 }
 
 #[test]
