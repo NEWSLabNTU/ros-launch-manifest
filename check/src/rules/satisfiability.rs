@@ -325,19 +325,18 @@ fn extract_literal(s: &str) -> &str {
 /// Check if a ref points to a node that has a condition (if:/unless:).
 fn is_conditional_ref(r: &str, conditional_nodes: &HashSet<&str>) -> bool {
     r.split_once('/')
-        .map_or(false, |(node, _)| conditional_nodes.contains(node))
+        .is_some_and(|(node, _)| conditional_nodes.contains(node))
 }
 
 /// Check if all subscribers of a topic are state-only (state: true, not required: true).
 /// If so, 0 publishers is harmless — polled subscribers just read nothing.
 fn all_state_only_subs(subscribers: &[String], manifest: &Manifest) -> bool {
     subscribers.iter().all(|sub_ref| {
-        if let Some((node_name, ep_name)) = sub_ref.split_once('/') {
-            if let Some(node) = manifest.nodes.get(node_name) {
-                if let Some(ep) = node.subscribers.get(ep_name) {
-                    return ep.state.unwrap_or(false) && !ep.required.unwrap_or(false);
-                }
-            }
+        if let Some((node_name, ep_name)) = sub_ref.split_once('/')
+            && let Some(node) = manifest.nodes.get(node_name)
+            && let Some(ep) = node.subscribers.get(ep_name)
+        {
+            return ep.state.unwrap_or(false) && !ep.required.unwrap_or(false);
         }
         // Can't resolve — assume it needs data (conservative)
         false
