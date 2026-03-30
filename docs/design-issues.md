@@ -1246,14 +1246,24 @@ and a single `state: true` subscriber (ekf/twist_input). When both
 publishers are filtered, the topic has 0 pub + 1 state sub. The rule
 reports an error, but the system works fine — EKF just has no twist data.
 
-### Proposed Fix
+### Fix — Done
 
-Before checking satisfiability for a topic, check whether all subscribers
-are `state: true`. If so, skip — no publisher is needed for correctness.
+The satisfiability rule now resolves each subscriber ref (`node/endpoint`)
+to its endpoint properties in the node declaration. If every subscriber
+is `state: true` and none are `required: true`, the topic is skipped —
+0 publishers is harmless for polled, non-required subscribers.
 
-This requires the satisfiability rule to look up subscriber endpoint
-properties from the node declarations, which it doesn't currently do
-(it only examines topic pub/sub lists and node conditions).
+The four combinations:
+
+| `state` | `required` | 0 publishers OK?                         |
+|---------|------------|------------------------------------------|
+| false   | false      | No — causal callback expects messages    |
+| false   | true       | No — causal + must have initial data     |
+| true    | false      | **Yes** — polls nothing, node works fine |
+| true    | true       | No — node needs at least one message     |
+
+3 new tests: state-only skip, state+required still errors, mixed
+state+causal still checked.
 
 ---
 
@@ -1335,6 +1345,6 @@ This is a small CLI change — filter `CheckResult.diagnostics` by
 | Dangling entity checks (13)        | New validation rule     | Small   | Done (Phase 33.4) — `dangling-entity` rule |
 | Arg types + satisfiability (14)    | Format + analysis       | Medium  | Done (Phase 33.3 + 33.5) — `ArgDecl` types + Z3 satisfiability |
 | ~~`?` in flow sequences (15)~~    | ~~YAML compat~~         | Small   | Done — `?` removed, optionality inferred from node conditions |
-| State-only sub skip (16)          | Satisfiability refinement| Small   | Open — false positives on state-only subscribers |
+| State-only sub skip (16)          | Satisfiability refinement| Small   | Done — skip topics where all subs are state-only |
 | Cross-scope suppression (17)      | UX / CLI                | Small   | Open — no way to suppress expected cross-scope warnings |
 | Per-rule CLI filter (18)          | UX / CLI                | Small   | Open — `--rule <ID>` flag for focused output |

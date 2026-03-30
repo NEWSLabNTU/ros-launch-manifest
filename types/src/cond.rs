@@ -491,7 +491,10 @@ topics:
         assert!(!m.nodes.contains_key("conditional_node"));
         // Ref to conditional node silently dropped (inferred optional)
         let subs = &m.topics["data"].subscribers;
-        assert!(subs.is_empty(), "conditional ref should be dropped: {subs:?}");
+        assert!(
+            subs.is_empty(),
+            "conditional ref should be dropped: {subs:?}"
+        );
     }
 
     #[test]

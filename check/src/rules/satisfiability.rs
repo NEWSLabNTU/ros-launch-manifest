@@ -34,8 +34,10 @@ impl ValidationRule for SatisfiabilityRule {
         // Create Z3 enum sorts and variables
         let mut arg_vars: HashMap<&str, ArgVar> = HashMap::new();
         for (name, values) in &finite_args {
-            let z3_names: Vec<z3::Symbol> =
-                values.iter().map(|v| z3::Symbol::String(v.to_string())).collect();
+            let z3_names: Vec<z3::Symbol> = values
+                .iter()
+                .map(|v| z3::Symbol::String(v.to_string()))
+                .collect();
             let (sort, consts, _) =
                 z3::Sort::enumeration(&z3_ctx, z3::Symbol::String(name.to_string()), &z3_names);
             let var = z3::ast::Datatype::new_const(&z3_ctx, *name, &sort);
@@ -48,7 +50,13 @@ impl ValidationRule for SatisfiabilityRule {
                     (v.to_string(), dt)
                 })
                 .collect();
-            arg_vars.insert(name, ArgVar { var, consts: const_map });
+            arg_vars.insert(
+                name,
+                ArgVar {
+                    var,
+                    consts: const_map,
+                },
+            );
         }
 
         // Collect conditional node names — refs to these are optional
@@ -64,6 +72,11 @@ impl ValidationRule for SatisfiabilityRule {
             if topic.subscribers.is_empty() {
                 continue;
             }
+            // Skip if all subscribers are state-only (polled, non-required) —
+            // 0 publishers is harmless when no subscriber needs causal data.
+            if all_state_only_subs(&topic.subscribers, manifest) {
+                continue;
+            }
             let conditional_pubs: Vec<&str> = topic
                 .publishers
                 .iter()
@@ -71,13 +84,21 @@ impl ValidationRule for SatisfiabilityRule {
                 .map(|s| s.as_str())
                 .collect();
             if conditional_pubs.is_empty()
-                || topic.publishers.iter().any(|r| !is_conditional_ref(r, &conditional_nodes))
+                || topic
+                    .publishers
+                    .iter()
+                    .any(|r| !is_conditional_ref(r, &conditional_nodes))
             {
                 continue;
             }
             check_all_filtered(
-                &z3_ctx, &arg_vars, manifest, &conditional_pubs,
-                &format!("topic '{topic_name}' has 0 publishers"), ctx, self.id(),
+                &z3_ctx,
+                &arg_vars,
+                manifest,
+                &conditional_pubs,
+                &format!("topic '{topic_name}' has 0 publishers"),
+                ctx,
+                self.id(),
             );
         }
 
@@ -93,13 +114,21 @@ impl ValidationRule for SatisfiabilityRule {
                 .map(|s| s.as_str())
                 .collect();
             if conditional_servers.is_empty()
-                || svc.server.iter().any(|r| !is_conditional_ref(r, &conditional_nodes))
+                || svc
+                    .server
+                    .iter()
+                    .any(|r| !is_conditional_ref(r, &conditional_nodes))
             {
                 continue;
             }
             check_all_filtered(
-                &z3_ctx, &arg_vars, manifest, &conditional_servers,
-                &format!("service '{svc_name}' has 0 servers"), ctx, self.id(),
+                &z3_ctx,
+                &arg_vars,
+                manifest,
+                &conditional_servers,
+                &format!("service '{svc_name}' has 0 servers"),
+                ctx,
+                self.id(),
             );
         }
 
@@ -115,13 +144,21 @@ impl ValidationRule for SatisfiabilityRule {
                 .map(|s| s.as_str())
                 .collect();
             if conditional_servers.is_empty()
-                || act.server.iter().any(|r| !is_conditional_ref(r, &conditional_nodes))
+                || act
+                    .server
+                    .iter()
+                    .any(|r| !is_conditional_ref(r, &conditional_nodes))
             {
                 continue;
             }
             check_all_filtered(
-                &z3_ctx, &arg_vars, manifest, &conditional_servers,
-                &format!("action '{act_name}' has 0 servers"), ctx, self.id(),
+                &z3_ctx,
+                &arg_vars,
+                manifest,
+                &conditional_servers,
+                &format!("action '{act_name}' has 0 servers"),
+                ctx,
+                self.id(),
             );
         }
 
@@ -191,7 +228,11 @@ fn check_all_filtered<'a>(
             }
         }
         parts.sort();
-        ctx.error(rule_id, "args", format!("{description} when {}", parts.join(", ")));
+        ctx.error(
+            rule_id,
+            "args",
+            format!("{description} when {}", parts.join(", ")),
+        );
     }
 }
 
@@ -285,4 +326,20 @@ fn extract_literal(s: &str) -> &str {
 fn is_conditional_ref(r: &str, conditional_nodes: &HashSet<&str>) -> bool {
     r.split_once('/')
         .map_or(false, |(node, _)| conditional_nodes.contains(node))
+}
+
+/// Check if all subscribers of a topic are state-only (state: true, not required: true).
+/// If so, 0 publishers is harmless — polled subscribers just read nothing.
+fn all_state_only_subs(subscribers: &[String], manifest: &Manifest) -> bool {
+    subscribers.iter().all(|sub_ref| {
+        if let Some((node_name, ep_name)) = sub_ref.split_once('/') {
+            if let Some(node) = manifest.nodes.get(node_name) {
+                if let Some(ep) = node.subscribers.get(ep_name) {
+                    return ep.state.unwrap_or(false) && !ep.required.unwrap_or(false);
+                }
+            }
+        }
+        // Can't resolve — assume it needs data (conservative)
+        false
+    })
 }

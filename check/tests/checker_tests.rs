@@ -774,7 +774,7 @@ services:
 
 #[test]
 fn test_arg_types_bool_valid_values() {
-    use ros_launch_manifest_types::{resolve_args, ArgDecl};
+    use ros_launch_manifest_types::{ArgDecl, resolve_args};
     use std::collections::{BTreeMap, HashMap};
 
     let manifest_args = BTreeMap::from([("flag".into(), ArgDecl::Bool)]);
@@ -782,19 +782,25 @@ fn test_arg_types_bool_valid_values() {
     // "true" and "false" are valid
     for val in &["true", "false"] {
         let caller = HashMap::from([("flag".into(), val.to_string())]);
-        assert!(resolve_args(&manifest_args, &caller).is_ok(), "{val} should be valid for Bool");
+        assert!(
+            resolve_args(&manifest_args, &caller).is_ok(),
+            "{val} should be valid for Bool"
+        );
     }
 
     // "yes", "1", "True", "FALSE" are all invalid
     for val in &["yes", "no", "1", "0", "True", "FALSE", ""] {
         let caller = HashMap::from([("flag".into(), val.to_string())]);
-        assert!(resolve_args(&manifest_args, &caller).is_err(), "'{val}' should be invalid for Bool");
+        assert!(
+            resolve_args(&manifest_args, &caller).is_err(),
+            "'{val}' should be invalid for Bool"
+        );
     }
 }
 
 #[test]
 fn test_arg_types_choices_validation() {
-    use ros_launch_manifest_types::{resolve_args, ArgDecl};
+    use ros_launch_manifest_types::{ArgDecl, resolve_args};
     use std::collections::{BTreeMap, HashMap};
 
     let manifest_args = BTreeMap::from([(
@@ -809,18 +815,24 @@ fn test_arg_types_choices_validation() {
 
     let caller = HashMap::from([("mode".into(), "lidar".into())]);
     let err = resolve_args(&manifest_args, &caller).unwrap_err();
-    assert!(matches!(err, ros_launch_manifest_types::SubstError::InvalidArgValue { .. }));
+    assert!(matches!(
+        err,
+        ros_launch_manifest_types::SubstError::InvalidArgValue { .. }
+    ));
 }
 
 #[test]
 fn test_arg_types_mixed_free_and_typed() {
-    use ros_launch_manifest_types::{resolve_args, ArgDecl};
+    use ros_launch_manifest_types::{ArgDecl, resolve_args};
     use std::collections::{BTreeMap, HashMap};
 
     let manifest_args = BTreeMap::from([
         ("free_arg".into(), ArgDecl::String),
         ("bool_arg".into(), ArgDecl::Bool),
-        ("choice_arg".into(), ArgDecl::Choices(vec!["a".into(), "b".into()])),
+        (
+            "choice_arg".into(),
+            ArgDecl::Choices(vec!["a".into(), "b".into()]),
+        ),
     ]);
 
     // All valid
@@ -849,7 +861,11 @@ fn test_arg_types_parse_all_forms() {
     let yaml = "args: [x, y, z]\nversion: 1\n";
     let m = parse_manifest_str(yaml).unwrap();
     assert_eq!(m.args.len(), 3);
-    assert!(m.args.values().all(|d| matches!(d, ros_launch_manifest_types::ArgDecl::String)));
+    assert!(
+        m.args
+            .values()
+            .all(|d| matches!(d, ros_launch_manifest_types::ArgDecl::String))
+    );
 
     // Map with null: String
     let yaml2 = "args:\n  x:\n  y:\nversion: 1\n";
@@ -867,12 +883,18 @@ args:
 version: 1
 "#;
     let m3 = parse_manifest_str(yaml3).unwrap();
-    assert!(matches!(m3.args["flag"], ros_launch_manifest_types::ArgDecl::Bool));
+    assert!(matches!(
+        m3.args["flag"],
+        ros_launch_manifest_types::ArgDecl::Bool
+    ));
     match &m3.args["mode"] {
         ros_launch_manifest_types::ArgDecl::Choices(v) => assert_eq!(v, &["a", "b", "c"]),
         _ => panic!("expected Choices"),
     }
-    assert!(matches!(m3.args["name"], ros_launch_manifest_types::ArgDecl::String));
+    assert!(matches!(
+        m3.args["name"],
+        ros_launch_manifest_types::ArgDecl::String
+    ));
 }
 
 // ── Condition edge cases ──
@@ -945,14 +967,20 @@ nodes:
     let resolved = resolve_args(&m.args, &args).unwrap();
     let mut filtered = substitute_manifest(&m, &resolved).unwrap();
     filter_manifest(&mut filtered);
-    assert!(!filtered.nodes.contains_key("legacy"), "unless should exclude when expr is true");
+    assert!(
+        !filtered.nodes.contains_key("legacy"),
+        "unless should exclude when expr is true"
+    );
     assert!(filtered.nodes.contains_key("modern"));
 
     let args2 = HashMap::from([("mode".into(), "old".into())]);
     let resolved2 = resolve_args(&m.args, &args2).unwrap();
     let mut filtered2 = substitute_manifest(&m, &resolved2).unwrap();
     filter_manifest(&mut filtered2);
-    assert!(filtered2.nodes.contains_key("legacy"), "unless should include when expr is false");
+    assert!(
+        filtered2.nodes.contains_key("legacy"),
+        "unless should include when expr is false"
+    );
     assert!(!filtered2.nodes.contains_key("modern"));
 }
 
@@ -979,8 +1007,14 @@ actions:
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
     filter_manifest(&mut m);
-    assert!(!m.services.contains_key("conditional_svc"), "service if=false → filtered");
-    assert!(!m.actions.contains_key("conditional_act"), "action unless=true → filtered");
+    assert!(
+        !m.services.contains_key("conditional_svc"),
+        "service if=false → filtered"
+    );
+    assert!(
+        !m.actions.contains_key("conditional_act"),
+        "action unless=true → filtered"
+    );
 }
 
 #[test]
@@ -1171,10 +1205,7 @@ actions:
         .iter()
         .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
         .collect();
-    assert!(
-        !errs.is_empty(),
-        "action with no server should be error"
-    );
+    assert!(!errs.is_empty(), "action with no server should be error");
     assert!(
         errs[0].message.contains("no server"),
         "message should mention no server: {}",
@@ -1205,7 +1236,10 @@ topics:
     filter_manifest(&mut m);
 
     // optional_pub filtered → topic has 0 pub, 1 sub
-    assert!(m.topics.contains_key("sensor"), "topic survives (has subscriber)");
+    assert!(
+        m.topics.contains_key("sensor"),
+        "topic survives (has subscriber)"
+    );
     assert!(m.topics["sensor"].publishers.is_empty());
 
     let result = run_checks(&m);
@@ -1214,7 +1248,10 @@ topics:
         .iter()
         .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("no publishers"))
         .collect();
-    assert!(!warns.is_empty(), "should warn about 0 publishers after filter");
+    assert!(
+        !warns.is_empty(),
+        "should warn about 0 publishers after filter"
+    );
 }
 
 #[test]
@@ -1251,10 +1288,7 @@ services:
         .iter()
         .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
         .collect();
-    assert!(
-        !errs.is_empty(),
-        "service with 0 servers should be error"
-    );
+    assert!(!errs.is_empty(), "service with 0 servers should be error");
 }
 
 #[test]
@@ -1495,7 +1529,9 @@ nodes:
     assert!(
         !warns.is_empty(),
         "unless (always true) → unreachable: {:?}",
-        result.diagnostics.iter()
+        result
+            .diagnostics
+            .iter()
             .filter(|d| d.rule_id == "satisfiability")
             .map(|d| &d.message)
             .collect::<Vec<_>>()
@@ -1541,10 +1577,7 @@ topics:
         .iter()
         .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
         .collect();
-    assert!(
-        !sat_errs.is_empty(),
-        "camera+accurate has 0 publishers"
-    );
+    assert!(!sat_errs.is_empty(), "camera+accurate has 0 publishers");
     // Error message should mention the specific failing combination
     let msg = &sat_errs[0].message;
     assert!(
@@ -1670,6 +1703,122 @@ topics:
         sat_errs[0].message.contains("mode=ndt"),
         "should mention mode=ndt: {}",
         sat_errs[0].message
+    );
+}
+
+// ── State-only subscriber skip in satisfiability ──
+
+#[test]
+fn test_satisfiability_skips_state_only_subscribers() {
+    // All subscribers are state: true (not required) — 0 publishers is fine
+    let yaml = r#"
+version: 1
+args:
+  use_twist:
+    type: bool
+nodes:
+  twist_estimator:
+    if: $(var use_twist)
+    pub: [twist]
+  ekf:
+    sub:
+      twist_input:
+        state: true
+topics:
+  twist_data:
+    type: geometry_msgs/msg/TwistStamped
+    pub: [twist_estimator/twist]
+    sub: [ekf/twist_input]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // use_twist=false → 0 publishers, but ekf/twist_input is state-only → skip
+    assert!(
+        sat_errs.is_empty(),
+        "state-only subscriber should not trigger satisfiability error: {sat_errs:?}"
+    );
+}
+
+#[test]
+fn test_satisfiability_state_required_still_errors() {
+    // Subscriber is state: true BUT required: true — needs at least one message
+    let yaml = r#"
+version: 1
+args:
+  use_map:
+    type: bool
+nodes:
+  map_loader:
+    if: $(var use_map)
+    pub: [map]
+  ndt:
+    sub:
+      map:
+        state: true
+        required: true
+topics:
+  pointcloud_map:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [map_loader/map]
+    sub: [ndt/map]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // use_map=false → 0 publishers, ndt/map is required → error
+    assert!(
+        !sat_errs.is_empty(),
+        "state+required subscriber should still trigger error"
+    );
+}
+
+#[test]
+fn test_satisfiability_mixed_state_and_causal_subs() {
+    // One state-only sub + one causal sub → not all state-only → still checked
+    let yaml = r#"
+version: 1
+args:
+  use_extra:
+    type: bool
+nodes:
+  extra_pub:
+    if: $(var use_extra)
+    pub: [data]
+  causal_consumer:
+    sub:
+      input: {}
+  state_consumer:
+    sub:
+      input:
+        state: true
+topics:
+  stream:
+    type: std_msgs/msg/String
+    pub: [extra_pub/data]
+    sub:
+      - causal_consumer/input
+      - state_consumer/input
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let sat_errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
+        .collect();
+    // causal_consumer/input is not state → topic is still checked
+    assert!(
+        !sat_errs.is_empty(),
+        "mixed state+causal subs should still be checked"
     );
 }
 
@@ -1831,7 +1980,10 @@ paths:
 
     assert_eq!(m2.nodes.len(), 2, "eagleye + ekf");
     // twist topic: 0 pub + 0 sub after filter → removed
-    assert!(!m2.topics.contains_key("twist"), "twist topic removed (0 pub, 0 sub)");
+    assert!(
+        !m2.topics.contains_key("twist"),
+        "twist topic removed (0 pub, 0 sub)"
+    );
 
     let result2 = run_checks(&m2);
     assert!(
@@ -1848,10 +2000,7 @@ paths:
         .iter()
         .filter(|d| d.rule_id == "satisfiability" && d.severity == Severity::Error)
         .collect();
-    assert!(
-        sat_errs.is_empty(),
-        "variant-complete: {sat_errs:?}"
-    );
+    assert!(sat_errs.is_empty(), "variant-complete: {sat_errs:?}");
 }
 
 // ── Combined args + conditions ──

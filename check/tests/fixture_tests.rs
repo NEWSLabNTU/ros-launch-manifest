@@ -4,8 +4,7 @@ use ros_launch_manifest_check::{Severity, run_checks};
 use ros_launch_manifest_types::{
     filter_manifest, parse_manifest, parse_manifest_str, resolve_args, substitute_manifest,
 };
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -487,7 +486,11 @@ fn fixture_control_conditional_all_enabled() {
     let mut filtered = substitute_manifest(&m, &args).unwrap();
     filter_manifest(&mut filtered);
 
-    assert_eq!(filtered.nodes.len(), 5, "all nodes present when all enabled");
+    assert_eq!(
+        filtered.nodes.len(),
+        5,
+        "all nodes present when all enabled"
+    );
     // Conditional nodes present — refs kept
     let pred_subs = &filtered.topics["predicted_trajectory"].subscribers;
     assert_eq!(pred_subs.len(), 3, "3 subscribers to predicted_trajectory");
@@ -520,7 +523,10 @@ fn fixture_control_conditional_all_disabled() {
     // predicted_trajectory should have 0 subscribers (all optional, all filtered)
     // but still have 1 publisher → topic survives
     let pred = &filtered.topics["predicted_trajectory"];
-    assert!(pred.subscribers.is_empty(), "all optional subs filtered out");
+    assert!(
+        pred.subscribers.is_empty(),
+        "all optional subs filtered out"
+    );
     assert_eq!(pred.publishers.len(), 1, "controller still publishes");
 
     // Scope groups: kinematic_state should only have controller's ref
@@ -563,7 +569,11 @@ fn fixture_control_conditional_partial_enable() {
     let mut filtered = substitute_manifest(&m, &args).unwrap();
     filter_manifest(&mut filtered);
 
-    assert_eq!(filtered.nodes.len(), 3, "controller + validator + lane_checker");
+    assert_eq!(
+        filtered.nodes.len(),
+        3,
+        "controller + validator + lane_checker"
+    );
     assert!(filtered.nodes.contains_key("controller"));
     assert!(filtered.nodes.contains_key("control_validator"));
     assert!(filtered.nodes.contains_key("lane_checker"));
@@ -633,7 +643,10 @@ fn fixture_control_conditional_reject_invalid_bool() {
     ]);
     let err = resolve_args(&m.args, &scope_args).unwrap_err();
     assert!(
-        matches!(err, ros_launch_manifest_types::SubstError::InvalidArgValue { .. }),
+        matches!(
+            err,
+            ros_launch_manifest_types::SubstError::InvalidArgValue { .. }
+        ),
         "bool arg should reject 'yes': {err}"
     );
 }
@@ -686,7 +699,11 @@ fn fixture_service_scope_interface() {
     // Scope srv interface
     assert!(m.scope_srv.contains_key("clear_route_api"));
     assert!(m.scope_srv.contains_key("set_route_api"));
-    assert_eq!(m.scope_srv["set_route_api"].len(), 2, "two endpoints in set_route_api group");
+    assert_eq!(
+        m.scope_srv["set_route_api"].len(),
+        2,
+        "two endpoints in set_route_api group"
+    );
 }
 
 // ── manifest_satisfiability: multi-variant localization ──
@@ -830,7 +847,10 @@ fn fixture_satisfiability_reject_invalid_choice() {
     ]);
     let err = resolve_args(&m.args, &scope_args).unwrap_err();
     assert!(
-        matches!(err, ros_launch_manifest_types::SubstError::InvalidArgValue { .. }),
+        matches!(
+            err,
+            ros_launch_manifest_types::SubstError::InvalidArgValue { .. }
+        ),
         "choices arg should reject 'lidar': {err}"
     );
 }
