@@ -34,6 +34,41 @@ and connected via `<remap>`. In manifests, topics are **first-class** —
 declared with message type, QoS, and rate, and explicitly wired to node
 endpoints.
 
+### Directory Structure
+
+Launch files live in each package's install tree. Manifest files are
+organized in a flat manifest directory, keyed by `package/stem.yaml`:
+
+```
+ROS install tree                        Manifest directory
+─────────────────                       ──────────────────
+share/                                  manifests/
+├── tier4_control_launch/               ├── tier4_control_launch/
+│   └── launch/                         │   └── control.yaml
+│       └── control.launch.xml          │
+├── tier4_system_launch/                ├── tier4_system_launch/
+│   └── launch/                         │   └── system.yaml
+│       └── system.launch.xml           │
+├── autoware_mrm_handler/               ├── autoware_mrm_handler/
+│   └── launch/                         │   └── mrm_handler.yaml
+│       └── mrm_handler.launch.xml      │
+├── tier4_planning_launch/              ├── tier4_planning_launch/
+│   └── launch/                         │   ├── planning.yaml
+│       ├── planning.launch.xml         │   ├── behavior_planning.yaml
+│       └── .../behavior_planning/      │   └── motion_planning.yaml
+│           └── behavior_planning.      │
+│               launch.xml              │
+└── autoware_launch/                    └── autoware_launch/
+    └── launch/                             └── planning_simulator.yaml
+        └── planning_simulator.
+            launch.xml
+```
+
+The manifest path is derived from the launch file: strip the `launch/`
+subdirectory and `.launch.xml` / `.launch.py` extension, replace with
+`.yaml`. The manifest loader resolves `<manifest_dir>/<pkg>/<stem>.yaml`
+for each scope in the launch tree.
+
 ## The Manifest Model
 
 A manifest describes a **scope** — one launch file's contribution to the
