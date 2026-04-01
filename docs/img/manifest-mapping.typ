@@ -105,6 +105,10 @@
       #ln(c-node)[
         #text(fill: dim, font: code-font, size: cs)[\</group\>]
       ]
+      #ln(c-node)[#h(1pt)]
+      #ln(c-node)[#h(1pt)]
+      #ln(c-node)[#h(1pt)]
+      #ln(c-node)[#h(1pt)]
 
       #gap()
 
@@ -112,8 +116,6 @@
       #ln(c-include)[
         #text(fill: xml-color, font: code-font, size: cs)[\<include ]#text(fill: attr-color, font: code-font, size: cs)[file="system.launch.xml"]#text(fill: xml-color, font: code-font, size: cs)[/\>]
       ]
-      #ln(c-include)[#h(1pt)]
-      #ln(c-include)[#h(1pt)]
     ]
   },
 
@@ -150,7 +152,13 @@
         #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[controller:]
       ]
       #ln(c-node, indent: 14pt)[
-        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[pub: ]#text(fill: yaml-v, font: code-font, size: cs)[\[cmd\]]
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[pub:]
+      ]
+      #ln(c-node, indent: 22pt)[
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[cmd:]
+      ]
+      #ln(c-node, indent: 30pt)[
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[min\_rate\_hz: ]#text(fill: yaml-v, font: code-font, size: cs)[30]
       ]
       #ln(c-node, indent: 6pt)[
         #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[validator:]
@@ -159,7 +167,13 @@
         #text(fill: red, font: code-font, size: cs, weight: "bold")[if: ]#text(fill: red, font: code-font, size: cs)[\$(var launch\_validator)]
       ]
       #ln(c-node, indent: 14pt)[
-        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[sub: ]#text(fill: yaml-v, font: code-font, size: cs)[\[cmd\]]
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[sub:]
+      ]
+      #ln(c-node, indent: 22pt)[
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[input:]
+      ]
+      #ln(c-node, indent: 30pt)[
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[min\_rate\_hz: ]#text(fill: yaml-v, font: code-font, size: cs)[30]
       ]
 
       // ── topics block (yellow) ──
@@ -170,13 +184,13 @@
         #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[control\_cmd:]
       ]
       #ln(c-topic, indent: 14pt)[
-        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[type: ]#text(fill: yaml-v, font: code-font, size: cs)[Control]
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[type: ]#text(fill: yaml-v, font: code-font, size: cs)[autoware\_control\_msgs/msg/Control]
       ]
       #ln(c-topic, indent: 14pt)[
         #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[pub: ]#text(fill: yaml-v, font: code-font, size: cs)[\[controller/cmd\]]
       ]
       #ln(c-topic, indent: 14pt)[
-        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[sub: ]#text(fill: yaml-v, font: code-font, size: cs)[\[validator/cmd\]]
+        #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[sub: ]#text(fill: yaml-v, font: code-font, size: cs)[\[validator/input\]]
       ]
       #ln(c-topic, indent: 14pt)[
         #text(fill: yaml-k, font: code-font, size: cs, weight: "bold")[rate\_hz: ]#text(fill: yaml-v, font: code-font, size: cs)[30]
