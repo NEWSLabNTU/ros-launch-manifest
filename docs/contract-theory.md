@@ -31,17 +31,19 @@ Symbols used throughout this document:
 |--------|---------|
 | $C = (A, G)$ | Contract: assumption $A$ + guarantee $G$ |
 | $M$ | Component (a node or scope that satisfies a contract) |
-| $L_{\max}$, $L_{\min}$ | Maximum / minimum latency (ms) |
+| $L_{\text{node}}(X)$ | Worst-case processing time of node $X$ (from `max_latency_ms`) |
+| $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (typically ~0 for same-machine) |
+| $L_{\max}$, $L_{\min}$ | Worst / best case end-to-end latency of a path or scope |
 | $A_{\max}$ | Maximum data age from original source (ms) |
 | $f$ | Frequency (Hz) |
 | $P$ | Timer period (ms) |
 | $J$ | Jitter — max deviation from ideal period (ms) |
 | $d$ | Drop rate: fraction of messages lost ($d = N/W$) |
-| $\mathcal{R}$ | Delivery rate: $\mathcal{R} = 1 - d$ |
+| $\mathcal{R}$ | Delivery rate: $\mathcal{R} = 1 - d$ (fraction that survives) |
 | $N$ | Max drops in a window |
 | $W$ | Window size (messages) |
 | $K$ | Max consecutive drops |
-| $L(t)$ | Transport latency of topic $t$ (typically ~0 for same-machine) |
+| $\ell_{\max}$ | Observed longest consecutive drop run (runtime) |
 
 ## What is a Contract?
 
@@ -53,17 +55,34 @@ A **contract** is a pair $C = (A, G)$:
   promises, given the assumption holds. "I will produce a result within
   30ms."
 
-A component $M$ **satisfies** contract $C$ when: if the assumption holds
-on the inputs, the guarantee holds on the outputs.
-
-$$M \cap A \subseteq G$$
-
-In plain English: "if you give me what I asked for, I'll deliver what I
-promised."
+A component **satisfies** its contract when: if the assumption holds
+on the inputs, the guarantee holds on the outputs. "If you give me what
+I asked for, I'll deliver what I promised." *(Formally: $M \cap A \subseteq G$
+— the component's behaviors, intersected with the assumed inputs, are
+all within the guaranteed outputs.)*
 
 ### Three Levels
 
-The manifest defines contracts at three levels:
+The manifest defines contracts at three levels. To make this concrete,
+consider a perception pipeline:
+
+```
+pointcloud → [cropbox: 5ms] → [ground_filter: 15ms] → [detector: 30ms]
+```
+
+**Topic contract** — for the channel between cropbox and ground_filter:
+- *Assumption:* cropbox publishes at ≥ 10 Hz
+- *Guarantee:* the channel delivers at 10 Hz with drops ≤ 1/100
+
+**Node contract** — for ground_filter:
+- *Assumption:* receives filtered points at ≥ 10 Hz
+- *Guarantee:* output within 15ms, drops ≤ 2/100
+
+**Scope contract** — for the whole perception pipeline:
+- *Assumption:* parent scope wires the pointcloud input
+- *Guarantee:* end-to-end latency ≤ 50ms, data age ≤ 150ms
+
+Summary:
 
 | Level | What it describes | Assumption | Guarantee |
 |-------|-------------------|------------|-----------|
@@ -122,37 +141,67 @@ for diagnosis. At runtime:
 
 ## Composition
 
-When nodes are connected into a pipeline, their contracts compose.
-The rules depend on the connection topology.
+A single node's contract says what it promises in isolation. But a
+pipeline's guarantee depends on how nodes are connected. The composition
+rules below show how to compute the pipeline's end-to-end latency, drop
+rate, and age from the individual node contracts.
+
+### Understanding Worst-Case Latency
+
+A message traverses a pipeline by passing through nodes and the
+transport channels (topics) between them. At each stage, time is spent:
+
+- **Node processing** — the time a node takes to receive an input,
+  compute, and publish the output. This is the node's `max_latency_ms`.
+- **Transport** — the time for a published message to reach the next
+  subscriber via DDS. On the same machine this is typically < 1ms;
+  across machines it depends on the network.
+
+The **worst-case latency** of a path is the total time assuming every
+stage takes its maximum. This is a pessimistic bound — the real latency
+is usually lower, but the bound is what the contract guarantees.
+
+We write:
+- $L_{\text{node}}(X)$ — worst-case processing time of node $X$
+  (from the node's `max_latency_ms`)
+- $L_{\text{transport}}(X \to Y)$ — worst-case transport time between
+  node $X$ and node $Y$ (typically ~0 for same-machine)
 
 ### Series (Pipeline)
 
-Nodes connected in sequence: $A \to B \to C$.
+Nodes connected in sequence. Each message passes through every node,
+spending time in processing and transport at each hop:
 
 ```
-in → [A: 5ms] → [B: 15ms] → [C: 30ms] → out
+in → [A: 5ms] —transport→ [B: 15ms] —transport→ [C: 30ms] → out
 ```
 
-**Latency adds:**
+The worst case is when every node and every transport takes its maximum
+time. Latencies simply add up:
 
-$$L_{\max}(A \to B \to C) = L_{\max}(A) + L(t_{AB}) + L_{\max}(B) + L(t_{BC}) + L_{\max}(C)$$
+$$L_{\max} = L_{\text{node}}(A) + L_{\text{transport}}(A \to B) + L_{\text{node}}(B) + L_{\text{transport}}(B \to C) + L_{\text{node}}(C)$$
 
-In this example: $5 + 0 + 15 + 0 + 30 = 50$ ms (transport $L(t) \approx 0$ for same-machine).
+In this example with same-machine transport (~0):
 
-**Delivery rates multiply** (each stage independently drops):
+$$5 + 0 + 15 + 0 + 30 = 50 \text{ ms}$$
 
-$$\mathcal{R}_{\text{chain}} = \prod_i \mathcal{R}_i$$
+**Why it's the sum:** the message cannot be in two nodes at once. It
+arrives at A, waits for A to finish, travels to B, waits for B to
+finish, and so on. Each delay is sequential.
 
-Three nodes each dropping 2/100: $\mathcal{R} = 0.98^3 = 0.941$, so
-the chain drops about 5.9%.
+**Delivery rates also compose in series** — each stage independently
+drops messages, so a message must survive every stage. See
+[Drop Composition](#drop-composition) below for the formulas and examples.
 
-**Age accumulates:**
+**Age accumulates** — the age at the output is the age at the source
+plus all processing and transport time along the chain:
 
-$$A_{\max}(C) = A_{\max}(\text{source}) + \sum L_{\max}(p_i) + \sum L(t_j)$$
+$$A_{\max} = A_{\max}(\text{source}) + \sum_i L_{\text{node}}(p_i) + \sum_j L_{\text{transport}}(t_j)$$
 
 ### Parallel (Fork-Join)
 
-Two branches merging at a fusion node:
+Two branches merging at a fusion node. The fusion node waits for inputs
+from both branches before producing output:
 
 ```
       ┌→ A (50ms) →┐
@@ -160,20 +209,25 @@ in →  │             ├→ C (20ms) → out
       └→ B (30ms) →┘
 ```
 
-**Latency = slowest branch + fusion:**
+The worst case: the **slower branch** determines how long the fusion
+node waits. Then add the fusion node's own processing time:
 
-$$L_{\max} = \max(L_{\max}(A), L_{\max}(B)) + L_{\max}(C)$$
+$$L_{\max} = \max(L_{\max}(\text{branch } A),\; L_{\max}(\text{branch } B)) + L_{\text{node}}(C)$$
 
-Example: $\max(50, 30) + 20 = 70$ ms. The barrier waits for the slowest
-branch even in the best case, so $L_{\min}$ also uses $\max$.
+where $L_{\max}(\text{branch } A)$ is the end-to-end latency of branch A
+— which may itself be a series pipeline of multiple nodes.
 
-**Rate = slowest branch:**
+Example: $\max(50, 30) + 20 = 70$ ms.
 
-$$f = \min(f_A, f_B)$$
+Note: the best-case latency $L_{\min}$ also uses $\max$ — the fusion
+barrier waits for the slowest branch even when both are fast.
 
-**Age = oldest branch + fusion:**
+**Rate = slowest branch:** $f = \min(f_A, f_B)$
 
-$$A_{\max} = \max(A_{\max}(A), A_{\max}(B)) + L_{\max}(C)$$
+**Age = oldest branch + fusion** — the output is as stale as its
+oldest input:
+
+$$A_{\max} = \max(A_{\max}(\text{branch } A),\; A_{\max}(\text{branch } B)) + L_{\text{node}}(C)$$
 
 Drop at the barrier is **not composed statically** — the user declares
 the fusion node's observed drops directly, combining all causes
@@ -181,29 +235,33 @@ the fusion node's observed drops directly, combining all causes
 
 ### Periodic (Timer-Driven)
 
-A node that runs on a timer with period $P$ and jitter $J$, reading
-state inputs:
+A timer-driven node runs at fixed intervals (period $P$), reading the
+latest state from a buffer. It does not react to individual messages —
+it wakes up on the timer and processes whatever is available.
 
 ```
-upstream → [state buffer] → [periodic node, P=100ms] → out
+upstream → [state buffer] → [periodic node, P=100ms, J=5ms] → out
 ```
 
-**Worst-case latency through a periodic node:**
+**Worst-case latency through a periodic node.** The worst case happens
+when new data arrives just *after* the timer fires. The data sits in the
+buffer for nearly one full period before the next timer tick processes it:
 
-$$L_{\max} = L_{\max}(\text{upstream}) + P + J + C$$
+$$L_{\max} = L_{\text{node}}(\text{upstream}) + P + J + L_{\text{node}}(\text{periodic})$$
 
-Worst case: state arrives just after the timer fires, waits a full period.
+Where:
+- $L_{\text{node}}(\text{upstream})$ — time for data to reach the buffer
+- $P$ — one full timer period of waiting (worst case)
+- $J$ — timer jitter (the timer itself may be late)
+- $L_{\text{node}}(\text{periodic})$ — the periodic node's processing time
 
-**Best case:**
+**Best case:** the timer fires right as data arrives (zero wait):
 
-$$L_{\min} = L_{\min}(\text{upstream}) + C$$
+$$L_{\min} = L_{\text{node}}(\text{upstream}) + L_{\text{node}}(\text{periodic})$$
 
-Best case: timer fires right as state updates (zero wait). $C$ is
-computation time.
-
-**Rate is independent of upstream:**
-
-$$f = 1000 / P$$
+**Rate is independent of upstream:** $f = 1000 / P$. The periodic node
+produces output at its own timer rate regardless of how fast or slow
+the upstream is.
 
 **Periodic nodes reset the consecutive drop chain.** Upstream
 consecutive drops don't propagate because the timer fires regardless
@@ -246,23 +304,29 @@ This works because causal paths preserve `header.stamp` through the
 chain — each node copies the input stamp to the output (see
 [Timestamps and Data Flow](launch-manifest.md#timestamps-and-data-flow)).
 
-**Static computation:** sum max latencies along the causal chain:
+**Static computation:** sum node processing times and transport times
+along the causal chain:
 
-$$A_{\max}(o) = \sum_{\text{chain}} L_{\max}(p_i) + \sum_{\text{chain}} L(t_j)$$
+$$A_{\max}(o) = \sum_{\text{chain}} L_{\text{node}}(p_i) + \sum_{\text{chain}} L_{\text{transport}}(t_j)$$
 
 For multi-input paths (barrier), the age is the **maximum** of all input
 ages — the output is as stale as its oldest input:
 
-$$A_{\max}(o) = \max_{i \in \text{inputs}} A_{\max}(\text{input}_i) + L_{\max}(p)$$
+$$A_{\max}(o) = \max_{i \in \text{inputs}} A_{\max}(\text{input}_i) + L_{\text{node}}(p)$$
 
 **`max_age_ms`** on a scope path constrains freshness. The checker
 verifies the declared age budget is >= the statically computed age.
 
 ## Burstiness
 
-The drop composition math assumes **independent drops** (Bernoulli model).
+The drop composition rules in the previous section assume each drop is
+independent (Bernoulli model). If drops are actually bursty — clustered
+together due to network congestion or OS scheduling — the static
+guarantees are weaker than they appear. The runtime monitor detects
+this gap.
+
 In practice, DDS transport drops are often **bursty** — network
-congestion, OS scheduling, or queue overflow cause drops to cluster.
+congestion, scheduling jitter, or queue overflow cause drops to cluster.
 
 The runtime monitor detects burstiness via two lightweight metrics
 (~5 ns/message overhead):
@@ -373,11 +437,12 @@ drops per window $d_i$:
 
 $$DI = \frac{\mathrm{Var}(d_i)}{E(d_i)}$$
 
-**Observed max run** $L_{\max}$. Compare to Bernoulli prediction:
+**Observed max run** $\ell_{\max}$ (longest consecutive drop sequence).
+Compare to Bernoulli prediction:
 
-$$E[L_{\max}^{\text{Bernoulli}}] \approx \frac{\ln(N \cdot (1-d))}{\ln(1/d)}$$
+$$E[\ell_{\max}^{\text{Bernoulli}}] \approx \frac{\ln(N \cdot (1-d))}{\ln(1/d)}$$
 
-If $L_{\max} \gg E[L_{\max}^{\text{Bernoulli}}]$, drops are burstier
+If $\ell_{\max} \gg E[\ell_{\max}^{\text{Bernoulli}}]$, drops are burstier
 than the model predicts.
 
 **Estimated mean burst length** (reported when $DI > 1.5$):
@@ -386,6 +451,10 @@ $$\hat{r} = 1 - P(\text{drop} \mid \text{previous drop})$$
 $$\text{mean burst} = 1 / \hat{r}$$
 
 ## Appendix C: Empirical Contract Derivation
+
+When writing a manifest for an existing system without documented timing
+requirements, you need initial values for `max_latency_ms`, `min_rate_hz`,
+and `drop`. Capture mode bootstraps these from runtime measurements.
 
 Capture mode (`--save-manifest-dir`) derives contracts from observed
 traces:
