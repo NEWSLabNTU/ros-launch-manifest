@@ -1,5 +1,9 @@
 # Launch Manifest
 
+*This is the manifest format specification. For the formal theory
+behind timing contracts and composition rules, see
+[contract-theory.md](contract-theory.md).*
+
 ## Introduction
 
 ROS 2 launch files declare which nodes to run but not which topics they
@@ -266,34 +270,69 @@ full composition and checking rules.
 
 ### Drop Budgets
 
-Drops happen — messages can be lost in transport or intentionally skipped
-by nodes that can't keep up. The manifest lets you declare how much loss
-is acceptable.
+Messages can be lost in transport between nodes — DDS queue overflow,
+network congestion, or QoS mismatch. The manifest lets you declare how
+much loss is acceptable.
 
-**`drop: 5 / 100`** — "up to 5 drops per 100 messages." This is a
-sliding-window rate.
+Drops are declared on **topics** (transport drops) and **scope paths**
+(E2E drops). Node paths do not have drop fields — if a node internally
+skips messages, the effect shows as a lower `pub.min_rate_hz` on its
+output.
 
-**`max_consecutive: 3`** — "never lose more than 3 in a row." Consecutive
+**`max_drop_rate: 0.05`** — up to 5% of messages may be lost. This is
+a long-run average, declared as a fraction (0-1).
+
+**`max_consecutive: 3`** — never lose more than 3 in a row. Consecutive
 drops cause visible glitches (e.g., a planner that misses 3 consecutive
 obstacle updates).
 
 ```yaml
+topics:
+  pointcloud:
+    rate_hz: 10
+    max_drop_rate: 0.05        # 5% transport loss
+    max_consecutive: 3         # never 3+ in a row
+
 paths:
-  main:
-    input: sensor_points
-    output: [objects]
-    max_latency_ms: 30
-    drop:
-      max_count: 5 / 100       # up to 5% drop rate
-      max_consecutive: 3       # never 3+ in a row
+  perception:
+    input: raw_data
+    output: [detections]
+    max_latency_ms: 85
+    max_drop_rate: 0.08        # 8% E2E (all transport hops combined)
+    max_consecutive: 5
 ```
 
-**Composition:** drop rates multiply through a chain. If node A drops
-2/100 and node B drops 3/100, the chain drops ~4.94/100. The scope's
-`drop` budget must be >= the composed rate of its children.
+**Rate-drop interaction:** a topic's effective delivery rate accounts
+for drops. If `rate_hz: 10` and `max_drop_rate: 0.05`, the subscriber
+effectively receives at least `10 * (1 - 0.05) = 9.5 Hz`. The checker
+verifies: `rate_hz * (1 - max_drop_rate) >= sub.min_rate_hz`.
+
+**Composition:** drop rates multiply through a chain. If topic T1 has
+`max_drop_rate: 0.02` and T2 has `max_drop_rate: 0.03`, the chain drop
+rate is `1 - (0.98 * 0.97) ≈ 0.049`. The scope's `max_drop_rate` must
+be ≥ the composed rate.
 
 **If omitted:** no drop checking. The `drop-rate` and `drop-consecutive`
 rules only fire when drop values are declared.
+
+### QoS Defaults
+
+When `qos:` is omitted on a topic, the checker does not validate QoS.
+When declared, the checker validates that values are from the allowed set:
+
+| Field | Allowed values | ROS 2 default (when omitted) |
+|-------|---------------|------------------------------|
+| `reliability` | `reliable`, `best_effort` | `reliable` |
+| `durability` | `volatile`, `transient_local` | `volatile` |
+| `depth` | integer | `10` |
+| `history` | `keep_last`, `keep_all` | `keep_last` |
+| `lifespan_ms` | integer | unlimited |
+| `liveliness` | `automatic`, `manual_by_topic` | `automatic` |
+
+Declaring QoS is recommended for topics where publisher and subscriber
+must agree (e.g., `transient_local` for map data, `best_effort` for
+high-rate sensor streams). The `qos-compat` rule errors on invalid values
+like `reliability: maybe`.
 
 ### Timestamps and Data Flow
 
@@ -353,25 +392,6 @@ inputs contribute. EKF reads map data (`state: true`, stamp from minutes
 ago) and sensor data (causal, `stamp=T`). The output pose has `stamp=T`,
 not the map's ancient timestamp.
 
-### QoS Defaults
-
-When `qos:` is omitted on a topic, the checker does not validate QoS.
-When declared, the checker validates that values are from the allowed set:
-
-| Field | Allowed values | ROS 2 default (when omitted) |
-|-------|---------------|------------------------------|
-| `reliability` | `reliable`, `best_effort` | `reliable` |
-| `durability` | `volatile`, `transient_local` | `volatile` |
-| `depth` | integer | `10` |
-| `history` | `keep_last`, `keep_all` | `keep_last` |
-| `lifespan_ms` | integer | unlimited |
-| `liveliness` | `automatic`, `manual_by_topic` | `automatic` |
-
-Declaring QoS is recommended for topics where publisher and subscriber
-must agree (e.g., `transient_local` for map data, `best_effort` for
-high-rate sensor streams). The `qos-compat` rule errors on invalid values
-like `reliability: maybe`.
-
 ## Worked Example
 
 A perception pipeline with tracking and prediction stages.
@@ -409,6 +429,7 @@ topics:
     pub: [tracking/objects]
     sub: [prediction/objects]
     rate_hz: 10
+    max_drop_rate: 0.02
 
 sub:
   pointcloud: [tracking/detected_objects]
@@ -416,6 +437,14 @@ sub:
 
 pub:
   objects: [prediction/objects]
+
+paths:
+  main:
+    input: pointcloud
+    output: [objects]
+    max_latency_ms: 50
+    max_age_ms: 150
+    max_drop_rate: 0.05
 ```
 
 ```yaml
@@ -470,6 +499,73 @@ The parent (`perception.yaml`) wires children: `tracking/objects` →
 `prediction/objects` via the `tracked_objects` topic. Each child
 declares its scope interface (`sub:` / `pub:`) so the parent knows
 what ports to connect.
+
+### Example: Args, Conditions, and State
+
+A control scope with one always-present controller and an optional
+validator gated by a boolean launch arg:
+
+```yaml
+# tier4_control_launch/control.yaml
+args:
+  launch_validator:
+    type: bool                   # enables satisfiability checking
+
+version: 1
+
+nodes:
+  controller:
+    sub:
+      trajectory:
+        min_rate_hz: 10          # causal — triggers control loop
+      operation_mode:
+        state: true              # polled — read latest, not every update
+        required: true           # must know mode before operating
+    pub:
+      control_cmd:
+        min_rate_hz: 30
+    paths:
+      main:
+        input: trajectory
+        output: [control_cmd]
+        max_latency_ms: 10
+
+  validator:
+    if: $(var launch_validator)  # only present when arg is "true"
+    sub:
+      control_cmd: {}
+      predicted_trajectory: {}
+
+topics:
+  control_cmd:
+    type: autoware_control_msgs/msg/Control
+    pub: [controller/control_cmd]
+    sub: [validator/control_cmd]  # auto-optional: validator is conditional
+    rate_hz: 30
+
+sub:
+  trajectory_input: [controller/trajectory]
+
+pub:
+  control_output: [controller/control_cmd]
+
+paths:
+  control:
+    input: trajectory_input
+    output: [control_output]
+    max_latency_ms: 15
+```
+
+Key features demonstrated:
+- **`args:` with `type: bool`** — enables Z3 satisfiability checking
+  across all valid configurations
+- **`if:`** — validator only exists when `launch_validator` is `"true"`;
+  its topic refs are automatically dropped when it's filtered out
+- **`state: true`** — operation_mode is polled, doesn't create a causal
+  dependency in the dataflow graph
+- **`required: true`** — controller needs at least one operation_mode
+  message before it can operate
+- **Scope path** — E2E latency budget for the control scope
 
 ## Format Reference
 
@@ -594,30 +690,36 @@ topics:
     pub: [controller/cmd]
     sub: [validator/input]
     rate_hz: 30
+    max_drop_rate: 0.01
+    max_consecutive: 3
     qos:
       reliability: reliable
       durability: transient_local
       depth: 1
-    drop: 1 / 100
 ```
 
-| Field         | Required | Description | If omitted |
-|---------------|----------|-------------|------------|
-| `type`        | yes      | ROS message type (`pkg/msg/Name`) | Error |
-| `pub`         | no       | Publisher endpoint refs (`node/endpoint`) | Empty list |
-| `sub`         | no       | Subscriber endpoint refs | Empty list |
-| `rate_hz`     | no       | Negotiated channel rate | Rate hierarchy not checked |
-| `qos`         | no       | QoS profile | QoS not validated |
-| `drop`        | no       | Drop tolerance: `N / W` or full form | Drop not checked |
-| `if`/`unless` | no       | Condition | Always included |
+| Field            | Required | Description | If omitted |
+|------------------|----------|-------------|------------|
+| `type`           | yes      | ROS message type (`pkg/msg/Name`) | Error |
+| `pub`            | no       | Publisher endpoint refs (`node/endpoint`) | Empty list |
+| `sub`            | no       | Subscriber endpoint refs | Empty list |
+| `rate_hz`        | no       | Negotiated channel rate | Rate hierarchy not checked |
+| `max_drop_rate`  | no       | Transport drop rate (fraction 0-1) | Drop not checked |
+| `max_consecutive`| no       | Max consecutive transport drops | Consecutive not checked |
+| `qos`            | no       | QoS profile | QoS not validated |
+| `if`/`unless`    | no       | Condition | Always included |
 
-**Drop notation:** `drop: 5 / 100` means "up to 5 drops per 100 messages."
-Full form: `drop: { max_count: 5 / 100, max_consecutive: 3 }`.
+**Rate hierarchy with drops:**
 
-**Rate hierarchy:** `pub.min_rate_hz >= topic.rate_hz >= sub.min_rate_hz`.
-The publisher must produce *at least* as fast as the topic's negotiated
-rate, and the topic rate must meet every subscriber's minimum demand.
-Think of it as: supply >= channel >= demand.
+```
+pub.min_rate_hz  >=  rate_hz  >=  rate_hz * (1 - max_drop_rate)  >=  sub.min_rate_hz
+     30                30          30 * (1 - 0.01) = 29.7               29
+```
+
+The publisher must produce at least as fast as the channel rate. The
+effective delivery rate (after transport drops) must meet every
+subscriber's minimum demand. Think of it as: supply ≥ channel ≥
+effective delivery ≥ demand.
 
 ### Services and Actions
 
@@ -687,7 +789,7 @@ Named causal relations with timing constraints. Declared on nodes and
 scopes. See [Latency vs Age](#latency-vs-age) for definitions.
 
 ```yaml
-# Node-level path
+# Node-level path (latency only — drops are on topics, not node paths)
 nodes:
   centerpoint:
     sub: [pointcloud]
@@ -697,16 +799,19 @@ nodes:
         input: pointcloud
         output: [objects]
         max_latency_ms: 30
-        drop: 5 / 100
 
-# Scope-level path
+# Scope-level path (latency + age + E2E drops)
 paths:
   perception:
     input: raw_data
     output: [detections]
     max_latency_ms: 85
     max_age_ms: 150
+    max_drop_rate: 0.08
+    max_consecutive: 5
 ```
+
+**Node path fields:**
 
 | Field            | Meaning | If omitted |
 |------------------|---------|------------|
@@ -714,10 +819,21 @@ paths:
 | `output`         | Result endpoint(s) from `pub:` | Required |
 | `max_latency_ms` | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
 | `min_latency_ms` | Best-case time — faster is suspicious (stale cache?) | Not checked |
-| `max_age_ms`     | Max data age from original source (see definition above) | Not checked |
-| `correlation`    | Multi-input stamp matching: `timestamp` (inputs must match within `tolerance_ms`, output stamp = oldest) or `latest` (use most recent, no matching) | No correlation check |
+| `correlation`    | Multi-input stamp matching: `timestamp` or `latest` | No correlation check |
 | `tolerance_ms`   | Max `header.stamp` difference between correlated inputs | Required if `correlation: timestamp` |
-| `drop`           | Drop tolerance | Not checked |
+
+Node paths have latency and correlation only. Age is scope-level because
+it's a chain property from the original source to the output — an
+individual node doesn't know how far upstream the source is. Drops are
+topic-level (transport) and scope-level (E2E).
+
+**Scope path fields** (all of the above, plus):
+
+| Field             | Meaning | If omitted |
+|-------------------|---------|------------|
+| `max_age_ms`      | Max data age from original source | Not checked |
+| `max_drop_rate`   | E2E drop rate across the scope (fraction 0-1) | Drop not checked |
+| `max_consecutive` | E2E max consecutive drops | Consecutive not checked |
 
 ## Static Validation
 
@@ -733,8 +849,8 @@ The checker runs 14 rules on each manifest:
 | `budget-overflow`  | Descendant budget exceeds ancestor budget (part > whole)           | Error         |
 | `scope-budget`     | Sum of children exceeds scope budget; age < latency                | Warning/Error |
 | `causal-dag`       | Cycles in the dataflow graph (`state:` breaks cycles)              | Error         |
-| `drop-rate`        | Scope drop budget tighter than chain delivery rate                 | Error         |
-| `drop-consecutive` | Consecutive drop bound statistically infeasible                    | Error/Warning |
+| `drop-rate`        | Scope max_drop_rate < composed topic rates; effective delivery rate < sub.min_rate_hz | Error |
+| `drop-consecutive` | max_consecutive statistically infeasible given drop rate            | Error/Warning |
 | `service-wiring`   | Service client with no matching server                             | Warning       |
 | `service-type`     | Service with no type; server/client not on node                    | Error/Warning |
 | `dangling-entity`  | Topic with 0 publishers; service/action with 0 servers             | Error/Warning |
