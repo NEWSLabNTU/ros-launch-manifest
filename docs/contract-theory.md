@@ -44,6 +44,8 @@ Symbols used throughout this document:
 | $W$ | Window size (messages) |
 | $K$ | Max consecutive drops |
 | $\ell_{\max}$ | Observed longest consecutive drop run (runtime) |
+| `budget-overflow` | Verification check: descendant budget exceeds ancestor budget (error) |
+| `scope-budget` | Verification check: sum of children exceeds scope budget (warning) |
 
 ## What is a Contract?
 
@@ -96,7 +98,8 @@ internal graph into an end-to-end budget.
 
 ### Example: NDT Scan Matcher
 
-Here is one node's contract in both YAML and formal notation:
+Now that we've seen the three levels, let's look at one node's contract
+in detail — both the YAML declaration and its formal interpretation:
 
 ```yaml
 nodes:
@@ -188,6 +191,12 @@ $$5 + 0 + 15 + 0 + 30 = 50 \text{ ms}$$
 **Why it's the sum:** the message cannot be in two nodes at once. It
 arrives at A, waits for A to finish, travels to B, waits for B to
 finish, and so on. Each delay is sequential.
+
+**Transport is implicit in the scope budget.** Transport latency between
+nodes is not declared separately in the manifest — it is absorbed into
+the scope's `max_latency_ms` as headroom. The gap between the sum of
+node budgets and the scope budget accounts for transport and scheduling
+variance. On the same machine, transport is typically < 1ms.
 
 **Delivery rates also compose in series** — each stage independently
 drops messages, so a message must survive every stage. See
@@ -292,6 +301,184 @@ probability is below 1% (see Appendix A for the full derivation).
 
 **Necessary condition:** $K_s \geq \max_i K_i$ — the scope can't be
 stricter than any individual node.
+
+## Verification Rules
+
+The checker verifies that declared budgets are consistent across the
+scope tree. Two separate checks apply to latency, drop, and age — each
+with property-specific composition math but the same structural rules.
+
+For precise measurement point definitions, see
+[Latency vs Age](launch-manifest.md#latency-vs-age) in the manifest spec.
+
+### Opaque vs Transparent Scopes
+
+A scope's behavior in the budget check depends on whether it declares
+its own budget:
+
+- **Opaque** (has budget declared): the parent uses the declared value.
+  The scope is a black box — its internal decomposition is its own
+  responsibility.
+- **Transparent** (no budget declared): the parent looks through it
+  and sees the children directly. It's just organizational grouping
+  (namespacing), not a timing boundary.
+
+### Check 1: Budget Overflow (Error)
+
+No descendant's budget may exceed any ancestor's budget. A node with
+20ms inside a scope with 10ms is always wrong — the part cannot be
+bigger than the whole, regardless of transport or topology.
+
+The checker walks the scope tree from root to leaves, tracking the
+tightest ancestor budget seen so far. At each node or scope with a
+declared budget, it verifies the budget fits within the ancestor's.
+Transparent scopes (no budget) don't tighten the constraint — the
+walk passes through them.
+
+```
+Implementation sketch:
+
+check_overflow(node, ancestor_budget):
+  if node.budget > ancestor_budget → ERROR
+  effective = min(node.budget, ancestor_budget)
+  for each child:
+    check_overflow(child, effective)
+```
+
+This check is **topology-unaware** — it doesn't distinguish series from
+parallel. For parallel branches, each branch is individually less than
+the scope budget (since max(branches) < scope is a weaker constraint
+than sum). The overflow check catches the trivially wrong case; the
+sum check (below) catches composition errors.
+
+### Check 2: Budget Sum (Warning)
+
+For each scope with a declared budget, the sum of its direct children's
+budgets must fit within the scope budget. Children without budgets
+contribute to the **residual** — the unallocated portion of the scope
+budget that covers transport, scheduling variance, and undeclared nodes.
+
+For transparent scopes (no budget), the parent looks through and
+collects grandchildren directly.
+
+```
+Implementation sketch:
+
+check_sum(scope):
+  if scope has no budget → skip
+  declared = collect children with budgets (look through transparent scopes)
+  undeclared = children without budgets
+  if sum(declared) > scope.budget → WARNING
+  residual = scope.budget - sum(declared)
+  if undeclared is not empty and scope has paths:
+    → INFO: "Xms residual across N undeclared nodes"
+```
+
+The sum check is a **warning** (not an error) because the sum is a lower
+bound — it doesn't include transport between nodes. The gap between the
+sum and the scope budget is the allowance for transport, scheduling
+variance, and undeclared nodes.
+
+Like the overflow check, the sum check is **topology-unaware**. For
+parallel branches, the sum is conservative (sum > max), so the check
+may warn even when the actual composition fits. This is the right
+direction — a false warning is better than a missed violation.
+
+### Latency Example
+
+```
+scope S: max_latency_ms: 100
+  ├── sub-scope P: max_latency_ms: 50    (opaque)
+  │     ├── node A: max_latency_ms: 20
+  │     └── node B: max_latency_ms: 25
+  ├── sub-scope Q: (no budget)            (transparent)
+  │     └── node C: max_latency_ms: 30
+  └── node E: (no budget)
+```
+
+**Overflow check** — walk the tree with tightest ancestor:
+- A(20) ≤ min(S:100, P:50) = 50. OK.
+- B(25) ≤ 50. OK.
+- C(30) ≤ min(S:100) = 100. OK. (Q has no budget, doesn't tighten.)
+
+**Sum check on P** (opaque, checks its own children):
+- A(20) + B(25) = 45 ≤ 50. Passes. 5ms residual (transport/headroom).
+
+**Sum check on S** (looks through transparent Q):
+- P(50, opaque) + C(30, from Q look-through) = 80. E is undeclared.
+- 80 ≤ 100. Passes. Residual: 20ms across 1 undeclared node (E).
+
+If E later gets a budget of 25ms: 50 + 30 + 25 = 105 > 100. Warning.
+
+### Drop Example
+
+Drop budgets compose multiplicatively. The structural rules (opaque,
+transparent, overflow) still apply, but the "sum" check uses delivery
+rate multiplication instead of addition.
+
+```
+scope S: drop: 10/100
+  ├── node A: drop: 3/100
+  ├── node B: drop: 3/100
+  └── node C: (no drop budget)
+```
+
+**Overflow check**: A's drop rate (3%) < S's (10%). B's (3%) < 10%. OK.
+
+**Composition check**: chain delivery rate $\mathcal{R} = 0.97 \times 0.97 = 0.9409$.
+Chain drop rate: 5.91%. Scope allows 10%.
+5.91% ≤ 10%. Passes.
+
+Residual drop budget: the chain uses 5.91% of the 10% budget. The
+remaining ~4.09% covers C's drops and transport losses. As C gets a
+drop budget, the chain rate increases and the residual shrinks.
+
+### Age: Chain-Based Verification
+
+Age behaves differently from latency and drop. Age is a **chain
+property** — it's the sum of all latencies from the original source
+to the output, computed along the causal path. It does not decompose
+hierarchically like a latency budget.
+
+When the checker verifies `max_age_ms`, it traces the causal chain
+from the scope's output back to the source, summing each node's
+`max_latency_ms` and transport along the way. If any node on the
+chain has no `max_latency_ms`, the chain has a gap — the static
+age check cannot be completed.
+
+```
+scope S: max_age_ms: 200
+  paths: { input: sensor, output: [plan] }
+  ├── node A: max_latency_ms: 30
+  ├── node B: (no latency budget)       ← gap in the chain
+  └── node C: max_latency_ms: 50
+```
+
+Known chain contribution: A(30) + C(50) = 80ms. B's processing time
+is unknown, so the checker cannot prove age ≤ 200ms.
+
+Result: INFO — "age check incomplete: node B on the critical path has
+no latency budget." The scope's `max_age_ms` contract is accepted but
+unverified statically. Runtime monitoring checks the actual age.
+
+The **overflow check** still applies to age: if a scope declares
+`max_age_ms: 100` and a child scope declares `max_age_ms: 150`,
+that's an error (child age cannot exceed parent age).
+
+### Partial Decomposition
+
+A scope contract is valid without full node-level decomposition. Three
+scenarios:
+
+| Scope budget | Node budgets | Checker behavior |
+|-------------|-------------|-----------------|
+| Declared | All declared | Verify composition ≤ scope, check overflow |
+| Declared | Some missing | Verify declared fit, report residual (latency/drop) or gap (age) |
+| Declared | None declared | Accept — runtime monitoring checks E2E |
+
+This supports a **top-down workflow**: start with the E2E requirement,
+fill in node budgets as you measure them. The residual (or gap report)
+tells you what's unaccounted for.
 
 ## Data Age
 

@@ -206,8 +206,7 @@ a dependency loop.
 Both describe "how old is the data?" but measure different things.
 
 **`max_latency_ms`** — the time from when the *triggering input arrives
-at this node/scope* to when the output is published. This is local
-processing time.
+at this node/scope* to when the output is published.
 
 ```
 sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→ [detector: 30ms]
@@ -215,10 +214,19 @@ sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→
                   └────────────── scope max_latency_ms: 50ms ─────────────┘
 ```
 
-For a **node path**, `max_latency_ms` is measured from `rcl_take` of the
-trigger input to `rcl_publish` of the output. For a **scope path**, it is
-the worst-case time from when data enters the scope (arrives at the first
-node) to when the scope's output is published.
+**Measurement points:**
+
+- **Node `max_latency_ms`**: from `rcl_take` of the trigger input to
+  `rcl_publish` of the output. This is pure processing time — transport
+  to the next node is NOT included.
+- **Scope `max_latency_ms`**: from the first `rcl_take` inside the
+  scope to the last `rcl_publish` out of the scope. This INCLUDES
+  internal transport between nodes within the scope.
+
+The scope budget is always ≥ the sum of node budgets because the scope
+includes internal transport that individual nodes don't. Transport
+latency is not declared separately — it is absorbed into the scope
+budget as headroom.
 
 **`max_age_ms`** — the time from when the data was *originally produced*
 (the `header.stamp` at the sensor source) to when the scope's output is
@@ -235,15 +243,26 @@ preserving `header.stamp` — see [Timestamps and Data Flow](#timestamps-and-dat
 
 **When to use each:**
 
-- `max_latency_ms` — always declare on paths. This is the node/scope's
-  own processing budget.
+- `max_latency_ms` — declare on paths when you have a timing budget.
+  This is the node/scope's own processing budget.
 - `max_age_ms` — declare on scope paths when data freshness matters to
   downstream consumers. A planning module may need sensor data no older
   than 200ms, regardless of how many nodes processed it upstream.
 
-**If omitted:** `max_latency_ms` omitted means no latency budget is
-checked. `max_age_ms` omitted means no freshness constraint. The
-`scope-budget` rule only fires when these values are declared.
+**If omitted:** `max_latency_ms` omitted means the node/scope has no
+timing budget. The checker treats it as **transparent** — parent scopes
+look through it when computing budget sums. `max_age_ms` omitted means
+no freshness constraint.
+
+**Partial decomposition:** You don't need to declare `max_latency_ms` on
+every node. A scope with a budget is valid even if some (or all) of its
+children have no budgets. The checker reports the **residual** — the
+unallocated portion of the scope budget — so you can see how much
+headroom remains. This supports a top-down workflow: start with the E2E
+requirement, fill in per-node budgets as you measure them.
+
+See [Verification Rules](contract-theory.md#verification-rules) for the
+full composition and checking rules.
 
 ### Drop Budgets
 
@@ -693,7 +712,7 @@ paths:
 |------------------|---------|------------|
 | `input`          | Trigger endpoint(s) from `sub:` | Empty = periodic (timer-driven) |
 | `output`         | Result endpoint(s) from `pub:` | Required |
-| `max_latency_ms` | Worst-case input-to-output time (see definition above) | Not checked |
+| `max_latency_ms` | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
 | `min_latency_ms` | Best-case time — faster is suspicious (stale cache?) | Not checked |
 | `max_age_ms`     | Max data age from original source (see definition above) | Not checked |
 | `correlation`    | Multi-input stamp matching: `timestamp` (inputs must match within `tolerance_ms`, output stamp = oldest) or `latest` (use most recent, no matching) | No correlation check |
@@ -702,7 +721,7 @@ paths:
 
 ## Static Validation
 
-The checker runs 13 rules on each manifest:
+The checker runs 14 rules on each manifest:
 
 | Rule               | What it catches                                                    | Severity      |
 |--------------------|--------------------------------------------------------------------|---------------|
@@ -711,7 +730,8 @@ The checker runs 13 rules on each manifest:
 | `qos-compat`       | Invalid QoS values                                                 | Error         |
 | `rate-hierarchy`   | Publisher rate < topic rate < subscriber rate                       | Error         |
 | `rate-chain`       | Export rate unachievable from upstream                              | Warning       |
-| `scope-budget`     | Scope latency < sum of node latencies; age < latency               | Warning/Error |
+| `budget-overflow`  | Descendant budget exceeds ancestor budget (part > whole)           | Error         |
+| `scope-budget`     | Sum of children exceeds scope budget; age < latency                | Warning/Error |
 | `causal-dag`       | Cycles in the dataflow graph (`state:` breaks cycles)              | Error         |
 | `drop-rate`        | Scope drop budget tighter than chain delivery rate                 | Error         |
 | `drop-consecutive` | Consecutive drop bound statistically infeasible                    | Error/Warning |
