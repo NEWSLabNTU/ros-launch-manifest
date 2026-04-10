@@ -268,20 +268,12 @@ upstream.
 
 ---
 
-## 26. Worked Example Indirection Not Explained
+## ~~26. Worked Example Indirection Not Explained~~ — Done
 
-### Problem
-
-`perception.yaml` references `tracking/objects` and `prediction/objects`
-in its topic wiring. These mean "the `objects` export of the `tracking`
-include" — a `child_name/export_name` convention. This naming convention
-is never explicitly stated. The reader must reverse-engineer it from the
-example by cross-referencing child manifests.
-
-### Fix
-
-Add a callout before the worked example explaining the `child/export`
-naming convention, with one explicit expansion.
+Added a naming convention callout before the perception manifest example
+in launch-manifest.md, explaining that `tracking/objects` means "the
+`objects` export of the `tracking` include." Also added inline comments
+on the topic wiring lines.
 
 ---
 
@@ -389,7 +381,7 @@ and links to the appendix for statistical details.
 | 23 | Age check needs full decomposition | Theory / static check   | —       | Open — inherent tension with top-down workflow |
 | 24 | Transport latency unmodeled        | Format design           | Small   | Open |
 | 25 | Periodic formula double-counts     | Theory / doc fix        | Trivial | Open |
-| 26 | Worked example indirection         | Doc fix                 | Trivial | Open |
+| 26 | Worked example indirection         | Doc fix                 | Trivial | Done — `child/export` convention callout added |
 | 27 | No ROS topic name mapping example  | Doc fix                 | Small   | Done — "Mapping from ROS Topics" subsection added |
 | 28 | `args:` position inconsistent      | Doc fix                 | Trivial | Done — `version:` now first in control example |
 | 29 | `exclude_patterns` override        | Doc fix                 | Trivial | Open |

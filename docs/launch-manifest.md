@@ -413,6 +413,13 @@ A perception pipeline with tracking and prediction stages.
 
 **Manifest files:**
 
+**Naming convention:** when a parent manifest references a child's
+endpoint, it uses `child/export` — the include name joined with the
+child's scope interface export name. For example, `tracking/objects`
+means "the `objects` export of the `tracking` include." The child
+manifest (`tracking.yaml`) declares `pub: objects: [...]` as its scope
+boundary; the parent uses `tracking/objects` to wire it into topics.
+
 ```yaml
 # tier4_perception_launch/perception.yaml
 version: 1
@@ -426,8 +433,8 @@ includes:
 topics:
   tracked_objects:
     type: autoware_perception_msgs/msg/TrackedObjects
-    pub: [tracking/objects]
-    sub: [prediction/objects]
+    pub: [tracking/objects]       # tracking include's "objects" export
+    sub: [prediction/objects]     # prediction include's "objects" import
     rate_hz: 10
     max_drop_rate: 0.02
 
