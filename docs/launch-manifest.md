@@ -500,6 +500,33 @@ The parent (`perception.yaml`) wires children: `tracking/objects` →
 declares its scope interface (`sub:` / `pub:`) so the parent knows
 what ports to connect.
 
+### Mapping from ROS Topics to Manifest Declarations
+
+When writing a manifest for an existing system, you start with runtime
+topic names (from `ros2 topic list`) and need to map them into manifest
+declarations. Here is one concrete mapping using the perception example
+above:
+
+**Runtime topic:** `/perception/tracking/tracked_objects`
+
+| Layer               | File              | Key                              | Value                            |
+|---------------------|-------------------|----------------------------------|----------------------------------|
+| Publisher endpoint  | `tracking.yaml`   | `nodes.multi_object_tracker.pub` | `tracked`                        |
+| Internal topic      | `tracking.yaml`   | `topics.tracked_objects.pub`     | `[multi_object_tracker/tracked]` |
+| Child export        | `tracking.yaml`   | `pub.objects`                    | `[multi_object_tracker/tracked]` |
+| Parent wiring       | `perception.yaml` | `topics.tracked_objects.pub`     | `[tracking/objects]`             |
+| Subscriber endpoint | `prediction.yaml` | `nodes.map_based_prediction.sub` | `tracked`                        |
+| Child import        | `prediction.yaml` | `sub.objects`                    | `[map_based_prediction/tracked]` |
+| Parent wiring       | `perception.yaml` | `topics.tracked_objects.sub`     | `[prediction/objects]`           |
+
+The ROS topic name `/perception/tracking/tracked_objects` comes from
+namespace resolution in the launch file (`<push-ros-namespace>` +
+`<remap>`). The manifest uses **logical names** — the topic key
+`tracked_objects` is a manifest-local identifier, not the ROS name.
+Endpoint names like `tracked` are local to the node declaration. The
+`child/export` references (e.g., `tracking/objects`) combine the include
+name with the child's scope interface export name.
+
 ### Example: Args, Conditions, and State
 
 A control scope with one always-present controller and an optional

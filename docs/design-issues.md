@@ -285,23 +285,12 @@ naming convention, with one explicit expansion.
 
 ---
 
-## 27. No Example Shows Actual ROS Topic Name Mapping
+## ~~27. No Example Shows Actual ROS Topic Name Mapping~~ — Done
 
-### Problem
-
-Every example uses logical manifest names. A user writing a manifest for
-an existing system needs to answer: "my node publishes on
-`/perception/tracking/tracked_objects` — what do I write in the manifest?"
-
-The answer involves endpoint names, topic keys, scope interfaces, and
-namespace resolution, but the docs never show the full mapping from a
-concrete ROS runtime topic name to its manifest declaration.
-
-### Fix
-
-Add a "Mapping from ROS topics" section or callout with one concrete
-example showing: ROS topic name → which manifest file, which topic key,
-which endpoint.
+Added "Mapping from ROS Topics to Manifest Declarations" subsection to
+the worked example in launch-manifest.md. Shows the full mapping from
+`/perception/tracking/tracked_objects` through each manifest layer
+(endpoint → internal topic → child export → parent wiring).
 
 ---
 
@@ -401,7 +390,7 @@ and links to the appendix for statistical details.
 | 24 | Transport latency unmodeled        | Format design           | Small   | Open |
 | 25 | Periodic formula double-counts     | Theory / doc fix        | Trivial | Open |
 | 26 | Worked example indirection         | Doc fix                 | Trivial | Open |
-| 27 | No ROS topic name mapping example  | Doc fix                 | Small   | Open |
+| 27 | No ROS topic name mapping example  | Doc fix                 | Small   | Done — "Mapping from ROS Topics" subsection added |
 | 28 | `args:` position inconsistent      | Doc fix                 | Trivial | Done — `version:` now first in control example |
 | 29 | `exclude_patterns` override        | Doc fix                 | Trivial | Open |
 | 30 | No example error messages          | Doc fix                 | Small   | Open |
