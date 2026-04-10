@@ -507,11 +507,11 @@ validator gated by a boolean launch arg:
 
 ```yaml
 # tier4_control_launch/control.yaml
+version: 1
+
 args:
   launch_validator:
     type: bool                   # enables satisfiability checking
-
-version: 1
 
 nodes:
   controller:
