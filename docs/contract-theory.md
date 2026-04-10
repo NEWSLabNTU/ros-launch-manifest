@@ -35,7 +35,7 @@ Symbols used throughout this document:
 | $C = (A, G)$ | Contract: assumption $A$ + guarantee $G$ |
 | $M$ | Component (a node or scope that satisfies a contract) |
 | $L_{\text{node}}(X)$ | Worst-case processing time of node $X$ (from `max_latency_ms`) |
-| $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (typically ~0 for same-machine) |
+| $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (from topic's `max_transport_ms`; 0 when omitted) |
 | $L_{\max}$, $L_{\min}$ | Worst / best case end-to-end latency of a path or scope |
 | $A_{\max}$ | Maximum data age from original source (ms) |
 | $f$ | Frequency (Hz) |
@@ -168,7 +168,8 @@ We write:
 - $L_{\text{node}}(X)$ — worst-case processing time of node $X$
   (from the node's `max_latency_ms`)
 - $L_{\text{transport}}(X \to Y)$ — worst-case transport time between
-  node $X$ and node $Y$ (typically ~0 for same-machine)
+  node $X$ and node $Y$ (from the topic's `max_transport_ms`; 0 when
+  omitted)
 
 ### Series (Pipeline)
 
@@ -192,11 +193,13 @@ $$5 + 0 + 15 + 0 + 30 = 50 \text{ ms}$$
 arrives at A, waits for A to finish, travels to B, waits for B to
 finish, and so on. Each delay is sequential.
 
-**Transport is implicit in the scope budget.** Transport latency between
-nodes is not declared separately in the manifest — it is absorbed into
-the scope's `max_latency_ms` as headroom. The gap between the sum of
-node budgets and the scope budget accounts for transport and scheduling
-variance. On the same machine, transport is typically < 1ms.
+**Transport is declared per topic.** Each topic can declare
+`max_transport_ms` — the worst-case time for a published message to
+reach the subscriber via DDS. Topics without `max_transport_ms`
+contribute 0 to the budget sum; their transport is absorbed into the
+scope's residual headroom. On the same machine, transport is typically
+< 1ms and can be omitted. For cross-machine hops (sensor ECUs, network
+bridges), declare `max_transport_ms` to make the budget explicit.
 
 **Delivery rates also compose in series** — each stage independently
 drops messages, so a message must survive every stage. See
@@ -392,18 +395,21 @@ Implementation sketch:
 
 check_sum(scope):
   if scope has no budget → skip
-  declared = collect children with budgets (look through transparent scopes)
-  undeclared = children without budgets
-  if sum(declared) > scope.budget → WARNING
-  residual = scope.budget - sum(declared)
-  if undeclared is not empty and scope has paths:
-    → INFO: "Xms residual across N undeclared nodes"
+  declared_nodes = collect children with budgets (look through transparent scopes)
+  undeclared_nodes = children without budgets
+  declared_transport = sum of max_transport_ms on topics within scope (0 when omitted)
+  undeclared_transport_count = topics without max_transport_ms
+  total = sum(declared_nodes) + declared_transport
+  if total > scope.budget → WARNING
+  residual = scope.budget - total
+  if undeclared_nodes or undeclared_transport_count:
+    → INFO: "Xms residual across N undeclared nodes and M topics without transport budget"
 ```
 
 The sum check is a **warning** (not an error) because the sum is a lower
-bound — it doesn't include transport between nodes. The gap between the
-sum and the scope budget is the allowance for transport, scheduling
-variance, and undeclared nodes.
+bound — topics without `max_transport_ms` contribute 0. The gap between
+the sum and the scope budget is the allowance for undeclared transport,
+scheduling variance, and undeclared nodes.
 
 Like the overflow check, the sum check is **topology-unaware**. For
 parallel branches, the sum is conservative (sum > max), so the check
@@ -416,9 +422,12 @@ direction — a false warning is better than a missed violation.
 scope S: max_latency_ms: 100
   ├── sub-scope P: max_latency_ms: 50    (opaque)
   │     ├── node A: max_latency_ms: 20
+  │     ├── topic T1: max_transport_ms: 2  (A → B)
   │     └── node B: max_latency_ms: 25
   ├── sub-scope Q: (no budget)            (transparent)
   │     └── node C: max_latency_ms: 30
+  ├── topic T2: (no transport budget)     (P → C)
+  ├── topic T3: (no transport budget)     (C → E)
   └── node E: (no budget)
 ```
 
@@ -428,11 +437,13 @@ scope S: max_latency_ms: 100
 - C(30) ≤ min(S:100) = 100. OK. (Q has no budget, doesn't tighten.)
 
 **Sum check on P** (opaque, checks its own children):
-- A(20) + B(25) = 45 ≤ 50. Passes. 5ms residual (transport/headroom).
+- A(20) + T1(2) + B(25) = 47 ≤ 50. Passes. 3ms residual.
 
 **Sum check on S** (looks through transparent Q):
 - P(50, opaque) + C(30, from Q look-through) = 80. E is undeclared.
-- 80 ≤ 100. Passes. Residual: 20ms across 1 undeclared node (E).
+  T2 and T3 have no transport budget (contribute 0).
+- 80 ≤ 100. Passes. Residual: 20ms across 1 undeclared node (E) and
+  2 topics without transport budget.
 
 If E later gets a budget of 25ms: 50 + 30 + 25 = 105 > 100. Warning.
 

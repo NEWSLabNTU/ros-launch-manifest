@@ -229,8 +229,9 @@ sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→
 
 The scope budget is always ≥ the sum of node budgets because the scope
 includes internal transport that individual nodes don't. Transport
-latency is not declared separately — it is absorbed into the scope
-budget as headroom.
+latency can be declared per topic via `max_transport_ms`. Topics without
+it contribute 0 to the budget sum — the undeclared transport is absorbed
+into the scope's residual headroom.
 
 **`max_age_ms`** — the time from when the data was *originally produced*
 (the `header.stamp` at the sensor source) to when the scope's output is
@@ -726,22 +727,24 @@ topics:
     rate_hz: 30
     max_drop_rate: 0.01
     max_consecutive: 3
+    max_transport_ms: 5            # cross-machine hop
     qos:
       reliability: reliable
       durability: transient_local
       depth: 1
 ```
 
-| Field            | Required | Description | If omitted |
-|------------------|----------|-------------|------------|
-| `type`           | yes      | ROS message type (`pkg/msg/Name`) | Error |
-| `pub`            | no       | Publisher endpoint refs (`node/endpoint`) | Empty list |
-| `sub`            | no       | Subscriber endpoint refs | Empty list |
-| `rate_hz`        | no       | Negotiated channel rate | Rate hierarchy not checked |
-| `max_drop_rate`  | no       | Transport drop rate (fraction 0-1) | Drop not checked |
-| `max_consecutive`| no       | Max consecutive transport drops | Consecutive not checked |
-| `qos`            | no       | QoS profile | QoS not validated |
-| `if`/`unless`    | no       | Condition | Always included |
+| Field              | Required | Description | If omitted |
+|--------------------|----------|-------------|------------|
+| `type`             | yes      | ROS message type (`pkg/msg/Name`) | Error |
+| `pub`              | no       | Publisher endpoint refs (`node/endpoint`) | Empty list |
+| `sub`              | no       | Subscriber endpoint refs | Empty list |
+| `rate_hz`          | no       | Negotiated channel rate | Rate hierarchy not checked |
+| `max_drop_rate`    | no       | Transport drop rate (fraction 0-1) | Drop not checked |
+| `max_consecutive`  | no       | Max consecutive transport drops | Consecutive not checked |
+| `max_transport_ms` | no       | Worst-case transport latency (ms) | 0 — absorbed into scope residual |
+| `qos`              | no       | QoS profile | QoS not validated |
+| `if`/`unless`      | no       | Condition | Always included |
 
 **Rate hierarchy with drops:**
 

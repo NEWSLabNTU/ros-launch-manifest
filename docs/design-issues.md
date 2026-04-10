@@ -226,24 +226,14 @@ are in tension.
 
 ---
 
-## 24. Transport Latency Unmodeled
+## ~~24. Transport Latency Unmodeled~~ — Done (Option A)
 
-### Problem
-
-Transport is described as "typically ~0 for same-machine" and "absorbed
-into the scope budget as headroom." For cross-machine deployments
-(Autoware with sensor ECUs), transport could be 1–10ms per hop. There
-is no way to declare transport latency, so the scope budget silently
-absorbs it. The budget residual becomes ambiguous — is it headroom, or
-is it consumed by transport?
-
-### Options
-
-| Option | Pros | Cons |
-|--------|------|------|
-| A. Optional `transport_ms` on topics | Explicit per-hop budget | Extra field, rarely needed on same-machine |
-| B. Scope-level `transport_budget_ms` | One field, covers all hops | Less precise |
-| C. Accept it | Simple | Cross-machine latency invisible |
+Added `max_transport_ms` (optional) to the topic format. Worst-case
+transport time per topic hop. Topics without it contribute 0 — their
+transport is absorbed into the scope residual. Updated:
+- launch-manifest.md: topic example, field table, Latency vs Age section
+- contract-theory.md: notation, series section, sum check sketch,
+  latency example (P's sum now includes T1's 2ms transport)
 
 ---
 
@@ -368,7 +358,7 @@ and links to the appendix for statistical details.
 | 21 | Topic keys vs ROS topic names      | UX / naming             | Small   | Open |
 | 22 | Drop independence assumption       | Theory / static check   | Medium  | Open |
 | 23 | Age check needs full decomposition | Theory / static check   | —       | Open — inherent tension with top-down workflow |
-| 24 | Transport latency unmodeled        | Format design           | Small   | Open |
+| 24 | Transport latency unmodeled        | Format design           | Small   | Done — `max_transport_ms` on topics |
 | 25 | Periodic formula double-counts     | Theory / doc fix        | Trivial | Done — upstream removed from formula |
 | 26 | Worked example indirection         | Doc fix                 | Trivial | Done — `child/export` convention callout added |
 | 27 | No ROS topic name mapping example  | Doc fix                 | Small   | Done — "Mapping from ROS Topics" subsection added |
