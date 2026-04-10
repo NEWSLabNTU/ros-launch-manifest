@@ -256,17 +256,21 @@ upstream → [state buffer] → [periodic node, P=100ms, J=5ms] → out
 when new data arrives just *after* the timer fires. The data sits in the
 buffer for nearly one full period before the next timer tick processes it:
 
-$$L_{\max} = L_{\text{node}}(\text{upstream}) + P + J + L_{\text{node}}(\text{periodic})$$
+$$L_{\max}(\text{periodic}) = P + J + L_{\text{node}}(\text{periodic})$$
 
 Where:
-- $L_{\text{node}}(\text{upstream})$ — time for data to reach the buffer
 - $P$ — one full timer period of waiting (worst case)
 - $J$ — timer jitter (the timer itself may be late)
 - $L_{\text{node}}(\text{periodic})$ — the periodic node's processing time
 
+Upstream processing time is **not** included — it is already accounted
+for by the upstream node's own `max_latency_ms` in series composition.
+The periodic node's contribution to the chain is the buffer wait plus
+its own processing.
+
 **Best case:** the timer fires right as data arrives (zero wait):
 
-$$L_{\min} = L_{\text{node}}(\text{upstream}) + L_{\text{node}}(\text{periodic})$$
+$$L_{\min}(\text{periodic}) = L_{\text{node}}(\text{periodic})$$
 
 **Rate is independent of upstream:** $f = 1000 / P$ (where $P$ is in ms). The periodic node
 produces output at its own timer rate regardless of how fast or slow
@@ -322,7 +326,7 @@ topic's `max_consecutive` on the critical path.
 |----------|---------|------|-----|------|
 | **Series** | sum of nodes + transport | preserved | sum along chain | multiply $\mathcal{R}$ |
 | **Parallel** | max(branches) + fusion | min of branches | max(branches) + fusion | user-declared on fusion |
-| **Periodic** | upstream + $P$ + $J$ + node | $1000/P$ (independent) | resets stamp chain | resets consecutive chain |
+| **Periodic** | $P$ + $J$ + node | $1000/P$ (independent) | resets stamp chain | resets consecutive chain |
 
 ## Verification Rules
 

@@ -247,24 +247,13 @@ is it consumed by transport?
 
 ---
 
-## 25. Periodic Node Latency Formula Double-Counts Upstream
+## ~~25. Periodic Node Latency Formula Double-Counts Upstream~~ — Done
 
-### Problem
-
-The periodic worst-case formula (contract-theory.md §Periodic) is:
-
-```
-L_max = L_node(upstream) + P + J + L_node(periodic)
-```
-
-But `L_node(upstream)` is already accounted for in the upstream node's
-own `max_latency_ms` declaration. When composing a series chain that
-includes a periodic node, upstream processing is counted twice: once in
-the upstream node's budget and once in the periodic formula.
-
-The formula should describe the additional latency the periodic node
-introduces — which is `P + J + L_node(periodic)`, not including
-upstream.
+Fixed: removed `L_node(upstream)` from the periodic worst-case and
+best-case formulas in contract-theory.md. The periodic node's
+contribution is `P + J + L_node(periodic)` — upstream processing is
+already counted by the upstream node's own budget in series composition.
+Updated the composition summary table to match.
 
 ---
 
@@ -380,7 +369,7 @@ and links to the appendix for statistical details.
 | 22 | Drop independence assumption       | Theory / static check   | Medium  | Open |
 | 23 | Age check needs full decomposition | Theory / static check   | —       | Open — inherent tension with top-down workflow |
 | 24 | Transport latency unmodeled        | Format design           | Small   | Open |
-| 25 | Periodic formula double-counts     | Theory / doc fix        | Trivial | Open |
+| 25 | Periodic formula double-counts     | Theory / doc fix        | Trivial | Done — upstream removed from formula |
 | 26 | Worked example indirection         | Doc fix                 | Trivial | Done — `child/export` convention callout added |
 | 27 | No ROS topic name mapping example  | Doc fix                 | Small   | Done — "Mapping from ROS Topics" subsection added |
 | 28 | `args:` position inconsistent      | Doc fix                 | Trivial | Done — `version:` now first in control example |
