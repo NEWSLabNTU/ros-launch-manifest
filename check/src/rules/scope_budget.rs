@@ -43,19 +43,41 @@ impl ValidationRule for ScopeBudgetRule {
             // For external includes, we can't check without loading them
         }
 
+        // Sum max_transport_ms across topics in this scope
+        let topic_transport: f64 = manifest
+            .topics
+            .values()
+            .filter_map(|t| t.max_transport_ms)
+            .sum();
+        let undeclared_transport_count = manifest
+            .topics
+            .values()
+            .filter(|t| t.max_transport_ms.is_none())
+            .count();
+
         // Check scope-level paths
         for (path_name, path) in &manifest.paths {
             if let Some(declared) = path.max_latency_ms {
-                // Simple sum of all node latencies as an approximation
-                // (proper critical path requires graph traversal)
-                let total: f64 = node_latencies.values().sum();
+                // Sum: node latencies + declared topic transport.
+                // Topics without max_transport_ms contribute 0; their transport
+                // is absorbed into the scope's residual headroom.
+                let nodes_total: f64 = node_latencies.values().sum();
+                let total = nodes_total + topic_transport;
                 if total > 0.0 && declared < total {
+                    let suffix = if undeclared_transport_count > 0 {
+                        format!(
+                            " ({undeclared_transport_count} topic(s) have no max_transport_ms; \
+                             actual total may be larger)"
+                        )
+                    } else {
+                        String::new()
+                    };
                     ctx.warning(
                         self.id(),
                         &format!("paths.{path_name}"),
                         format!(
-                            "scope max_latency_ms ({declared}) may be less than sum of node latencies ({total}). \
-                             Run critical path analysis for precise check."
+                            "scope max_latency_ms ({declared}) may be less than sum of node \
+                             latencies ({nodes_total}) + declared topic transport ({topic_transport}) = {total}.{suffix}"
                         ),
                     );
                 }
