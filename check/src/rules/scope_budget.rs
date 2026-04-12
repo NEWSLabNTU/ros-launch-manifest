@@ -1,4 +1,17 @@
-//! Rule: scope latency budget >= critical path through internal graph.
+//! Rule: scope latency budget >= sum of node latencies (conservative).
+//!
+//! This is a per-manifest fallback that runs when checking a single
+//! manifest in isolation (no cross-scope merge). It uses a flat sum
+//! of all node latencies plus declared topic transport, which is a
+//! conservative upper bound — correct for series chains but
+//! pessimistic for parallel (fork-join) topologies where the actual
+//! critical path is `max(branches) + fusion`.
+//!
+//! When checking a manifest tree via the manifest loader, the precise
+//! topology-aware critical path is computed from the global dataflow
+//! graph (Phase 35.3) and reported via the cross-scope `scope-budget`
+//! diagnostic. The two diagnostics are deduplicated by their `path`
+//! field.
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
