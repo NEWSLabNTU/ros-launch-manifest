@@ -19,7 +19,7 @@ and at what quality*.
 **How to read this document:**
 
 - **[Manifest Elements](#manifest-elements)** — the building blocks: scope, node, topic, path, etc.
-- **[Background](#background)** — the *why*: subscriber modes, name resolution, latency, drops, timestamps.
+- **[Background](#background)** — design principles, dataflow patterns, contracts, timing, and timestamps.
 - **[Worked Example](#worked-example)** — a complete multi-scope perception pipeline.
 - **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
 - **[Static Validation](#static-validation)** — checker rules and example diagnostics.
@@ -178,6 +178,60 @@ graph. Scopes contain nodes, topics, services, and child scopes.
 
 ## Background
 
+### Modularity and Standalone Checking
+
+The manifest design is **modular** — each manifest is self-contained
+and semantically valid regardless of where it sits in the launch
+hierarchy. You can check the full `autoware.launch.xml` (all
+subsystems), just `control.launch.xml` (one subsystem), or a single
+leaf launch file. The checker produces valid results at every level.
+
+This is why the same topic can appear in multiple manifests. When
+`control.yaml` subscribes to `/localization/kinematic_state`, it
+declares `type: nav_msgs/msg/Odometry` — even though `localization.yaml`
+already declares the same type for the same topic. The duplication is
+intentional: if you launch `control.launch.xml` alone (without
+localization), the checker still knows the expected message type and
+can validate the manifest independently.
+
+The **consistency rule** is the mechanism that makes this work:
+
+- When checking a single manifest, all declarations are local — no
+  conflicts possible.
+- When checking a manifest tree (multiple scopes), the checker merges
+  declarations for the same resolved topic name. `type:` must agree.
+  `rate_hz:` and `qos:` must agree when declared in multiple scopes.
+  `pub:` and `sub:` lists are merged.
+
+This is the opposite of a centralized model where a parent manifest
+"owns" topic declarations. A centralized model would break standalone
+checking — a leaf manifest would be incomplete without its parent.
+
+### Independence from ROS Launch
+
+The manifest format is a **plain YAML specification** — it does not
+parse launch files, evaluate substitutions, or depend on ROS
+infrastructure. The manifest doesn't know its own namespace or args
+until check time.
+
+The **launch tree provides context** to the manifest:
+
+- **Namespace**: from `<push-ros-namespace>` — used to resolve relative
+  topic keys
+- **Args**: from `<arg>` declarations and `<let>` assignments — used to
+  substitute `$(var name)` and evaluate conditions
+- **Parent-child relationships**: from `<include>` tags — used for
+  scope-tree budget checks
+
+This context is captured in the **scope table** (already produced by
+the parser as part of `record.json`). The checker receives the scope
+table and applies it: substitute args, resolve relative names, filter
+conditions. The manifest itself is inert.
+
+This separation means manifests work with any tool that produces a
+scope table — not just the ROS 2 launch system. A different build
+system, a test harness, or a manual scope table all work the same way.
+
 ### Subscriber Modes: `state` and `required`
 
 ROS 2 nodes subscribe to topics in two patterns:
@@ -259,9 +313,51 @@ included in the launch hierarchy.
 
 See [Topics](#topics) for the full field table and consistency rules.
 
-### Latency vs Age
+### Dataflow Topologies
 
-Both describe "how old is the data?" but measure different things.
+Nodes connect in three basic topologies, each with different latency
+and timing behavior:
+
+**Pipeline (series)** — the most common pattern. Each node processes
+and forwards to the next. Latencies add:
+
+```
+in → [cropbox: 5ms] → [ground_filter: 15ms] → [detector: 30ms] → out
+                        total: 5 + 15 + 30 = 50ms
+```
+
+In Autoware, the perception pipeline (sensor → preprocessing →
+detection → tracking → prediction) is a series chain.
+
+**Fork-join (parallel)** — two branches merge at a fusion node. The
+fusion node waits for both inputs. Latency = max(branches) + fusion:
+
+```
+      ┌→ lidar detection (50ms) →┐
+in →  │                          ├→ fusion (20ms) → out
+      └→ camera detection (30ms) →┘
+                   total: max(50, 30) + 20 = 70ms
+```
+
+In Autoware, object merger and radar fusion follow this pattern —
+multiple sensor streams converge at a fusion node.
+
+**Periodic (timer-driven)** — a timer-driven node polls the latest
+state from a buffer. Breaks the causal chain:
+
+```
+upstream → [state buffer] → [EKF, period=100ms] → out
+             worst case: data waits up to one full period
+```
+
+In Autoware, the EKF localizer runs on a timer, polling buffered pose
+and twist measurements. The multi-object tracker can also run
+periodically with delay compensation.
+
+See [contract-theory.md](contract-theory.md#composition) for the formal
+composition rules (latency, rate, age, drop) for each topology.
+
+### Latency vs Age
 
 Latency and age serve different concerns:
 
@@ -292,13 +388,6 @@ includes internal transport that individual nodes don't. Transport
 latency can be declared per topic via `max_transport_ms`. Topics without
 it contribute 0 to the budget sum — the undeclared transport is absorbed
 into the scope's residual headroom.
-
-**Partial decomposition:** You don't need to declare `max_latency_ms` on
-every node. A scope with a budget is valid even if some (or all) of its
-children have no budgets. The checker reports the **residual** — the
-unallocated portion of the scope budget — so you can see how much
-headroom remains. This supports a top-down workflow: start with the E2E
-requirement, fill in per-node budgets as you measure them.
 
 **`max_age_ms`** — the maximum acceptable age of data when a subscriber
 receives it. Declared on **subscriber endpoints**, not on paths.
@@ -339,6 +428,63 @@ See [Nodes](#nodes) for the `max_age_ms` field table and
 [Verification Rules](contract-theory.md#verification-rules) for the
 full composition and checking rules.
 
+### Node and Scope Contracts
+
+Contracts are defined at two levels, serving different roles:
+
+**Node contract** — owned by the component developer. Declares what the
+node needs (assumption) and what it promises (guarantee):
+
+```yaml
+nodes:
+  ground_filter:
+    sub:
+      input: { min_rate_hz: 10 }        # assumption: 10 Hz input
+    pub:
+      output: { min_rate_hz: 10 }       # guarantee: 10 Hz output
+    paths:
+      main:
+        input: input
+        output: [output]
+        max_latency_ms: 15              # guarantee: 15ms processing
+```
+
+A node contract is testable in isolation — give it input at the assumed
+rate and verify the output meets the guarantee. The
+assumption/guarantee separation helps diagnosis at runtime:
+
+| Assumption | Guarantee | Diagnosis |
+|------------|-----------|-----------|
+| met | met | Nominal |
+| met | violated | **Node bug** — exceeds its declared budget |
+| violated | met | Upstream problem, but this node is robust |
+| violated | violated | Upstream problem — not this node's fault |
+
+**Scope contract** — owned by the system integrator. Declares an E2E
+budget across a subtree of nodes:
+
+```yaml
+paths:
+  perception:
+    input: /sensing/pointcloud
+    output: [/perception/objects]
+    max_latency_ms: 85                  # E2E budget for the whole pipeline
+    max_drop_rate: 0.08
+```
+
+The scope path uses topic names as entry/exit points. The checker
+traces the dataflow between them, considering only nodes within the
+scope's subtree.
+
+**Partial decomposition** connects the two levels: start with the scope
+budget (top-down), fill in node budgets as you measure them (bottom-up).
+The checker reports the **residual** — how much of the scope budget
+remains after subtracting declared node budgets. This tells you how
+much headroom covers undeclared nodes and transport.
+
+See [contract-theory.md](contract-theory.md#what-is-a-contract) for
+the formal contract definitions.
+
 ### Drop Budgets
 
 Messages can be lost in transport between nodes — DDS queue overflow,
@@ -366,8 +512,8 @@ topics:
 
 paths:
   perception:
-    input: raw_data
-    output: [detections]
+    input: /sensing/pointcloud
+    output: [/perception/objects]
     max_latency_ms: 85
     max_drop_rate: 0.08        # 8% E2E (all transport hops combined)
     max_consecutive: 5
@@ -413,8 +559,8 @@ like `reliability: maybe`. See [Topics](#topics) for the `qos:` field.
 ### Timestamps and Data Flow
 
 Timestamps (`header.stamp`) are the thread that connects latency, age,
-correlation, and state. The manifest imposes rules on how timestamps
-flow through the graph.
+and correlation. The manifest imposes rules on how timestamps flow
+through the graph.
 
 **Causal paths preserve timestamps.** When a node has a causal path
 `input → output`, the output message's `header.stamp` must equal the
@@ -434,55 +580,81 @@ sensor reading.
 **Periodic nodes reset the timestamp chain.** A timer-driven node
 (empty `input: []` path) generates its own timestamps — the output
 `stamp` is the current time, not propagated from an input. For example,
-a tracker runs on a 10 Hz timer, polls the latest fused objects
-(`state: true`), and publishes tracked objects with `stamp = now`.
-This is why `max_age_ms` on a subscriber downstream of a periodic node
-reflects the periodic node's timer rate, not the original sensor's
-timestamp — a periodic node breaks the provenance chain.
-
-**Multi-input correlation matches timestamps.** When a node fuses
-multiple causal inputs (e.g., lidar + camera), `correlation` specifies
-how input timestamps are paired:
-
-- `correlation: timestamp` — inputs must have matching `header.stamp`
-  within `tolerance_ms`. If lidar and camera stamps differ by more than
-  the tolerance, the pair is discarded. The output `stamp` is the oldest
-  input stamp (preserving the earliest provenance). Corresponds to
-  `message_filters::ApproximateTimeSynchronizer` in ROS 2.
-
-- `correlation: latest` — the node triggers on the **first listed
-  input** (the primary causal input) and reads the latest value from
-  secondary inputs. No timestamp matching is performed. The output
-  `stamp` equals the **primary input's stamp** — secondary inputs
-  enrich the data but don't determine the timestamp. This is the
-  dominant pattern in Autoware: map-based prediction triggers on
-  tracked objects (primary) and polls traffic signals (secondary).
-
-```yaml
-paths:
-  # ApproximateTime sync — output stamp = oldest input stamp
-  fusion:
-    input: [lidar_objects, camera_objects]
-    output: [fused]
-    correlation: timestamp
-    tolerance_ms: 50           # lidar and camera stamps must be within 50ms
-    max_latency_ms: 20
-
-  # Primary input trigger — output stamp = primary (first) input stamp
-  prediction:
-    input: [tracked_objects, traffic_signals]
-    output: [predicted]
-    correlation: latest
-    max_latency_ms: 15
-```
+the EKF localizer runs on a 10 Hz timer, polls buffered pose/twist
+measurements (`state: true`), and publishes with `stamp = now`.
+Subscribers downstream see age relative to the EKF's timer, not the
+original sensor.
 
 **State subscribers don't contribute timestamps.** A `state: true`
 subscriber reads the latest value regardless of its timestamp. The
 state data's `stamp` is *not* propagated to the output — only causal
 inputs contribute. EKF reads map data (`state: true`, stamp from minutes
 ago) and sensor data (causal, `stamp=T`). The output pose has `stamp=T`,
-not the map's ancient timestamp. See [Paths](#paths) for `correlation`
-and `tolerance_ms` fields.
+not the map's ancient timestamp.
+
+### Multi-Input Fusion and Correlation
+
+When a node fuses multiple inputs, the manifest must specify how input
+timestamps relate and which stamp the output inherits. This is declared
+via `correlation` on node paths.
+
+Analysis of 9 Autoware fusion nodes reveals two dominant patterns:
+
+**Pattern 1: Timestamp synchronization** (used by object merger, radar
+fusion, cluster merger, image projection fusion). Multiple inputs are
+synchronized via `message_filters::ApproximateTimeSynchronizer`. The
+output inherits the **oldest** input stamp:
+
+```yaml
+# Object merger: lidar + radar detections synchronized by timestamp
+nodes:
+  object_merger:
+    sub:
+      lidar_objects: { min_rate_hz: 10 }
+      radar_objects: { min_rate_hz: 10 }
+    pub:
+      merged: { min_rate_hz: 10 }
+    paths:
+      main:
+        input: [lidar_objects, radar_objects]
+        output: [merged]
+        correlation: timestamp
+        tolerance_ms: 50         # stamps must be within 50ms
+        max_latency_ms: 20
+```
+
+**Pattern 2: Primary input with polled secondaries** (used by
+map-based prediction, BEVFusion, distortion corrector). The node
+triggers on one primary input and reads the latest value from secondary
+inputs. The output inherits the **primary (first listed) input's**
+stamp:
+
+```yaml
+# Map-based prediction: triggers on tracked objects, polls map + signals
+nodes:
+  map_based_prediction:
+    sub:
+      tracked: { min_rate_hz: 10 }
+      vector_map: { state: true, required: true }
+      traffic_signals: { state: true }
+    pub:
+      predicted: { min_rate_hz: 10 }
+    paths:
+      main:
+        input: [tracked, traffic_signals]
+        output: [predicted]
+        correlation: latest      # primary = tracked (first listed)
+        max_latency_ms: 15
+```
+
+**Effect on age:** with `correlation: timestamp`, the output age equals
+the **oldest** branch — the output is as stale as its stalest input.
+With `correlation: latest`, the output age follows only the **primary**
+branch — secondary inputs don't affect age tracking.
+
+See [Paths](#paths) for the `correlation` and `tolerance_ms` fields.
+See [contract-theory.md](contract-theory.md#parallel-fork-join) for the
+formal latency and age composition rules.
 
 ## Worked Example
 
