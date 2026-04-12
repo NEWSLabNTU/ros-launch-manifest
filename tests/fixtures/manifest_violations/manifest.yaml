@@ -4,13 +4,10 @@
 #   [error]   qos-compat        — invalid durability "persistent"
 #   [error]   rate-hierarchy     — pub min_rate_hz (5) < topic rate_hz (10)
 #   [error]   rate-hierarchy     — topic rate_hz (8) < subscriber min_rate_hz (15)
-#   [error]   scope-budget       — max_age_ms (30) < max_latency_ms (100)
 #   [error]   causal-dag         — cycle between node_a and node_b
-#   [error]   drop-rate          — scope drop budget infeasible
-#   [error]   drop-consecutive   — scope max_consecutive (2) < node max_consecutive (5)
+#   [error]   drop-sanity        — drop count N > window W (or other sanity issues)
 #   [warning] scope-budget       — scope latency may be less than sum of node latencies
 #   [warning] wiring             — path endpoint not wired by any topic
-#   [warning] drop-consecutive   — Poisson feasibility warning
 version: 1
 
 nodes:
@@ -109,18 +106,11 @@ services:
   typeless_service:
     server: [node_a/to_b]
 
-sub:
-  raw: [slow_driver/input]
-
-pub:
-  results: [node_b/output]
-
 paths:
   main:
     input: raw
     output: [results]
     max_latency_ms: 100
-    max_age_ms: 30
     drop:
       max_count: 3 / 100
       max_consecutive: 2

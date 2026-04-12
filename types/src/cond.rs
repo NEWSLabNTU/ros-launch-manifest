@@ -150,33 +150,6 @@ fn cleanup_dangling_refs(
         .actions
         .retain(|_, a| !a.server.is_empty() || !a.client.is_empty());
 
-    // Clean up scope interface group members (? refs to filtered nodes)
-    for members in manifest.scope_pub.values_mut() {
-        cleanup_ref_list(members, &node_names, conditional_nodes);
-    }
-    for members in manifest.scope_sub.values_mut() {
-        cleanup_ref_list(members, &node_names, conditional_nodes);
-    }
-    for members in manifest.scope_srv.values_mut() {
-        cleanup_ref_list(members, &node_names, conditional_nodes);
-    }
-    for members in manifest.scope_cli.values_mut() {
-        cleanup_ref_list(members, &node_names, conditional_nodes);
-    }
-    for members in manifest.action_server.values_mut() {
-        cleanup_ref_list(members, &node_names, conditional_nodes);
-    }
-    for members in manifest.action_client.values_mut() {
-        cleanup_ref_list(members, &node_names, conditional_nodes);
-    }
-
-    // Remove empty scope interface groups
-    manifest.scope_pub.retain(|_, v| !v.is_empty());
-    manifest.scope_sub.retain(|_, v| !v.is_empty());
-    manifest.scope_srv.retain(|_, v| !v.is_empty());
-    manifest.scope_cli.retain(|_, v| !v.is_empty());
-    manifest.action_server.retain(|_, v| !v.is_empty());
-    manifest.action_client.retain(|_, v| !v.is_empty());
 }
 
 /// Remove refs whose node was conditional and got filtered out (inferred optional).
@@ -611,27 +584,4 @@ topics:
         assert!(!m.topics.contains_key("half_topic"));
     }
 
-    #[test]
-    fn test_empty_scope_group_removed() {
-        let yaml = r#"
-version: 1
-nodes:
-  opt_node:
-    if: "false"
-    pub: [output]
-sub:
-  input_group:
-    - opt_node/output
-"#;
-        let mut m = crate::parse_manifest_str(yaml).unwrap();
-        assert!(m.scope_sub.contains_key("input_group"));
-
-        filter_manifest(&mut m);
-
-        // Group becomes empty after opt_node is filtered → removed
-        assert!(
-            !m.scope_sub.contains_key("input_group"),
-            "empty scope group should be removed"
-        );
-    }
 }

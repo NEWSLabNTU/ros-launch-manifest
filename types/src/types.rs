@@ -36,8 +36,6 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exclude_patterns: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub global_topics: BTreeMap<String, GlobalTopicDecl>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub nodes: BTreeMap<String, NodeDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<String, TopicDecl>,
@@ -47,35 +45,8 @@ pub struct Manifest {
     pub actions: BTreeMap<String, ActionDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub includes: BTreeMap<String, IncludeDecl>,
-    /// Scope interface — publisher endpoint groups (scope provides to parent).
-    #[serde(rename = "pub", skip_serializing_if = "BTreeMap::is_empty")]
-    pub scope_pub: BTreeMap<String, Vec<String>>,
-    /// Scope interface — subscriber endpoint groups (scope needs from parent).
-    #[serde(rename = "sub", skip_serializing_if = "BTreeMap::is_empty")]
-    pub scope_sub: BTreeMap<String, Vec<String>>,
-    /// Scope interface — service server endpoint groups.
-    #[serde(rename = "srv", skip_serializing_if = "BTreeMap::is_empty")]
-    pub scope_srv: BTreeMap<String, Vec<String>>,
-    /// Scope interface — service client endpoint groups.
-    #[serde(rename = "cli", skip_serializing_if = "BTreeMap::is_empty")]
-    pub scope_cli: BTreeMap<String, Vec<String>>,
-    /// Scope interface — action server endpoint groups.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub action_server: BTreeMap<String, Vec<String>>,
-    /// Scope interface — action client endpoint groups.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub action_client: BTreeMap<String, Vec<String>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, PathDecl>,
-}
-
-/// Global topic declaration (type + optional QoS).
-#[derive(Debug, Clone, Serialize)]
-pub struct GlobalTopicDecl {
-    #[serde(rename = "type")]
-    pub msg_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub qos: Option<QosDecl>,
 }
 
 /// Node declaration.
@@ -106,6 +77,9 @@ pub struct EndpointProps {
     pub max_rate_hz: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jitter_ms: Option<f64>,
+    /// Sub endpoint: max data age at receive (now - header.stamp), runtime-checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_ms: Option<f64>,
     /// Sub endpoint: read-latest, not causal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<bool>,
@@ -139,6 +113,9 @@ pub struct TopicDecl {
     pub qos: Option<QosDecl>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_hz: Option<f64>,
+    /// Worst-case transport latency (ms) for this topic hop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_transport_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
 }
@@ -206,18 +183,14 @@ pub struct PathDecl {
     pub if_condition: Option<String>,
     #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
     pub unless_condition: Option<String>,
-    /// Single endpoint name or list of endpoint names (from sub).
+    /// Node paths: endpoint names. Scope paths: topic names (relative/absolute).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<String>,
-    /// List of endpoint names (from pub).
+    /// Node paths: endpoint names. Scope paths: topic names (relative/absolute).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_latency_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_age_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

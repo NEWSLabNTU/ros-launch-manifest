@@ -71,21 +71,3 @@ services:
     server: [mission_planner/set_waypoint_route]
     client: [route_selector/set_waypoint_route]
 
-sub:
-  vector_map:
-    - mission_planner/vector_map
-  odometry:
-    - mission_planner/odometry
-  modified_goal:
-    - mission_planner/modified_goal
-
-pub:
-  route:
-    - route_selector/main_route
-
-srv:
-  clear_route_api:
-    - mission_planner/clear_route
-  set_route_api:
-    - mission_planner/set_lanelet_route
-    - mission_planner/set_waypoint_route

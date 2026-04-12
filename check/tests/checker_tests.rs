@@ -270,25 +270,6 @@ paths:
     );
 }
 
-#[test]
-fn test_scope_age_less_than_latency() {
-    let yaml = r#"
-version: 1
-paths:
-  main:
-    input: raw
-    output: [out]
-    max_latency_ms: 100
-    max_age_ms: 50
-"#;
-    let errs = errors(yaml);
-    assert!(
-        errs.iter()
-            .any(|e| e.contains("max_age_ms (50) < max_latency_ms (100)")),
-        "expected age error: {errs:?}"
-    );
-}
-
 // ── Causal DAG ──
 
 #[test]
@@ -341,10 +322,10 @@ topics:
     );
 }
 
-// ── Drop rate ──
+// ── Drop sanity ──
 
 #[test]
-fn test_drop_rate_feasible() {
+fn test_drop_sanity_max_consecutive_zero() {
     let yaml = r#"
 version: 1
 nodes:
@@ -353,61 +334,19 @@ nodes:
       main:
         input: x
         output: [y]
-        drop: 2 / 100
-  b:
-    paths:
-      main:
-        input: x
-        output: [y]
-        drop: 3 / 100
-paths:
-  main:
-    input: raw
-    output: [out]
-    drop: 6 / 100
+        drop:
+          max_count: 5 / 100
+          max_consecutive: 0
 "#;
     let errs = errors(yaml);
-    let drop_errs: Vec<_> = errs.iter().filter(|e| e.contains("drop-rate")).collect();
     assert!(
-        drop_errs.is_empty(),
-        "unexpected drop errors: {drop_errs:?}"
+        errs.iter().any(|e| e.contains("max_consecutive is 0")),
+        "expected drop-sanity error for max_consecutive 0: {errs:?}"
     );
 }
 
 #[test]
-fn test_drop_rate_infeasible() {
-    let yaml = r#"
-version: 1
-nodes:
-  a:
-    paths:
-      main:
-        input: x
-        output: [y]
-        drop: 5 / 100
-  b:
-    paths:
-      main:
-        input: x
-        output: [y]
-        drop: 5 / 100
-paths:
-  main:
-    input: raw
-    output: [out]
-    drop: 5 / 100
-"#;
-    let errs = errors(yaml);
-    assert!(
-        errs.iter().any(|e| e.contains("drop-rate")),
-        "expected drop rate error: {errs:?}"
-    );
-}
-
-// ── Drop consecutive ──
-
-#[test]
-fn test_drop_consecutive_feasible() {
+fn test_drop_sanity_valid_values() {
     let yaml = r#"
 version: 1
 nodes:
@@ -429,40 +368,36 @@ paths:
 "#;
     let m = parse_manifest_str(yaml).unwrap();
     let result = run_checks(&m);
-    let consec_errs: Vec<_> = result
+    let sanity_errs: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.rule_id == "drop-consecutive" && d.severity == Severity::Error)
+        .filter(|d| d.rule_id == "drop-sanity" && d.severity == Severity::Error)
         .collect();
-    assert!(consec_errs.is_empty(), "unexpected errors: {consec_errs:?}");
+    assert!(sanity_errs.is_empty(), "unexpected errors: {sanity_errs:?}");
 }
 
 #[test]
-fn test_drop_consecutive_scope_stricter_than_node() {
+fn test_drop_sanity_effective_rate_insufficient() {
     let yaml = r#"
 version: 1
 nodes:
-  a:
-    paths:
-      main:
-        input: x
-        output: [y]
-        drop:
-          max_count: 5 / 100
-          max_consecutive: 5
-paths:
-  main:
-    input: raw
-    output: [out]
+  consumer:
+    sub:
+      data:
+        min_rate_hz: 10
+topics:
+  sensor:
+    type: PointCloud2
+    pub: []
+    sub: [consumer/data]
+    rate_hz: 10
     drop:
-      max_count: 6 / 100
-      max_consecutive: 3
+      max_count: 50 / 100
 "#;
     let errs = errors(yaml);
     assert!(
-        errs.iter()
-            .any(|e| e.contains("scope max_consecutive (3) < node max_consecutive (5)")),
-        "expected consecutive error: {errs:?}"
+        errs.iter().any(|e| e.contains("effective delivery rate")),
+        "expected drop-sanity effective rate error: {errs:?}"
     );
 }
 
@@ -530,16 +465,11 @@ topics:
     pub: [ground/output]
     sub: [centerpoint/pointcloud]
     rate_hz: 10
-sub:
-  raw_data: [cropbox/input]
-pub:
-  detections: [centerpoint/objects]
 paths:
   main:
     input: raw_data
     output: [detections]
     max_latency_ms: 60
-    max_age_ms: 150
     drop: 6 / 100
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -625,26 +555,32 @@ topics:
 }
 
 #[test]
-fn test_span_scope_budget_error_has_byte_range() {
+fn test_span_scope_budget_warning_has_byte_range() {
     let yaml = r#"version: 1
+nodes:
+  a:
+    paths:
+      main:
+        input: []
+        output: [out]
+        max_latency_ms: 200
 paths:
   main:
     input: raw
     output: [out]
-    max_latency_ms: 100
-    max_age_ms: 50
+    max_latency_ms: 50
 "#;
     let parsed = parse_manifest_str_with_spans(yaml).unwrap();
     let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
 
-    let budget_errs: Vec<_> = result
+    let budget_warns: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.rule_id == "scope-budget" && d.severity == Severity::Error)
+        .filter(|d| d.rule_id == "scope-budget" && d.severity == Severity::Warning)
         .collect();
-    assert!(!budget_errs.is_empty());
+    assert!(!budget_warns.is_empty());
 
-    let with_span: Vec<_> = budget_errs.iter().filter(|d| d.span.is_some()).collect();
+    let with_span: Vec<_> = budget_warns.iter().filter(|d| d.span.is_some()).collect();
     assert!(
         !with_span.is_empty(),
         "expected scope-budget diagnostic with span"
@@ -1088,99 +1024,8 @@ paths:
     assert!(m.paths["active_path"].if_condition.is_none());
 }
 
-// ── Unified scope interface edge cases ──
-
-#[test]
-fn test_scope_interface_all_types() {
-    let yaml = r#"
-version: 1
-nodes:
-  n:
-    pub: [out]
-    sub: [in_data]
-    srv:
-      my_srv: {}
-    cli:
-      my_cli: {}
-pub:
-  output_group: [n/out]
-sub:
-  input_group: [n/in_data]
-srv:
-  srv_group: [n/my_srv]
-cli:
-  cli_group: [n/my_cli]
-action_server:
-  act_srv: [n/out]
-action_client:
-  act_cli: [n/in_data]
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    assert_eq!(m.scope_pub.len(), 1);
-    assert_eq!(m.scope_sub.len(), 1);
-    assert_eq!(m.scope_srv.len(), 1);
-    assert_eq!(m.scope_cli.len(), 1);
-    assert_eq!(m.action_server.len(), 1);
-    assert_eq!(m.action_client.len(), 1);
-}
-
-#[test]
-fn test_scope_interface_optional_refs_in_groups() {
-    use ros_launch_manifest_types::filter_manifest;
-
-    let yaml = r#"
-version: 1
-nodes:
-  always:
-    sub: [input]
-  opt_a:
-    if: "false"
-    sub: [input]
-  opt_b:
-    if: "true"
-    sub: [input]
-sub:
-  mixed_group:
-    - always/input
-    - opt_a/input
-    - opt_b/input
-"#;
-    let mut m = parse_manifest_str(yaml).unwrap();
-    filter_manifest(&mut m);
-
-    let group = &m.scope_sub["mixed_group"];
-    assert_eq!(group.len(), 2, "always + opt_b, opt_a filtered out");
-    assert_eq!(group[0], "always/input");
-    assert_eq!(group[1], "opt_b/input"); // conditional node present — ref kept
-}
-
-#[test]
-fn test_scope_interface_multiple_groups() {
-    let yaml = r#"
-version: 1
-nodes:
-  driver:
-    pub: [lidar, camera, radar]
-  planner:
-    sub: [objects, trajectory]
-sub:
-  perception_in:
-    - driver/lidar
-    - driver/camera
-  radar_in:
-    - driver/radar
-pub:
-  planning_out:
-    - planner/objects
-  trajectory_out:
-    - planner/trajectory
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    assert_eq!(m.scope_sub.len(), 2);
-    assert_eq!(m.scope_pub.len(), 2);
-    assert_eq!(m.scope_sub["perception_in"].len(), 2);
-    assert_eq!(m.scope_sub["radar_in"].len(), 1);
-}
+// Scope interface tests removed — scope_pub, scope_sub, scope_srv, scope_cli,
+// action_server, action_client fields no longer exist on Manifest.
 
 // ── Dangling entity edge cases ──
 
@@ -1856,31 +1701,7 @@ services:
 
 // ── Substitution in scope interface ──
 
-#[test]
-fn test_substitution_in_scope_interface() {
-    use ros_launch_manifest_types::{resolve_args, substitute_manifest};
-    use std::collections::HashMap;
-
-    let yaml = r#"
-args:
-  input_topic:
-version: 1
-nodes:
-  n:
-    sub: [data]
-sub:
-  $(var input_topic)_input:
-    - n/data
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let args = HashMap::from([("input_topic".into(), "lidar".into())]);
-    let resolved = resolve_args(&m.args, &args).unwrap();
-    let subst = substitute_manifest(&m, &resolved).unwrap();
-
-    // The scope group key is NOT substituted (it's a YAML key, not a value)
-    // But the members ARE substituted
-    assert!(subst.scope_sub.contains_key("$(var input_topic)_input"));
-}
+// test_substitution_in_scope_interface removed — scope interface fields no longer exist.
 
 // ── Full pipeline: substitute → filter → check ──
 
@@ -1936,18 +1757,11 @@ topics:
     pub: [twist_node/twist]
     sub: []
 
-sub:
-  pointcloud: [ndt_node/pointcloud]
-  gnss: [eagleye_node/gnss]
-  imu: [twist_node/imu]
-pub:
-  localization: [ekf/output]
 paths:
   main:
     input: pointcloud
     output: [localization]
     max_latency_ms: 40
-    max_age_ms: 200
 "#;
 
     let m = parse_manifest_str(yaml).unwrap();

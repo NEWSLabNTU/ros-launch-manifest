@@ -26,9 +26,7 @@ impl ValidationRule for WiringRule {
             for (path_name, path) in &node.paths {
                 for input_ep in &path.input {
                     let full_ref = format!("{node_name}/{input_ep}");
-                    if !wired_endpoints.contains(&full_ref)
-                        && !is_scope_interface_ref(input_ep, manifest)
-                    {
+                    if !wired_endpoints.contains(&full_ref) {
                         ctx.warning(
                             self.id(),
                             &format!("nodes.{node_name}.paths.{path_name}"),
@@ -52,27 +50,5 @@ impl ValidationRule for WiringRule {
                 }
             }
         }
-
-        // Check unresolved scope sub (incoming) interface endpoints
-        for (group_name, members) in &manifest.scope_sub {
-            for member in members {
-                let is_wired = manifest
-                    .topics
-                    .values()
-                    .any(|t| t.subscribers.iter().any(|s| s == member || s == group_name));
-                if !is_wired {
-                    ctx.warning(
-                        self.id(),
-                        &format!("sub.{group_name}"),
-                        format!("scope sub member '{member}' is not wired by any topic's sub list"),
-                    );
-                }
-            }
-        }
     }
-}
-
-/// Check if a name is referenced in the scope interface (sub or cli groups).
-fn is_scope_interface_ref(name: &str, manifest: &Manifest) -> bool {
-    manifest.scope_sub.contains_key(name) || manifest.scope_cli.contains_key(name)
 }

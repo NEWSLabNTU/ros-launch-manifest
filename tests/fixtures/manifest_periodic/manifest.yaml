@@ -83,5 +83,3 @@ topics:
     sub: []
     rate_hz: 30
 
-pub:
-  control: [controller/control_cmd]

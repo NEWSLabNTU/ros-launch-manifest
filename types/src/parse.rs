@@ -70,18 +70,11 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         version: yaml_u32(doc, "version").unwrap_or(1),
         args: parse_args(doc),
         exclude_patterns: yaml_string_list(doc, "exclude_patterns"),
-        global_topics: parse_global_topics(doc)?,
         nodes: parse_nodes(doc, ctx)?,
         topics: parse_topics(doc, ctx)?,
         services: parse_services(doc, ctx)?,
         actions: parse_actions(doc, ctx)?,
         includes: parse_includes(doc, ctx)?,
-        scope_pub: parse_groups(doc, "pub"),
-        scope_sub: parse_groups(doc, "sub"),
-        scope_srv: parse_groups(doc, "srv"),
-        scope_cli: parse_groups(doc, "cli"),
-        action_server: parse_groups(doc, "action_server"),
-        action_client: parse_groups(doc, "action_client"),
         paths: parse_paths(doc, ctx)?,
     })
 }
@@ -164,6 +157,7 @@ fn parse_endpoint_props(yaml: &Yaml, _ctx: &str) -> Result<EndpointProps, ParseE
         min_rate_hz: yaml_f64(yaml, "min_rate_hz"),
         max_rate_hz: yaml_f64(yaml, "max_rate_hz"),
         jitter_ms: yaml_f64(yaml, "jitter_ms"),
+        max_age_ms: yaml_f64(yaml, "max_age_ms"),
         state: yaml_bool(yaml, "state"),
         required: yaml_bool(yaml, "required"),
     })
@@ -257,6 +251,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
             subscribers: vec![],
             qos: None,
             rate_hz: None,
+            max_transport_ms: None,
             drop: None,
         });
     }
@@ -269,6 +264,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         subscribers: yaml_string_list(yaml, "sub"),
         qos: parse_qos(yaml),
         rate_hz: yaml_f64(yaml, "rate_hz"),
+        max_transport_ms: yaml_f64(yaml, "max_transport_ms"),
         drop: parse_drop_spec(yaml, "drop", ctx)?,
     })
 }
@@ -408,50 +404,6 @@ fn parse_arg_decl(yaml: &Yaml) -> ArgDecl {
     ArgDecl::String
 }
 
-// ── Global Topics ──
-
-fn parse_global_topics(doc: &Yaml) -> Result<BTreeMap<String, GlobalTopicDecl>, ParseError> {
-    let mut out = BTreeMap::new();
-    let section = &doc["global_topics"];
-    if section.is_badvalue() {
-        return Ok(out);
-    }
-    if let Some(hash) = section.as_hash() {
-        for (k, v) in hash {
-            let name = yaml_str_owned(k);
-            out.insert(
-                name,
-                GlobalTopicDecl {
-                    msg_type: yaml_string(v, "type").unwrap_or_default(),
-                    qos: parse_qos(v),
-                },
-            );
-        }
-    }
-    Ok(out)
-}
-
-// ── Import/Export Groups ──
-
-fn parse_groups(doc: &Yaml, key: &str) -> BTreeMap<String, Vec<String>> {
-    let mut out = BTreeMap::new();
-    let section = &doc[key];
-    if section.is_badvalue() {
-        return out;
-    }
-    if let Some(hash) = section.as_hash() {
-        for (k, v) in hash {
-            let name = yaml_str_owned(k);
-            let members = match v {
-                Yaml::Array(arr) => arr.iter().map(yaml_str_owned).collect(),
-                _ => vec![],
-            };
-            out.insert(name, members);
-        }
-    }
-    out
-}
-
 // ── Paths ──
 
 fn parse_paths(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, PathDecl>, ParseError> {
@@ -479,8 +431,6 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         input: parse_string_or_list(yaml, "input"),
         output: yaml_string_list(yaml, "output"),
         max_latency_ms: yaml_f64(yaml, "max_latency_ms"),
-        min_latency_ms: yaml_f64(yaml, "min_latency_ms"),
-        max_age_ms: yaml_f64(yaml, "max_age_ms"),
         correlation: yaml_string(yaml, "correlation"),
         tolerance_ms: yaml_f64(yaml, "tolerance_ms"),
         drop: parse_drop_spec(yaml, "drop", ctx)?,
@@ -619,14 +569,11 @@ topics:
     type: std_msgs/msg/String
     pub: [talker/chatter]
     sub: [listener/chatter]
-pub:
-  output: [talker/chatter]
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         assert_eq!(m.version, 1);
         assert_eq!(m.nodes.len(), 2);
         assert_eq!(m.topics.len(), 1);
-        assert_eq!(m.scope_pub.len(), 1);
 
         let talker = &m.nodes["talker"];
         assert!(talker.publishers.contains_key("chatter"));
@@ -683,7 +630,6 @@ nodes:
         input: sensor_points
         output: [ndt_pose]
         max_latency_ms: 50
-        min_latency_ms: 10
         drop:
           max_count: 10 / 100
           max_consecutive: 5
@@ -699,7 +645,6 @@ nodes:
         assert_eq!(loc.input, vec!["sensor_points"]);
         assert_eq!(loc.output, vec!["ndt_pose"]);
         assert_eq!(loc.max_latency_ms, Some(50.0));
-        assert_eq!(loc.min_latency_ms, Some(10.0));
         let drop = loc.drop.as_ref().unwrap();
         assert_eq!(drop.max_count.as_ref().unwrap().n, 10);
         assert_eq!(drop.max_count.as_ref().unwrap().w, 100);
@@ -757,8 +702,6 @@ includes:
       emergency_stop:
         pub: [stop_cmd]
         sub: [diagnostics]
-    pub:
-      commands: [emergency_stop/stop_cmd]
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         assert_eq!(m.includes.len(), 2);
@@ -776,7 +719,6 @@ includes:
         match &m.includes["safety"] {
             IncludeDecl::Inline(inner) => {
                 assert!(inner.nodes.contains_key("emergency_stop"));
-                assert!(inner.scope_pub.contains_key("commands"));
             }
             _ => panic!("expected Inline"),
         }
@@ -786,26 +728,18 @@ includes:
     fn test_scope_paths() {
         let yaml = r#"
 version: 1
-sub:
-  raw_data: [cropbox_filter/input]
-pub:
-  detections: [centerpoint/objects]
 paths:
   main:
     input: raw_data
     output: [detections]
     max_latency_ms: 50
-    max_age_ms: 120
 "#;
         let m = parse_manifest_str(yaml).unwrap();
-        assert_eq!(m.scope_sub["raw_data"], vec!["cropbox_filter/input"]);
-        assert_eq!(m.scope_pub["detections"], vec!["centerpoint/objects"]);
 
         let main = &m.paths["main"];
         assert_eq!(main.input, vec!["raw_data"]);
         assert_eq!(main.output, vec!["detections"]);
         assert_eq!(main.max_latency_ms, Some(50.0));
-        assert_eq!(main.max_age_ms, Some(120.0));
     }
 
     #[test]
@@ -829,26 +763,6 @@ nodes:
         assert_eq!(path.input, vec!["lidar_objects", "camera_objects"]);
         assert_eq!(path.correlation.as_deref(), Some("timestamp"));
         assert_eq!(path.tolerance_ms, Some(50.0));
-    }
-
-    #[test]
-    fn test_global_topics() {
-        let yaml = r#"
-version: 1
-global_topics:
-  /tf:
-    type: tf2_msgs/msg/TFMessage
-    qos:
-      reliability: reliable
-      depth: 100
-  /clock:
-    type: rosgraph_msgs/msg/Clock
-"#;
-        let m = parse_manifest_str(yaml).unwrap();
-        assert_eq!(m.global_topics.len(), 2);
-        let tf = &m.global_topics["/tf"];
-        assert_eq!(tf.msg_type, "tf2_msgs/msg/TFMessage");
-        assert_eq!(tf.qos.as_ref().unwrap().depth, Some(100));
     }
 
     #[test]

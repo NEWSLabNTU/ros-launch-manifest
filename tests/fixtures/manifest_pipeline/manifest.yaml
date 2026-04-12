@@ -98,16 +98,9 @@ topics:
     sub: []
     rate_hz: 10
 
-sub:
-  sensor_input: [cropbox/raw_points]
-
-pub:
-  tracking_output: [tracker/tracked_objects]
-
 paths:
   perception:
-    input: sensor_input
-    output: [tracking_output]
+    input: raw_points
+    output: [tracked_objects]
     max_latency_ms: 60
-    max_age_ms: 200
     drop: 4 / 100

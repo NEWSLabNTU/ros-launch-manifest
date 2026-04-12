@@ -157,26 +157,6 @@ pub fn substitute_manifest(
         act.client = substitute_vec(&act.client, args)?;
     }
 
-    // Scope interface: endpoint lists
-    for members in m.scope_pub.values_mut() {
-        *members = substitute_vec(members, args)?;
-    }
-    for members in m.scope_sub.values_mut() {
-        *members = substitute_vec(members, args)?;
-    }
-    for members in m.scope_srv.values_mut() {
-        *members = substitute_vec(members, args)?;
-    }
-    for members in m.scope_cli.values_mut() {
-        *members = substitute_vec(members, args)?;
-    }
-    for members in m.action_server.values_mut() {
-        *members = substitute_vec(members, args)?;
-    }
-    for members in m.action_client.values_mut() {
-        *members = substitute_vec(members, args)?;
-    }
-
     // Scope paths: conditions + fields
     for path in m.paths.values_mut() {
         path.if_condition = substitute_opt(&path.if_condition, args)?;

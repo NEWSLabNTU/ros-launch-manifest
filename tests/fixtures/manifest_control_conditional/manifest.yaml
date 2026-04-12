@@ -106,32 +106,8 @@ topics:
       reliability: reliable
       depth: 1
 
-sub:
-  trajectory_input:
-    - controller/trajectory
-  kinematic_state:
-    - controller/kinematic_state
-    - control_validator/kinematic_state
-    - lane_checker/kinematic_state
-    - collision_detector/kinematic_state
-  steering_status:
-    - controller/steering_status
-  operation_mode:
-    - controller/operation_mode
-  pointcloud:
-    - aeb/pointcloud
-    - collision_detector/pointcloud
-  velocity_status:
-    - aeb/velocity_status
-  vector_map:
-    - lane_checker/vector_map
-
-pub:
-  control_output:
-    - controller/control_cmd
-
 paths:
   control:
-    input: trajectory_input
-    output: [control_output]
+    input: trajectory
+    output: [control_cmd]
     max_latency_ms: 15

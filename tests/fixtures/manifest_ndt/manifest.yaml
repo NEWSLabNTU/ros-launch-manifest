@@ -107,15 +107,8 @@ services:
     type: std_srvs/srv/Trigger
     server: [ndt_scan_matcher/trigger_node]
 
-sub:
-  raw_lidar: [voxel_grid/raw_points]
-
-pub:
-  localization: [ekf_localizer/ekf_pose]
-
 paths:
   localization:
     input: raw_lidar
     output: [localization]
     max_latency_ms: 50
-    max_age_ms: 100

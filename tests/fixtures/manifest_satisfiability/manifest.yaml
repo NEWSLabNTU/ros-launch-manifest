@@ -98,25 +98,8 @@ topics:
       - twist_estimator/twist
     sub: []
 
-sub:
-  pointcloud:
-    - ndt_node/pointcloud
-  gnss:
-    - eagleye_node/gnss_fix
-    - gnss_node/gnss_fix
-  imu:
-    - eagleye_node/imu
-    - twist_estimator/imu
-  map:
-    - ndt_node/map
-
-pub:
-  pose_output:
-    - ekf/ekf_pose
-
 paths:
   localization:
     input: pointcloud
     output: [pose_output]
     max_latency_ms: 40
-    max_age_ms: 200
