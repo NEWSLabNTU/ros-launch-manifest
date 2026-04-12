@@ -233,13 +233,166 @@ manifest tree, same as topics. No orphan `cli:` warnings — the
 
 ---
 
+## 42. Topology-Unaware Sum Check Produces False Warnings
+
+### Problem
+
+The `scope-budget` sum check adds all children's latency budgets and
+warns if the sum exceeds the scope budget. But for parallel (fork-join)
+branches, the correct composition is `max(branches)`, not `sum`. In any
+Autoware perception scope with lidar + camera + radar branches merging
+at a fusion node, the sum check will warn even when `max(branches) +
+fusion` fits the budget.
+
+The contract-theory doc acknowledges this ("the sum is conservative")
+but pervasive false warnings train users to ignore all warnings.
+
+### Options
+
+| Option | Pros | Cons |
+|--------|------|------|
+| A. Topology-aware check | Use path declarations to identify parallel branches, apply `max` | Requires dataflow graph analysis |
+| B. Suppression mechanism | `# manifest: suppress scope-budget` | Hides real issues too |
+| C. Accept as conservative | False positives, no false negatives | Noisy for real systems |
+
+---
+
+## 43. Scope Path Dataflow Tracing Underspecified
+
+### Problem
+
+The spec says "the checker traces the dataflow between the input and
+output topics, considering only nodes within this scope's subtree" but
+never specifies the algorithm:
+
+- Multiple paths between input and output — use the longest (worst-case)?
+- Diamond patterns where paths fork and rejoin?
+- Opaque child scopes — use the declared budget or trace through?
+- How does the checker build the dataflow graph from topic declarations?
+
+This is a critical piece of the checker design that needs specification,
+at least at the algorithmic level.
+
+---
+
+## 44. `max_transport_ms` Ambiguous for Multi-Subscriber Topics
+
+### Problem
+
+`max_transport_ms` is declared per topic, but a single ROS 2 topic can
+have subscribers with different transport characteristics — one on the
+same machine via shared memory (< 1ms), another across a network bridge
+(5-10ms). A single value per topic can't express this.
+
+### Options
+
+| Option | Pros | Cons |
+|--------|------|------|
+| A. Worst-case across all subscribers | Simple | Pessimistic for same-machine subs |
+| B. Per-subscriber transport override | Precise | More complex format |
+| C. Document as worst-case | No format change | Users must declare the worst case |
+
+---
+
+## 45. No QoS Publisher-Subscriber Compatibility Check
+
+### Problem
+
+The `qos-compat` rule validates that QoS field values are from the
+allowed set (e.g., `reliability: maybe` → error). But it does not
+check **publisher-subscriber QoS compatibility** — one of the most
+common ROS 2 deployment bugs:
+
+- `best_effort` publisher + `reliable` subscriber → **incompatible**
+  (no data flows)
+- `volatile` publisher + `transient_local` subscriber →
+  **incompatible** (late-joining subscriber misses data)
+
+The manifest declares QoS on topics and the checker merges across
+scopes. After merge, the checker has both publisher and subscriber QoS
+— it should validate compatibility using the ROS 2 compatibility
+matrix.
+
+### Fix
+
+Add a `qos-match` rule that checks publisher QoS against subscriber
+QoS on merged topics. The ROS 2 compatibility rules:
+
+| Publisher | Subscriber | Compatible? |
+|-----------|-----------|-------------|
+| reliable | reliable | Yes |
+| reliable | best_effort | Yes |
+| best_effort | reliable | **No** |
+| best_effort | best_effort | Yes |
+| transient_local | transient_local | Yes |
+| transient_local | volatile | Yes |
+| volatile | transient_local | **No** |
+| volatile | volatile | Yes |
+
+---
+
+## ~~46. No Guidance on Manifest Node Naming~~ — Done
+
+Added to §Nodes: manifest node name must match the ROS 2 node name
+(`name=` attribute / `__node:=` remap, as shown in `ros2 node list`).
+
+---
+
+## ~~47. Missing Inline Include Example~~ — Done
+
+Added inline include example to §Includes.
+
+---
+
+## ~~48. `header.stamp` Propagation Stated as Rule but Is Convention~~ — Done
+
+Softened to "should" with guidance: nodes that reset the stamp should
+be modeled as periodic paths (`input: []`).
+
+---
+
+## 49. Lifecycle Nodes Not Addressed
+
+### Problem
+
+ROS 2 lifecycle (managed) nodes have states: unconfigured, inactive,
+active, finalized. A lifecycle node only publishes when active. A node
+contract (`min_rate_hz`, `max_latency_ms`) applies only in the active
+state, but the manifest has no way to express this.
+
+In Autoware, lifecycle nodes are used for sensor drivers and some
+processing nodes. During system startup, nodes transition through
+states — the checker would see rate violations until all nodes are
+active.
+
+### Options
+
+| Option | Pros | Cons |
+|--------|------|------|
+| A. Implicit: contracts apply when active | Matches ROS 2 behavior | Runtime monitor must know lifecycle state |
+| B. Explicit `lifecycle: true` on node | Manifest declares lifecycle awareness | Extra field, most nodes aren't lifecycle |
+| C. Document as limitation | Honest | Startup violations noisy |
+
+---
+
+## ~~50. `min_latency_ms` Poorly Motivated~~ — Done
+
+Removed from both node and scope path field tables. Not used in any
+rule, example, or validation.
+
+---
+
 ## Summary
 
 | #  | Issue                               | Type                  | Effort  | Status                    |
 |----|-------------------------------------|-----------------------|---------|---------------------------|
 | 18 | Per-rule CLI filter                 | UX / CLI              | Small   | Open                      |
-| 22 | Drop independence assumption        | Theory / static check | Medium  | Done — runtime only       |
-| 23 | Age check needs full decomposition  | Theory / static check | —       | Done — age on subscribers |
-| 29 | `exclude_patterns` override         | Doc fix               | Trivial | Done                      |
-| 31 | `correlation: latest` stamp         | Spec gap              | Small   | Done                      |
-| 33 | Topic keys as ROS names             | Format redesign       | Large   | Done (docs), code pending |
+| 42 | Sum check false warnings on parallel| Checker design        | Medium  | Open                      |
+| 43 | Scope path tracing underspecified   | Spec gap              | Medium  | Open                      |
+| 44 | `max_transport_ms` multi-subscriber | Format design         | Small   | Open                      |
+| 45 | QoS pub/sub compatibility check     | New rule              | Small   | Open                      |
+| 46 | Node naming guidance                | Doc fix               | Trivial | Done                      |
+| 47 | Missing inline include example      | Doc fix               | Trivial | Done                      |
+| 48 | `header.stamp` propagation too strong| Doc fix              | Trivial | Done                      |
+| 49 | Lifecycle nodes not addressed       | Spec gap              | Small   | Open                      |
+| 50 | `min_latency_ms` poorly motivated   | Format design         | Trivial | Done — removed            |

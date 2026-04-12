@@ -173,7 +173,7 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   (node-level paths, input/output are endpoint names) and scopes
   (scope-level paths, input/output are topic names). No launch file
   equivalent — this is the contract layer that manifests add.
-  See [Paths](#paths), [Latency vs Age](#latency-vs-age),
+  See [Paths](#paths), [Latency and Data Freshness](#latency-and-data-freshness),
   [Drop Budgets](#drop-budgets).
 
 ## Background
@@ -340,7 +340,9 @@ in →  │                          ├→ fusion (20ms) → out
 ```
 
 In Autoware, object merger and radar fusion follow this pattern —
-multiple sensor streams converge at a fusion node.
+multiple sensor streams converge at a fusion node. See
+[Multi-Input Fusion and Correlation](#multi-input-fusion-and-correlation)
+for how timestamps are handled at the fusion point.
 
 **Periodic (timer-driven)** — a timer-driven node polls the latest
 state from a buffer. Breaks the causal chain:
@@ -357,7 +359,7 @@ periodically with delay compensation.
 See [contract-theory.md](contract-theory.md#composition) for the formal
 composition rules (latency, rate, age, drop) for each topology.
 
-### Latency vs Age
+### Latency and Data Freshness
 
 Latency and age serve different concerns:
 
@@ -483,7 +485,9 @@ remains after subtracting declared node budgets. This tells you how
 much headroom covers undeclared nodes and transport.
 
 See [contract-theory.md](contract-theory.md#what-is-a-contract) for
-the formal contract definitions.
+the formal contract definitions and
+[Partial Decomposition](contract-theory.md#partial-decomposition) for
+checker behavior with incomplete budgets.
 
 ### Drop Budgets
 
@@ -505,7 +509,8 @@ obstacle updates).
 
 ```yaml
 topics:
-  pointcloud:
+  /sensing/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
     rate_hz: 10
     max_drop_rate: 0.05        # 5% transport loss
     max_consecutive: 3         # never 3+ in a row
@@ -562,10 +567,13 @@ Timestamps (`header.stamp`) are the thread that connects latency, age,
 and correlation. The manifest imposes rules on how timestamps flow
 through the graph.
 
-**Causal paths preserve timestamps.** When a node has a causal path
-`input → output`, the output message's `header.stamp` must equal the
-input's `header.stamp`. This is how data provenance is tracked through
-a pipeline — every node passes the original sensor timestamp forward:
+**Causal paths should preserve timestamps.** When a node has a causal
+path `input → output`, the output message's `header.stamp` should equal
+the input's `header.stamp`. The manifest assumes this convention for age
+tracking. Nodes that reset the stamp (e.g., using current time) should
+be modeled as periodic paths (`input: []`) even if they are
+callback-driven. This is how data provenance is tracked through a
+pipeline:
 
 ```
 sensor (stamp=T) → cropbox (stamp=T) → detector (stamp=T) → planner
@@ -594,9 +602,10 @@ not the map's ancient timestamp.
 
 ### Multi-Input Fusion and Correlation
 
-When a node fuses multiple inputs, the manifest must specify how input
-timestamps relate and which stamp the output inherits. This is declared
-via `correlation` on node paths.
+When a node fuses multiple inputs (the fork-join topology from
+[Dataflow Topologies](#dataflow-topologies)), the manifest must specify
+how input timestamps relate and which stamp the output inherits. This
+is declared via `correlation` on node paths.
 
 Analysis of 9 Autoware fusion nodes reveals two dominant patterns:
 
@@ -641,9 +650,9 @@ nodes:
       predicted: { min_rate_hz: 10 }
     paths:
       main:
-        input: [tracked, traffic_signals]
+        input: tracked             # causal trigger (only causal inputs in path)
         output: [predicted]
-        correlation: latest      # primary = tracked (first listed)
+        correlation: latest        # polled inputs read latest, not synchronized
         max_latency_ms: 15
 ```
 
@@ -942,6 +951,9 @@ hierarchy for budget-overflow and scope-budget checks.
 ### Nodes
 
 Declare a node for each ROS 2 node or composable node in the launch file.
+The manifest node name must match the ROS 2 **node name** — the `name=`
+attribute in the launch XML (or `__node:=` remap). This is the name that
+appears in `ros2 node list`.
 
 ```yaml
 nodes:
@@ -1102,12 +1114,25 @@ includes:
 ```
 
 Inline includes (for `<group>` blocks) embed the manifest structure
-directly instead of referencing a file.
+directly instead of referencing a file:
+
+```yaml
+includes:
+  sensor_group:
+    if: $(var launch_sensors)
+    nodes:
+      lidar_driver:
+        pub: [pointcloud]
+    topics:
+      pointcloud:
+        type: sensor_msgs/msg/PointCloud2
+        pub: [lidar_driver/pointcloud]
+```
 
 ### Paths
 
 Named causal relations with timing constraints. Declared on nodes and
-scopes. See [Latency vs Age](#latency-vs-age) for definitions.
+scopes. See [Latency and Data Freshness](#latency-and-data-freshness) for definitions.
 
 ```yaml
 # Node-level path (latency only — drops are on topics, not node paths)
@@ -1141,12 +1166,11 @@ paths:
 | `input`          | Trigger endpoint(s) from `sub:` | Empty = periodic (timer-driven) |
 | `output`         | Result endpoint(s) from `pub:` | Required |
 | `max_latency_ms` | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
-| `min_latency_ms` | Best-case time — faster is suspicious (stale cache?) | Not checked |
 | `correlation`    | Multi-input stamp matching: `timestamp` or `latest` | No correlation check |
 | `tolerance_ms`   | Max `header.stamp` difference between correlated inputs | Required if `correlation: timestamp` |
 
 Node paths have latency and correlation only. Age is declared on
-**subscriber endpoints** (see [Latency vs Age](#latency-vs-age)), not
+**subscriber endpoints** (see [Latency and Data Freshness](#latency-and-data-freshness)), not
 on paths. Drops are topic-level (transport) and scope-level (E2E).
 
 **Scope path fields:**
@@ -1156,7 +1180,6 @@ on paths. Drops are topic-level (transport) and scope-level (E2E).
 | `input`           | Entry topic name(s) — relative or absolute | Empty = periodic |
 | `output`          | Exit topic name(s) — relative or absolute | Required |
 | `max_latency_ms`  | Worst-case E2E time across the scope | Not checked; transparent |
-| `min_latency_ms`  | Best-case E2E time | Not checked |
 | `max_drop_rate`   | E2E drop rate across the scope (fraction 0-1) | Drop not checked |
 | `max_consecutive` | E2E max consecutive drops | Consecutive not checked |
 | `correlation`     | Multi-input stamp matching: `timestamp` or `latest` | No correlation check |

@@ -331,7 +331,7 @@ scope tree. Two separate checks apply to latency, drop, and age — each
 with property-specific composition math but the same structural rules.
 
 For precise measurement point definitions, see
-[Latency vs Age](launch-manifest.md#latency-vs-age) in the manifest spec.
+[Latency and Data Freshness](launch-manifest.md#latency-and-data-freshness) in the manifest spec.
 
 ### Opaque vs Transparent Scopes
 
