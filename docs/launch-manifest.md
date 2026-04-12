@@ -16,6 +16,14 @@ the topics and services that wire them, and optional timing contracts.
 Where a launch file says *what to run*, the manifest says *what communicates
 and at what quality*.
 
+**How to read this document:**
+
+- **[Manifest Elements](#manifest-elements)** — the building blocks: scope, node, topic, path, etc.
+- **[Background](#background)** — the *why*: subscriber modes, name resolution, latency, drops, timestamps.
+- **[Worked Example](#worked-example)** — a complete multi-scope perception pipeline.
+- **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
+- **[Static Validation](#static-validation)** — checker rules and example diagnostics.
+
 ## From Launch Files to Manifests
 
 A manifest mirrors the launch file it describes. Each launch file concept
@@ -79,11 +87,14 @@ graph. Scopes contain nodes, topics, services, and child scopes.
 
 ![Manifest model: scopes, nodes, and wiring](img/manifest-model.png)
 
-### Concepts
+### Manifest Elements
 
 - **Scope.** A manifest file describes one scope. A scope corresponds to
   one launch file (or one `<group>` block). Scopes form a tree that
-  mirrors the launch file include hierarchy.
+  mirrors the launch file include hierarchy. The scope's namespace
+  (from the launch tree) determines how relative topic keys are resolved.
+  See [Scopes](#scopes), [Includes](#includes),
+  [Directory Structure](#directory-structure).
 
 - **Node.** A leaf execution entity — a ROS 2 node or composable node.
   Declares named **endpoints**: pub, sub, srv, cli. Optionally declares
@@ -91,23 +102,37 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   regular nodes — the container is a deployment detail. A composable node
   belongs to the manifest of the launch file that contains the
   `<load_composable_node>` tag, not the container's launch file.
+  See [Nodes](#nodes).
 
 - **Endpoint.** A named port on a node. Four kinds: `pub` (publishes),
   `sub` (subscribes), `srv` (serves a service), `cli` (calls a service).
-  Endpoints can have properties: rate, jitter, state, required.
+  Endpoints can have properties: rate, jitter, state, required, max_age_ms.
+  See [Nodes](#nodes),
+  [Subscriber Modes](#subscriber-modes-state-and-required).
 
-  Endpoint names are **local to the node** within the manifest. A node
-  declares `pub: [cmd]` — the `topics:` section wires this endpoint to
-  a ROS topic: `pub: [controller/cmd]` means "controller's cmd endpoint
-  publishes on this topic."
+  Endpoint names are **local to the node** within the manifest. The
+  `topics:` section wires endpoints to ROS topics using `node/endpoint`
+  refs:
+
+  ```yaml
+  nodes:
+    controller:
+      pub: [cmd]                   # "cmd" is the endpoint name
+
+  topics:
+    command/control_cmd:
+      pub: [controller/cmd]        # node_name/endpoint_name
+  ```
 
   `pub:` / `sub:` appear at two levels — don't confuse them:
   - On a **node** — declares endpoint names (`pub: [cmd]`)
   - Inside a **topic** — lists which endpoints are wired (`pub: [controller/cmd]`)
 
 - **Topic.** First-class wiring between endpoints. Topic keys are **ROS
-  topic names** — either relative (resolved by the checker using the
-  scope's namespace from the launch tree) or absolute (starts with `/`).
+  topic names** — either relative or absolute. See
+  [Topic Name Resolution](#topic-name-resolution), [Topics](#topics),
+  [QoS Defaults](#qos-defaults),
+  [Timestamps and Data Flow](#timestamps-and-data-flow).
 
   The same topic can appear in multiple manifests across the scope tree.
   Contract fields (`type:`, `rate_hz:`, `qos:`) must agree across all
@@ -118,14 +143,16 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   follow the same naming rules as topics — ROS names, relative or
   absolute. The same service can appear in multiple manifests; `type:`
   must agree, `server:`/`client:` are merged.
+  See [Services and Actions](#services-and-actions).
 
 - **Include.** A child scope. Maps to `<include>` in launch files. The
   include name is the ROS namespace (from `<push-ros-namespace>`). Each
-  include references a child manifest file.
+  include references a child manifest file. See [Includes](#includes).
 
 - **Args and Conditions.** Manifests can declare `args:` (named parameters
   resolved from the launch tree) and `if:` / `unless:` conditions on any
   entity. These mirror `<arg>` and `if="$(var ...)"` in launch XML.
+  See [Args](#args), [Conditions](#conditions).
 
   When args and conditions are used, the manifest goes through a pipeline
   before checking:
@@ -143,10 +170,13 @@ graph. Scopes contain nodes, topics, services, and child scopes.
 
 - **Paths.** Named causal relations (input → output) with timing
   constraints: max latency, drop tolerance. Declared on nodes
-  (node-level paths) and scopes (scope-level paths). No launch file
+  (node-level paths, input/output are endpoint names) and scopes
+  (scope-level paths, input/output are topic names). No launch file
   equivalent — this is the contract layer that manifests add.
+  See [Paths](#paths), [Latency vs Age](#latency-vs-age),
+  [Drop Budgets](#drop-budgets).
 
-## Key Concepts in Detail
+## Background
 
 ### Subscriber Modes: `state` and `required`
 
@@ -201,6 +231,33 @@ optional — the most common case.
 publishes a pose that NDT subscribes to as `state: true`, the checker
 does not flag it as a causal cycle — the data flows but doesn't create
 a dependency loop.
+
+See [Nodes](#nodes) for the full endpoint property tables.
+
+### Topic Name Resolution
+
+Topic keys, service keys, and scope path `input:`/`output:` follow the
+same resolution rule:
+
+- **Absolute** (`/localization/kinematic_state`): used as-is
+- **Relative** (`command/control_cmd`): resolved by the checker as
+  `<scope_ns>/<key>` using the scope's namespace from the launch tree
+
+Example: scope ns `/control`, topic key `command/control_cmd`
+→ resolved: `/control/command/control_cmd`
+
+The scope namespace is **not** declared in the manifest — it comes from
+the launch tree's scope table at check time. This means the same
+manifest resolves to different absolute names depending on where it's
+included in the launch hierarchy.
+
+**When to use each:**
+- **Relative** for topics you publish — they're naturally in your namespace
+- **Absolute** for topics you subscribe to from other scopes — makes the
+  cross-scope dependency explicit
+- **Relative** for intra-scope wiring between your own nodes
+
+See [Topics](#topics) for the full field table and consistency rules.
 
 ### Latency vs Age
 
@@ -277,7 +334,9 @@ local consistency: if a subscriber has `max_age_ms: 200` and the
 scope path has `max_latency_ms: 50`, the upstream must deliver data
 with age ≤ 150ms — a feasibility check, not a proof.
 
-See [Verification Rules](contract-theory.md#verification-rules) for the
+See [Nodes](#nodes) for the `max_age_ms` field table and
+[Paths](#paths) for the `max_latency_ms` field table. See
+[Verification Rules](contract-theory.md#verification-rules) for the
 full composition and checking rules.
 
 ### Drop Budgets
@@ -329,6 +388,9 @@ See [Burstiness](contract-theory.md#burstiness) for runtime detection.
 **If omitted:** no drop checking. The `drop-sanity` rule only fires
 when drop values are declared.
 
+See [Topics](#topics) for the `max_drop_rate` and `max_consecutive`
+field table and [Paths](#paths) for scope-level drop fields.
+
 ### QoS Defaults
 
 When `qos:` is omitted on a topic, the checker does not validate QoS.
@@ -346,7 +408,7 @@ When declared, the checker validates that values are from the allowed set:
 Declaring QoS is recommended for topics where publisher and subscriber
 must agree (e.g., `transient_local` for map data, `best_effort` for
 high-rate sensor streams). The `qos-compat` rule errors on invalid values
-like `reliability: maybe`.
+like `reliability: maybe`. See [Topics](#topics) for the `qos:` field.
 
 ### Timestamps and Data Flow
 
@@ -419,7 +481,8 @@ subscriber reads the latest value regardless of its timestamp. The
 state data's `stamp` is *not* propagated to the output — only causal
 inputs contribute. EKF reads map data (`state: true`, stamp from minutes
 ago) and sensor data (causal, `stamp=T`). The output pose has `stamp=T`,
-not the map's ancient timestamp.
+not the map's ancient timestamp. See [Paths](#paths) for `correlation`
+and `tolerance_ms` fields.
 
 ## Worked Example
 
@@ -675,6 +738,35 @@ string equality.
 After filtering, refs to conditional nodes that were removed are
 silently dropped. Refs to unconditional nodes are always required.
 
+### Scopes
+
+Each manifest file describes one scope — one launch file's contribution
+to the graph. The scope's properties come from the launch tree, not the
+manifest:
+
+- **Namespace**: from `<push-ros-namespace>` in the launch file. Used
+  to resolve relative topic/service keys at check time.
+- **Parent/child relationships**: from `<include>` tags. Determines the
+  scope tree for budget checks.
+- **Args**: from `<arg>` declarations and `<let>` assignments, captured
+  in the scope table.
+
+```yaml
+# tracking.yaml
+# Scope properties (from launch tree, not declared here):
+#   ns: /perception/object_recognition/tracking
+#   parent: perception.yaml
+#   args: { ... }
+version: 1
+
+nodes: { ... }
+topics: { ... }
+```
+
+A scope can contain nodes, topics, services, includes (child scopes),
+and paths. When the checker loads a manifest tree, it walks the scope
+hierarchy for budget-overflow and scope-budget checks.
+
 ### Nodes
 
 Declare a node for each ROS 2 node or composable node in the launch file.
@@ -732,18 +824,9 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 ### Topics
 
 Declare a topic when your scope publishes or subscribes to it. Topic
-keys are **ROS topic names** — relative or absolute:
-
-- **Relative** (`command/control_cmd`): resolved by the checker using the
-  scope's namespace from the launch tree (e.g., scope ns `/control` →
-  `/control/command/control_cmd`)
-- **Absolute** (`/localization/kinematic_state`): used as-is
-
-**When to use each:**
-- **Relative** for topics you publish — they're naturally in your namespace
-- **Absolute** for topics you subscribe to from other scopes — makes the
-  cross-scope dependency explicit
-- **Relative** for intra-scope wiring between your own nodes
+keys are **ROS topic names** — relative or absolute. See
+[Topic Name Resolution](#topic-name-resolution) for the resolution rule
+and guidance on when to use each.
 
 The same topic can appear in multiple manifests across the scope tree.
 Contract fields (`type:`, `rate_hz:`, `qos:`) must agree; endpoint lists
@@ -993,31 +1076,6 @@ warning[satisfiability]: when pose_source='gnss', topic 'ndt_pose' has
   0 publishers — ndt_node is conditional on pose_source='ndt'
   --> localization.yaml:30:5
 ```
-
-## Generating Manifests from a Running System
-
-Writing manifests from scratch requires knowing message types, topic
-rates, and latency budgets. **Capture mode** bootstraps manifests from
-runtime measurements:
-
-```bash
-play_launch launch <pkg> <launch_file> --save-manifest-dir ./manifests
-```
-
-This runs the launch file, observes the runtime communication graph,
-and generates manifest YAML files with empirically derived contracts:
-
-- **`type:`** — observed message types for each topic
-- **`rate_hz:`** — observed publish rate
-- **`max_latency_ms:`** — observed worst-case latency × safety margin (default 1.2×)
-- **`pub:` / `sub:`** — discovered from runtime topic connections
-
-The generated manifests are a starting point. Review and adjust the
-values — tighten budgets where requirements are known, relax where the
-safety margin is too aggressive. See
-[Appendix C](contract-theory.md#appendix-c-empirical-contract-derivation)
-in the contract theory doc for the statistical derivation and confidence
-bounds.
 
 ## References
 
