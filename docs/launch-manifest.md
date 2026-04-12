@@ -142,7 +142,7 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   loses both sides, it's silently removed.
 
 - **Paths.** Named causal relations (input → output) with timing
-  constraints: max latency, max age, drop tolerance. Declared on nodes
+  constraints: max latency, drop tolerance. Declared on nodes
   (node-level paths) and scopes (scope-level paths). No launch file
   equivalent — this is the contract layer that manifests add.
 
@@ -374,8 +374,9 @@ sensor reading.
 `stamp` is the current time, not propagated from an input. For example,
 a tracker runs on a 10 Hz timer, polls the latest fused objects
 (`state: true`), and publishes tracked objects with `stamp = now`.
-This is why `max_age_ms` is typically declared on scope paths rather
-than node paths — a periodic node breaks the provenance chain.
+This is why `max_age_ms` on a subscriber downstream of a periodic node
+reflects the periodic node's timer rate, not the original sensor's
+timestamp — a periodic node breaks the provenance chain.
 
 **Multi-input correlation matches timestamps.** When a node fuses
 multiple causal inputs (e.g., lidar + camera), `correlation` specifies
@@ -983,6 +984,10 @@ error[consistency]: topic '/localization/kinematic_state' type mismatch:
   'nav_msgs/msg/Odometry' in localization.yaml vs
   'geometry_msgs/msg/PoseStamped' in control.yaml
   --> localization.yaml:10:5, control.yaml:18:5
+
+error[drop-sanity]: scope 'perception' max_drop_rate (0.02) is tighter than
+  topic '/perception/pointcloud' max_drop_rate (0.05) on its path
+  --> perception.yaml:15:5
 
 warning[satisfiability]: when pose_source='gnss', topic 'ndt_pose' has
   0 publishers — ndt_node is conditional on pose_source='ndt'

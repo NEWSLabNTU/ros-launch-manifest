@@ -37,7 +37,7 @@ Symbols used throughout this document:
 | $L_{\text{node}}(X)$ | Worst-case processing time of node $X$ (from `max_latency_ms`) |
 | $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (from topic's `max_transport_ms`; 0 when omitted) |
 | $L_{\max}$, $L_{\min}$ | Worst / best case end-to-end latency of a path or scope |
-| $A_{\max}$ | Maximum data age from original source (ms) |
+| $A_{\max}$ | Maximum data age at a subscriber (ms) — runtime checked via `max_age_ms` |
 | $f$ | Frequency (Hz) |
 | $P$ | Timer period (ms) |
 | $J$ | Jitter — max deviation from ideal period (ms) |
@@ -83,7 +83,7 @@ pointcloud → [cropbox: 5ms] → [ground_filter: 15ms] → [detector: 30ms]
 
 **Scope contract** — for the whole perception pipeline:
 - *Assumption:* parent scope wires the pointcloud input
-- *Guarantee:* end-to-end latency ≤ 50ms, data age ≤ 150ms
+- *Guarantee:* end-to-end latency ≤ 50ms
 
 Summary:
 
@@ -130,7 +130,7 @@ nodes:
 - $L_{\max} \leq 50$ ms (trigger to output)
 
 (Drops are declared on the topics that carry `ndt_pose`, not on the
-node path — see [Drop Composition](#drop-composition).)
+node path — see [Drop Budgets](#drop-budgets).)
 
 The **assumption/guarantee separation** is what makes contracts useful
 for diagnosis. At runtime:
@@ -146,8 +146,8 @@ for diagnosis. At runtime:
 
 A single node's contract says what it promises in isolation. But a
 pipeline's guarantee depends on how nodes are connected. The composition
-rules below show how to compute the pipeline's end-to-end latency, drop
-rate, and age from the individual node contracts.
+rules below show how to compute the pipeline's end-to-end latency
+from the individual node contracts.
 
 ### Understanding Worst-Case Latency
 
@@ -201,14 +201,10 @@ scope's residual headroom. On the same machine, transport is typically
 < 1ms and can be omitted. For cross-machine hops (sensor ECUs, network
 bridges), declare `max_transport_ms` to make the budget explicit.
 
-**Delivery rates also compose in series** — each stage independently
-drops messages, so a message must survive every stage. See
-[Drop Composition](#drop-composition) below for the formulas and examples.
-
-**Age accumulates** — the age at the output is the age at the source
-plus all processing and transport time along the chain:
-
-$$A_{\max} = A_{\max}(\text{source}) + \sum_i L_{\text{node}}(p_i) + \sum_j L_{\text{transport}}(t_j)$$
+**Age accumulates** along the chain — each node and transport hop adds
+to the total time since the original sensor reading. Age is checked at
+runtime on subscriber endpoints (`max_age_ms`), not statically composed.
+See [Data Age](#data-age).
 
 ### Parallel (Fork-Join)
 
@@ -525,7 +521,8 @@ oldest input. With `correlation: latest`, age follows the primary
 The drop composition rules assume each drop is independent (Bernoulli
 model). In practice, DDS transport drops are often **bursty** — network
 congestion, scheduling jitter, or queue overflow cause drops to cluster.
-When drops are bursty, the static guarantees are weaker than they appear.
+When drops are bursty, the declared `max_drop_rate` and `max_consecutive`
+thresholds may be violated more often than the Bernoulli model predicts.
 The runtime monitor detects this gap.
 
 The runtime monitor detects burstiness via two lightweight metrics
