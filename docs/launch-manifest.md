@@ -31,7 +31,6 @@ maps to a manifest element. Matching colors show the correspondence:
 | `if="$(var ...)"` | `if:` / `unless:` | Conditions on any entity |
 | `<include>` | `includes:` | Child scope with its own manifest |
 | *(in source code)* | `paths:` | Timing contracts: latency, age, drops |
-| *(in source code)* | `pub:` / `sub:` | Scope boundary interface |
 
 The key difference: in launch files, topics are implicit in source code
 and connected via `<remap>`. In manifests, topics are **first-class** —
@@ -97,30 +96,28 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   `sub` (subscribes), `srv` (serves a service), `cli` (calls a service).
   Endpoints can have properties: rate, jitter, state, required.
 
-  Endpoint names are **local identifiers within the manifest**, not ROS
-  topic names. A node declares `pub: [cmd]` — this is not the ROS topic
-  `/control/cmd`. The `topics:` section is where endpoints get wired to
-  actual topics: `pub: [controller/cmd]` means "controller's cmd endpoint
-  publishes on this topic." The launch file's `<remap>` determines the
-  real ROS name; the manifest uses logical names for wiring.
+  Endpoint names are **local to the node** within the manifest. A node
+  declares `pub: [cmd]` — the `topics:` section wires this endpoint to
+  a ROS topic: `pub: [controller/cmd]` means "controller's cmd endpoint
+  publishes on this topic."
 
-- **Topic.** First-class wiring between endpoints. Declares message type,
-  which endpoints publish, which subscribe, QoS, and channel rate.
-  In launch files, this information is split across `<remap>` tags,
-  source code, and convention. The manifest makes it explicit.
-
-- **Service / Action.** Request-response wiring. Declares service type,
-  server endpoints, client endpoints. Actions have server and client sides.
-
-- **Scope Interface.** The scope's boundary — top-level `pub:`, `sub:`,
-  `srv:`, `cli:` groups that declare which internal endpoints are visible
-  to the parent scope. The parent wires children together by referencing
-  `child_name/group_name` in its topics and services.
-
-  Note: `pub:` / `sub:` appear at three levels — don't confuse them:
+  `pub:` / `sub:` appear at two levels — don't confuse them:
   - On a **node** — declares endpoint names (`pub: [cmd]`)
-  - At **top level** — declares the scope boundary (`pub: control_output: [controller/cmd]`)
   - Inside a **topic** — lists which endpoints are wired (`pub: [controller/cmd]`)
+
+- **Topic.** First-class wiring between endpoints. Topic keys are **ROS
+  topic names** — either relative (resolved by the checker using the
+  scope's namespace from the launch tree) or absolute (starts with `/`).
+
+  The same topic can appear in multiple manifests across the scope tree.
+  Contract fields (`type:`, `rate_hz:`, `qos:`) must agree across all
+  declarations; `pub:` and `sub:` endpoint lists are merged by the
+  checker. Each scope only references its own nodes in endpoint lists.
+
+- **Service / Action.** Request-response wiring. Service and action keys
+  follow the same naming rules as topics — ROS names, relative or
+  absolute. The same service can appear in multiple manifests; `type:`
+  must agree, `server:`/`client:` are merged.
 
 - **Include.** A child scope. Maps to `<include>` in launch files. The
   include name is the ROS namespace (from `<push-ros-namespace>`). Each
@@ -209,8 +206,14 @@ a dependency loop.
 
 Both describe "how old is the data?" but measure different things.
 
+Latency and age serve different concerns:
+
+- **Latency** constrains processing — declared on **paths**
+- **Age** constrains data freshness — declared on **subscriber endpoints**
+
 **`max_latency_ms`** — the time from when the *triggering input arrives
-at this node/scope* to when the output is published.
+at this node/scope* to when the output is published. Declared on node
+paths and scope paths.
 
 ```
 sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→ [detector: 30ms]
@@ -233,38 +236,46 @@ latency can be declared per topic via `max_transport_ms`. Topics without
 it contribute 0 to the budget sum — the undeclared transport is absorbed
 into the scope's residual headroom.
 
-**`max_age_ms`** — the time from when the data was *originally produced*
-(the `header.stamp` at the sensor source) to when the scope's output is
-published. Age includes all upstream latency, transport delays, and
-processing before the data reached this scope.
-
-```
-age = now - header.stamp (at the point of output publish)
-```
-
-Age is always >= latency, because age includes time before the data
-entered the current scope. Age computation relies on causal paths
-preserving `header.stamp` — see [Timestamps and Data Flow](#timestamps-and-data-flow).
-
-**When to use each:**
-
-- `max_latency_ms` — declare on paths when you have a timing budget.
-  This is the node/scope's own processing budget.
-- `max_age_ms` — declare on scope paths when data freshness matters to
-  downstream consumers. A planning module may need sensor data no older
-  than 200ms, regardless of how many nodes processed it upstream.
-
-**If omitted:** `max_latency_ms` omitted means the node/scope has no
-timing budget. The checker treats it as **transparent** — parent scopes
-look through it when computing budget sums. `max_age_ms` omitted means
-no freshness constraint.
-
 **Partial decomposition:** You don't need to declare `max_latency_ms` on
 every node. A scope with a budget is valid even if some (or all) of its
 children have no budgets. The checker reports the **residual** — the
 unallocated portion of the scope budget — so you can see how much
 headroom remains. This supports a top-down workflow: start with the E2E
 requirement, fill in per-node budgets as you measure them.
+
+**`max_age_ms`** — the maximum acceptable age of data when a subscriber
+receives it. Declared on **subscriber endpoints**, not on paths.
+
+```
+age = now - header.stamp (at the point of rcl_take)
+```
+
+Age is an end-to-end property: it includes all upstream latency,
+transport delays, and processing before the data reached this
+subscriber. The subscriber doesn't need to know the internal chain
+structure — it just declares how fresh its input must be.
+
+```yaml
+nodes:
+  planner:
+    sub:
+      objects:
+        min_rate_hz: 10
+        max_age_ms: 200          # data must be fresher than 200ms
+      map:
+        state: true
+        required: true           # no age constraint — map data can be old
+```
+
+**Runtime monitoring** checks `max_age_ms` on every `rcl_take` via
+the interception layer, which already reads `header.stamp`. If
+`now - stamp > max_age_ms`, a violation is flagged.
+
+**Static checking** does not trace the full causal chain (which would
+require every node to have a budget). Instead, the checker verifies
+local consistency: if a subscriber has `max_age_ms: 200` and the
+scope path has `max_latency_ms: 50`, the upstream must deliver data
+with age ≤ 150ms — a feasibility check, not a proof.
 
 See [Verification Rules](contract-theory.md#verification-rules) for the
 full composition and checking rules.
@@ -308,13 +319,15 @@ for drops. If `rate_hz: 10` and `max_drop_rate: 0.05`, the subscriber
 effectively receives at least `10 * (1 - 0.05) = 9.5 Hz`. The checker
 verifies: `rate_hz * (1 - max_drop_rate) >= sub.min_rate_hz`.
 
-**Composition:** drop rates multiply through a chain. If topic T1 has
-`max_drop_rate: 0.02` and T2 has `max_drop_rate: 0.03`, the chain drop
-rate is `1 - (0.98 * 0.97) ≈ 0.049`. The scope's `max_drop_rate` must
-be ≥ the composed rate.
+**Static vs runtime:** the static checker validates local consistency
+(drop values in range, scope drop rate not tighter than any topic's,
+effective delivery meets subscriber demand). Drop **composition** across
+chains and `max_consecutive` enforcement are **runtime-only** — they
+depend on actual transport conditions that can't be proven statically.
+See [Burstiness](contract-theory.md#burstiness) for runtime detection.
 
-**If omitted:** no drop checking. The `drop-rate` and `drop-consecutive`
-rules only fire when drop values are declared.
+**If omitted:** no drop checking. The `drop-sanity` rule only fires
+when drop values are declared.
 
 ### QoS Defaults
 
@@ -371,19 +384,33 @@ how input timestamps are paired:
 - `correlation: timestamp` — inputs must have matching `header.stamp`
   within `tolerance_ms`. If lidar and camera stamps differ by more than
   the tolerance, the pair is discarded. The output `stamp` is the oldest
-  input stamp (preserving the earliest provenance).
+  input stamp (preserving the earliest provenance). Corresponds to
+  `message_filters::ApproximateTimeSynchronizer` in ROS 2.
 
-- `correlation: latest` — use the most recent message from each input,
-  regardless of stamp difference. No timestamp matching is performed.
+- `correlation: latest` — the node triggers on the **first listed
+  input** (the primary causal input) and reads the latest value from
+  secondary inputs. No timestamp matching is performed. The output
+  `stamp` equals the **primary input's stamp** — secondary inputs
+  enrich the data but don't determine the timestamp. This is the
+  dominant pattern in Autoware: map-based prediction triggers on
+  tracked objects (primary) and polls traffic signals (secondary).
 
 ```yaml
 paths:
+  # ApproximateTime sync — output stamp = oldest input stamp
   fusion:
     input: [lidar_objects, camera_objects]
     output: [fused]
     correlation: timestamp
     tolerance_ms: 50           # lidar and camera stamps must be within 50ms
     max_latency_ms: 20
+
+  # Primary input trigger — output stamp = primary (first) input stamp
+  prediction:
+    input: [tracked_objects, traffic_signals]
+    output: [predicted]
+    correlation: latest
+    max_latency_ms: 15
 ```
 
 **State subscribers don't contribute timestamps.** A `state: true`
@@ -400,63 +427,29 @@ A perception pipeline with tracking and prediction stages.
 **Launch files:**
 
 ```xml
-<!-- perception.launch.xml -->
-<push-ros-namespace namespace="perception"/>
+<!-- perception.launch.xml (ns: /perception/object_recognition) -->
+<push-ros-namespace namespace="perception/object_recognition"/>
 <include file="tracking/tracking.launch.xml"/>
 <include file="prediction/prediction.launch.xml"/>
 
-<!-- tracking/tracking.launch.xml -->
+<!-- tracking/tracking.launch.xml (ns: .../tracking) -->
+<push-ros-namespace namespace="tracking"/>
 <node pkg="autoware_multi_object_tracker" exec="tracker"/>
 
-<!-- prediction/prediction.launch.xml -->
+<!-- prediction/prediction.launch.xml (ns: .../prediction) -->
+<push-ros-namespace namespace="prediction"/>
 <node pkg="autoware_map_based_prediction" exec="predictor"/>
 ```
 
 **Manifest files:**
 
-**Naming convention:** when a parent manifest references a child's
-endpoint, it uses `child/export` — the include name joined with the
-child's scope interface export name. For example, `tracking/objects`
-means "the `objects` export of the `tracking` include." The child
-manifest (`tracking.yaml`) declares `pub: objects: [...]` as its scope
-boundary; the parent uses `tracking/objects` to wire it into topics.
-
-```yaml
-# tier4_perception_launch/perception.yaml
-version: 1
-
-includes:
-  tracking:
-    manifest: tier4_perception_launch/tracking.yaml
-  prediction:
-    manifest: tier4_perception_launch/prediction.yaml
-
-topics:
-  tracked_objects:
-    type: autoware_perception_msgs/msg/TrackedObjects
-    pub: [tracking/objects]       # tracking include's "objects" export
-    sub: [prediction/objects]     # prediction include's "objects" import
-    rate_hz: 10
-    max_drop_rate: 0.02
-
-sub:
-  pointcloud: [tracking/detected_objects]
-  vector_map: [prediction/vector_map]
-
-pub:
-  objects: [prediction/objects]
-
-paths:
-  main:
-    input: pointcloud
-    output: [objects]
-    max_latency_ms: 50
-    max_age_ms: 150
-    max_drop_rate: 0.05
-```
+Each manifest declares topics using ROS topic names as keys. Relative
+keys are resolved by the checker using the scope's namespace from the
+launch tree. Each scope only references its own nodes in endpoint lists.
 
 ```yaml
 # tier4_perception_launch/tracking.yaml
+# scope ns (from launch tree): /perception/object_recognition/tracking
 version: 1
 
 nodes:
@@ -469,71 +462,78 @@ nodes:
       main: { input: detected, output: [tracked], max_latency_ms: 20 }
 
 topics:
-  tracked_objects:
+  # relative → /perception/object_recognition/tracking/objects
+  objects:
     type: autoware_perception_msgs/msg/TrackedObjects
     pub: [multi_object_tracker/tracked]
     rate_hz: 10
-
-sub:
-  detected_objects: [multi_object_tracker/detected]
-
-pub:
-  objects: [multi_object_tracker/tracked]
 ```
 
 ```yaml
 # tier4_perception_launch/prediction.yaml
+# scope ns (from launch tree): /perception/object_recognition/prediction
 version: 1
 
 nodes:
   map_based_prediction:
     sub:
-      tracked: { min_rate_hz: 10 }
+      tracked:
+        min_rate_hz: 10
+        max_age_ms: 150            # tracked objects must be fresher than 150ms
       vector_map: { state: true, required: true }
     pub:
       predicted: { min_rate_hz: 10 }
     paths:
       main: { input: tracked, output: [predicted], max_latency_ms: 15 }
 
-sub:
-  objects: [map_based_prediction/tracked]
-  vector_map: [map_based_prediction/vector_map]
+topics:
+  # absolute — subscribes to tracking's output topic
+  /perception/object_recognition/tracking/objects:
+    type: autoware_perception_msgs/msg/TrackedObjects
+    sub: [map_based_prediction/tracked]
 
-pub:
-  objects: [map_based_prediction/predicted]
+  # absolute — subscribes to map data from outside perception
+  /map/vector_map:
+    type: autoware_map_msgs/msg/LaneletMapBin
+    sub: [map_based_prediction/vector_map]
+
+  # relative → /perception/object_recognition/prediction/objects
+  objects:
+    type: autoware_perception_msgs/msg/PredictedObjects
+    pub: [map_based_prediction/predicted]
 ```
 
-The parent (`perception.yaml`) wires children: `tracking/objects` →
-`prediction/objects` via the `tracked_objects` topic. Each child
-declares its scope interface (`sub:` / `pub:`) so the parent knows
-what ports to connect.
+```yaml
+# tier4_perception_launch/perception.yaml
+# scope ns (from launch tree): /perception/object_recognition
+version: 1
 
-### Mapping from ROS Topics to Manifest Declarations
+includes:
+  tracking:
+    manifest: tier4_perception_launch/tracking.yaml
+  prediction:
+    manifest: tier4_perception_launch/prediction.yaml
 
-When writing a manifest for an existing system, you start with runtime
-topic names (from `ros2 topic list`) and need to map them into manifest
-declarations. Here is one concrete mapping using the perception example
-above:
+paths:
+  main:
+    input: /perception/obstacle_segmentation/pointcloud
+    output: [prediction/objects]       # relative → /perception/object_recognition/prediction/objects
+    max_latency_ms: 50
+    max_drop_rate: 0.05
+```
 
-**Runtime topic:** `/perception/tracking/tracked_objects`
-
-| Layer               | File              | Key                              | Value                            |
-|---------------------|-------------------|----------------------------------|----------------------------------|
-| Publisher endpoint  | `tracking.yaml`   | `nodes.multi_object_tracker.pub` | `tracked`                        |
-| Internal topic      | `tracking.yaml`   | `topics.tracked_objects.pub`     | `[multi_object_tracker/tracked]` |
-| Child export        | `tracking.yaml`   | `pub.objects`                    | `[multi_object_tracker/tracked]` |
-| Parent wiring       | `perception.yaml` | `topics.tracked_objects.pub`     | `[tracking/objects]`             |
-| Subscriber endpoint | `prediction.yaml` | `nodes.map_based_prediction.sub` | `tracked`                        |
-| Child import        | `prediction.yaml` | `sub.objects`                    | `[map_based_prediction/tracked]` |
-| Parent wiring       | `perception.yaml` | `topics.tracked_objects.sub`     | `[prediction/objects]`           |
-
-The ROS topic name `/perception/tracking/tracked_objects` comes from
-namespace resolution in the launch file (`<push-ros-namespace>` +
-`<remap>`). The manifest uses **logical names** — the topic key
-`tracked_objects` is a manifest-local identifier, not the ROS name.
-Endpoint names like `tracked` are local to the node declaration. The
-`child/export` references (e.g., `tracking/objects`) combine the include
-name with the child's scope interface export name.
+Key points:
+- **No scope interface** — each manifest declares topics directly using
+  ROS topic names. No `pub:`/`sub:` export/import groups.
+- **Topic keys are ROS names** — `objects` in tracking.yaml resolves to
+  `/perception/object_recognition/tracking/objects`. prediction.yaml
+  subscribes using the absolute name.
+- **Consistency across scopes** — the topic
+  `/perception/object_recognition/tracking/objects` appears in both
+  tracking.yaml (pub) and prediction.yaml (sub). The `type:` must agree;
+  the checker merges `pub:` and `sub:` lists.
+- **Each scope is self-contained** — prediction.yaml can be checked
+  standalone (e.g., when launching prediction.launch.xml directly).
 
 ### Example: Args, Conditions, and State
 
@@ -542,6 +542,7 @@ validator gated by a boolean launch arg:
 
 ```yaml
 # tier4_control_launch/control.yaml
+# scope ns (from launch tree): /control
 version: 1
 
 args:
@@ -572,26 +573,34 @@ nodes:
       predicted_trajectory: {}
 
 topics:
-  control_cmd:
+  # relative → /control/command/control_cmd
+  command/control_cmd:
     type: autoware_control_msgs/msg/Control
     pub: [controller/control_cmd]
     sub: [validator/control_cmd]  # auto-optional: validator is conditional
     rate_hz: 30
 
-sub:
-  trajectory_input: [controller/trajectory]
+  # absolute — subscribes to topic from planning subsystem
+  /planning/trajectory:
+    type: autoware_planning_msgs/msg/Trajectory
+    sub: [controller/trajectory]
 
-pub:
-  control_output: [controller/control_cmd]
+  # absolute — subscribes to topic from system subsystem
+  /system/operation_mode/state:
+    type: autoware_system_msgs/msg/OperationModeState
+    sub: [controller/operation_mode]
 
 paths:
   control:
-    input: trajectory_input
-    output: [control_output]
+    input: /planning/trajectory
+    output: [command/control_cmd]   # relative → /control/command/control_cmd
     max_latency_ms: 15
 ```
 
 Key features demonstrated:
+- **Topic keys are ROS names** — relative `command/control_cmd` resolves
+  to `/control/command/control_cmd`; absolute `/planning/trajectory`
+  reaches outside the scope
 - **`args:` with `type: bool`** — enables Z3 satisfiability checking
   across all valid configurations
 - **`if:`** — validator only exists when `launch_validator` is `"true"`;
@@ -600,7 +609,8 @@ Key features demonstrated:
   dependency in the dataflow graph
 - **`required: true`** — controller needs at least one operation_mode
   message before it can operate
-- **Scope path** — E2E latency budget for the control scope
+- **Scope path** — E2E latency budget; `input:`/`output:` reference
+  topic names (same resolution rules as topic keys)
 
 ## Format Reference
 
@@ -612,7 +622,11 @@ syntax, field table with defaults, and when to use.
 | Field              | Required | Description | If omitted |
 |--------------------|----------|-------------|------------|
 | `version`          | yes      | Format version (currently `1`) | Error |
-| `exclude_patterns` | no       | Topic prefixes to ignore | `/rosout`, `/parameter_events` |
+| `exclude_patterns` | no       | Topic prefixes to ignore (replaces defaults) | `/rosout`, `/parameter_events` |
+
+When `exclude_patterns` is declared, it **replaces** the defaults — only
+the listed prefixes are excluded. Use `exclude_patterns: []` to include
+all topics (including `/rosout` and `/parameter_events`).
 
 ### Args
 
@@ -696,6 +710,7 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 |---------------|-----------------------------------------------|------------|
 | `min_rate_hz` | Minimum expected receive rate                 | Not checked |
 | `max_rate_hz` | Maximum expected receive rate                 | Not checked |
+| `max_age_ms`  | Max data age at receive (`now - header.stamp`) | Not checked |
 | `state`       | Polled (read-latest), not causal              | `false` — causal |
 | `required`    | Must receive at least once before operational | `false` — optional |
 
@@ -715,12 +730,28 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 
 ### Topics
 
-Declare a topic when two nodes communicate. Even if the launch file
-doesn't have an explicit `<remap>`, the topic exists in the runtime graph.
+Declare a topic when your scope publishes or subscribes to it. Topic
+keys are **ROS topic names** — relative or absolute:
+
+- **Relative** (`command/control_cmd`): resolved by the checker using the
+  scope's namespace from the launch tree (e.g., scope ns `/control` →
+  `/control/command/control_cmd`)
+- **Absolute** (`/localization/kinematic_state`): used as-is
+
+**When to use each:**
+- **Relative** for topics you publish — they're naturally in your namespace
+- **Absolute** for topics you subscribe to from other scopes — makes the
+  cross-scope dependency explicit
+- **Relative** for intra-scope wiring between your own nodes
+
+The same topic can appear in multiple manifests across the scope tree.
+Contract fields (`type:`, `rate_hz:`, `qos:`) must agree; endpoint lists
+(`pub:`, `sub:`) are merged by the checker.
 
 ```yaml
 topics:
-  control_cmd:
+  # relative — resolved using scope ns
+  command/control_cmd:
     type: autoware_control_msgs/msg/Control
     pub: [controller/cmd]
     sub: [validator/input]
@@ -732,6 +763,11 @@ topics:
       reliability: reliable
       durability: transient_local
       depth: 1
+
+  # absolute — cross-scope subscription
+  /planning/trajectory:
+    type: autoware_planning_msgs/msg/Trajectory
+    sub: [controller/trajectory]
 ```
 
 | Field              | Required | Description | If omitted |
@@ -746,6 +782,10 @@ topics:
 | `qos`              | no       | QoS profile | QoS not validated |
 | `if`/`unless`      | no       | Condition | Always included |
 
+`type` is required in every topic declaration so each manifest is
+self-contained for standalone checking. The `consistency` rule validates
+that all declarations of the same resolved topic agree.
+
 **Rate hierarchy with drops:**
 
 ```
@@ -758,39 +798,37 @@ effective delivery rate (after transport drops) must meet every
 subscriber's minimum demand. Think of it as: supply ≥ channel ≥
 effective delivery ≥ demand.
 
+When a topic is declared across multiple scopes, the checker merges
+all declarations before running rate and drop checks. The publisher's
+`rate_hz` in one scope is checked against the subscriber's `min_rate_hz`
+in another.
+
 ### Services and Actions
+
+Service and action keys follow the same naming rules as topics — **ROS
+names**, either relative or absolute. The same service can appear in
+multiple manifests; `type:` must agree, `server:`/`client:` are merged.
 
 ```yaml
 services:
-  operate:
+  # relative → /system/mrm/operate
+  mrm/operate:
     type: tier4_system_msgs/srv/OperateMrm
     server: [operator/operate]
     client: [handler/operate]
 
+  # absolute — cross-scope service call
+  /system/mrm/comfortable_stop:
+    type: tier4_system_msgs/srv/OperateMrm
+    client: [mrm_handler/comfortable_stop_operate]
+
 actions:
+  # relative → resolved via scope ns
   navigate:
     type: nav2_msgs/action/NavigateToPose
     server: [navigator/navigate]
     client: [planner/navigate]
 ```
-
-### Scope Interface
-
-Top-level `pub:`, `sub:`, `srv:`, `cli:` declare the scope's boundary.
-Parent scopes reference these as `child_name/group_name`.
-
-```yaml
-pub:
-  control_output: [controller/cmd]
-sub:
-  trajectory_input: [controller/trajectory]
-srv:
-  operate: [operator/operate]
-cli:
-  operate_mrm: [handler/comfortable_stop_operate]
-```
-
-Actions use `action_server:` and `action_client:`.
 
 ### Includes
 
@@ -810,16 +848,6 @@ includes:
 Inline includes (for `<group>` blocks) embed the manifest structure
 directly instead of referencing a file.
 
-### Global Topics
-
-Absolute topic names referenced without local declaration.
-
-```yaml
-global_topics:
-  /tf: { type: tf2_msgs/msg/TFMessage, qos: { reliability: reliable, depth: 100 } }
-  /clock: { type: rosgraph_msgs/msg/Clock }
-```
-
 ### Paths
 
 Named causal relations with timing constraints. Declared on nodes and
@@ -837,13 +865,15 @@ nodes:
         output: [objects]
         max_latency_ms: 30
 
-# Scope-level path (latency + age + E2E drops)
+# Scope-level path (latency + E2E drops)
+# input/output are topic names (relative or absolute)
+# The checker traces dataflow between these topics, considering
+# only nodes within this scope's subtree (from includes: tree)
 paths:
   perception:
-    input: raw_data
-    output: [detections]
+    input: /perception/obstacle_segmentation/pointcloud
+    output: [/perception/object_recognition/prediction/objects]
     max_latency_ms: 85
-    max_age_ms: 150
     max_drop_rate: 0.08
     max_consecutive: 5
 ```
@@ -859,47 +889,130 @@ paths:
 | `correlation`    | Multi-input stamp matching: `timestamp` or `latest` | No correlation check |
 | `tolerance_ms`   | Max `header.stamp` difference between correlated inputs | Required if `correlation: timestamp` |
 
-Node paths have latency and correlation only. Age is scope-level because
-it's a chain property from the original source to the output — an
-individual node doesn't know how far upstream the source is. Drops are
-topic-level (transport) and scope-level (E2E).
+Node paths have latency and correlation only. Age is declared on
+**subscriber endpoints** (see [Latency vs Age](#latency-vs-age)), not
+on paths. Drops are topic-level (transport) and scope-level (E2E).
 
-**Scope path fields** (all of the above, plus):
+**Scope path fields:**
 
 | Field             | Meaning | If omitted |
 |-------------------|---------|------------|
-| `max_age_ms`      | Max data age from original source | Not checked |
+| `input`           | Entry topic name(s) — relative or absolute | Empty = periodic |
+| `output`          | Exit topic name(s) — relative or absolute | Required |
+| `max_latency_ms`  | Worst-case E2E time across the scope | Not checked; transparent |
+| `min_latency_ms`  | Best-case E2E time | Not checked |
 | `max_drop_rate`   | E2E drop rate across the scope (fraction 0-1) | Drop not checked |
 | `max_consecutive` | E2E max consecutive drops | Consecutive not checked |
+| `correlation`     | Multi-input stamp matching: `timestamp` or `latest` | No correlation check |
+| `tolerance_ms`    | Max `header.stamp` difference between correlated inputs | Required if `correlation: timestamp` |
+
+The checker traces the dataflow between the input and output topics,
+considering only nodes within this scope's subtree. When a parent scope
+and child scope declare paths with the same resolved (input, output)
+topics, `budget-overflow` checks that the child's budget ≤ the parent's.
 
 ## Static Validation
 
 The checker runs 14 rules on each manifest:
 
-| Rule               | What it catches                                                    | Severity      |
-|--------------------|--------------------------------------------------------------------|---------------|
-| `endpoint-unique`  | Duplicate endpoint names within a node                             | Error         |
-| `wiring`           | Path endpoints not connected by any topic                          | Warning       |
-| `qos-compat`       | Invalid QoS values                                                 | Error         |
-| `rate-hierarchy`   | Publisher rate < topic rate < subscriber rate                       | Error         |
-| `rate-chain`       | Export rate unachievable from upstream                              | Warning       |
-| `budget-overflow`  | Descendant budget exceeds ancestor budget (part > whole)           | Error         |
-| `scope-budget`     | Sum of children exceeds scope budget; age < latency                | Warning/Error |
-| `causal-dag`       | Cycles in the dataflow graph (`state:` breaks cycles)              | Error         |
-| `drop-rate`        | Scope max_drop_rate < composed topic rates; effective delivery rate < sub.min_rate_hz | Error |
-| `drop-consecutive` | max_consecutive statistically infeasible given drop rate            | Error/Warning |
-| `service-wiring`   | Service client with no matching server                             | Warning       |
-| `service-type`     | Service with no type; server/client not on node                    | Error/Warning |
-| `dangling-entity`  | Topic with 0 publishers; service/action with 0 servers             | Error/Warning |
-| `satisfiability`   | Arg combination produces dangling entities; unreachable nodes      | Error/Warning |
+| Rule                | What it catches                                                    | Severity      |
+|---------------------|--------------------------------------------------------------------|---------------|
+| `endpoint-unique`   | Duplicate endpoint names within a node                             | Error         |
+| `wiring`            | Path endpoints not connected by any topic                          | Warning       |
+| `qos-compat`        | Invalid QoS values                                                 | Error         |
+| `rate-hierarchy`    | Publisher rate < topic rate < subscriber rate                       | Error         |
+| `rate-chain`        | Output rate unachievable from upstream                              | Warning       |
+| `budget-overflow`   | Descendant budget exceeds ancestor budget (part > whole)           | Error         |
+| `scope-budget`      | Sum of children exceeds scope budget                               | Warning       |
+| `causal-dag`        | Cycles in the dataflow graph (`state:` breaks cycles)              | Error         |
+| `drop-sanity`       | Scope max_drop_rate < topic max_drop_rate on its path; effective delivery rate < sub.min_rate_hz; values out of range | Error |
+| `service-wiring`    | Service client with no matching server across tree                 | Warning       |
+| `service-type`      | Service with no type; server/client not on node                    | Error/Warning |
+| `dangling-entity`   | Topic with 0 publishers across tree; service/action with 0 servers | Error/Warning |
+| `satisfiability`    | Arg combination produces dangling entities; unreachable nodes      | Error/Warning |
+| `consistency`       | Same resolved topic/service has conflicting `type:`, `rate_hz:`, or `qos:` across scopes | Error |
+
+**Drop checking** is split between static and runtime:
+- **Static (`drop-sanity`)**: validates values are in range, scope drop
+  rate is not tighter than any individual topic's drop rate on the path,
+  and effective delivery rate meets subscriber demand
+  (`rate_hz × (1 - max_drop_rate) >= sub.min_rate_hz`). No chain
+  composition — drop rates depend on runtime conditions.
+- **Runtime monitoring**: observes actual drop patterns, detects
+  burstiness (autocorrelation, dispersion index), and checks
+  `max_consecutive` against observed longest runs. See
+  [Burstiness](contract-theory.md#burstiness) for the detection metrics.
 
 **Satisfiability checking**: when args have `type: bool` or `choices:`,
 the checker uses Z3 to verify no valid arg combination produces a
 structurally broken manifest. A passing manifest is **variant-complete**.
 
-**Dangling entities**: after condition filtering, topics with 0 publishers
-(warning — may be wired by parent), services/actions with 0 servers
+**Consistency**: when checking a manifest tree, the checker merges all
+declarations for the same resolved topic or service name. `type:` must
+match across all scopes. `rate_hz:` and `qos:` must agree when declared
+in multiple scopes. Endpoint lists (`pub:`/`sub:`, `server:`/`client:`)
+are merged.
+
+**Dangling entities**: after condition filtering and cross-scope merge,
+topics with 0 publishers across the entire manifest tree (warning —
+may be published by an external system), services/actions with 0 servers
 (error), and empty entities (silently removed) are flagged.
+
+**Example diagnostics:**
+
+```
+error[endpoint-unique]: duplicate endpoint name 'cmd' in node 'controller'
+  --> control.yaml:5:9
+
+warning[wiring]: path 'main' endpoint 'controller/cmd' not connected by any topic
+  --> control.yaml:12:9
+
+error[rate-hierarchy]: topic 'command/control_cmd' rate_hz (30) > publisher
+  'controller/cmd' min_rate_hz (10) — publisher too slow for channel rate
+  --> control.yaml:20:5
+
+error[budget-overflow]: node 'detector' max_latency_ms (60) exceeds ancestor
+  scope 'perception' max_latency_ms (50)
+  --> perception.yaml:8:5, tracking.yaml:14:9
+
+warning[dangling-entity]: topic '/sensor/imu' has 0 publishers across the
+  manifest tree — may be published by an external system
+  --> control.yaml:25:5
+
+error[consistency]: topic '/localization/kinematic_state' type mismatch:
+  'nav_msgs/msg/Odometry' in localization.yaml vs
+  'geometry_msgs/msg/PoseStamped' in control.yaml
+  --> localization.yaml:10:5, control.yaml:18:5
+
+warning[satisfiability]: when pose_source='gnss', topic 'ndt_pose' has
+  0 publishers — ndt_node is conditional on pose_source='ndt'
+  --> localization.yaml:30:5
+```
+
+## Generating Manifests from a Running System
+
+Writing manifests from scratch requires knowing message types, topic
+rates, and latency budgets. **Capture mode** bootstraps manifests from
+runtime measurements:
+
+```bash
+play_launch launch <pkg> <launch_file> --save-manifest-dir ./manifests
+```
+
+This runs the launch file, observes the runtime communication graph,
+and generates manifest YAML files with empirically derived contracts:
+
+- **`type:`** — observed message types for each topic
+- **`rate_hz:`** — observed publish rate
+- **`max_latency_ms:`** — observed worst-case latency × safety margin (default 1.2×)
+- **`pub:` / `sub:`** — discovered from runtime topic connections
+
+The generated manifests are a starting point. Review and adjust the
+values — tighten budgets where requirements are known, relax where the
+safety margin is too aggressive. See
+[Appendix C](contract-theory.md#appendix-c-empirical-contract-derivation)
+in the contract theory doc for the statistical derivation and confidence
+bounds.
 
 ## References
 

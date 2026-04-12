@@ -91,7 +91,7 @@ Summary:
 |-------|-------------------|------------|-----------|
 | **Topic** | A communication channel | Publisher produces at `rate_hz` | Channel delivers at `rate_hz` with drops ≤ `max_drop_rate` |
 | **Node** | A single computation | Inputs arrive per `min_rate_hz`, `state`, `required` | Output within `max_latency_ms` |
-| **Scope** | An entire launch file | Parent wires scope interface endpoints | E2E `max_latency_ms`, `max_age_ms`, `max_drop_rate` |
+| **Scope** | An entire launch file | Topic declarations consistent across tree | E2E `max_latency_ms`, `max_drop_rate` |
 
 These compose hierarchically: topic contracts constrain the channels,
 node contracts describe per-node timing, scope contracts abstract the
@@ -236,10 +236,21 @@ barrier waits for the slowest branch even when both are fast.
 
 **Rate = slowest branch:** $f = \min(f_A, f_B)$
 
-**Age = oldest branch + fusion** — the output is as stale as its
-oldest input:
+**Age depends on correlation mode:**
+
+- `correlation: timestamp` — the output stamp is the **oldest** input
+  stamp. Age = max of branch ages + fusion processing:
 
 $$A_{\max} = \max(A_{\max}(\text{branch } A),\; A_{\max}(\text{branch } B)) + L_{\text{node}}(C)$$
+
+- `correlation: latest` — the output stamp is the **primary input's**
+  stamp (first listed input). Age follows only the primary branch:
+
+$$A_{\max} = A_{\max}(\text{primary branch}) + L_{\text{node}}(C)$$
+
+The `latest` mode reflects how most Autoware fusion nodes work: the
+primary input triggers the callback, secondary inputs are polled. The
+output inherits the primary input's provenance.
 
 Drop at the barrier is **not composed statically** — the user declares
 the fusion node's observed drops directly, combining all causes
@@ -284,52 +295,38 @@ consecutive drops don't propagate because the timer fires regardless
 of whether new data arrived. Each segment (before and after the
 periodic node) is checked independently.
 
-### Drop Composition
+### Drop Budgets
 
 Drops are declared as `max_drop_rate` (a fraction, 0-1) on **topics**
 (transport drops) and **scope paths** (E2E drops). Node paths do not
 have drop fields — if a node internally drops messages, the effect is
 reflected in a lower `pub.min_rate_hz` on its output.
 
-Define **delivery rate** $\mathcal{R} = 1 - d$ where $d$ is the
-`max_drop_rate`.
+**Static checking** validates local consistency only:
 
-**Series:** delivery rates multiply across topics on the critical path.
-A message must survive every transport hop:
-
-$$\mathcal{R}_{\text{chain}} = \prod_i (1 - d_i)$$
-
-**Scope check:** the scope declares `max_drop_rate: d_s`. Valid when:
-
-$$d_s \geq 1 - \mathcal{R}_{\text{chain}}$$
-
-**Rate-drop compatibility:** a topic's effective delivery rate must
-meet subscriber demand:
+- Values in range: $0 \leq d \leq 1$, `max_consecutive` positive integer
+- Scope drop rate sanity: scope `max_drop_rate` must not be tighter than
+  any individual topic's `max_drop_rate` on the path (part > whole)
+- Rate-drop compatibility: a topic's effective delivery rate must meet
+  subscriber demand:
 
 $$f_{\text{topic}} \cdot (1 - d_{\text{topic}}) \geq f_{\min}(\text{sub})$$
 
-This extends the rate hierarchy: supply ≥ channel ≥ effective delivery ≥ demand.
-
-**Consecutive drops:** given drop probability $d$ on a topic, the
-probability of $K$ or more consecutive drops in $W$ messages (Poisson
-approximation):
-
-$$P(\text{max run} \geq K \mid W) \approx 1 - \exp\!\left(-(W - K + 1) \cdot d^K \cdot (1-d)\right)$$
-
-The manifest declares `max_consecutive: K`. The monitoring window $W$
-is a runtime parameter (not declared in the manifest). See Appendix A
-for the full derivation.
-
-**Necessary condition:** scope `max_consecutive` $\geq$ max of any
-topic's `max_consecutive` on the critical path.
+**Runtime monitoring** handles composition and consecutive checks —
+these depend on actual transport conditions (burstiness, congestion)
+that cannot be proven statically. The runtime monitor observes actual
+drop patterns and checks `max_drop_rate` and `max_consecutive` against
+observed values. See [Burstiness](#burstiness) for detection metrics
+and Appendix A for the underlying theory.
 
 ### Composition Summary
 
 | Topology | Latency | Rate | Age | Drop |
 |----------|---------|------|-----|------|
-| **Series** | sum of nodes + transport | preserved | sum along chain | multiply $\mathcal{R}$ |
-| **Parallel** | max(branches) + fusion | min of branches | max(branches) + fusion | user-declared on fusion |
-| **Periodic** | $P$ + $J$ + node | $1000/P$ (independent) | resets stamp chain | resets consecutive chain |
+| **Series** | sum of nodes + transport | preserved | sum along chain | runtime monitoring |
+| **Parallel (`timestamp`)** | max(branches) + fusion | min of branches | max(branches) + fusion | runtime monitoring |
+| **Parallel (`latest`)** | primary branch + fusion | primary branch | primary branch + fusion | runtime monitoring |
+| **Periodic** | $P$ + $J$ + node | $1000/P$ (independent) | resets stamp chain | runtime monitoring |
 
 ## Verification Rules
 
@@ -449,9 +446,8 @@ If E later gets a budget of 25ms: 50 + 30 + 25 = 105 > 100. Warning.
 
 ### Drop Example
 
-Drop budgets compose multiplicatively. The structural rules (opaque,
-transparent, overflow) still apply, but composition uses delivery rate
-multiplication instead of addition. Drops live on **topics** (transport)
+Drop budgets are checked statically for local consistency (sanity) and
+at runtime for actual behavior. Drops live on **topics** (transport)
 and **scope paths** (E2E), not on node paths.
 
 ```
@@ -461,49 +457,15 @@ scope S path: max_drop_rate: 0.10
   topic T3: (no drop budget)       (C → D transport)
 ```
 
-**Overflow check**: T1 drop (3%) < S drop (10%). T2 (3%) < 10%. OK.
-
-**Composition check**: chain $\mathcal{R} = (1 - 0.03) \times (1 - 0.03) = 0.9409$.
-Chain drop rate: 5.91%. Scope allows 10%.
-5.91% ≤ 10%. Passes.
-
-Residual: the declared topics use 5.91% of the 10% budget. The
-remaining ~4.09% covers T3's undeclared transport drops.
+**Sanity check**: T1 drop (3%) < S drop (10%). T2 (3%) < 10%. OK.
+No topic has a tighter drop budget than the scope.
 
 **Rate-drop check**: if T1 has `rate_hz: 10` and subscriber B has
 `min_rate_hz: 9`: effective delivery = $10 \times (1 - 0.03) = 9.7$ Hz ≥ 9. Passes.
 
-### Age: Chain-Based Verification
-
-Age behaves differently from latency and drop. Age is a **chain
-property** — it's the sum of all latencies from the original source
-to the output, computed along the causal path. It does not decompose
-hierarchically like a latency budget.
-
-When the checker verifies `max_age_ms`, it traces the causal chain
-from the scope's output back to the source, summing each node's
-`max_latency_ms` and transport along the way. If any node on the
-chain has no `max_latency_ms`, the chain has a gap — the static
-age check cannot be completed.
-
-```
-scope S: max_age_ms: 200
-  paths: { input: sensor, output: [plan] }
-  ├── node A: max_latency_ms: 30
-  ├── node B: (no latency budget)       ← gap in the chain
-  └── node C: max_latency_ms: 50
-```
-
-Known chain contribution: A(30) + C(50) = 80ms. B's processing time
-is unknown, so the checker cannot prove age ≤ 200ms.
-
-Result: INFO — "age check incomplete: node B on the critical path has
-no latency budget." The scope's `max_age_ms` contract is accepted but
-unverified statically. Runtime monitoring checks the actual age.
-
-The **overflow check** still applies to age: if a scope declares
-`max_age_ms: 100` and a child scope declares `max_age_ms: 150`,
-that's an error (child age cannot exceed parent age).
+**Runtime monitoring** observes actual E2E drop rates and checks them
+against the scope's `max_drop_rate: 0.10` and `max_consecutive` (if
+declared). See [Burstiness](#burstiness) and Appendix A for the theory.
 
 ### Partial Decomposition
 
@@ -513,7 +475,7 @@ scenarios:
 | Scope budget | Node budgets | Checker behavior |
 |-------------|-------------|-----------------|
 | Declared | All declared | Verify composition ≤ scope, check overflow |
-| Declared | Some missing | Verify declared fit, report residual (latency/drop) or gap (age) |
+| Declared | Some missing | Verify declared fit, report residual (latency) |
 | Declared | None declared | Accept — runtime monitoring checks E2E |
 
 This supports a **top-down workflow**: start with the E2E requirement,
@@ -522,29 +484,41 @@ tells you what's unaccounted for.
 
 ## Data Age
 
-The **age** of an output message is the time since the original sensor
-data was created:
+The **age** of a message at a subscriber is the time since the original
+sensor data was created:
 
-$$\text{age}(o) = t_{\text{pub}}(o) - \text{header.stamp}(\text{source})$$
+$$\text{age} = t_{\text{take}} - \text{header.stamp}(\text{source})$$
 
 This works because causal paths preserve `header.stamp` through the
 chain — each node copies the input stamp to the output (see
 [Timestamps and Data Flow](launch-manifest.md#timestamps-and-data-flow)).
 
-**Static computation:** sum node processing times and transport times
-along the causal chain:
+**`max_age_ms`** is declared on **subscriber endpoints**, not on paths.
+It constrains data freshness at the point of consumption:
 
-$$A_{\max}(o) = \sum_{\text{chain}} L_{\text{node}}(p_i) + \sum_{\text{chain}} L_{\text{transport}}(t_j)$$
+```yaml
+nodes:
+  planner:
+    sub:
+      objects:
+        max_age_ms: 200          # data must be fresher than 200ms
+```
 
-For multi-input paths (barrier), the age is the **maximum** of all input
-ages — the output is as stale as its oldest input:
+**Runtime checking:** the interception layer reads `header.stamp` on
+every `rcl_take` and compares to current time. If
+`now - stamp > max_age_ms`, a violation is flagged.
 
-$$A_{\max}(o) = \max_{i \in \text{inputs}} A_{\max}(\text{input}_i) + L_{\text{node}}(p)$$
+**Static checking** does not trace the full causal chain (which would
+require every upstream node to have a latency budget). Instead, the
+checker verifies local consistency: if a subscriber has `max_age_ms`
+and the scope path feeding it has `max_latency_ms`, the checker can
+verify that the age budget is feasible given the known latency budget.
 
-**`max_age_ms`** on a scope path constrains freshness. The checker
-verifies the declared age budget is >= the statically computed age.
-See [Age: Chain-Based Verification](#age-chain-based-verification) for
-how the checker handles partial chains with undeclared nodes.
+**For multi-input nodes:** the age at a subscriber depends on the
+correlation mode. With `correlation: timestamp`, age reflects the
+oldest input. With `correlation: latest`, age follows the primary
+(first listed) input only. See
+[Parallel composition](#parallel-fork-join) for the formulas.
 
 ## Burstiness
 
@@ -568,7 +542,12 @@ When burstiness is detected, the monitor recommends increasing
 `max_consecutive` or investigating the burst cause. See Appendix B
 for the detailed metric formulas.
 
-## Appendix A: Drop Composition Derivation
+## Appendix A: Drop Composition Theory
+
+The formulas below describe the theoretical relationships between
+per-topic drop rates and chain-level behavior. These are used by the
+**runtime monitor** for analysis and alerting, not by the static
+checker (which only validates local consistency).
 
 ### A.1 Delivery Rate Composition
 
