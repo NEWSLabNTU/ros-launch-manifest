@@ -163,6 +163,107 @@ topics:
     assert!(errs.is_empty(), "unexpected errors: {errs:?}");
 }
 
+// ── qos-match: structural QoS validity ──
+
+#[test]
+fn test_qos_match_depth_zero_errors() {
+    let yaml = r#"
+version: 1
+topics:
+  pointcloud:
+    type: PointCloud2
+    qos:
+      reliability: reliable
+      depth: 0
+"#;
+    let errs = errors(yaml);
+    assert!(
+        errs.iter().any(|e| e.contains("[qos-match]") && e.contains("depth is 0")),
+        "expected qos-match depth=0 error: {errs:?}"
+    );
+}
+
+#[test]
+fn test_qos_match_keep_all_with_depth_warns() {
+    let yaml = r#"
+version: 1
+topics:
+  pointcloud:
+    type: PointCloud2
+    qos:
+      reliability: reliable
+      history: keep_all
+      depth: 10
+"#;
+    let warns = warnings(yaml);
+    assert!(
+        warns
+            .iter()
+            .any(|w| w.contains("[qos-match]") && w.contains("keep_all") && w.contains("depth")),
+        "expected qos-match keep_all+depth warning: {warns:?}"
+    );
+}
+
+#[test]
+fn test_qos_match_best_effort_transient_local_warns() {
+    let yaml = r#"
+version: 1
+topics:
+  pointcloud:
+    type: PointCloud2
+    qos:
+      reliability: best_effort
+      durability: transient_local
+"#;
+    let warns = warnings(yaml);
+    assert!(
+        warns.iter().any(|w| {
+            w.contains("[qos-match]")
+                && w.contains("best_effort")
+                && w.contains("transient_local")
+        }),
+        "expected qos-match best_effort+transient_local warning: {warns:?}"
+    );
+}
+
+#[test]
+fn test_qos_match_clean_profile() {
+    // Reliable + transient_local + keep_last + depth=10 is the standard
+    // "deliver to late joiners" pattern — should produce no diagnostics.
+    let yaml = r#"
+version: 1
+topics:
+  map:
+    type: OccupancyGrid
+    qos:
+      reliability: reliable
+      durability: transient_local
+      history: keep_last
+      depth: 1
+"#;
+    let errs = errors(yaml);
+    let warns = warnings(yaml);
+    let qos_match: Vec<_> = warns.iter().filter(|w| w.contains("[qos-match]")).collect();
+    assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+    assert!(qos_match.is_empty(), "unexpected qos-match warnings: {qos_match:?}");
+}
+
+#[test]
+fn test_qos_match_no_qos_no_diagnostics() {
+    // Topic without QoS section should not trigger qos-match.
+    let yaml = r#"
+version: 1
+topics:
+  data:
+    type: String
+"#;
+    let errs = errors(yaml);
+    let warns = warnings(yaml);
+    assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+    let qos_match: Vec<_> = warns.iter().filter(|w| w.contains("[qos-match]")).collect();
+    assert!(qos_match.is_empty(), "unexpected qos-match warnings: {qos_match:?}");
+}
+
 // ── Rate hierarchy ──
 
 #[test]

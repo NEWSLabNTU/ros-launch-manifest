@@ -6,6 +6,7 @@ mod dangling_entity;
 mod drop_sanity;
 mod endpoint_unique;
 mod qos_compat;
+mod qos_match;
 mod rate_hierarchy;
 mod satisfiability;
 mod scope_budget;
@@ -28,6 +29,7 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(endpoint_unique::EndpointUniqueRule),
         Box::new(wiring::WiringRule),
         Box::new(qos_compat::QosCompatRule),
+        Box::new(qos_match::QosMatchRule),
         Box::new(rate_hierarchy::RateHierarchyRule),
         Box::new(scope_budget::ScopeBudgetRule),
         Box::new(causal_dag::CausalDagRule),
