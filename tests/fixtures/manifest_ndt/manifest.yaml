@@ -60,6 +60,29 @@ nodes:
         max_latency_ms: 2
 
 topics:
+  # Absolute — external inputs from sensing and map subsystems.
+  /sensing/lidar/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [voxel_grid/raw_points]
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  /sensing/imu/imu_raw:
+    type: sensor_msgs/msg/Imu
+    sub: [ekf_localizer/imu]
+    rate_hz: 50
+    qos:
+      reliability: best_effort
+
+  /map/pointcloud_map:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [ndt_scan_matcher/map]
+    qos:
+      reliability: reliable
+      durability: transient_local
+
+  # Relative — intra-scope localization topics.
   downsampled_points:
     type: sensor_msgs/msg/PointCloud2
     pub: [voxel_grid/downsampled]
@@ -86,22 +109,6 @@ topics:
       reliability: reliable
       durability: transient_local
 
-  imu_data:
-    type: sensor_msgs/msg/Imu
-    pub: []
-    sub: [ekf_localizer/imu]
-    rate_hz: 50
-    qos:
-      reliability: best_effort
-
-  pointcloud_map:
-    type: sensor_msgs/msg/PointCloud2
-    pub: []
-    sub: [ndt_scan_matcher/map]
-    qos:
-      reliability: reliable
-      durability: transient_local
-
 services:
   trigger_ndt:
     type: std_srvs/srv/Trigger
@@ -109,6 +116,6 @@ services:
 
 paths:
   localization:
-    input: raw_lidar
-    output: [localization]
+    input: /sensing/lidar/pointcloud
+    output: [ekf_initial_pose]
     max_latency_ms: 50

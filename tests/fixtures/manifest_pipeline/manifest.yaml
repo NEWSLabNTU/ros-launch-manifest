@@ -1,5 +1,10 @@
 # Autoware-like perception pipeline: lidar → cropbox → ground → fusion → tracker.
 # Clean manifest — all budgets, rates, and drops are feasible.
+#
+# Topic naming: topic keys are ROS topic names.
+# - Relative (`cropped_points`): resolved against scope ns at check time.
+# - Absolute (`/sensing/lidar/pointcloud`): unchanged, references topics
+#   from a different subsystem.
 version: 1
 
 nodes:
@@ -62,6 +67,15 @@ nodes:
         drop: 2 / 100
 
 topics:
+  # Absolute — raw pointcloud from sensing subsystem (cross-scope input).
+  /sensing/lidar/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [cropbox/raw_points]
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  # Relative — intra-scope topics within perception.
   cropped_points:
     type: sensor_msgs/msg/PointCloud2
     pub: [cropbox/cropped_points]
@@ -100,7 +114,7 @@ topics:
 
 paths:
   perception:
-    input: raw_points
+    input: /sensing/lidar/pointcloud
     output: [tracked_objects]
     max_latency_ms: 60
     drop: 4 / 100

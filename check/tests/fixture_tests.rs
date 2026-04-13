@@ -47,8 +47,11 @@ fn fixture_pipeline_parses() {
         4,
         "cropbox + ground_filter + fusion + tracker"
     );
-    assert_eq!(m.topics.len(), 5);
+    assert_eq!(m.topics.len(), 6);
     assert!(!m.paths.is_empty());
+    // Verify mix of absolute and relative topic keys
+    assert!(m.topics.contains_key("/sensing/lidar/pointcloud"));
+    assert!(m.topics.contains_key("cropped_points"));
 }
 
 #[test]
