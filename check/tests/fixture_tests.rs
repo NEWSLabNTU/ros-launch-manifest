@@ -797,6 +797,125 @@ fn fixture_satisfiability_reject_invalid_choice() {
     );
 }
 
+// ── manifest_standalone: sub-only with type, validates in isolation ──
+
+#[test]
+fn fixture_standalone_parses_and_validates() {
+    let m = parse_manifest(&fixture_path("manifest_standalone")).unwrap();
+    assert_eq!(m.nodes.len(), 1);
+    assert!(m.nodes.contains_key("consumer"));
+    // Topic declared with type → self-contained
+    assert!(m.topics.contains_key("/localization/kinematic_state"));
+    let topic = &m.topics["/localization/kinematic_state"];
+    assert_eq!(topic.msg_type, "nav_msgs/msg/Odometry");
+    assert!(topic.publishers.is_empty());
+    assert_eq!(topic.subscribers, vec!["consumer/odometry"]);
+}
+
+#[test]
+fn fixture_standalone_no_per_manifest_errors() {
+    // In standalone mode (no cross-scope merge), a sub-only topic with
+    // declared type is valid. The per-manifest checker does NOT warn
+    // about missing publishers — that's a cross-scope concern.
+    let m = parse_manifest(&fixture_path("manifest_standalone")).unwrap();
+    let result = run_checks(&m);
+    assert!(
+        !result.has_errors(),
+        "standalone fixture should have no errors: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn fixture_standalone_subscriber_max_age_ms() {
+    let m = parse_manifest(&fixture_path("manifest_standalone")).unwrap();
+    let consumer = &m.nodes["consumer"];
+    let odometry = &consumer.subscribers["odometry"];
+    assert_eq!(odometry.max_age_ms, Some(100.0));
+    assert_eq!(odometry.min_rate_hz, Some(50.0));
+}
+
+// ── manifest_qos_match: qos-match rule end-to-end ──
+
+#[test]
+fn fixture_qos_match_parses() {
+    let m = parse_manifest(&fixture_path("manifest_qos_match")).unwrap();
+    assert_eq!(m.topics.len(), 4);
+}
+
+#[test]
+fn fixture_qos_match_depth_zero_error() {
+    let m = parse_manifest(&fixture_path("manifest_qos_match")).unwrap();
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .errors()
+        .filter(|d| d.rule_id == "qos-match" && d.path.contains("depth_zero"))
+        .collect();
+    assert_eq!(errs.len(), 1, "expected 1 qos-match depth=0 error");
+    assert!(errs[0].message.contains("depth is 0"));
+}
+
+#[test]
+fn fixture_qos_match_best_effort_transient_local_warning() {
+    let m = parse_manifest(&fixture_path("manifest_qos_match")).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.severity == Severity::Warning
+                && d.rule_id == "qos-match"
+                && d.path.contains("best_effort_transient")
+        })
+        .collect();
+    assert_eq!(
+        warns.len(),
+        1,
+        "expected 1 qos-match best_effort+transient_local warning"
+    );
+    assert!(warns[0].message.contains("best_effort"));
+    assert!(warns[0].message.contains("transient_local"));
+}
+
+#[test]
+fn fixture_qos_match_keep_all_with_depth_warning() {
+    let m = parse_manifest(&fixture_path("manifest_qos_match")).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.severity == Severity::Warning
+                && d.rule_id == "qos-match"
+                && d.path.contains("keep_all_with_depth")
+        })
+        .collect();
+    assert_eq!(
+        warns.len(),
+        1,
+        "expected 1 qos-match keep_all+depth warning"
+    );
+    assert!(warns[0].message.contains("keep_all"));
+}
+
+#[test]
+fn fixture_qos_match_canonical_vector_map_clean() {
+    // The canonical "deliver to late joiners" QoS pattern on /map/vector_map
+    // (reliable + transient_local + keep_last + depth:1) should produce
+    // no qos-match diagnostics.
+    let m = parse_manifest(&fixture_path("manifest_qos_match")).unwrap();
+    let result = run_checks(&m);
+    let vector_map_qos_match: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "qos-match" && d.path.contains("vector_map"))
+        .collect();
+    assert!(
+        vector_map_qos_match.is_empty(),
+        "canonical vector_map QoS should be clean: {vector_map_qos_match:?}"
+    );
+}
+
 // ── Cross-fixture: parse all fixtures via parse_manifest_str round-trip ──
 
 #[test]
@@ -813,6 +932,9 @@ fn all_fixtures_round_trip() {
         "manifest_control_conditional",
         "manifest_service_scope",
         "manifest_satisfiability",
+        "manifest_standalone",
+        "manifest_qos_match",
+        "manifest_parallel_pipeline",
     ];
     for name in fixtures {
         let path = fixture_path(name);
