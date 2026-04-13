@@ -66,29 +66,16 @@ interface endpoints).
 
 ---
 
-## 18. CLI Should Support Per-Rule Filtering
+## ~~18. CLI Should Support Per-Rule Filtering~~ — Done
 
-### Problem
-
-The `play_launch check` CLI runs all 15 validation rules and outputs
-all diagnostics. Users interested in a specific rule (e.g., satisfiability
-results only) must grep the output. The `just check-sat` recipe in
-autoware-contract does exactly this — a shell grep wrapper.
-
-### Proposed Solution
-
-Add `--rule <RULE_ID>` filter to the CLI:
+Implemented in Phase 34.8. The `play_launch check` command now accepts
+a repeatable `--rule <RULE_ID>` flag that filters diagnostics
+(per-scope and cross-scope) by rule ID. The summary line shows the
+active filter. Example:
 
 ```bash
-# Show only satisfiability results
-play_launch check --rule satisfiability --manifest-dir . autoware_launch planning_simulator.launch.xml
-
-# Show only errors from specific rules
-play_launch check --rule dangling-entity --rule optional-ref --manifest-dir . ...
+play_launch check --manifest-dir manifests/ --rule consistency --rule budget-overflow <pkg> <launch>
 ```
-
-This is a small CLI change — filter `CheckResult.diagnostics` by
-`rule_id` before rendering.
 
 ---
 
@@ -233,45 +220,50 @@ manifest tree, same as topics. No orphan `cli:` warnings — the
 
 ---
 
-## 42. Topology-Unaware Sum Check Produces False Warnings
+## ~~42. Topology-Unaware Sum Check Produces False Warnings~~ — Done
 
-### Problem
+Resolved in Phase 35.1–35.4 (Option A: topology-aware check).
 
-The `scope-budget` sum check adds all children's latency budgets and
-warns if the sum exceeds the scope budget. But for parallel (fork-join)
-branches, the correct composition is `max(branches)`, not `sum`. In any
-Autoware perception scope with lidar + camera + radar branches merging
-at a fusion node, the sum check will warn even when `max(branches) +
-fusion` fits the budget.
+The cross-scope critical-path check in `manifest_loader.rs` builds a
+global dataflow graph and uses forward DP with `max` over predecessors
+at fork-join points, correctly handling parallel branches. The
+`manifest_parallel_pipeline` fixture (lidar 50ms + camera 30ms →
+fusion 20ms) verifies that `max(50, 30) + 20 = 70ms` is accepted
+without false-warning on the sum (100ms).
 
-The contract-theory doc acknowledges this ("the sum is conservative")
-but pervasive false warnings train users to ignore all warnings.
-
-### Options
-
-| Option | Pros | Cons |
-|--------|------|------|
-| A. Topology-aware check | Use path declarations to identify parallel branches, apply `max` | Requires dataflow graph analysis |
-| B. Suppression mechanism | `# manifest: suppress scope-budget` | Hides real issues too |
-| C. Accept as conservative | False positives, no false negatives | Noisy for real systems |
+The per-manifest `scope-budget` sum check remains as a conservative
+fallback for standalone checking (documented as such in
+`scope_budget.rs`). For full cross-scope trees, the precise
+critical-path check supersedes it.
 
 ---
 
-## 43. Scope Path Dataflow Tracing Underspecified
+## ~~43. Scope Path Dataflow Tracing Underspecified~~ — Done
 
-### Problem
+Resolved in Phase 35.1–35.4. The algorithm is now specified and
+implemented in `src/play_launch/src/ros/manifest_graph.rs`:
 
-The spec says "the checker traces the dataflow between the input and
-output topics, considering only nodes within this scope's subtree" but
-never specifies the algorithm:
-
-- Multiple paths between input and output — use the longest (worst-case)?
-- Diamond patterns where paths fork and rejoin?
-- Opaque child scopes — use the declared budget or trace through?
-- How does the checker build the dataflow graph from topic declarations?
-
-This is a critical piece of the checker design that needs specification,
-at least at the algorithmic level.
+- **Graph construction**: `build_global_graph(&ManifestIndex)` builds
+  a cross-scope graph from merged topic publishers/subscribers.
+  State edges (subscribers with `state: true`) are marked separately
+  and skipped in causal traversal.
+- **Subgraph extraction**: `subgraph_for_scope_path()` restricts to
+  nodes in the scope's subtree and identifies sources/sinks from the
+  scope path's resolved input/output topics.
+- **Critical path**: `critical_path()` uses topological sort followed
+  by forward DP. At each node, `latency = max(predecessor.latency +
+  edge.transport) + node.processing`, which correctly handles:
+  - Series chains (sum)
+  - Fork-join (max at the join point)
+  - Multi-input nodes (max over predecessors)
+  - State edges (skipped)
+- **Diamond patterns**: handled naturally by the topological sort —
+  each node's latency is computed once based on its predecessors,
+  regardless of how many paths converged on it.
+- **Opaque vs transparent scopes**: the current implementation treats
+  all scopes as transparent (walks into their nodes). Opaque-scope
+  optimization (using declared child budgets without traversing) is
+  a potential future improvement but not required for correctness.
 
 ---
 
@@ -351,27 +343,33 @@ be modeled as periodic paths (`input: []`).
 
 ---
 
-## 49. Lifecycle Nodes Not Addressed
+## ~~49. Lifecycle Nodes Not Addressed~~ — Done (Option B)
 
-### Problem
+Added `lifecycle: Option<bool>` field on `NodeDecl`. When set to true,
+the node is marked as a ROS 2 managed node, and runtime monitors
+gate contract checks (rate, latency, age) on the node being in the
+Active state. Static checking is unaffected.
 
-ROS 2 lifecycle (managed) nodes have states: unconfigured, inactive,
-active, finalized. A lifecycle node only publishes when active. A node
-contract (`min_rate_hz`, `max_latency_ms`) applies only in the active
-state, but the manifest has no way to express this.
+Example:
 
-In Autoware, lifecycle nodes are used for sensor drivers and some
-processing nodes. During system startup, nodes transition through
-states — the checker would see rate violations until all nodes are
-active.
+```yaml
+nodes:
+  lidar_driver:
+    lifecycle: true
+    pub:
+      pointcloud: { min_rate_hz: 10 }   # applies when driver is Active
+```
 
-### Options
+Updated:
+- `types/src/types.rs` — added `lifecycle` field
+- `types/src/parse.rs` — parses `lifecycle` key, new test `test_lifecycle_node`
+- `docs/launch-manifest.md` — Background section explains lifecycle
+  semantics; Nodes format reference documents the field
 
-| Option | Pros | Cons |
-|--------|------|------|
-| A. Implicit: contracts apply when active | Matches ROS 2 behavior | Runtime monitor must know lifecycle state |
-| B. Explicit `lifecycle: true` on node | Manifest declares lifecycle awareness | Extra field, most nodes aren't lifecycle |
-| C. Document as limitation | Honest | Startup violations noisy |
+**Out of scope for v1** (future work):
+- Per-state contracts (different rate/latency per state)
+- Activation ordering / dependency graph
+- Parser auto-detection from launch file (`LifecycleNode` action)
 
 ---
 
@@ -384,15 +382,35 @@ rule, example, or validation.
 
 ## Summary
 
-| #  | Issue                               | Type                  | Effort  | Status                    |
-|----|-------------------------------------|-----------------------|---------|---------------------------|
-| 18 | Per-rule CLI filter                 | UX / CLI              | Small   | Open                      |
-| 42 | Sum check false warnings on parallel| Checker design        | Medium  | Open                      |
-| 43 | Scope path tracing underspecified   | Spec gap              | Medium  | Open                      |
-| 44 | `max_transport_ms` multi-subscriber | Format design         | Small   | Open                      |
-| 45 | QoS pub/sub compatibility check     | New rule              | Small   | Open                      |
-| 46 | Node naming guidance                | Doc fix               | Trivial | Done                      |
-| 47 | Missing inline include example      | Doc fix               | Trivial | Done                      |
-| 48 | `header.stamp` propagation too strong| Doc fix              | Trivial | Done                      |
-| 49 | Lifecycle nodes not addressed       | Spec gap              | Small   | Open                      |
-| 50 | `min_latency_ms` poorly motivated   | Format design         | Trivial | Done — removed            |
+Issues not in this table are either resolved (struck through above)
+or superseded by a later issue. Only open issues and their phase
+assignments are shown here.
+
+| #  | Issue                               | Type                  | Effort  | Status                                 |
+|----|-------------------------------------|-----------------------|---------|----------------------------------------|
+| 44 | `max_transport_ms` multi-subscriber | Format design         | Small   | Open — future format extension         |
+| 45 | QoS pub/sub compatibility check     | New rule              | Small   | Open — needs per-endpoint QoS (future) |
+
+**Recently resolved** (Phase 34/35):
+
+| #  | Issue                               | Resolved in |
+|----|-------------------------------------|-------------|
+| 18 | Per-rule CLI filter                 | Phase 34.8  |
+| 22 | Drop composition assumes independence | Phase 34 (runtime-only) |
+| 23 | Age on subscriber endpoints         | Phase 34    |
+| 29 | `exclude_patterns` override         | Phase 34    |
+| 30 | Example error messages              | Phase 34    |
+| 31 | `correlation: latest` stamp         | Phase 34    |
+| 32 | Capture mode doc location           | Phase 34    |
+| 33 | Topic keys as ROS names             | Phase 34    |
+| 34 | Scope paths use topic names         | Phase 34    |
+| 35 | Parent manifest purpose             | Phase 34    |
+| 37 | Absolute name verbosity (accepted)  | Phase 34    |
+| 41 | Services follow topic pattern       | Phase 34    |
+| 42 | Topology-aware budget check         | Phase 35.1–35.4 |
+| 43 | Scope path tracing algorithm        | Phase 35.1–35.4 |
+| 46 | Node naming guidance                | Phase 34    |
+| 47 | Inline include example              | Phase 34    |
+| 48 | `header.stamp` as convention        | Phase 34    |
+| 49 | Lifecycle node `lifecycle:` flag    | Phase 35 (post-35.8) |
+| 50 | `min_latency_ms` removed            | Phase 34    |

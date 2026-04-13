@@ -108,6 +108,7 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
     Ok(NodeDecl {
         if_condition: yaml_string(yaml, "if"),
         unless_condition: yaml_string(yaml, "unless"),
+        lifecycle: yaml_bool(yaml, "lifecycle"),
         publishers: parse_endpoints(yaml, "pub", ctx)?,
         subscribers: parse_endpoints(yaml, "sub", ctx)?,
         srv: parse_srv_endpoints(yaml, "srv", ctx)?,
@@ -615,6 +616,25 @@ nodes:
         assert_eq!(ndt.publishers["ndt_pose"].min_rate_hz, Some(10.0));
         assert!(ndt.publishers.contains_key("exe_time_ms"));
         assert_eq!(ndt.srv["trigger_node"].max_response_ms, Some(100.0));
+    }
+
+    #[test]
+    fn test_lifecycle_node() {
+        let yaml = r#"
+version: 1
+nodes:
+  lidar_driver:
+    lifecycle: true
+    pub:
+      pointcloud:
+        min_rate_hz: 10
+  regular_node:
+    pub:
+      data: {}
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        assert_eq!(m.nodes["lidar_driver"].lifecycle, Some(true));
+        assert_eq!(m.nodes["regular_node"].lifecycle, None);
     }
 
     #[test]

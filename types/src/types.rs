@@ -56,6 +56,14 @@ pub struct NodeDecl {
     pub if_condition: Option<String>,
     #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
     pub unless_condition: Option<String>,
+    /// True if this is a ROS 2 lifecycle (managed) node. Rate, latency,
+    /// and age contracts on this node's endpoints are runtime-gated on
+    /// the node being in the Active state — publishers don't publish
+    /// and subscribers don't run callbacks in Unconfigured/Inactive.
+    /// Static checking is unaffected; this is a signal for runtime
+    /// monitors to skip checks until the node is Active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<bool>,
     #[serde(rename = "pub", skip_serializing_if = "BTreeMap::is_empty")]
     pub publishers: BTreeMap<String, EndpointProps>,
     #[serde(rename = "sub", skip_serializing_if = "BTreeMap::is_empty")]

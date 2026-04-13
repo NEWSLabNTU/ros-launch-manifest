@@ -286,6 +286,26 @@ publishes a pose that NDT subscribes to as `state: true`, the checker
 does not flag it as a causal cycle — the data flows but doesn't create
 a dependency loop.
 
+**Lifecycle (managed) nodes.** A ROS 2 lifecycle node has a state
+machine (Unconfigured → Inactive → Active → Finalized) and only
+publishes / runs callbacks in the Active state. Contracts on such
+nodes apply to steady-state active operation; the runtime monitor
+gates checks on the node being in the Active state, skipping
+false violations during startup and state transitions.
+
+Declare a lifecycle node with `lifecycle: true` on the node:
+
+```yaml
+nodes:
+  lidar_driver:
+    lifecycle: true
+    pub:
+      pointcloud: { min_rate_hz: 10 }   # applies when driver is Active
+```
+
+Static checking is unaffected — the flag is purely a signal for runtime
+monitoring. See [Nodes](#nodes) for the field definition.
+
 See [Nodes](#nodes) for the full endpoint property tables.
 
 ### Topic Name Resolution
@@ -977,9 +997,21 @@ nodes:
         input: trajectory
         output: [cmd]
         max_latency_ms: 10
+
+  lidar_driver:
+    lifecycle: true              # managed node — contracts apply when Active
+    pub:
+      pointcloud: { min_rate_hz: 10 }
 ```
 
 Endpoints can be a list (`pub: [a, b]`) or a map with properties.
+
+**Node properties:**
+
+| Field         | Meaning                                       | If omitted |
+|---------------|-----------------------------------------------|------------|
+| `lifecycle`   | True if ROS 2 lifecycle (managed) node — contracts are runtime-gated on Active state | `false` — regular node |
+| `if` / `unless` | Condition                                   | Always included |
 
 **Subscriber properties:**
 
