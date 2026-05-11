@@ -284,6 +284,43 @@ mod tests {
     }
 
     #[test]
+    fn test_span_index_endpoint_qos_nested() {
+        // Per-endpoint qos blocks under nodes.<n>.pub.<ep>.qos.<field>
+        // and nodes.<n>.sub.<ep>.qos.<field>, plus per-sub
+        // max_transport_ms, must be addressable for diagnostic spans.
+        let yaml = r#"
+nodes:
+  perception:
+    sub:
+      pointcloud:
+        qos:
+          reliability: reliable
+        max_transport_ms: 0
+"#;
+        let idx = SpanIndex::build(yaml);
+
+        assert!(
+            idx.get("nodes.perception.sub.pointcloud.qos").is_some(),
+            "missing endpoint qos span"
+        );
+        assert!(
+            idx.get("nodes.perception.sub.pointcloud.qos.reliability")
+                .is_some(),
+            "missing endpoint qos.reliability span"
+        );
+        assert!(
+            idx.get("nodes.perception.sub.pointcloud.max_transport_ms")
+                .is_some(),
+            "missing per-sub max_transport_ms span"
+        );
+
+        let span = idx
+            .get("nodes.perception.sub.pointcloud.qos.reliability")
+            .unwrap();
+        assert_eq!(&yaml[span.clone()], "reliability");
+    }
+
+    #[test]
     fn test_span_index_paths() {
         let yaml = "nodes:\n  a:\n    paths:\n      main:\n        max_latency_ms: 50\n";
         let idx = SpanIndex::build(yaml);

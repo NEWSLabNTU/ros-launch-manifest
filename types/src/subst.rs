@@ -173,6 +173,13 @@ pub fn substitute_manifest(
         }
     }
 
+    // External topics: type field
+    for ext in m.external_topics.values_mut() {
+        if let Some(t) = &ext.msg_type {
+            ext.msg_type = Some(substitute_str(t, args)?);
+        }
+    }
+
     Ok(m)
 }
 

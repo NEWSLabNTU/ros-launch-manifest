@@ -76,6 +76,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         actions: parse_actions(doc, ctx)?,
         includes: parse_includes(doc, ctx)?,
         paths: parse_paths(doc, ctx)?,
+        external_topics: parse_external_topics(doc, ctx)?,
     })
 }
 
@@ -161,6 +162,8 @@ fn parse_endpoint_props(yaml: &Yaml, _ctx: &str) -> Result<EndpointProps, ParseE
         max_age_ms: yaml_f64(yaml, "max_age_ms"),
         state: yaml_bool(yaml, "state"),
         required: yaml_bool(yaml, "required"),
+        qos: parse_qos(yaml),
+        max_transport_ms: yaml_f64(yaml, "max_transport_ms"),
     })
 }
 
@@ -254,6 +257,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
             rate_hz: None,
             max_transport_ms: None,
             drop: None,
+            external: None,
         });
     }
     Ok(TopicDecl {
@@ -267,7 +271,76 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         rate_hz: yaml_f64(yaml, "rate_hz"),
         max_transport_ms: yaml_f64(yaml, "max_transport_ms"),
         drop: parse_drop_spec(yaml, "drop", ctx)?,
+        external: parse_external_side(yaml, "external", ctx)?,
     })
+}
+
+/// Parse the manifest-level `external_topics:` block.
+fn parse_external_topics(
+    doc: &Yaml,
+    ctx: &str,
+) -> Result<BTreeMap<String, ExternalTopicDecl>, ParseError> {
+    let mut out = BTreeMap::new();
+    let section = &doc["external_topics"];
+    if section.is_badvalue() {
+        return Ok(out);
+    }
+    let hash = section
+        .as_hash()
+        .ok_or_else(|| field_err(ctx, "external_topics", "expected mapping"))?;
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        let path = format_path(ctx, &format!("external_topics.{name}"));
+        // Accept either `side:` or `external:` as the side selector.
+        // Try whichever is present; if both are present, `side:` wins.
+        let side_present = !v["side"].is_badvalue();
+        let external_present = !v["external"].is_badvalue();
+        let side = if side_present {
+            parse_external_side(v, "side", &path)?
+        } else if external_present {
+            parse_external_side(v, "external", &path)?
+        } else {
+            None
+        };
+        let side = side.ok_or_else(|| {
+            field_err(
+                &path,
+                "side",
+                "external_topics entry must have a 'side: pub|sub|both' (or 'external:') field",
+            )
+        })?;
+        out.insert(
+            name,
+            ExternalTopicDecl {
+                side,
+                msg_type: yaml_string(v, "type"),
+                qos: parse_qos(v),
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// Parse an `ExternalSide` enum from a string-valued YAML field.
+fn parse_external_side(
+    doc: &Yaml,
+    key: &str,
+    ctx: &str,
+) -> Result<Option<ExternalSide>, ParseError> {
+    let raw = match yaml_string(doc, key) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    match raw.as_str() {
+        "pub" => Ok(Some(ExternalSide::Pub)),
+        "sub" => Ok(Some(ExternalSide::Sub)),
+        "both" => Ok(Some(ExternalSide::Both)),
+        _ => Err(field_err(
+            ctx,
+            key,
+            &format!("invalid external side '{raw}', expected 'pub', 'sub', or 'both'"),
+        )),
+    }
 }
 
 // ── Services & Actions ──
@@ -830,6 +903,148 @@ actions:
         let m = parse_manifest_str("").unwrap();
         assert_eq!(m.version, 1);
         assert!(m.nodes.is_empty());
+    }
+
+    #[test]
+    fn test_endpoint_qos_override() {
+        let yaml = r#"
+version: 1
+nodes:
+  lidar:
+    pub:
+      pointcloud:
+        qos:
+          reliability: best_effort
+          depth: 5
+  perception:
+    sub:
+      pointcloud:
+        qos: { reliability: reliable }
+        max_transport_ms: 0
+  remote_viz:
+    sub:
+      pointcloud:
+        max_transport_ms: 10
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        let lidar_pub = &m.nodes["lidar"].publishers["pointcloud"];
+        let lidar_qos = lidar_pub.qos.as_ref().unwrap();
+        assert_eq!(lidar_qos.reliability.as_deref(), Some("best_effort"));
+        assert_eq!(lidar_qos.depth, Some(5));
+        assert_eq!(lidar_pub.max_transport_ms, None);
+
+        let perception_sub = &m.nodes["perception"].subscribers["pointcloud"];
+        let perception_qos = perception_sub.qos.as_ref().unwrap();
+        assert_eq!(perception_qos.reliability.as_deref(), Some("reliable"));
+        assert_eq!(perception_sub.max_transport_ms, Some(0.0));
+
+        let remote_sub = &m.nodes["remote_viz"].subscribers["pointcloud"];
+        assert!(remote_sub.qos.is_none());
+        assert_eq!(remote_sub.max_transport_ms, Some(10.0));
+    }
+
+    #[test]
+    fn test_endpoint_effective_qos_overlay() {
+        use crate::types::QosDecl;
+        let topic = QosDecl {
+            reliability: Some("reliable".into()),
+            durability: Some("transient_local".into()),
+            depth: Some(10),
+            ..Default::default()
+        };
+        let endpoint = QosDecl {
+            reliability: Some("best_effort".into()),
+            ..Default::default()
+        };
+        let eff = QosDecl::effective(Some(&topic), Some(&endpoint));
+        // Endpoint override wins for reliability.
+        assert_eq!(eff.reliability.as_deref(), Some("best_effort"));
+        // Topic-level fields are inherited.
+        assert_eq!(eff.durability.as_deref(), Some("transient_local"));
+        assert_eq!(eff.depth, Some(10));
+
+        // Empty endpoint qos = full inherit.
+        let eff = QosDecl::effective(Some(&topic), Some(&QosDecl::default()));
+        assert_eq!(eff.reliability.as_deref(), Some("reliable"));
+
+        // No topic-level: endpoint stands alone.
+        let eff = QosDecl::effective(None, Some(&endpoint));
+        assert_eq!(eff.reliability.as_deref(), Some("best_effort"));
+        assert_eq!(eff.durability, None);
+
+        // Neither side: all None.
+        let eff = QosDecl::effective(None, None);
+        assert_eq!(eff.reliability, None);
+        assert_eq!(eff.durability, None);
+    }
+
+    #[test]
+    fn test_external_topics_block() {
+        use crate::types::ExternalSide;
+        let yaml = r#"
+version: 1
+external_topics:
+  /tf:
+    external: pub
+    type: tf2_msgs/msg/TFMessage
+  /vehicle/engage:
+    external: pub
+  /debug/marker:
+    external: sub
+  /passthrough/relay:
+    external: both
+    type: std_msgs/msg/String
+    qos: { reliability: best_effort }
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        assert_eq!(m.external_topics.len(), 4);
+
+        let tf = &m.external_topics["/tf"];
+        assert_eq!(tf.side, ExternalSide::Pub);
+        assert_eq!(tf.msg_type.as_deref(), Some("tf2_msgs/msg/TFMessage"));
+
+        let engage = &m.external_topics["/vehicle/engage"];
+        assert_eq!(engage.side, ExternalSide::Pub);
+        assert!(engage.msg_type.is_none());
+
+        let marker = &m.external_topics["/debug/marker"];
+        assert_eq!(marker.side, ExternalSide::Sub);
+
+        let passthrough = &m.external_topics["/passthrough/relay"];
+        assert_eq!(passthrough.side, ExternalSide::Both);
+        let qos = passthrough.qos.as_ref().unwrap();
+        assert_eq!(qos.reliability.as_deref(), Some("best_effort"));
+    }
+
+    #[test]
+    fn test_topic_external_flag() {
+        use crate::types::ExternalSide;
+        let yaml = r#"
+version: 1
+nodes:
+  consumer:
+    sub: [data]
+topics:
+  /sensor/data:
+    type: std_msgs/msg/String
+    external: pub
+    sub: [consumer/data]
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        let topic = &m.topics["/sensor/data"];
+        assert_eq!(topic.external, Some(ExternalSide::Pub));
+    }
+
+    #[test]
+    fn test_external_invalid_side_errors() {
+        let yaml = r#"
+version: 1
+external_topics:
+  /tf: { external: maybe }
+"#;
+        let err = parse_manifest_str(yaml).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid external side") || msg.contains("'maybe'"), "got: {msg}");
     }
 
     #[test]

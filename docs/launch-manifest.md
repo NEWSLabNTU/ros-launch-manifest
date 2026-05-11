@@ -131,13 +131,15 @@ graph. Scopes contain nodes, topics, services, and child scopes.
 - **Topic.** First-class wiring between endpoints. Topic keys are **ROS
   topic names** — either relative or absolute. See
   [Topic Name Resolution](#topic-name-resolution), [Topics](#topics),
-  [QoS Defaults](#qos-defaults),
+  [Quality of Service](#quality-of-service),
   [Timestamps and Data Flow](#timestamps-and-data-flow).
 
   The same topic can appear in multiple manifests across the scope tree.
-  Contract fields (`type:`, `rate_hz:`, `qos:`) must agree across all
-  declarations; `pub:` and `sub:` endpoint lists are merged by the
-  checker. Each scope only references its own nodes in endpoint lists.
+  Contract fields (`type:`, `rate_hz:`, topic-level `qos:`) must agree
+  across all declarations; `pub:` and `sub:` endpoint lists are merged
+  by the checker. Per-endpoint `qos:` overrides live on a node and are
+  local to its declaring scope. Each scope only references its own nodes
+  in endpoint lists.
 
 - **Service / Action.** Request-response wiring. Service and action keys
   follow the same naming rules as topics — ROS names, relative or
@@ -200,8 +202,10 @@ The **consistency rule** is the mechanism that makes this work:
   conflicts possible.
 - When checking a manifest tree (multiple scopes), the checker merges
   declarations for the same resolved topic name. `type:` must agree.
-  `rate_hz:` and `qos:` must agree when declared in multiple scopes.
-  `pub:` and `sub:` lists are merged.
+  `rate_hz:` and the topic-level `qos:` block must agree when declared
+  in multiple scopes. `pub:` and `sub:` lists are merged. Per-endpoint
+  `qos:` overrides are not merged — they apply to the endpoint they
+  decorate.
 
 This is the opposite of a centralized model where a parent manifest
 "owns" topic declarations. A centralized model would break standalone
@@ -407,9 +411,14 @@ sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→
 
 The scope budget is always ≥ the sum of node budgets because the scope
 includes internal transport that individual nodes don't. Transport
-latency can be declared per topic via `max_transport_ms`. Topics without
-it contribute 0 to the budget sum — the undeclared transport is absorbed
-into the scope's residual headroom.
+latency can be declared per topic via `max_transport_ms` (default for
+all subscribers) and overridden per subscriber via the same field on
+a `sub:` endpoint — a single ROS topic can have heterogeneous transport
+(intra-process ~0ms, SHM <1ms, network 5-10ms) so per-subscriber
+override is necessary for accurate critical-path computation. Topics
+without `max_transport_ms` (and no per-sub override) contribute 0 to
+the budget sum — the undeclared transport is absorbed into the scope's
+residual headroom.
 
 **`max_age_ms`** — the maximum acceptable age of data when a subscriber
 receives it. Declared on **subscriber endpoints**, not on paths.
@@ -449,6 +458,51 @@ See [Nodes](#nodes) for the `max_age_ms` field table and
 [Paths](#paths) for the `max_latency_ms` field table. See
 [Verification Rules](contract-theory.md#verification-rules) for the
 full composition and checking rules.
+
+**Heterogeneous transport on a single topic.** The same ROS 2 topic can
+have subscribers with very different transport latency: an
+intra-process subscriber sees ~0ms, a same-machine SHM subscriber sees
+< 1ms, and a cross-network subscriber sees 5–10ms. To express this,
+`max_transport_ms` can be declared **on the subscriber endpoint** to
+override the topic-level default. The checker uses the per-subscriber
+value as the edge weight from the publisher to that subscriber in
+critical-path computation:
+
+```
+edge[pub → sub].transport = sub.max_transport_ms
+                         ?? topic.max_transport_ms
+                         ?? 0
+```
+
+Critical path becomes per-sink:
+`latency = max_pred( pred.latency + edge[pred → node].transport )
+         + node.processing`.
+
+```yaml
+topics:
+  /sensor/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [lidar/output]
+    sub: [perception/input, debug_recorder/input, remote_viz/input]
+    max_transport_ms: 10                # default (worst-case fallback)
+
+nodes:
+  perception:
+    sub:
+      input:
+        max_transport_ms: 0             # intra-process
+  debug_recorder:
+    sub:
+      input:
+        max_transport_ms: 1             # same-machine SHM
+  remote_viz:
+    sub:
+      input: {}                         # inherits topic default → 10ms
+```
+
+The override is sub-side only — a publisher does not know which
+subscriber receives data over which transport, but a subscriber knows
+how it consumes. Pub-side `max_transport_ms` is not part of the format.
 
 ### Node and Scope Contracts
 
@@ -562,24 +616,108 @@ when drop values are declared.
 See [Topics](#topics) for the `max_drop_rate` and `max_consecutive`
 field table and [Paths](#paths) for scope-level drop fields.
 
-### QoS Defaults
+### Quality of Service
 
-When `qos:` is omitted on a topic, the checker does not validate QoS.
-When declared, the checker validates that values are from the allowed set:
+QoS can be declared at two levels:
 
-| Field | Allowed values | ROS 2 default (when omitted) |
-|-------|---------------|------------------------------|
-| `reliability` | `reliable`, `best_effort` | `reliable` |
-| `durability` | `volatile`, `transient_local` | `volatile` |
-| `depth` | integer | `10` |
-| `history` | `keep_last`, `keep_all` | `keep_last` |
-| `lifespan_ms` | integer | unlimited |
-| `liveliness` | `automatic`, `manual_by_topic` | `automatic` |
+- **Topic-level** (`topics.<name>.qos`): default profile applied to every
+  publisher and subscriber on the topic that does not specify its own.
+- **Endpoint-level** (`nodes.<n>.pub.<ep>.qos` and
+  `nodes.<n>.sub.<ep>.qos`): per-endpoint override of one or more fields.
 
-Declaring QoS is recommended for topics where publisher and subscriber
-must agree (e.g., `transient_local` for map data, `best_effort` for
-high-rate sensor streams). The `qos-compat` rule errors on invalid values
-like `reliability: maybe`. See [Topics](#topics) for the `qos:` field.
+**Allowed values:**
+
+| Field         | Allowed values                  | ROS 2 default (when omitted) |
+|---------------|---------------------------------|------------------------------|
+| `reliability` | `reliable`, `best_effort`       | `reliable` |
+| `durability`  | `volatile`, `transient_local`   | `volatile` |
+| `depth`       | integer                         | `10` |
+| `history`     | `keep_last`, `keep_all`         | `keep_last` |
+| `lifespan_ms` | integer                         | unlimited |
+| `liveliness`  | `automatic`, `manual_by_topic`  | `automatic` |
+
+The `qos-compat` rule errors on invalid values like `reliability: maybe`.
+
+**Override semantics (field-level):**
+
+The effective QoS for an endpoint is computed per-field:
+
+```
+effective.<field> = endpoint.qos.<field>
+                 ?? topic.qos.<field>
+                 ?? unspecified
+```
+
+Endpoint declarations override topic-level on a per-field basis — an
+endpoint that overrides only `reliability` still inherits `depth` and
+`durability` from the topic. `qos: {}` on an endpoint inherits the
+topic default in full. Overrides are silent — they are an intentional
+DDS-level pattern (e.g., a reliable logger and a best-effort visualizer
+on the same sensor topic).
+
+Topic-level QoS is still subject to the `consistency` rule: when the
+same topic is declared in multiple scopes, the topic-level `qos:` blocks
+must agree. Endpoint-level overrides live on a node and are local to the
+declaring scope — they do not participate in cross-scope merge.
+
+**Pub/sub compatibility (`qos-match` rule):**
+
+After cross-scope merge, the checker computes the effective QoS for
+every publisher and subscriber on each merged topic and checks DDS
+compatibility for every (pub, sub) pair. The compatibility rule is
+**offered ≥ requested**:
+
+| Field         | Pub                | Sub                | Compatible? |
+|---------------|--------------------|--------------------|-------------|
+| `reliability` | `reliable`         | `reliable`         | yes |
+| `reliability` | `reliable`         | `best_effort`      | yes |
+| `reliability` | `best_effort`      | `reliable`         | **no** |
+| `reliability` | `best_effort`      | `best_effort`      | yes |
+| `durability`  | `transient_local`  | `transient_local`  | yes |
+| `durability`  | `transient_local`  | `volatile`         | yes |
+| `durability`  | `volatile`         | `transient_local`  | **no** |
+| `durability`  | `volatile`         | `volatile`         | yes |
+
+A field is checked only when both sides have it specified (directly or
+inherited from topic-level). Fields specified on only one side are
+skipped — the checker does not assume ROS 2 defaults, because real
+deployments use multiple QoS profiles (sensor data, services,
+parameters) with different defaults.
+
+`history`, `depth`, `lifespan_ms`, and `liveliness` are not checked by
+`qos-match` in v1. `liveliness`, `deadline`, and `lifespan` compatibility
+are deferred to a later version.
+
+When arg conditions gate publishers or subscribers, `qos-match` runs per
+satisfiable arg model (sharing infrastructure with `satisfiability`):
+errors are emitted only for (pub, sub) pairs that coexist in some valid
+configuration.
+
+**Example:**
+
+```yaml
+topics:
+  /sensor/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [lidar_driver/output]
+    sub: [perception/input, debug_recorder/input]
+    qos:                          # default for all endpoints on this topic
+      reliability: best_effort
+      depth: 5
+
+nodes:
+  perception:
+    sub:
+      input:
+        qos: { reliability: reliable }   # override → qos-match error
+  debug_recorder:
+    sub:
+      input: {}                          # inherits topic default — ok
+```
+
+The pub `lidar_driver/output` (effective `reliability: best_effort`)
+against sub `perception/input` (effective `reliability: reliable`)
+produces a `qos-match` error.
 
 ### Timestamps and Data Flow
 
@@ -1015,13 +1153,15 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 
 **Subscriber properties:**
 
-| Field         | Meaning                                       | If omitted |
-|---------------|-----------------------------------------------|------------|
-| `min_rate_hz` | Minimum expected receive rate                 | Not checked |
-| `max_rate_hz` | Maximum expected receive rate                 | Not checked |
-| `max_age_ms`  | Max data age at receive (`now - header.stamp`) | Not checked |
-| `state`       | Polled (read-latest), not causal              | `false` — causal |
-| `required`    | Must receive at least once before operational | `false` — optional |
+| Field              | Meaning                                       | If omitted |
+|--------------------|-----------------------------------------------|------------|
+| `min_rate_hz`      | Minimum expected receive rate                 | Not checked |
+| `max_rate_hz`      | Maximum expected receive rate                 | Not checked |
+| `max_age_ms`       | Max data age at receive (`now - header.stamp`) | Not checked |
+| `state`            | Polled (read-latest), not causal              | `false` — causal |
+| `required`         | Must receive at least once before operational | `false` — optional |
+| `qos`              | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
+| `max_transport_ms` | Per-subscriber transport latency override (ms) — used as the edge weight from publisher to this subscriber in scope path critical-path computation | Inherits topic-level `max_transport_ms` |
 
 **Publisher properties:**
 
@@ -1030,6 +1170,7 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 | `min_rate_hz` | Minimum publish rate                      | Not checked |
 | `max_rate_hz` | Maximum publish rate                      | Not checked |
 | `jitter_ms`   | Max deviation from ideal period           | Not checked |
+| `qos`         | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
 
 **Service/client properties:**
 
@@ -1045,8 +1186,10 @@ keys are **ROS topic names** — relative or absolute. See
 and guidance on when to use each.
 
 The same topic can appear in multiple manifests across the scope tree.
-Contract fields (`type:`, `rate_hz:`, `qos:`) must agree; endpoint lists
-(`pub:`, `sub:`) are merged by the checker.
+Contract fields (`type:`, `rate_hz:`, topic-level `qos:`) must agree;
+endpoint lists (`pub:`, `sub:`) are merged by the checker. Per-endpoint
+`qos:` overrides on a node's `pub:`/`sub:` entries are local to the
+declaring scope and not subject to cross-scope agreement.
 
 ```yaml
 topics:
@@ -1078,7 +1221,7 @@ topics:
 | `rate_hz`          | no       | Negotiated channel rate | Rate hierarchy not checked |
 | `max_drop_rate`    | no       | Transport drop rate (fraction 0-1) | Drop not checked |
 | `max_consecutive`  | no       | Max consecutive transport drops | Consecutive not checked |
-| `max_transport_ms` | no       | Worst-case transport latency (ms) | 0 — absorbed into scope residual |
+| `max_transport_ms` | no       | Worst-case transport latency (ms) — default for every subscriber on this topic; overridable per `sub:` endpoint | 0 — absorbed into scope residual |
 | `qos`              | no       | QoS profile | QoS not validated |
 | `if`/`unless`      | no       | Condition | Always included |
 
@@ -1222,15 +1365,90 @@ considering only nodes within this scope's subtree. When a parent scope
 and child scope declare paths with the same resolved (input, output)
 topics, `budget-overflow` checks that the child's budget ≤ the parent's.
 
+### External Topics
+
+Topics produced or consumed by systems outside the loaded manifest tree
+(hardware bridges, separate-package map loaders, joystick / teleop
+sources, rviz consumers) cannot be expressed by `topics:` alone —
+declaring them there would leave one side empty and trip
+`dangling-entity`.
+
+Two ways to mark a topic as external:
+
+**1. Top-level `external_topics:` block** — manifest-wide list, useful
+at the top of the launch tree where the boundary is known:
+
+```yaml
+external_topics:
+  /tf:
+    external: pub                  # external producer (we may sub)
+    type: tf2_msgs/msg/TFMessage
+  /vehicle/engage:
+    external: pub
+    type: autoware_vehicle_msgs/msg/Engage
+  /visualization:
+    external: sub                  # external consumer (we pub)
+  /passthrough/relay:
+    external: both                 # passthrough we don't model
+    type: std_msgs/msg/String
+    qos: { reliability: best_effort }
+```
+
+**2. Per-topic `external:` flag** — inline override on an existing
+topic decl, useful for one-off cases inside a leaf manifest:
+
+```yaml
+topics:
+  /sensor/raw:
+    type: sensor_msgs/msg/PointCloud2
+    external: pub                  # consumed by us, external producer
+    sub: [lidar_processor/input]
+```
+
+**Semantics:**
+
+- `external: pub` — producer is external. `dangling-entity` won't fire
+  on "no publishers" for this FQN. Internal subscribers may still be
+  declared and are checked normally.
+- `external: sub` — consumer is external. `dangling-entity` won't fire
+  on "no subscribers". Internal publishers may still be declared.
+- `external: both` — both sides external (passthrough).
+
+**Override and merge:**
+
+- Multiple `external_topics:` entries for the same FQN across scopes
+  merge by taking the more permissive side (`Both` ≥ either single).
+- An internal `pub:`/`sub:` declaration anywhere in the merged tree
+  takes precedence over the external mark on that same side — when a
+  team adds the missing producer manifest later, the external mark
+  becomes a no-op automatically.
+- `type:` in `external_topics:` is cross-checked against any internal
+  `topics:` declaration of the same FQN by the `consistency` rule.
+  Mismatches are reported as errors.
+
+**When to put it where:**
+
+| Boundary | Put `external_topics:` here |
+|----------|----------------------------|
+| Repo edge (e.g. truly external to your contract repo) | Top-level manifest of the launch tree |
+| Subsystem edge (e.g. perception's sensor inputs) | Subsystem manifest |
+| One-off case in a single leaf | Per-topic `external:` flag on the topic |
+
+For a typical autonomous-vehicle launch tree, ~10–50 entries at the
+top-level manifest cover the entire repo. Per-leaf duplication is not
+required — `--manifest-dir` loads the entire tree and a single external
+declaration in any ancestor suffices.
+
 ## Static Validation
 
-The checker runs 14 rules on each manifest:
+The checker runs 15 rules on each manifest:
 
 | Rule                | What it catches                                                    | Severity      |
 |---------------------|--------------------------------------------------------------------|---------------|
 | `endpoint-unique`   | Duplicate endpoint names within a node                             | Error         |
 | `wiring`            | Path endpoints not connected by any topic                          | Warning       |
 | `qos-compat`        | Invalid QoS values                                                 | Error         |
+| `qos-match`         | Publisher and subscriber QoS incompatible per DDS offered ≥ requested rule | Error |
 | `rate-hierarchy`    | Publisher rate < topic rate < subscriber rate                       | Error         |
 | `rate-chain`        | Output rate unachievable from upstream                              | Warning       |
 | `budget-overflow`   | Descendant budget exceeds ancestor budget (part > whole)           | Error         |
@@ -1241,7 +1459,7 @@ The checker runs 14 rules on each manifest:
 | `service-type`      | Service with no type; server/client not on node                    | Error/Warning |
 | `dangling-entity`   | Topic with 0 publishers across tree; service/action with 0 servers | Error/Warning |
 | `satisfiability`    | Arg combination produces dangling entities; unreachable nodes      | Error/Warning |
-| `consistency`       | Same resolved topic/service has conflicting `type:`, `rate_hz:`, or `qos:` across scopes | Error |
+| `consistency`       | Same resolved topic/service has conflicting `type:`, `rate_hz:`, or topic-level `qos:` across scopes | Error |
 
 **Drop checking** is split between static and runtime:
 - **Static (`drop-sanity`)**: validates values are in range, scope drop
@@ -1260,9 +1478,11 @@ structurally broken manifest. A passing manifest is **variant-complete**.
 
 **Consistency**: when checking a manifest tree, the checker merges all
 declarations for the same resolved topic or service name. `type:` must
-match across all scopes. `rate_hz:` and `qos:` must agree when declared
-in multiple scopes. Endpoint lists (`pub:`/`sub:`, `server:`/`client:`)
-are merged.
+match across all scopes. `rate_hz:` and the topic-level `qos:` block
+must agree when declared in multiple scopes. Endpoint lists
+(`pub:`/`sub:`, `server:`/`client:`) are merged. Endpoint-level `qos:`
+overrides live on a node and are local to the declaring scope — they
+do not need to agree across scopes.
 
 **Dangling entities**: after condition filtering and cross-scope merge,
 topics with 0 publishers across the entire manifest tree (warning —
@@ -1298,6 +1518,11 @@ error[consistency]: topic '/localization/kinematic_state' type mismatch:
 error[drop-sanity]: scope 'perception' max_drop_rate (0.02) is tighter than
   topic '/perception/pointcloud' max_drop_rate (0.05) on its path
   --> perception.yaml:15:5
+
+error[qos-match]: incompatible QoS on topic '/sensor/pointcloud' field
+  'reliability': pub 'lidar_driver/output' offers 'best_effort', sub
+  'perception/input' requests 'reliable'
+  --> sensors.yaml:8:5, perception.yaml:14:9
 
 warning[satisfiability]: when pose_source='gnss', topic 'ndt_pose' has
   0 publishers — ndt_node is conditional on pose_source='ndt'

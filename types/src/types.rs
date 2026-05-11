@@ -47,6 +47,14 @@ pub struct Manifest {
     pub includes: BTreeMap<String, IncludeDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, PathDecl>,
+    /// Topics this manifest's subtree consumes from / produces to systems
+    /// outside the loaded manifest tree (Issue #51). Each entry marks the
+    /// listed FQN as expected-external on the named side; the
+    /// `dangling-entity` rule skips that side when it would otherwise
+    /// fire. An internal `pub:`/`sub:` declaration anywhere in the merged
+    /// tree overrides the external mark.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub external_topics: BTreeMap<String, ExternalTopicDecl>,
 }
 
 /// Node declaration.
@@ -94,6 +102,17 @@ pub struct EndpointProps {
     /// Sub endpoint: must receive at least once before operational.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
+    /// Per-endpoint QoS override. Field-level merge with topic-level
+    /// `qos:` — fields declared here override the topic default; fields
+    /// not declared here inherit from the topic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qos: Option<QosDecl>,
+    /// Sub endpoint: per-subscriber transport latency override (ms).
+    /// Used as the edge weight from publisher to this subscriber in
+    /// scope-path critical-path computation. Inherits topic-level
+    /// `max_transport_ms` when not declared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_transport_ms: Option<f64>,
 }
 
 /// Service endpoint properties.
@@ -126,6 +145,46 @@ pub struct TopicDecl {
     pub max_transport_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
+    /// Per-topic external override. When set, the matching side
+    /// (`pub`/`sub`/`both`) is treated as expected-external — the
+    /// `dangling-entity` rule skips it. Equivalent to a
+    /// per-topic-scoped entry in the manifest's `external_topics:` block.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalSide>,
+}
+
+/// Side of a topic that is provided/consumed by an external system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExternalSide {
+    /// Producer is external. The local manifest tree may declare
+    /// subscribers but no internal publisher is required.
+    Pub,
+    /// Consumer is external. The local manifest tree may declare
+    /// publishers but no internal subscriber is required.
+    Sub,
+    /// Both producer and consumer are external — passthrough we don't
+    /// model on either side.
+    Both,
+}
+
+/// External-topic declaration (Issue #51). Marks an FQN as
+/// expected-external from the declaring scope's subtree.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExternalTopicDecl {
+    /// Side that is externally provided. Required.
+    #[serde(rename = "external")]
+    pub side: ExternalSide,
+    /// Optional ROS message type. When set, cross-checked against any
+    /// internal `topics:` declaration of the same FQN by the
+    /// `consistency` rule.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub msg_type: Option<String>,
+    /// Optional QoS profile (offered by the external producer or
+    /// requested by the external consumer). Cross-checked under the
+    /// `qos-match` rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qos: Option<QosDecl>,
 }
 
 /// Service declaration.
@@ -182,6 +241,31 @@ pub struct QosDecl {
     pub lifespan_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub liveliness: Option<String>,
+}
+
+impl QosDecl {
+    /// Compute the effective QoS for an endpoint by overlaying the
+    /// endpoint's per-field overrides on top of the topic-level default.
+    /// Each field follows: `endpoint.<f> ?? topic.<f>`. Fields unspecified
+    /// on both sides remain `None` and are skipped by `qos-match`.
+    pub fn effective(topic: Option<&QosDecl>, endpoint: Option<&QosDecl>) -> QosDecl {
+        let pick_str = |f: fn(&QosDecl) -> Option<&String>| -> Option<String> {
+            endpoint
+                .and_then(f)
+                .or_else(|| topic.and_then(f))
+                .cloned()
+        };
+        QosDecl {
+            reliability: pick_str(|q| q.reliability.as_ref()),
+            durability: pick_str(|q| q.durability.as_ref()),
+            depth: endpoint.and_then(|q| q.depth).or_else(|| topic.and_then(|q| q.depth)),
+            history: pick_str(|q| q.history.as_ref()),
+            lifespan_ms: endpoint
+                .and_then(|q| q.lifespan_ms)
+                .or_else(|| topic.and_then(|q| q.lifespan_ms)),
+            liveliness: pick_str(|q| q.liveliness.as_ref()),
+        }
+    }
 }
 
 /// Named causal path.
