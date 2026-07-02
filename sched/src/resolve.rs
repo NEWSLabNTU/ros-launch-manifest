@@ -34,6 +34,10 @@ pub enum SchedError {
         tier_a: String,
         tier_b: String,
     },
+    #[error("assign rule references tier `{tier}`, which has no [tiers.{tier}] definition")]
+    UnknownTier { tier: String },
+    #[error("tier `{tier}` has no [tiers.{tier}.{target}] sub-table for the resolve target")]
+    MissingPlatformSpec { tier: String, target: String },
 }
 
 /// Normalize a namespace/scope path: ensure a single leading slash, no trailing.
@@ -136,6 +140,106 @@ pub(crate) fn bind_nodes(
     Ok(members)
 }
 
+use crate::types::TierDef;
+
+/// One resolved tier: generic policy + concrete placement for one target.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResolvedTier {
+    pub name: String,
+    pub priority: i64,
+    pub stack_bytes: Option<u32>,
+    pub core: Option<u32>,
+    pub sched_class: Option<String>,
+    pub preempt_threshold: Option<i64>,
+    pub class: Option<String>,
+    pub period_us: Option<u64>,
+    pub budget_us: Option<u64>,
+    /// Effective deadline: platform override if present, else the generic head.
+    pub deadline_us: Option<u64>,
+    pub deadline_policy: Option<String>,
+    pub spin_period_us: Option<u64>,
+    /// Member node names, sorted.
+    pub members: Vec<String>,
+}
+
+impl ResolvedTier {
+    fn default_tier(members: Vec<String>) -> Self {
+        ResolvedTier {
+            name: DEFAULT_TIER.to_string(),
+            members,
+            ..Default::default()
+        }
+    }
+}
+
+/// The ordered tier table for one target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedTierTable {
+    /// Highest RTOS/OS priority first.
+    pub tiers: Vec<ResolvedTier>,
+}
+
+impl ResolvedTierTable {
+    /// True when the whole system collapsed to the single synthesized default.
+    pub fn is_single_tier(&self) -> bool {
+        self.tiers.len() == 1 && self.tiers[0].name == DEFAULT_TIER
+    }
+}
+
+/// Resolve tiers + assign rules against the system's nodes for one target.
+pub fn resolve(
+    tiers: &std::collections::BTreeMap<String, TierDef>,
+    assigns: &[AssignRule],
+    nodes: &[SchedNode],
+    target: &str,
+) -> Result<ResolvedTierTable, SchedError> {
+    // Every assign rule must name a real tier (the synthesized default excepted).
+    for rule in assigns {
+        if rule.tier != DEFAULT_TIER && !tiers.contains_key(&rule.tier) {
+            return Err(SchedError::UnknownTier {
+                tier: rule.tier.clone(),
+            });
+        }
+    }
+
+    let members_by_tier = bind_nodes(assigns, nodes)?;
+
+    let mut out: Vec<ResolvedTier> = Vec::with_capacity(members_by_tier.len());
+    for (name, members) in members_by_tier {
+        // The default tier needs no [tiers.default] table.
+        if name == DEFAULT_TIER && !tiers.contains_key(DEFAULT_TIER) {
+            out.push(ResolvedTier::default_tier(members));
+            continue;
+        }
+        let def = tiers
+            .get(&name)
+            .ok_or_else(|| SchedError::UnknownTier { tier: name.clone() })?;
+        let spec = def.platform(target).ok_or_else(|| SchedError::MissingPlatformSpec {
+            tier: name.clone(),
+            target: target.to_string(),
+        })?;
+        out.push(ResolvedTier {
+            name,
+            priority: spec.priority,
+            stack_bytes: spec.stack_bytes,
+            core: spec.core,
+            sched_class: spec.sched_class.clone(),
+            preempt_threshold: spec.preempt_threshold,
+            class: def.class.clone(),
+            period_us: def.period_us,
+            budget_us: def.budget_us,
+            deadline_us: spec.deadline_us.or(def.deadline_us),
+            deadline_policy: def.deadline_policy.clone(),
+            spin_period_us: def.spin_period_us,
+            members,
+        });
+    }
+
+    // Highest priority first; ties by name for determinism.
+    out.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
+    Ok(ResolvedTierTable { tiers: out })
+}
+
 #[cfg(test)]
 mod bind_tests {
     use super::*;
@@ -229,6 +333,106 @@ mod bind_tests {
         let nodes = vec![node("/a", "/")];
         let err = bind_nodes(&[rule_scope("hi", "/nowhere")], &nodes).unwrap_err();
         assert!(matches!(err, SchedError::UnknownScopeSelector { .. }));
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+    use crate::parse::parse_system_sched;
+
+    fn node(name: &str, scope: &str) -> SchedNode {
+        SchedNode {
+            name: name.to_string(),
+            scope: scope.to_string(),
+        }
+    }
+
+    #[test]
+    fn no_assigns_degenerates_to_single_default_tier() {
+        let sched = parse_system_sched("").unwrap();
+        let table = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap();
+        assert!(table.is_single_tier());
+        assert_eq!(table.tiers[0].members, vec!["/a".to_string()]);
+        assert_eq!(table.tiers[0].priority, 0);
+    }
+
+    #[test]
+    fn resolves_platform_numbers_and_effective_deadline() {
+        let src = r#"
+[tiers.control]
+class = "real_time"
+deadline_us = 50000
+
+[tiers.control.posix]
+priority = 80
+sched_class = "SCHED_FIFO"
+core = 1
+deadline_us = 40000
+
+[[assign]]
+tier = "control"
+nodes = ["/a"]
+"#;
+        let sched = parse_system_sched(src).unwrap();
+        let table = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap();
+        let t = table.tiers.iter().find(|t| t.name == "control").unwrap();
+        assert_eq!(t.priority, 80);
+        assert_eq!(t.core, Some(1));
+        assert_eq!(t.class.as_deref(), Some("real_time"));
+        assert_eq!(t.deadline_us, Some(40000)); // platform override wins
+        assert_eq!(t.members, vec!["/a".to_string()]);
+    }
+
+    #[test]
+    fn orders_tiers_highest_priority_first() {
+        let src = r#"
+[tiers.hi.posix]
+priority = 80
+[tiers.lo.posix]
+priority = 10
+
+[[assign]]
+tier = "hi"
+nodes = ["/a"]
+[[assign]]
+tier = "lo"
+nodes = ["/b"]
+"#;
+        let sched = parse_system_sched(src).unwrap();
+        let nodes = vec![node("/a", "/"), node("/b", "/")];
+        let table = resolve(&sched.tiers, &sched.assign, &nodes, "posix").unwrap();
+        assert_eq!(table.tiers[0].name, "hi");
+        assert_eq!(table.tiers[0].priority, 80);
+        assert_eq!(table.tiers[1].name, "lo");
+    }
+
+    #[test]
+    fn unknown_tier_in_assign_errors() {
+        let src = r#"
+[[assign]]
+tier = "ghost"
+nodes = ["/a"]
+"#;
+        let sched = parse_system_sched(src).unwrap();
+        let err = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap_err();
+        assert!(matches!(err, SchedError::UnknownTier { .. }));
+    }
+
+    #[test]
+    fn missing_platform_spec_errors() {
+        let src = r#"
+[tiers.hi.freertos]
+priority = 5
+
+[[assign]]
+tier = "hi"
+nodes = ["/a"]
+"#;
+        let sched = parse_system_sched(src).unwrap();
+        // resolving for posix must fail: only freertos declared.
+        let err = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap_err();
+        assert!(matches!(err, SchedError::MissingPlatformSpec { .. }));
     }
 }
 

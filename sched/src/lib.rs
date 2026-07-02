@@ -10,5 +10,7 @@ pub mod resolve;
 pub mod types;
 
 pub use parse::parse_system_sched;
-pub use resolve::SchedError;
+pub use resolve::{
+    DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError, SchedNode, resolve,
+};
 pub use types::{AssignRule, SystemSched, TierDef, TierPlatformSpec};
