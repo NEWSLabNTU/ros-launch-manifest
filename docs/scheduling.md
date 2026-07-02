@@ -70,7 +70,7 @@ deadline_us = 40000        # optional per-platform deadline tighten
   - `core: Option<u32>` — CPU core index (SMP pinning; `None` = unpinned)
   - `sched_class: Option<String>` — POSIX scheduler class (e.g. `"SCHED_FIFO"`, `"SCHED_RR"`)
   - `preempt_threshold: Option<i64>` — ThreadX preemption threshold
-  - `deadline_us: Option<u64>` — per-platform deadline override (tighter than generic head)
+  - `deadline_us: Option<u64>` — per-platform `deadline_us` overrides the generic head (not validated to be smaller)
 
 - **`AssignRule`** — `[[assign]]` sparse binding:
   - `tier: String` — target tier name
@@ -153,7 +153,7 @@ This requires `CAP_SYS_NICE` or root. The crate exposes the resolved `posix` num
 ## Distribution & Cross-Repo Sharing
 
 - **Authored in:** `play_launch` (`src/ros-launch-manifest/sched/`)
-- **Dependencies:** `serde`, `thiserror` only. Pure host code, no `no_std`, no runtime deps.
+- **Dependencies:** `serde`, `thiserror`, `toml`. Pure host code, no `no_std`, no runtime deps.
 - **Vendoring:** `nano-ros` vendors it via git submodule (same mechanism as `ros-launch-manifest`) and pins the commit in `nros-sdk-index.toml`.
 - **Portability:** Generic layer byte-identical across all platforms. Platform-specific placement lives in per-target sub-tables, so the same system TOML (generic fields) resolves identically on all platforms.
 

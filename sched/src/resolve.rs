@@ -1,8 +1,8 @@
 //! Selector-based tier resolution.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::types::AssignRule;
+use crate::types::{AssignRule, TierDef};
 
 /// The synthesized tier for nodes matched by no assign rule.
 pub const DEFAULT_TIER: &str = "default";
@@ -86,6 +86,10 @@ pub(crate) fn bind_nodes(
     nodes: &[SchedNode],
 ) -> Result<BTreeMap<String, Vec<String>>, SchedError> {
     let mut node_tier: BTreeMap<String, &str> = BTreeMap::new();
+    // Tracks nodes assigned by an explicit `nodes` rule (pass 1 only).
+    // Scope rules (pass 2) skip these without error; scope-vs-scope conflicts
+    // are detected by `assign_one` since the node is in `node_tier` but NOT here.
+    let mut explicit_nodes: BTreeSet<String> = BTreeSet::new();
 
     // Pass 1: explicit node selectors (highest precedence).
     for rule in assigns {
@@ -99,11 +103,14 @@ pub(crate) fn bind_nodes(
             }
             for n in hits {
                 assign_one(&mut node_tier, &n.name, &rule.tier)?;
+                explicit_nodes.insert(n.name.clone());
             }
         }
     }
 
-    // Pass 2: scope selectors — fill only nodes still unassigned by pass 1.
+    // Pass 2: scope selectors.
+    // - Nodes claimed by an explicit node rule (pass 1) are skipped silently: explicit wins.
+    // - Nodes claimed by a prior scope rule raise NodeMatchedByMultipleTiers via assign_one.
     for rule in assigns {
         if let Some(scope_sel) = &rule.scope {
             let hits: Vec<&SchedNode> = nodes
@@ -116,7 +123,7 @@ pub(crate) fn bind_nodes(
                 });
             }
             for n in hits {
-                if node_tier.contains_key(&n.name) {
+                if explicit_nodes.contains(&n.name) {
                     continue; // explicit node rule wins
                 }
                 assign_one(&mut node_tier, &n.name, &rule.tier)?;
@@ -139,8 +146,6 @@ pub(crate) fn bind_nodes(
     }
     Ok(members)
 }
-
-use crate::types::TierDef;
 
 /// One resolved tier: generic policy + concrete placement for one target.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -322,6 +327,23 @@ mod bind_tests {
     }
 
     #[test]
+    fn scope_scope_conflict_errors() {
+        // Two scope rules for different tiers, both matching the same node — must error.
+        let nodes = vec![node("/p/a", "/p"), node("/p/b", "/p")];
+        let assigns = vec![rule_scope("hi", "/p"), rule_scope("lo", "/p")];
+        let err = bind_nodes(&assigns, &nodes).unwrap_err();
+        assert!(matches!(err, SchedError::NodeMatchedByMultipleTiers { .. }));
+    }
+
+    #[test]
+    fn scope_selector_false_prefix_excluded() {
+        // Selector "/per" must NOT match namespace "/perception" — boundary proof.
+        let nodes = vec![node("/perception/a", "/perception")];
+        let err = bind_nodes(&[rule_scope("hi", "/per")], &nodes).unwrap_err();
+        assert!(matches!(err, SchedError::UnknownScopeSelector { .. }));
+    }
+
+    #[test]
     fn unknown_node_selector_errors() {
         let nodes = vec![node("/a", "/")];
         let err = bind_nodes(&[rule_nodes("hi", &["ghost"])], &nodes).unwrap_err();
@@ -433,6 +455,49 @@ nodes = ["/a"]
         // resolving for posix must fail: only freertos declared.
         let err = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap_err();
         assert!(matches!(err, SchedError::MissingPlatformSpec { .. }));
+    }
+
+    #[test]
+    fn deadline_falls_back_to_generic_head_when_platform_omits_it() {
+        let src = r#"
+[tiers.rt]
+deadline_us = 50000
+
+[tiers.rt.posix]
+priority = 40
+
+[[assign]]
+tier = "rt"
+nodes = ["/a"]
+"#;
+        let sched = parse_system_sched(src).unwrap();
+        let table = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap();
+        let t = table.tiers.iter().find(|t| t.name == "rt").unwrap();
+        // Platform sub-table has no deadline_us → falls back to the generic head's 50000.
+        assert_eq!(t.deadline_us, Some(50000));
+    }
+
+    #[test]
+    fn ties_broken_by_name() {
+        let src = r#"
+[tiers.b.posix]
+priority = 50
+[tiers.a.posix]
+priority = 50
+
+[[assign]]
+tier = "b"
+nodes = ["/b_node"]
+[[assign]]
+tier = "a"
+nodes = ["/a_node"]
+"#;
+        let sched = parse_system_sched(src).unwrap();
+        let nodes = vec![node("/a_node", "/"), node("/b_node", "/")];
+        let table = resolve(&sched.tiers, &sched.assign, &nodes, "posix").unwrap();
+        // Equal priority → sorted by name ascending.
+        assert_eq!(table.tiers[0].name, "a");
+        assert_eq!(table.tiers[1].name, "b");
     }
 }
 
