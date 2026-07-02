@@ -41,7 +41,7 @@ scope = "/perception/lidar"                  # launch-scope subtree selector
 # any node matched by no rule → synthesized "default" tier
 
 # ===== PLATFORM (same shape per target, values differ) =====
-[tiers.control.posix]      # Linux RT (reuses existing nano-ros key)
+[tiers.control.posix]      # Linux RT (shared with nano-ros)
 priority    = 80
 sched_class = "SCHED_FIFO"
 core        = 1
@@ -62,7 +62,7 @@ deadline_us = 40000        # optional per-platform deadline tighten
   - `budget_us: Option<u64>` — execution budget (microseconds)
   - `deadline_policy: Option<String>` — deadline breach policy
   - `spin_period_us: Option<u64>` — executor spin period (microseconds)
-  - Per-platform sub-tables: `posix`, `freertos`, `zephyr`, `threadx`, `nuttx` (each `Option<TierPlatformSpec>`)
+  - Per-platform sub-tables: `posix`, `freertos`, `zephyr`, `threadx`, `nuttx` (each `Option<TierPlatformSpec>`; `native` is accepted as an alias for `posix`)
 
 - **`TierPlatformSpec`** — `[tiers.<name>.<target>]` concrete placement:
   - `priority: i64` — OS/RTOS priority (i64 to admit Zephyr negative coop priorities)
@@ -109,7 +109,7 @@ Where `SchedNode` carries:
 2. **Scope subtree selectors** — middle precedence. Match by exact scope or descendant (nodes under the scope path).
 3. **Synthesized `default` tier** — lowest precedence. Unmatched nodes fall here.
 
-A node matched by two rules of different tiers is a conflict error.
+A node claimed by two rules at the **same precedence level** (node-vs-node or scope-vs-scope) for different tiers is a `NodeMatchedByMultipleTiers` error. An explicit node rule always wins over a scope rule for the same node — no error is raised.
 
 ### Effective Deadline Rule
 
@@ -120,7 +120,7 @@ For each resolved tier, the effective deadline is:
 ### Output
 
 - Tiers ordered highest-`priority` first
-- Degenerate case (no `[[assign]]` rules): single synthesized `default` tier with priority 0 and empty members (no platform lookup needed)
+- Degenerate case (no `[[assign]]` rules): single synthesized `default` tier with priority 0 and all nodes as members (no platform lookup needed)
 - All other cases: platform sub-table lookup required for each named tier
 
 ## Validation (Error Handling)
