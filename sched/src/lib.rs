@@ -8,3 +8,7 @@
 pub mod parse;
 pub mod resolve;
 pub mod types;
+
+pub use parse::parse_system_sched;
+pub use resolve::SchedError;
+pub use types::{AssignRule, SystemSched, TierDef, TierPlatformSpec};
