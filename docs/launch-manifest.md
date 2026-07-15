@@ -47,38 +47,61 @@ endpoints.
 
 ### Directory Structure
 
-Launch files live in each package's install tree. Manifest files are
-organized in a flat manifest directory, keyed by `package/stem.yaml`:
+Contracts are resolved through two channels, checked in order for every
+scope (first hit wins): **overlay** then **provider**. Both derive the
+same `<stem>` from the launch file — strip the `launch/` subdirectory and
+`.launch.xml` / `.launch.py` extension, append `.contract.yaml`.
+
+**Provider sidecar** (on by default) — the contract ships right next to
+the launch file it describes, in the package's own install tree:
 
 ```
-ROS install tree                        Manifest directory
-─────────────────                       ──────────────────
-share/                                  manifests/
-├── tier4_control_launch/               ├── tier4_control_launch/
-│   └── launch/                         │   └── control.yaml
-│       └── control.launch.xml          │
-├── tier4_system_launch/                ├── tier4_system_launch/
-│   └── launch/                         │   └── system.yaml
-│       └── system.launch.xml           │
-├── autoware_mrm_handler/               ├── autoware_mrm_handler/
-│   └── launch/                         │   └── mrm_handler.yaml
-│       └── mrm_handler.launch.xml      │
-├── tier4_planning_launch/              ├── tier4_planning_launch/
-│   └── launch/                         │   ├── planning.yaml
-│       ├── planning.launch.xml         │   ├── behavior_planning.yaml
-│       └── .../behavior_planning/      │   └── motion_planning.yaml
-│           └── behavior_planning.      │
-│               launch.xml              │
-└── autoware_launch/                    └── autoware_launch/
-    └── launch/                             └── planning_simulator.yaml
-        └── planning_simulator.
-            launch.xml
+share/
+├── tier4_control_launch/
+│   └── launch/
+│       ├── control.launch.xml
+│       └── control.contract.yaml
+├── tier4_system_launch/
+│   └── launch/
+│       ├── system.launch.xml
+│       └── system.contract.yaml
+└── autoware_launch/
+    └── launch/
+        ├── planning_simulator.launch.xml
+        └── planning_simulator.contract.yaml
 ```
 
-The manifest path is derived from the launch file: strip the `launch/`
-subdirectory and `.launch.xml` / `.launch.py` extension, replace with
-`.yaml`. The manifest loader resolves `<manifest_dir>/<pkg>/<stem>.yaml`
-for each scope in the launch tree.
+This is the natural home for a contract a package maintainer ships
+alongside their own launch file: `<launch-file-dir>/<stem>.contract.yaml`.
+Disable it with `--no-provider-contracts` (`play_launch check`/`launch`).
+
+**User overlay** (`--contracts <dir>`) — a separate tree, keyed by
+`package/launch/stem.contract.yaml`, for contracts a downstream user
+supplies without touching (or having write access to) the installed
+package:
+
+```
+<dir>/
+├── tier4_control_launch/
+│   └── launch/
+│       └── control.contract.yaml
+├── tier4_system_launch/
+│   └── launch/
+│       └── system.contract.yaml
+└── autoware_launch/
+    └── launch/
+        └── planning_simulator.contract.yaml
+```
+
+The overlay channel is checked first, so an overlay entry always wins
+over a provider sidecar for the same scope — useful for patching a
+contract without rebuilding the package. `pkg: None` scopes (a launch
+file referenced by raw path, not through a ROS package) use the `_`
+convention in both channels: `<dir>/_/launch/<stem>.contract.yaml`.
+
+The flat `<manifest-dir>/<pkg>/<stem>.yaml` layout (`--manifest-dir`) was
+the original transitional channel and has been removed (Phase 40.6) now
+that every known user has migrated to the provider/overlay layout above.
 
 ## The Manifest Model
 
@@ -1436,7 +1459,8 @@ topics:
 
 For a typical autonomous-vehicle launch tree, ~10–50 entries at the
 top-level manifest cover the entire repo. Per-leaf duplication is not
-required — `--manifest-dir` loads the entire tree and a single external
+required — the loader resolves every scope's contract across the whole
+launch tree (via the overlay/provider channels), so a single external
 declaration in any ancestor suffices.
 
 ## Static Validation
@@ -1538,7 +1562,8 @@ warning[satisfiability]: when pose_source='gnss', topic 'ndt_pose' has
 
 ## Non-Goals
 
-- Automatic manifest resolution (sidecar, AMENT_PREFIX_PATH) — `--manifest-dir` only
+- Discovery beyond the provider sidecar / overlay channels (e.g. scanning
+  `AMENT_PREFIX_PATH` for contracts outside those two layouts)
 - Blocking enforcement via RCL interception (future)
 - User-defined chains — scope hierarchy IS the chain structure
 - Semantic component extraction — manifests are user-authored
