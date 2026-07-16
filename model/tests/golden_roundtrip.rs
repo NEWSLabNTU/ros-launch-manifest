@@ -61,6 +61,10 @@ fn structure_layer_resolved_shapes() {
     let det = &s.nodes["/perception/detection/detector"];
     assert_eq!(det.exec.as_deref(), Some("detector_node"));
     assert!(!det.lifecycle);
+    assert_eq!(
+        s.nodes["/sensing/imu_node"].criticality.as_deref(),
+        Some("high")
+    );
     let tracker = &s.nodes["/perception/tracker"];
     assert_eq!(tracker.plugin.as_deref(), Some("tracker::TrackerNode"));
     assert_eq!(
@@ -126,10 +130,15 @@ fn execution_layer_slices() {
             board: "stm32f4".into()
         }
     );
-    // tier table + per-callback-group binding
+    // tier table (sched crate TierDef schema) + per-callback-group binding
     let high = &e.tiers["high"];
+    assert_eq!(high.class.as_deref(), Some("real_time"));
+    assert_eq!(high.deadline_us, Some(2000));
     assert_eq!(high.spin_period_us, Some(1000));
-    assert_eq!(high.platform["posix"].priority, Some(80));
-    assert_eq!(high.platform["posix"].policy.as_deref(), Some("fifo"));
+    let posix = high.posix.as_ref().unwrap();
+    assert_eq!(posix.priority, 80);
+    assert_eq!(posix.sched_class.as_deref(), Some("SCHED_FIFO"));
+    assert_eq!(posix.core, Some(2));
+    assert_eq!(high.threadx.as_ref().unwrap().preempt_threshold, Some(4));
     assert_eq!(e.bindings["/sensing/imu_node/ctrl"], "high");
 }

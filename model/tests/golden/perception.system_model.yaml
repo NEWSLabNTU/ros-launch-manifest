@@ -32,6 +32,7 @@ structure:
       scope: /perception
       pkg: imu_driver
       exec: imu_node
+      criticality: high
     /perception/tracker:
       scope: /perception
       pkg: multi_object_tracker
@@ -110,18 +111,21 @@ execution:
       target: mcu:stm32f4
   tiers:
     high:
+      class: real_time
+      deadline_us: 2000
       spin_period_us: 1000
-      platform:
-        posix:
-          priority: 80
-          policy: fifo
-        threadx:
-          priority: 4
+      posix:
+        priority: 80
+        sched_class: SCHED_FIFO
+        core: 2
+      threadx:
+        priority: 4
+        preempt_threshold: 4
     low:
+      class: best_effort
       spin_period_us: 10000
-      platform:
-        posix:
-          priority: 10
+      posix:
+        priority: 10
   bindings:
     /perception/detection/detector: high
     /sensing/imu_node/ctrl: high

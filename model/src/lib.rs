@@ -166,6 +166,13 @@ pub struct NodeInstance {
     /// Active state.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub lifecycle: bool,
+    /// Advisory scheduling criticality (`high` | `medium` | `low`) carried
+    /// through from the manifest (RT config v2 §2.1). The resolver's
+    /// `SchedMapper` already consumed it when deriving
+    /// [`Execution::bindings`]; it rides along for runtime diagnosis
+    /// dashboards. Unrecognized values are ignored, never an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub criticality: Option<String>,
 }
 
 /// Topic wiring: type + endpoint refs (`"<node FQN>/<endpoint>"`).
@@ -359,10 +366,14 @@ pub struct Execution {
     /// Node FQN → placement.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub deploy: BTreeMap<String, Deploy>,
-    /// Tier name → scheduling knobs (nano-ros RFC-0015 tier table).
+    /// Tier name → definition (sched crate schema — see [`TierDef`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tiers: BTreeMap<String, Tier>,
+    pub tiers: BTreeMap<String, TierDef>,
     /// `"<node FQN>"` or `"<node FQN>/<callback group>"` → tier name.
+    /// RESOLVED form: the resolver flattens the authoring-side sparse
+    /// `assign` rules (`sched::AssignRule`, scope prefixes + node lists)
+    /// into explicit per-node bindings — early binding, like everything
+    /// else in the model.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, String>,
 }
@@ -435,26 +446,14 @@ impl<'de> Deserialize<'de> for Target {
     }
 }
 
-/// One scheduling tier (nano-ros RFC-0015): a spin period plus per-platform
-/// scheduling knobs, keyed by platform (`posix`, `freertos`, `threadx`, …).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Tier {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spin_period_us: Option<u64>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub platform: BTreeMap<String, TierSched>,
-}
-
-/// Platform scheduling knobs for one tier.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct TierSched {
-    /// Task/thread priority in the platform's own scale.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub priority: Option<i64>,
-    /// Scheduling policy where the platform has one (e.g. POSIX `fifo`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub policy: Option<String>,
-}
+/// Tier definitions reuse the sched crate's schema (RT config v2, phase 41):
+/// a portable head (`class`, `deadline_us`, `period_us`, `budget_us`,
+/// `deadline_policy`, `spin_period_us`) plus fixed per-platform placement
+/// sub-tables (`posix`/`freertos`/`zephyr`/`threadx`/`nuttx` — `priority`,
+/// `stack_bytes`, `core`, `sched_class`, `preempt_threshold`, per-platform
+/// `deadline_us` override). One schema for the authoring form
+/// (`system.toml`), the model, and the `SchedMapper` pipeline.
+pub use ros_launch_manifest_sched::types::{TierDef, TierPlatformSpec};
 
 #[cfg(test)]
 mod tests {

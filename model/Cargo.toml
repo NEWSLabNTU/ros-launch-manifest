@@ -5,6 +5,7 @@ edition = "2024"
 description = "SystemModel — the resolved, checked system artifact shared by play_launch (Linux runtime) and nano-ros (embedded build)"
 
 [dependencies]
+ros-launch-manifest-sched = { path = "../sched" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
 thiserror = "2"
