@@ -178,7 +178,8 @@ topics:
 "#;
     let errs = errors(yaml);
     assert!(
-        errs.iter().any(|e| e.contains("[qos-match]") && e.contains("depth is 0")),
+        errs.iter()
+            .any(|e| e.contains("[qos-match]") && e.contains("depth is 0")),
         "expected qos-match depth=0 error: {errs:?}"
     );
 }
@@ -218,9 +219,7 @@ topics:
     let warns = warnings(yaml);
     assert!(
         warns.iter().any(|w| {
-            w.contains("[qos-match]")
-                && w.contains("best_effort")
-                && w.contains("transient_local")
+            w.contains("[qos-match]") && w.contains("best_effort") && w.contains("transient_local")
         }),
         "expected qos-match best_effort+transient_local warning: {warns:?}"
     );
@@ -245,7 +244,10 @@ topics:
     let warns = warnings(yaml);
     let qos_match: Vec<_> = warns.iter().filter(|w| w.contains("[qos-match]")).collect();
     assert!(errs.is_empty(), "unexpected errors: {errs:?}");
-    assert!(qos_match.is_empty(), "unexpected qos-match warnings: {qos_match:?}");
+    assert!(
+        qos_match.is_empty(),
+        "unexpected qos-match warnings: {qos_match:?}"
+    );
 }
 
 #[test]
@@ -261,7 +263,10 @@ topics:
     let warns = warnings(yaml);
     assert!(errs.is_empty(), "unexpected errors: {errs:?}");
     let qos_match: Vec<_> = warns.iter().filter(|w| w.contains("[qos-match]")).collect();
-    assert!(qos_match.is_empty(), "unexpected qos-match warnings: {qos_match:?}");
+    assert!(
+        qos_match.is_empty(),
+        "unexpected qos-match warnings: {qos_match:?}"
+    );
 }
 
 // ── Rate hierarchy ──

@@ -258,15 +258,14 @@ impl QosDecl {
     /// on both sides remain `None` and are skipped by `qos-match`.
     pub fn effective(topic: Option<&QosDecl>, endpoint: Option<&QosDecl>) -> QosDecl {
         let pick_str = |f: fn(&QosDecl) -> Option<&String>| -> Option<String> {
-            endpoint
-                .and_then(f)
-                .or_else(|| topic.and_then(f))
-                .cloned()
+            endpoint.and_then(f).or_else(|| topic.and_then(f)).cloned()
         };
         QosDecl {
             reliability: pick_str(|q| q.reliability.as_ref()),
             durability: pick_str(|q| q.durability.as_ref()),
-            depth: endpoint.and_then(|q| q.depth).or_else(|| topic.and_then(|q| q.depth)),
+            depth: endpoint
+                .and_then(|q| q.depth)
+                .or_else(|| topic.and_then(|q| q.depth)),
             history: pick_str(|q| q.history.as_ref()),
             lifespan_ms: endpoint
                 .and_then(|q| q.lifespan_ms)

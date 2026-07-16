@@ -70,9 +70,7 @@ fn check_qos_values(rule_id: &str, path: &str, qos: &QosDecl, ctx: &mut CheckCon
         ctx.error(
             rule_id,
             &format!("{path}.durability"),
-            format!(
-                "invalid durability value '{dur}', expected 'volatile' or 'transient_local'"
-            ),
+            format!("invalid durability value '{dur}', expected 'volatile' or 'transient_local'"),
         );
     }
     if let Some(history) = &qos.history

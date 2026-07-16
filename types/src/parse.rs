@@ -1061,7 +1061,10 @@ external_topics:
 "#;
         let err = parse_manifest_str(yaml).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("invalid external side") || msg.contains("'maybe'"), "got: {msg}");
+        assert!(
+            msg.contains("invalid external side") || msg.contains("'maybe'"),
+            "got: {msg}"
+        );
     }
 
     #[test]

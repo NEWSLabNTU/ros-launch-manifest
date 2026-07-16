@@ -149,7 +149,6 @@ fn cleanup_dangling_refs(
     manifest
         .actions
         .retain(|_, a| !a.server.is_empty() || !a.client.is_empty());
-
 }
 
 /// Remove refs whose node was conditional and got filtered out (inferred optional).
@@ -583,5 +582,4 @@ topics:
         // half_topic: pub empty but sub also empty → removed
         assert!(!m.topics.contains_key("half_topic"));
     }
-
 }

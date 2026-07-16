@@ -211,8 +211,10 @@ fn check_compat_pair(
 ) {
     let path = format!("topics.{topic_name}");
 
-    if let (Some(pub_rel), Some(sub_rel)) = (pub_qos.reliability.as_deref(), sub_qos.reliability.as_deref())
-        && !reliability_compatible(pub_rel, sub_rel)
+    if let (Some(pub_rel), Some(sub_rel)) = (
+        pub_qos.reliability.as_deref(),
+        sub_qos.reliability.as_deref(),
+    ) && !reliability_compatible(pub_rel, sub_rel)
     {
         ctx.error(
             rule_id,
@@ -225,7 +227,8 @@ fn check_compat_pair(
         );
     }
 
-    if let (Some(pub_dur), Some(sub_dur)) = (pub_qos.durability.as_deref(), sub_qos.durability.as_deref())
+    if let (Some(pub_dur), Some(sub_dur)) =
+        (pub_qos.durability.as_deref(), sub_qos.durability.as_deref())
         && !durability_compatible(pub_dur, sub_dur)
     {
         ctx.error(
