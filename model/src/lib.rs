@@ -92,6 +92,11 @@ pub struct Meta {
     /// Checker warnings embedded at resolve time (Errors refuse emission).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<String>,
+    /// The spawn-info companion (record.json) this model is bound to —
+    /// the runtime refuses a record whose hash differs (Phase 43.1).
+    /// `None` when the model was resolved to stdout (nothing to bind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<InputHash>,
 }
 
 /// One input file's content hash.
