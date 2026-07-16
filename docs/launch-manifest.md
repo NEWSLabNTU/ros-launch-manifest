@@ -1484,6 +1484,7 @@ The checker runs 15 rules on each manifest:
 | `dangling-entity`   | Topic with 0 publishers across tree; service/action with 0 servers | Error/Warning |
 | `satisfiability`    | Arg combination produces dangling entities; unreachable nodes      | Error/Warning |
 | `consistency`       | Same resolved topic/service has conflicting `type:`, `rate_hz:`, or topic-level `qos:` across scopes | Error |
+| `state-consistency` | Node has ≥2 sibling subs tagged `state: true` and *exactly one* other sub is neither tagged `state:` nor referenced as a path `input` — likely a missed `state:` tag | Warning |
 
 **Drop checking** is split between static and runtime:
 - **Static (`drop-sanity`)**: validates values are in range, scope drop

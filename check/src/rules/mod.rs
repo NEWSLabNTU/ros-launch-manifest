@@ -12,6 +12,7 @@ mod satisfiability;
 mod scope_budget;
 mod service_type;
 mod service_wiring;
+mod state_consistency;
 mod wiring;
 
 use crate::{check::CheckContext, graph::DataflowGraph};
@@ -39,5 +40,6 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(dangling_entity::DanglingEntityRule),
         Box::new(satisfiability::SatisfiabilityRule),
         Box::new(consistency::ConsistencyRule),
+        Box::new(state_consistency::StateConsistencyRule),
     ]
 }
