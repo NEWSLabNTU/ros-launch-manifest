@@ -230,6 +230,11 @@ pub struct Contracts {
     /// Per-topic channel contracts (rate, transport, drops, QoS).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<String, TopicContract>,
+    /// Externally-provided topics: FQN → which side is external
+    /// (`pub` | `sub` | `both`). Dangling-entity and runtime graph checks
+    /// skip the external side.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub externals: BTreeMap<String, ExternalSide>,
 }
 
 impl Contracts {
@@ -240,7 +245,17 @@ impl Contracts {
             && self.node_paths.is_empty()
             && self.scope_paths.is_empty()
             && self.topics.is_empty()
+            && self.externals.is_empty()
     }
+}
+
+/// Which side of an external topic lives outside the modeled system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExternalSide {
+    Pub,
+    Sub,
+    Both,
 }
 
 /// Publisher guarantee.
