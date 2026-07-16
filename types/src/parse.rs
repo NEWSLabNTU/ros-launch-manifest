@@ -115,6 +115,7 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
         srv: parse_srv_endpoints(yaml, "srv", ctx)?,
         cli: parse_endpoints(yaml, "cli", ctx)?,
         paths: parse_paths(yaml, ctx)?,
+        criticality: yaml_string(yaml, "criticality"),
     })
 }
 
@@ -708,6 +709,22 @@ nodes:
         let m = parse_manifest_str(yaml).unwrap();
         assert_eq!(m.nodes["lidar_driver"].lifecycle, Some(true));
         assert_eq!(m.nodes["regular_node"].lifecycle, None);
+    }
+
+    #[test]
+    fn test_node_criticality() {
+        let yaml = r#"
+version: 1
+nodes:
+  control_node:
+    criticality: high
+  regular_node:
+    pub:
+      data: {}
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        assert_eq!(m.nodes["control_node"].criticality.as_deref(), Some("high"));
+        assert_eq!(m.nodes["regular_node"].criticality, None);
     }
 
     #[test]

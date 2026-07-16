@@ -82,6 +82,14 @@ pub struct NodeDecl {
     pub cli: BTreeMap<String, EndpointProps>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, PathDecl>,
+    /// Mapper hint (Phase 41, RT config v2 design §2.1): platform-agnostic
+    /// scheduling criticality — `high` | `medium` | `low`. No priority
+    /// numbers; a `SchedMapper` (`play_launch`'s derive pipeline) may use
+    /// this as a tie-break or additional signal. Absent/unrecognized values
+    /// are ignored (mapper defaults the node non-RT), never a parse error —
+    /// this field is advisory, not schema-enforced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub criticality: Option<String>,
 }
 
 /// Publisher/subscriber endpoint properties (all optional).
