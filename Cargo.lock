@@ -92,6 +92,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -254,6 +260,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pretty_assertions"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ae130e2f271fbc2ac3a40fb1d07180839cdbbe443c7a27e1e3c13c5cac0116d"
+dependencies = [
+ "diff",
+ "yansi",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -309,6 +325,16 @@ dependencies = [
  "ros-launch-manifest-types",
  "thiserror",
  "z3",
+]
+
+[[package]]
+name = "ros-launch-manifest-model"
+version = "0.1.0"
+dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_yaml_ng",
+ "thiserror",
 ]
 
 [[package]]
@@ -564,6 +590,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
 name = "z3"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -610,19 +642,19 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
 name = "action_msgs"
-version = "1.2.2"
+version = "1.2.1"
 
 [[patch.unused]]
 name = "builtin_interfaces"
-version = "1.2.2"
+version = "1.2.1"
 
 [[patch.unused]]
 name = "composition_interfaces"
-version = "1.2.2"
+version = "1.2.1"
 
 [[patch.unused]]
 name = "diagnostic_msgs"
-version = "4.9.0"
+version = "4.2.4"
 
 [[patch.unused]]
 name = "example_interfaces"
@@ -630,11 +662,7 @@ version = "0.9.3"
 
 [[patch.unused]]
 name = "geometry_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "lifecycle_msgs"
-version = "1.2.2"
+version = "4.2.4"
 
 [[patch.unused]]
 name = "play_launch_msgs"
@@ -642,15 +670,15 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "rcl_interfaces"
-version = "1.2.2"
+version = "1.2.1"
 
 [[patch.unused]]
 name = "rosgraph_msgs"
-version = "1.2.2"
+version = "1.2.1"
 
 [[patch.unused]]
 name = "std_msgs"
-version = "4.9.0"
+version = "4.2.4"
 
 [[patch.unused]]
 name = "test_msgs"
