@@ -68,14 +68,14 @@ fn assign_one<'a>(
     node: &str,
     tier: &'a str,
 ) -> Result<(), SchedError> {
-    if let Some(prev) = map.insert(node.to_string(), tier) {
-        if prev != tier {
-            return Err(SchedError::NodeMatchedByMultipleTiers {
-                node: node.to_string(),
-                tier_a: prev.to_string(),
-                tier_b: tier.to_string(),
-            });
-        }
+    if let Some(prev) = map.insert(node.to_string(), tier)
+        && prev != tier
+    {
+        return Err(SchedError::NodeMatchedByMultipleTiers {
+            node: node.to_string(),
+            tier_a: prev.to_string(),
+            tier_b: tier.to_string(),
+        });
     }
     Ok(())
 }
@@ -94,8 +94,10 @@ pub(crate) fn bind_nodes(
     // Pass 1: explicit node selectors (highest precedence).
     for rule in assigns {
         for sel in &rule.nodes {
-            let hits: Vec<&SchedNode> =
-                nodes.iter().filter(|n| node_selector_matches(sel, n)).collect();
+            let hits: Vec<&SchedNode> = nodes
+                .iter()
+                .filter(|n| node_selector_matches(sel, n))
+                .collect();
             if hits.is_empty() {
                 return Err(SchedError::UnknownNodeSelector {
                     selector: sel.clone(),
@@ -219,10 +221,12 @@ pub fn resolve(
         let def = tiers
             .get(&name)
             .ok_or_else(|| SchedError::UnknownTier { tier: name.clone() })?;
-        let spec = def.platform(target).ok_or_else(|| SchedError::MissingPlatformSpec {
-            tier: name.clone(),
-            target: target.to_string(),
-        })?;
+        let spec = def
+            .platform(target)
+            .ok_or_else(|| SchedError::MissingPlatformSpec {
+                tier: name.clone(),
+                target: target.to_string(),
+            })?;
         out.push(ResolvedTier {
             name,
             priority: spec.priority,
@@ -309,10 +313,7 @@ mod bind_tests {
     #[test]
     fn explicit_node_wins_over_scope() {
         let nodes = vec![node("/p/a", "/p"), node("/p/b", "/p")];
-        let assigns = vec![
-            rule_scope("bg", "/p"),
-            rule_nodes("control", &["/p/a"]),
-        ];
+        let assigns = vec![rule_scope("bg", "/p"), rule_nodes("control", &["/p/a"])];
         let m = bind_nodes(&assigns, &nodes).unwrap();
         assert_eq!(m["control"], vec!["/p/a".to_string()]);
         assert_eq!(m["bg"], vec!["/p/b".to_string()]);
@@ -500,4 +501,3 @@ nodes = ["/a_node"]
         assert_eq!(table.tiers[1].name, "b");
     }
 }
-

@@ -192,6 +192,145 @@ On `posix`, this resolves to:
 - **perception tier:** priority 60, no scheduler class/core (inherited from platform sub-table if specified), members include all nodes under `/perception/lidar`
 - **default tier:** priority 0, all other nodes
 
+## v2 (derived) model — Phase 41.1
+
+**Status:** schema + mapper + bridge landed in the crate (this section); play_launch
+integration (contract → `MapperInput`, `--sched-apply` pipeline, `--target`
+flag) is wave 2 (Phase 41.2). The v1 TOML schema documented above keeps
+working unchanged via the bridge — this is purely additive.
+
+**Motivation:** the v1 schema is hand-written (tiers + `[[assign]]`), but the
+runtime can derive most of the scheduling context from launch + contract
+timing facts (rate, deadline, criticality). v2 makes that derivation a named,
+pluggable **mapper** and shrinks the platform file to platform facts +
+explicit overrides. See `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`
+for the full design (this section summarizes the parts the sched crate
+implements).
+
+### Platform-file schema (YAML)
+
+One file names one target (`target:` header). `posix` (Linux RT) is typed
+concretely; any other target is kept as a raw passthrough (`nano-ros`
+validates its own target vocabularies — see below).
+
+```yaml
+target: posix                # required, non-empty; validated by parse_platform_file_yaml
+mapper: rate_monotonic       # SchedMapper name, looked up in a MapperRegistry
+resources:                   # platform facts, typed per target
+  rt_priority_band: { min: 10, max: 40 }
+  isolated_cpus: [0]
+overrides:                   # explicit per-node pins; beat derived values, always
+  control_node: { priority: 20, core: 0 }
+```
+
+- **`posix` `resources`** (`PosixResources`): `rt_priority_band: Option<PriorityBand>`
+  (`{ min: i64, max: i64 }`), `isolated_cpus: Vec<u32>` (advisory; not enforced
+  by this crate). For `target: posix` the band is validated at parse time:
+  `min <= max` AND entirely inside Linux's legal `SCHED_FIFO`/`SCHED_RR`
+  priority range `1..=99` (`POSIX_RT_PRIORITY_MIN`/`MAX`), else
+  `PlatformError::InvalidPriorityBand`. Unknown targets are never
+  range-validated (raw passthrough; e.g. Zephyr's negative coop priorities).
+- **`posix` `overrides.<node>`** (`PosixOverride`): `priority: Option<i64>`,
+  `core: Option<u32>`, `sched_class: Option<String>`.
+- **Unknown target** (e.g. `zephyr`, `freertos`): `resources`/`overrides` parse
+  as raw `serde_yaml_ng::Value` (`PlatformResources::Raw` /
+  `PlatformOverrideEntry::Raw`) — untyped, untouched, passed through for the
+  consumer (nano-ros) to validate against its own per-target vocabulary.
+- Entry point: `parse_platform_file(path) -> Result<PlatformFile, PlatformError>`
+  dispatches on extension — `.yaml`/`.yml` → this schema
+  (`parse_platform_file_yaml`), `.toml` → the legacy bridge (below).
+
+### `SchedMapper` trait + registry
+
+```rust
+pub trait SchedMapper {
+    fn name(&self) -> &str;
+    fn map(&self, input: &MapperInput, facts: &PlatformFacts) -> Result<SchedPlan, MapError>;
+}
+```
+
+- **`MapperInput`** — dependency-free per-node facts extracted by the caller
+  (play_launch, wave 2) from launch + contract:
+  `nodes: Vec<MapperNode>` where `MapperNode { name, scope, rate_hz: Option<f64>,
+  deadline_us: Option<u64>, criticality: Option<Criticality>, path_budget_ms: Option<f64> }`;
+  plus `legacy: Option<SystemSched>`, populated only by the `.toml` bridge for
+  the `manual` mapper. No graph edges yet (YAGNI — a future field like
+  `depends_on` can be added additively).
+- **`PlatformFacts`** — type alias for `PlatformResources` (the platform
+  file's parsed `resources`, per the selected target).
+- **`SchedPlan`** — type alias for the crate's existing `ResolvedTierTable`
+  (deliberately reused, not a new parallel type: it is already "ordered
+  priority/core/sched_class placement grouped by tier, with member node
+  names", which is exactly what every mapper produces). Built-in mappers that
+  give each node its own priority represent that as a one-member-per-tier
+  `ResolvedTier` (tier name = node name); nodes with no facts collapse into
+  the existing `DEFAULT_TIER` (priority 0, no `sched_class`, i.e. non-RT) —
+  the same shape an unmatched node gets in the v1 resolver.
+- **`MapperRegistry`** — `register(Box<dyn SchedMapper>)`, `get(name) -> Option<&dyn SchedMapper>`,
+  `with_builtins()` (pre-registers `manual`, `rate_monotonic`,
+  `deadline_monotonic`). Consumers (play_launch, nano-ros) register
+  additional mappers at link time; no dynamic loading.
+
+### Built-in mappers
+
+- **`manual`** — the legacy semantics. Requires `input.legacy` (only
+  populated by the `.toml` bridge); delegates to `resolve()` against the
+  legacy tiers + `[[assign]]` for `target = "posix"`, reproducing v1 output
+  exactly. Ignores `facts`.
+- **`rate_monotonic`** — higher `rate_hz` → higher priority, linearly spread
+  across `resources.rt_priority_band` (rank 0 → `band.max`, last rank →
+  `band.min`). Deterministic: ranked by rate descending, ties broken by node
+  name ascending. Nodes with no `rate_hz` fall into the non-RT default tier.
+  Errors (`MapError::MissingPriorityBand`) if the target isn't `posix` or the
+  band is absent; errors (`MapError::InvalidPriorityBand`) if `min > max` or
+  the band leaves the POSIX `1..=99` RT range (same `validate_posix()` rule
+  as the parser — guards facts constructed programmatically, not via a file).
+- **`deadline_monotonic`** — same shape, ranked by `deadline_us` ascending
+  (shorter deadline → higher priority); ties broken by name ascending; no
+  `deadline_us` → non-RT default.
+
+Applying `overrides` on top of a derived plan ("override beats derived,
+always") is **not** part of the trait — it's mapper-independent,
+platform-file-scoped logic that the caller (play_launch, wave 2's pipeline)
+applies after `map()` returns.
+
+### Legacy `.toml` bridge
+
+`parse_legacy_toml(input: &str) -> Result<PlatformFile, SchedError>`
+(`bridge.rs`) parses a v1 `system.toml` document and produces a
+`PlatformFile` with `target: "posix"`, `mapper: "manual"`, empty
+`resources`/`overrides`, and the parsed `SystemSched` carried in
+`PlatformFile::legacy`. Reachable through `parse_platform_file`'s `.toml`
+extension dispatch. **Equivalence is tested**: fixture TOML → bridge →
+`manual` mapper output is asserted equal to calling `resolve()` directly on
+the same fixture (`bridge::tests::bridge_then_manual_mapper_matches_direct_resolve`).
+
+### Validation helpers (design §6 conflict semantics)
+
+Pure functions over an already-derived `SchedPlan`; the caller decides
+warn-vs-strict and how to present the result (`--sched-apply`, `--explain` —
+wave 2/4):
+
+- **`band_violations(plan, band) -> Vec<BandViolation>`** — every non-default
+  tier whose priority falls outside `[band.min, band.max]`.
+- **`rate_priority_contradictions(input, plan) -> Vec<Contradiction>`** /
+  **`deadline_priority_contradictions(input, plan) -> Vec<Contradiction>`** —
+  pairwise scan: a node with a strictly higher rate (or strictly shorter
+  deadline) than another must not end up at a strictly lower final priority;
+  a violation is reported as a `Contradiction { node_a, node_b, kind }` (the
+  built-in rate/deadline mappers' own output never triggers this by
+  construction — only hand-authored overrides or the `manual` mapper's
+  independent tiers can).
+
+### Deprecation note
+
+The v1 TOML schema (`SystemSched`/`TierDef`/`AssignRule`/`resolve()`,
+documented above) is not deprecated by this wave — it keeps parsing and
+resolving exactly as before, and is the sole implementation of the `manual`
+mapper via the bridge. Per the design doc, it is scheduled for retirement
+(Phase 41.6) only after `nano-ros` migrates to the v2 schema; there is no
+flag day.
+
 ## Design of Record
 
-See `docs/superpowers/specs/2026-07-01-shared-scheduling-crate-design.md` (the canonical design document) for detailed rationale on schema orthogonality, selector binding, platform separation, and migration strategy.
+See `docs/superpowers/specs/2026-07-01-shared-scheduling-crate-design.md` (the original v1 design document) and `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md` (the v2/derived-scheduling design of record, Phase 41) for detailed rationale.

@@ -1,7 +1,6 @@
 //! TOML parsing for the system scheduling document.
 
-use crate::resolve::SchedError;
-use crate::types::SystemSched;
+use crate::{resolve::SchedError, types::SystemSched};
 
 /// Parse a system scheduling document from a TOML string.
 pub fn parse_system_sched(input: &str) -> Result<SystemSched, SchedError> {
@@ -47,9 +46,15 @@ scope = "/perception/lidar"
             control.platform("posix").unwrap().sched_class.as_deref(),
             Some("SCHED_FIFO")
         );
-        assert_eq!(control.platform("freertos").unwrap().deadline_us, Some(40000));
+        assert_eq!(
+            control.platform("freertos").unwrap().deadline_us,
+            Some(40000)
+        );
         assert_eq!(sched.assign.len(), 2);
-        assert_eq!(sched.assign[0].nodes, vec!["ndt_localizer", "ekf_localizer"]);
+        assert_eq!(
+            sched.assign[0].nodes,
+            vec!["ndt_localizer", "ekf_localizer"]
+        );
         assert_eq!(sched.assign[1].scope.as_deref(), Some("/perception/lidar"));
     }
 
