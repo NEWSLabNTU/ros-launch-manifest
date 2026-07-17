@@ -1,0 +1,30 @@
+version: 1
+chains:
+  ok_chain:
+    semantics: reaction
+    max_latency_ms: 100
+    segments:
+      - { scope: /a, path: make }
+      - { via: /link/out }
+      - { scope: /b, path: consume }
+  broken_via_chain:
+    semantics: reaction
+    max_latency_ms: 100
+    segments:
+      - { scope: /a, path: make }
+      - { via: /link/nonexistent }
+      - { scope: /b, path: consume }
+  budget_blown_chain:
+    semantics: reaction
+    max_latency_ms: 10
+    segments:
+      - { scope: /a, path: make }
+      - { via: /link/out }
+      - { scope: /b, path: consume }
+  sampling_infeasible_chain:
+    semantics: reaction
+    max_latency_ms: 50
+    segments:
+      - { scope: /a, path: make_slow }
+      - { via: /link/out2 }
+      - { scope: /b, path: consume2 }
