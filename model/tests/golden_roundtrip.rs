@@ -70,6 +70,22 @@ fn structure_layer_resolved_shapes() {
         s.nodes["/sensing/imu_node"].criticality.as_deref(),
         Some("high")
     );
+    // R1-M4/M6 — resolved params + lifecycle autostart
+    let imu = &s.nodes["/sensing/imu_node"];
+    assert_eq!(imu.params["rate_hz"], ParamValue::Int(100));
+    assert_eq!(
+        imu.params["frame_id"],
+        ParamValue::Str("imu_link".to_string())
+    );
+    assert_eq!(imu.params["use_filter"], ParamValue::Bool(true));
+    assert_eq!(
+        imu.params["offsets"],
+        ParamValue::StrList(vec!["0.1".to_string(), "0.2".to_string()])
+    );
+    assert_eq!(
+        s.nodes["/perception/tracker"].lifecycle_autostart,
+        Some(Autostart::Active)
+    );
     let tracker = &s.nodes["/perception/tracker"];
     assert_eq!(tracker.plugin.as_deref(), Some("tracker::TrackerNode"));
     assert_eq!(
@@ -94,6 +110,16 @@ fn contracts_layer_numbers() {
     assert_eq!(
         c.pub_endpoints["/perception/detection/detector/objects"].jitter_ms,
         Some(5.0)
+    );
+    // R1-M5 — per-endpoint QoS
+    assert_eq!(
+        c.pub_endpoints["/perception/detection/detector/objects"]
+            .qos
+            .as_ref()
+            .unwrap()
+            .reliability
+            .as_deref(),
+        Some("best_effort")
     );
     let sub = &c.sub_endpoints["/perception/detection/detector/pointcloud"];
     assert_eq!(sub.max_age_ms, Some(100.0));
@@ -135,6 +161,25 @@ fn execution_layer_slices() {
             board: "stm32f4".into()
         }
     );
+    // R1-M1/M2/M3 — deploy fields, transports, bridges, features
+    let imu = &e.deploy["/sensing/imu_node"];
+    assert_eq!(imu.domain, Some(7));
+    assert_eq!(imu.locator.as_deref(), Some("tcp/10.0.2.1:7447"));
+    assert_eq!(imu.rmw.as_deref(), Some("zenoh"));
+    assert_eq!(imu.extra["optimize"], ExtraValue::Str("size".to_string()));
+    assert_eq!(
+        imu.extra["features"],
+        ExtraValue::StrList(vec!["safety".to_string()])
+    );
+    let t = &e.transports[0];
+    assert_eq!(t.kind, "ethernet");
+    assert_eq!(t.id.as_deref(), Some("eth0"));
+    assert_eq!(t.mac.as_deref(), Some("02:00:00:00:00:01"));
+    assert_eq!(t.domain, Some(7));
+    assert_eq!(e.bridges[0].from, "eth0");
+    assert_eq!(e.bridges[0].topics, vec!["/perception/objects"]);
+    assert_eq!(e.features, vec!["safety"]);
+
     // tier table (sched crate TierDef schema) + per-callback-group binding
     let high = &e.tiers["high"];
     assert_eq!(high.class.as_deref(), Some("real_time"));

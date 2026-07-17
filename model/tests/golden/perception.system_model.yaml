@@ -36,12 +36,20 @@ structure:
       pkg: imu_driver
       exec: imu_node
       criticality: high
+      params:
+        rate_hz: 100
+        frame_id: imu_link
+        use_filter: true
+        offsets:
+          - '0.1'
+          - '0.2' 
     /perception/tracker:
       scope: /perception
       pkg: multi_object_tracker
       plugin: tracker::TrackerNode
       container: /perception/pipeline_container
       lifecycle: true
+      lifecycle_autostart: active
   topics:
     /sensing/pointcloud:
       type: sensor_msgs/msg/PointCloud2
@@ -64,6 +72,9 @@ contracts:
     /perception/detection/detector/objects:
       min_rate_hz: 10.0
       jitter_ms: 5.0
+      qos:
+        reliability: best_effort
+        depth: 1
   sub_endpoints:
     /perception/detection/detector/pointcloud:
       min_rate_hz: 10.0
@@ -112,6 +123,13 @@ execution:
       host: main
     /sensing/imu_node:
       target: mcu:stm32f4
+      domain: 7
+      locator: tcp/10.0.2.1:7447
+      rmw: zenoh
+      extra:
+        optimize: size
+        features:
+          - safety
   tiers:
     high:
       class: real_time
@@ -132,3 +150,20 @@ execution:
   bindings:
     /perception/detection/detector: high
     /sensing/imu_node/ctrl: high
+  transports:
+    - kind: ethernet
+      id: eth0
+      ip: 10.0.2.50/24
+      mac: '02:00:00:00:00:01'
+      gateway: 10.0.2.2
+      rmw: zenoh
+      locator: tcp/10.0.2.1:7447
+      domain: 7
+  bridges:
+    - name: uplink
+      from: eth0
+      to: can0
+      topics:
+        - /perception/objects
+  features:
+    - safety

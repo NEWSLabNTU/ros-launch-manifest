@@ -171,6 +171,18 @@ pub struct NodeInstance {
     /// Active state.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub lifecycle: bool,
+    /// R1-M6 — managed-node boot autostart policy (`none` = services
+    /// registered, externally driven; `configure`; `active`). `None` =
+    /// unspecified (consumer default `none`). Only meaningful when
+    /// `lifecycle` is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_autostart: Option<Autostart>,
+    /// R1-M4 — RESOLVED ROS parameter values for this node. Parameters
+    /// are system semantics (not spawn info — the two-artifact split
+    /// excludes cmd/env/param FILES, not values); the embedded consumer
+    /// has no record.json to read them from.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, ParamValue>,
     /// Advisory scheduling criticality (`high` | `medium` | `low`) carried
     /// through from the manifest (RT config v2 §2.1). The resolver's
     /// `SchedMapper` already consumed it when deriving
@@ -178,6 +190,29 @@ pub struct NodeInstance {
     /// dashboards. Unrecognized values are ignored, never an error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub criticality: Option<String>,
+}
+
+/// R1-M6 — lifecycle boot autostart policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Autostart {
+    None,
+    Configure,
+    Active,
+}
+
+/// R1-M4 — a resolved ROS parameter value. Untagged: YAML scalars map
+/// naturally; order matters (Bool before Int before Float before Str so
+/// `true`/`1`/`1.5`/`"x"` each hit the right arm; a float-typed param
+/// authored as `1` must be written `1.0`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ParamValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Str(String),
+    StrList(Vec<String>),
 }
 
 /// Topic wiring: type + endpoint refs (`"<node FQN>/<endpoint>"`).
@@ -268,6 +303,11 @@ pub struct PubContract {
     /// Max deviation from the ideal period.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter_ms: Option<f64>,
+    /// R1-M5 — per-endpoint QoS (overrides the topic-level profile for
+    /// this endpoint; manifest-side per-endpoint QoS + the retired 211.H
+    /// launch-param overlay both land here).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qos: Option<Qos>,
 }
 
 /// Subscriber assumption.
@@ -286,6 +326,9 @@ pub struct SubContract {
     /// Must receive at least once before the node is operational.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
+    /// R1-M5 — per-endpoint QoS (see [`PubContract::qos`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qos: Option<Qos>,
 }
 
 /// Service server guarantee.
@@ -396,11 +439,88 @@ pub struct Execution {
     /// else in the model.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, String>,
+    /// R1-M2 — transport/session declarations (network identity + the
+    /// (rmw, locator, domain) session tuple). Folds multi-domain
+    /// routing: a node binds a transport by `id`, each transport is one
+    /// session. The embedded boot bake reads its board's transport here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transports: Vec<Transport>,
+    /// R1-M3 — in-binary topic-relay bridges (nano-ros RFC-0009 shape).
+    /// Topic types resolve from layer 1 wiring, never written here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bridges: Vec<Bridge>,
+    /// R1-M3 — system capability axes (`safety`, `param_services`, …).
+    /// Unknown names are a consumer bake-time error.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+}
+
+/// R1-M2 — one transport/session declaration.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Transport {
+    /// `ethernet` | `wifi` | `serial` | `can` | `loopback`.
+    pub kind: String,
+    /// Stable id nodes/bridges bind by; `None` ⇒ keyed by `rmw`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// IPv4 CIDR (`"10.0.2.50/24"`) or `"dhcp"` — ethernet/wifi.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+    /// Ethernet MAC; `None` ⇒ board fused MAC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac: Option<String>,
+    /// Default IPv4 gateway — ethernet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<String>,
+    /// NIC names this session multi-homes over (one discovery graph).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interfaces: Vec<String>,
+    /// WiFi SSID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssid: Option<String>,
+    /// WiFi passphrase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Device handle (`"UART0"`, `"CAN0"`) — serial/can.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// Serial baud / CAN bitrate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baudrate: Option<u32>,
+    /// RMW riding this transport; `None` ⇒ deploy/system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rmw: Option<String>,
+    /// Session locator; `None` ⇒ platform default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
+    /// ROS domain this session joins; `None` ⇒ system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<u8>,
+}
+
+/// R1-M3 — one in-binary bridge.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Bridge {
+    pub name: String,
+    /// Source transport id (or rmw key).
+    pub from: String,
+    /// Destination transport id (or rmw key).
+    pub to: String,
+    /// Forwarded topic FQNs; empty ⇒ every declared topic.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub topics: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bidirectional: bool,
 }
 
 impl Execution {
     pub fn is_empty(&self) -> bool {
-        self.deploy.is_empty() && self.tiers.is_empty() && self.bindings.is_empty()
+        self.deploy.is_empty()
+            && self.tiers.is_empty()
+            && self.bindings.is_empty()
+            && self.transports.is_empty()
+            && self.bridges.is_empty()
+            && self.features.is_empty()
     }
 }
 
@@ -412,6 +532,38 @@ pub struct Deploy {
     /// Host name for multi-host Linux deployments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// R1-M1 — ROS domain for this node's session (RFC-0045 baked rung
+    /// on embedded). `None` = system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<u8>,
+    /// R1-M1 — session locator override. `None` = backend default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
+    /// R1-M1 — RMW backend for this node's session (`zenoh` | `xrce` |
+    /// `cyclonedds` | …). `None` = system default. The embedded bake
+    /// cannot pick a backend without one of the two.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rmw: Option<String>,
+    /// R1-M1 — consumer-defined extras (build tuning, runner knobs:
+    /// `profile`, `optimize`, `kind`, `framework`, cargo `features`…).
+    /// Open map by design: these are per-consumer build semantics, not
+    /// cross-runtime system semantics — but they ride the model so the
+    /// consumer never parses `system.toml` directly (canonical-path
+    /// decision).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, ExtraValue>,
+}
+
+/// R1-M1 — a deploy-extra value (untagged; Bool before Int before Float
+/// before Str, then string lists).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExtraValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Str(String),
+    StrList(Vec<String>),
 }
 
 /// Deployment target. Serialized as `linux` or `mcu:<board>`.
