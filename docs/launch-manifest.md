@@ -22,6 +22,7 @@ and at what quality*.
 - **[Background](#background)** — design principles, dataflow patterns, contracts, timing, and timestamps.
 - **[Worked Example](#worked-example)** — a complete multi-scope perception pipeline.
 - **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
+- **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, `chains:` (Phase 44.1).
 - **[Static Validation](#static-validation)** — checker rules and example diagnostics.
 
 ## From Launch Files to Manifests
@@ -1462,6 +1463,132 @@ top-level manifest cover the entire repo. Per-leaf duplication is not
 required — the loader resolves every scope's contract across the whole
 launch tree (via the overlay/provider channels), so a single external
 declaration in any ancestor suffices.
+
+## Vocabulary v2
+
+*Phase 44.1. All fields below are additive and optional — existing
+contracts (75+ Autoware files, rt_workspace) parse unmodified. See
+`docs/superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md`
+for the full design rationale; this section is the field reference.*
+
+### Path triggers (`trigger:`)
+
+Every `paths:` entry (node-level or scope-level) may declare an explicit,
+closed-taxonomy `trigger:` — what causes the path's output:
+
+```yaml
+paths:
+  forward:                                  # message-driven
+    trigger: { input: [control_cmd_in] }
+    output: [control_cmd_out]
+    max_latency_ms: 5
+  status_tick:                              # periodic, self-clocked
+    trigger: { timer: { rate_hz: 10 } }
+    output: [gate_status]
+  publish_map:                              # one-shot at startup
+    trigger: once
+    output: [map]
+  operator_cmd:                             # externally caused, irregular
+    trigger: spontaneous
+    output: [external_cmd]
+```
+
+| Form | Meaning |
+|------|---------|
+| `{ timer: { rate_hz: <f64> } }` | Periodic self-clocked callback. `rate_hz` must be > 0. |
+| `{ input: [ep, ...] }` | Message-driven; caused by these input endpoint/topic names. |
+| `once` | Published once (startup latch); scheduling-irrelevant. |
+| `spontaneous` | Caused outside the graph (operator, network, hardware); event-like. |
+
+**Legacy derivation.** When `trigger:` is absent: a non-empty `input:`
+list derives an input trigger (today's contracts parse identically under
+this rule); an empty or missing `input:` with no `trigger:` is
+**unclassified** — no trigger fact is derived, never silently assumed to
+be a timer. `PathDecl::effective_trigger()` implements this rule and is
+the single source of truth for downstream consumers (checker rules,
+mapper).
+
+**Compatibility validation** (parse-time): when both an explicit
+`trigger: { input: [...] }` and the legacy `input:` list are present,
+they must agree as sets — disagreement is a parse error; a
+redundant/reordered restatement is fine.
+
+### Fan-in sync (`sync:`)
+
+`sync:` declares the fan-in matching policy for an input-triggered path
+with 2 or more endpoints:
+
+```yaml
+paths:
+  fuse:
+    trigger: { input: [cloud_top, cloud_left, cloud_right] }
+    sync:
+      policy: approximate        # exact | approximate | timeout_any
+      max_interval_ms: 50        # match window (exact/approximate)
+      timeout_ms: 100             # timeout_any: publish partial set after this
+    output: [cloud_fused]
+    max_latency_ms: 30
+```
+
+| Field | Meaning | Required when |
+|-------|---------|----------------|
+| `policy` | `exact` (message_filters ExactTime), `approximate` (ApproximateTime), or `timeout_any` (collect-until-timeout, publish partial) | Always |
+| `max_interval_ms` | Match window | `policy: exact` or `policy: approximate` |
+| `timeout_ms` | Collect-until-timeout duration | `policy: timeout_any` |
+
+**Parse-time validation:** `sync:` is only meaningful on a path whose
+[effective trigger](#path-triggers-trigger) is `input` with at least 2
+endpoints (explicit `trigger.input` or legacy `input:` — either
+satisfies this); otherwise a parse error. `exact`/`approximate` require
+`max_interval_ms`; `timeout_any` requires `timeout_ms`.
+
+### Buffer discriminator (`buffer:`)
+
+`buffer:` on a `state: true` subscriber selects the buffering discipline:
+
+```yaml
+sub:
+  control_cmd: { state: true }                  # buffer: latest is the default
+  twist:       { state: true, buffer: queue }    # drained batch-wise per tick
+```
+
+- `latest` (default) — read-latest; staleness is the failure mode.
+- `queue` — bounded queue, drained batch-wise by the consuming timer
+  callback; backlog is the failure mode.
+
+**Parse-time validation:** `buffer:` is only meaningful alongside
+`state: true` — a parse error otherwise.
+
+### Cross-scope chains (`chains:`)
+
+A top-level `chains:` section composes named `paths:` (from any scope)
+into an end-to-end budget, connected by explicit `via:` topics —
+integrator-owned (root contract or overlay), no silent FQN matching:
+
+```yaml
+chains:
+  sensing_to_actuation:
+    semantics: reaction              # reaction | age
+    max_latency_ms: 150              # E2E budget
+    segments:
+      - { scope: /perception, path: preprocess }
+      - { via: /perception/objects }
+      - { scope: /planning, path: plan }
+      - { via: /planning/trajectory }
+      - { scope: /control, path: follow }
+```
+
+| Field | Meaning |
+|-------|---------|
+| `semantics` | `reaction` (first-reaction latency) or `age` (data staleness at the sink) — composition math diverges at junctions. |
+| `max_latency_ms` | End-to-end budget the chain's segments must fit within. |
+| `segments` | Alternating path segments (`{ scope, path }`) and connecting-topic segments (`{ via }`). |
+
+**Parse-time validation** (local shape only — cross-file link
+resolution is the checker's `chain-link` rule, not implemented in this
+phase): `segments` must be non-empty; the first and last segments must
+be path segments; no two `via` segments may be adjacent; a segment may
+not mix `via` with `scope`/`path`.
 
 ## Static Validation
 

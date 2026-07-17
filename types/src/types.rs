@@ -55,6 +55,13 @@ pub struct Manifest {
     /// tree overrides the external mark.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub external_topics: BTreeMap<String, ExternalTopicDecl>,
+    /// Named cross-scope compositions of `paths:` into end-to-end budgets
+    /// (Vocabulary v2, Phase 44.1 §4). Integrator-owned — root contract or
+    /// overlay, same owner as the platform file. Cross-file link
+    /// resolution (`chain-link` rule) is a checker concern (W2); parsing
+    /// only validates local segment shape.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub chains: BTreeMap<String, ChainDecl>,
 }
 
 /// Node declaration.
@@ -121,6 +128,26 @@ pub struct EndpointProps {
     /// `max_transport_ms` when not declared.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_transport_ms: Option<f64>,
+    /// Sub endpoint: buffering discipline for a `state: true` subscription
+    /// (Vocabulary v2, Phase 44.1 §3). `latest` (default) — staleness is
+    /// the failure mode; `queue` — backlog is the failure mode, drained
+    /// batch-wise by the consuming timer. Only meaningful alongside
+    /// `state: true`; parse-time error otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub buffer: Option<Buffer>,
+}
+
+/// Buffering discipline for a `state: true` subscriber endpoint
+/// (Vocabulary v2, Phase 44.1 §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Buffer {
+    /// Read-latest; staleness is the failure mode (today's implicit
+    /// semantics — the default when `buffer:` is unset).
+    Latest,
+    /// Bounded queue, drained batch-wise by the consuming timer callback;
+    /// backlog is the failure mode.
+    Queue,
 }
 
 /// Service endpoint properties.
@@ -296,6 +323,145 @@ pub struct PathDecl {
     pub tolerance_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
+    /// Explicit closed-taxonomy cause of this path's output (Vocabulary
+    /// v2, Phase 44.1 §1). When absent, [`PathDecl::effective_trigger`]
+    /// applies the legacy derivation from `input:`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<Trigger>,
+    /// Fan-in synchronization policy for an input-triggered path with
+    /// ≥2 endpoints (Vocabulary v2, Phase 44.1 §2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<Sync>,
+}
+
+impl PathDecl {
+    /// Derive the trigger actually in effect for this path (Vocabulary
+    /// v2, Phase 44.1 §1): an explicit `trigger:` always wins; otherwise
+    /// a non-empty legacy `input:` list derives an input trigger (today's
+    /// 75+ contracts parse identically under this rule); otherwise the
+    /// path is [`EffectiveTrigger::Unclassified`] — no trigger fact is
+    /// derived, never silently assumed to be a timer.
+    pub fn effective_trigger(&self) -> EffectiveTrigger {
+        if let Some(trigger) = &self.trigger {
+            return match trigger {
+                Trigger::Timer { rate_hz } => EffectiveTrigger::Timer { rate_hz: *rate_hz },
+                Trigger::Input(endpoints) => EffectiveTrigger::Input(endpoints.clone()),
+                Trigger::Once => EffectiveTrigger::Once,
+                Trigger::Spontaneous => EffectiveTrigger::Spontaneous,
+            };
+        }
+        if !self.input.is_empty() {
+            return EffectiveTrigger::Input(self.input.clone());
+        }
+        EffectiveTrigger::Unclassified
+    }
+}
+
+/// Explicit closed taxonomy of what causes a path's output (Vocabulary
+/// v2, Phase 44.1 §1). YAML forms:
+///
+/// ```yaml
+/// trigger: { timer: { rate_hz: 10 } }
+/// trigger: { input: [a, b] }
+/// trigger: once
+/// trigger: spontaneous
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Trigger {
+    /// Periodic self-clocked callback. `rate_hz` is a REAL scheduling
+    /// input (mapper fact); must be > 0.
+    Timer { rate_hz: f64 },
+    /// Output caused by these input endpoint/topic names. Rate is
+    /// inherited from upstream, not authored here.
+    Input(Vec<String>),
+    /// Published once (startup latch); scheduling-irrelevant.
+    Once,
+    /// Caused outside the graph (operator, network, hardware); event-like,
+    /// no upstream inheritance.
+    Spontaneous,
+}
+
+/// The trigger actually in effect for a path — either the explicit
+/// [`Trigger`] or the legacy-derived / unclassified fallback (Vocabulary
+/// v2, Phase 44.1 §1). See [`PathDecl::effective_trigger`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum EffectiveTrigger {
+    Timer {
+        rate_hz: f64,
+    },
+    Input(Vec<String>),
+    Once,
+    Spontaneous,
+    /// No explicit `trigger:` and no (non-empty) legacy `input:` list —
+    /// trigger facts are not derivable. Never silently assumed to be a
+    /// timer.
+    Unclassified,
+}
+
+/// Fan-in synchronization policy on an input-triggered path with ≥2
+/// endpoints (Vocabulary v2, Phase 44.1 §2).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Sync {
+    pub policy: SyncPolicy,
+    /// Match window for `exact`/`approximate` (required for those
+    /// policies).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_interval_ms: Option<f64>,
+    /// Collect-until-timeout duration for `timeout_any` (required for
+    /// that policy).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<f64>,
+}
+
+/// Fan-in sync matching policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncPolicy {
+    /// message_filters ExactTime.
+    Exact,
+    /// message_filters ApproximateTime.
+    Approximate,
+    /// Collect-until-timeout, publish partial set.
+    TimeoutAny,
+}
+
+/// Named cross-scope composition of `paths:` into an end-to-end budget
+/// (Vocabulary v2, Phase 44.1 §4).
+#[derive(Debug, Clone, Serialize)]
+pub struct ChainDecl {
+    /// Composition math: `reaction` (first-reaction latency) vs `age`
+    /// (data staleness at the sink) — the two diverge at junctions.
+    pub semantics: ChainSemantics,
+    /// End-to-end budget (ms) the chain's segments must fit within.
+    pub max_latency_ms: f64,
+    /// Alternating path/via segments. First and last must be path
+    /// segments; no two `via` segments may be adjacent. Cross-file link
+    /// resolution is a checker concern (W2's `chain-link` rule).
+    pub segments: Vec<ChainSegment>,
+}
+
+/// Chain composition semantics (Vocabulary v2, Phase 44.1 §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChainSemantics {
+    /// First-reaction latency (TIMEX "reaction").
+    Reaction,
+    /// Data staleness at the sink (TIMEX "age").
+    Age,
+}
+
+/// One segment of a [`ChainDecl`]: either a scoped path reference or an
+/// explicit connecting topic (`via:`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ChainSegment {
+    /// `{ scope: <scope>, path: <path-name> }` — a named path in the
+    /// given scope's manifest.
+    Path { scope: String, path: String },
+    /// `{ via: <topic-fqn> }` — the explicit connecting topic between two
+    /// path segments. No silent FQN matching.
+    Via { via: String },
 }
 
 /// Drop tolerance specification.

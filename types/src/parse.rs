@@ -77,6 +77,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         includes: parse_includes(doc, ctx)?,
         paths: parse_paths(doc, ctx)?,
         external_topics: parse_external_topics(doc, ctx)?,
+        chains: parse_chains(doc, ctx)?,
     })
 }
 
@@ -152,11 +153,11 @@ fn parse_endpoints(
     Ok(eps)
 }
 
-fn parse_endpoint_props(yaml: &Yaml, _ctx: &str) -> Result<EndpointProps, ParseError> {
+fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseError> {
     if yaml.is_null() || yaml.is_badvalue() {
         return Ok(EndpointProps::default());
     }
-    Ok(EndpointProps {
+    let props = EndpointProps {
         min_rate_hz: yaml_f64(yaml, "min_rate_hz"),
         max_rate_hz: yaml_f64(yaml, "max_rate_hz"),
         jitter_ms: yaml_f64(yaml, "jitter_ms"),
@@ -165,7 +166,33 @@ fn parse_endpoint_props(yaml: &Yaml, _ctx: &str) -> Result<EndpointProps, ParseE
         required: yaml_bool(yaml, "required"),
         qos: parse_qos(yaml),
         max_transport_ms: yaml_f64(yaml, "max_transport_ms"),
-    })
+        buffer: parse_buffer(yaml, ctx)?,
+    };
+    if props.buffer.is_some() && props.state != Some(true) {
+        return Err(field_err(
+            ctx,
+            "buffer",
+            "'buffer' is only meaningful on a subscriber with 'state: true'",
+        ));
+    }
+    Ok(props)
+}
+
+/// Parse the `buffer:` discriminator (Vocabulary v2, Phase 44.1 §3).
+fn parse_buffer(doc: &Yaml, ctx: &str) -> Result<Option<Buffer>, ParseError> {
+    let raw = match yaml_string(doc, "buffer") {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    match raw.as_str() {
+        "latest" => Ok(Some(Buffer::Latest)),
+        "queue" => Ok(Some(Buffer::Queue)),
+        other => Err(field_err(
+            ctx,
+            "buffer",
+            &format!("invalid buffer '{other}', expected 'latest' or 'queue'"),
+        )),
+    }
 }
 
 fn parse_srv_endpoints(
@@ -500,16 +527,288 @@ fn parse_paths(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, PathDecl>, Pars
 }
 
 fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
-    Ok(PathDecl {
+    let input = parse_string_or_list(yaml, "input");
+    let trigger = parse_trigger(yaml, ctx)?;
+
+    // Vocabulary v2 §1: explicit trigger.input and legacy input: may both
+    // be present; they must agree (as sets) or it's a parse error.
+    if let Some(Trigger::Input(trigger_eps)) = &trigger
+        && !input.is_empty()
+    {
+        let mut a: Vec<&str> = trigger_eps.iter().map(String::as_str).collect();
+        let mut b: Vec<&str> = input.iter().map(String::as_str).collect();
+        a.sort_unstable();
+        b.sort_unstable();
+        if a != b {
+            return Err(field_err(
+                ctx,
+                "trigger.input",
+                "disagrees with the legacy 'input:' list on this path",
+            ));
+        }
+    }
+
+    let sync = parse_sync(yaml, ctx)?;
+
+    let path = PathDecl {
         if_condition: yaml_string(yaml, "if"),
         unless_condition: yaml_string(yaml, "unless"),
-        input: parse_string_or_list(yaml, "input"),
+        input,
         output: yaml_string_list(yaml, "output"),
         max_latency_ms: yaml_f64(yaml, "max_latency_ms"),
         correlation: yaml_string(yaml, "correlation"),
         tolerance_ms: yaml_f64(yaml, "tolerance_ms"),
         drop: parse_drop_spec(yaml, "drop", ctx)?,
+        trigger,
+        sync,
+    };
+
+    // Vocabulary v2 §2: sync only meaningful with an input trigger with
+    // >=2 endpoints — cheap and unambiguous to check at parse time.
+    if path.sync.is_some() {
+        let ok = matches!(
+            path.effective_trigger(),
+            EffectiveTrigger::Input(eps) if eps.len() >= 2
+        );
+        if !ok {
+            return Err(field_err(
+                ctx,
+                "sync",
+                "'sync:' requires an input trigger with at least 2 endpoints",
+            ));
+        }
+    }
+
+    Ok(path)
+}
+
+// ── Trigger ──
+
+/// Parse `trigger:` (Vocabulary v2, Phase 44.1 §1). Bare-string forms
+/// (`once`, `spontaneous`) or single-key mapping forms (`timer:`,
+/// `input:`).
+fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
+    let section = &doc["trigger"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    if let Some(s) = section.as_str() {
+        return match s {
+            "once" => Ok(Some(Trigger::Once)),
+            "spontaneous" => Ok(Some(Trigger::Spontaneous)),
+            other => Err(field_err(
+                ctx,
+                "trigger",
+                &format!(
+                    "invalid trigger '{other}', expected 'once', 'spontaneous', \
+                     or a mapping with 'timer' or 'input'"
+                ),
+            )),
+        };
+    }
+    let hash = section.as_hash().ok_or_else(|| {
+        field_err(
+            ctx,
+            "trigger",
+            "expected 'once', 'spontaneous', or a mapping with 'timer' or 'input'",
+        )
+    })?;
+    if hash.len() != 1 {
+        return Err(field_err(
+            ctx,
+            "trigger",
+            "expected exactly one of 'timer' or 'input'",
+        ));
+    }
+    let (k, v) = hash.iter().next().expect("len == 1");
+    let key = yaml_str_owned(k);
+    match key.as_str() {
+        "timer" => {
+            let rate_hz = yaml_f64(v, "rate_hz")
+                .ok_or_else(|| field_err(ctx, "trigger.timer", "requires 'rate_hz'"))?;
+            if rate_hz <= 0.0 {
+                return Err(field_err(ctx, "trigger.timer.rate_hz", "must be > 0"));
+            }
+            Ok(Some(Trigger::Timer { rate_hz }))
+        }
+        "input" => {
+            let endpoints = yaml_direct_string_list(v);
+            Ok(Some(Trigger::Input(endpoints)))
+        }
+        other => Err(field_err(
+            ctx,
+            "trigger",
+            &format!("invalid trigger key '{other}', expected 'timer' or 'input'"),
+        )),
+    }
+}
+
+// ── Sync ──
+
+/// Parse `sync:` (Vocabulary v2, Phase 44.1 §2).
+fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
+    let section = &doc["sync"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let policy_str = yaml_string(section, "policy").ok_or_else(|| {
+        field_err(
+            ctx,
+            "sync.policy",
+            "required: 'exact', 'approximate', or 'timeout_any'",
+        )
+    })?;
+    let policy = match policy_str.as_str() {
+        "exact" => SyncPolicy::Exact,
+        "approximate" => SyncPolicy::Approximate,
+        "timeout_any" => SyncPolicy::TimeoutAny,
+        other => {
+            return Err(field_err(
+                ctx,
+                "sync.policy",
+                &format!(
+                    "invalid policy '{other}', expected 'exact', 'approximate', or 'timeout_any'"
+                ),
+            ));
+        }
+    };
+    let max_interval_ms = yaml_f64(section, "max_interval_ms");
+    let timeout_ms = yaml_f64(section, "timeout_ms");
+    match policy {
+        SyncPolicy::TimeoutAny => {
+            if timeout_ms.is_none() {
+                return Err(field_err(
+                    ctx,
+                    "sync.timeout_ms",
+                    "required when policy is 'timeout_any'",
+                ));
+            }
+        }
+        SyncPolicy::Exact | SyncPolicy::Approximate => {
+            if max_interval_ms.is_none() {
+                return Err(field_err(
+                    ctx,
+                    "sync.max_interval_ms",
+                    "required when policy is 'exact' or 'approximate'",
+                ));
+            }
+        }
+    }
+    Ok(Some(Sync {
+        policy,
+        max_interval_ms,
+        timeout_ms,
+    }))
+}
+
+// ── Chains ──
+
+/// Parse the top-level `chains:` section (Vocabulary v2, Phase 44.1 §4).
+fn parse_chains(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ChainDecl>, ParseError> {
+    let mut out = BTreeMap::new();
+    let section = &doc["chains"];
+    if section.is_badvalue() {
+        return Ok(out);
+    }
+    let hash = section
+        .as_hash()
+        .ok_or_else(|| field_err(ctx, "chains", "expected mapping"))?;
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        let path = format_path(ctx, &format!("chains.{name}"));
+        let chain = parse_chain_decl(v, &path)?;
+        out.insert(name, chain);
+    }
+    Ok(out)
+}
+
+fn parse_chain_decl(yaml: &Yaml, ctx: &str) -> Result<ChainDecl, ParseError> {
+    let semantics_str = yaml_string(yaml, "semantics")
+        .ok_or_else(|| field_err(ctx, "semantics", "required: 'reaction' or 'age'"))?;
+    let semantics = match semantics_str.as_str() {
+        "reaction" => ChainSemantics::Reaction,
+        "age" => ChainSemantics::Age,
+        other => {
+            return Err(field_err(
+                ctx,
+                "semantics",
+                &format!("invalid semantics '{other}', expected 'reaction' or 'age'"),
+            ));
+        }
+    };
+    let max_latency_ms = yaml_f64(yaml, "max_latency_ms")
+        .ok_or_else(|| field_err(ctx, "max_latency_ms", "required"))?;
+    let segments = parse_chain_segments(yaml, ctx)?;
+    Ok(ChainDecl {
+        semantics,
+        max_latency_ms,
+        segments,
     })
+}
+
+fn parse_chain_segments(yaml: &Yaml, ctx: &str) -> Result<Vec<ChainSegment>, ParseError> {
+    let section = &yaml["segments"];
+    let arr = section
+        .as_vec()
+        .ok_or_else(|| field_err(ctx, "segments", "expected a non-empty list"))?;
+    if arr.is_empty() {
+        return Err(field_err(ctx, "segments", "must be non-empty"));
+    }
+    let mut segments = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        let seg_ctx = format_path(ctx, &format!("segments[{i}]"));
+        segments.push(parse_chain_segment(item, &seg_ctx)?);
+    }
+    // Local shape only (Phase 44.1 §4) — cross-file link resolution
+    // (does every `via` exist? is it produced/consumed correctly?) is
+    // the checker's `chain-link` rule (W2).
+    if !matches!(segments.first(), Some(ChainSegment::Path { .. })) {
+        return Err(field_err(
+            ctx,
+            "segments",
+            "first segment must be a path segment ({ scope, path })",
+        ));
+    }
+    if !matches!(segments.last(), Some(ChainSegment::Path { .. })) {
+        return Err(field_err(
+            ctx,
+            "segments",
+            "last segment must be a path segment ({ scope, path })",
+        ));
+    }
+    for w in segments.windows(2) {
+        if matches!(w[0], ChainSegment::Via { .. }) && matches!(w[1], ChainSegment::Via { .. }) {
+            return Err(field_err(
+                ctx,
+                "segments",
+                "two adjacent 'via' segments are not allowed",
+            ));
+        }
+    }
+    Ok(segments)
+}
+
+fn parse_chain_segment(yaml: &Yaml, ctx: &str) -> Result<ChainSegment, ParseError> {
+    let has_via = !yaml["via"].is_badvalue();
+    let has_scope = !yaml["scope"].is_badvalue();
+    let has_path = !yaml["path"].is_badvalue();
+    if has_via && (has_scope || has_path) {
+        return Err(field_err(
+            ctx,
+            "segment",
+            "'via' cannot be combined with 'scope'/'path'",
+        ));
+    }
+    if has_via {
+        let via =
+            yaml_string(yaml, "via").ok_or_else(|| field_err(ctx, "via", "expected a string"))?;
+        return Ok(ChainSegment::Via { via });
+    }
+    let scope = yaml_string(yaml, "scope")
+        .ok_or_else(|| field_err(ctx, "scope", "path segment requires 'scope'"))?;
+    let path = yaml_string(yaml, "path")
+        .ok_or_else(|| field_err(ctx, "path", "path segment requires 'path'"))?;
+    Ok(ChainSegment::Path { scope, path })
 }
 
 // ── Drop ──
@@ -604,7 +903,14 @@ fn yaml_string_list(doc: &Yaml, key: &str) -> Vec<String> {
 
 /// Parse a field that can be a single string or a list of strings.
 fn parse_string_or_list(doc: &Yaml, key: &str) -> Vec<String> {
-    match &doc[key] {
+    yaml_direct_string_list(&doc[key])
+}
+
+/// Interpret a YAML value directly (not indexed under a key) as a single
+/// string or a list of strings. Used for nested trigger sub-values like
+/// `trigger: { input: [a, b] }`, where `v` is already the array/string.
+fn yaml_direct_string_list(y: &Yaml) -> Vec<String> {
+    match y {
         Yaml::String(s) => vec![s.clone()],
         Yaml::Array(arr) => arr.iter().map(yaml_str_owned).collect(),
         _ => vec![],
