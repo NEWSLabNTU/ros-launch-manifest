@@ -156,6 +156,11 @@ pub enum MapWarning {
         distinct_classes: usize,
         /// The band's inclusive width (`max - min + 1`).
         band_width: usize,
+        /// Human-readable labels of the classes that were clamped into
+        /// `band.min` (Phase 44.4 review, cosmetic-6): `chain '<name>'`
+        /// for chain-owned classes, `non-chain bucket` for the
+        /// criticality-bucketed remainder. Deduped, ranked order preserved.
+        clamped: Vec<String>,
     },
 }
 

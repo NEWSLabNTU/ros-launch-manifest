@@ -11,6 +11,16 @@
 //!   forward causal walk; revisiting a segment is a feedback loop, not a
 //!   chain (chain-aware-mapper spec: "Cyclic chain declarations are
 //!   rejected — a feedback loop is not a chain").
+//! - **Adjacent path segments** (error, Phase 44.4 review): two `{scope,
+//!   path}` segments with no `via:` between them. The connecting topic
+//!   between two path hops must always be explicit ("No silent FQN
+//!   matching", `ChainSegment::Via`'s own doc) — without a `via`, nothing
+//!   anywhere in the stack verifies that the first path's output actually
+//!   feeds the second path's input, yet the chain-aware mapper (44.4)
+//!   consumes the declared order as source-to-sink topo order for priority
+//!   ranking. Requiring the `via` makes the cross-scope `chain-link` rule's
+//!   output-of-preceding / consumed-by-following verification cover every
+//!   hop, so declaration order is always *verified*, never trusted.
 //!
 //! Cross-file `{scope, path}` existence and `via` topic linkage
 //! (output-of-preceding / consumed-by-following) require the merged
@@ -47,6 +57,35 @@ impl ValidationRule for ChainShapeRule {
                             ),
                         );
                     }
+                }
+            }
+
+            // Adjacent path segments with no `via:` between them: the
+            // connecting topic must be explicit so the cross-scope
+            // `chain-link` rule can verify the hop (see module doc).
+            for pair in chain.segments.windows(2) {
+                if let [
+                    ChainSegment::Path {
+                        scope: s1,
+                        path: p1,
+                    },
+                    ChainSegment::Path {
+                        scope: s2,
+                        path: p2,
+                    },
+                ] = pair
+                {
+                    ctx.error(
+                        self.id(),
+                        &format!("chains.{chain_name}"),
+                        format!(
+                            "chain '{chain_name}' has adjacent path segments \
+                             (scope='{s1}', path='{p1}') and (scope='{s2}', path='{p2}') \
+                             with no `via:` between them — the connecting topic must be \
+                             explicit (no silent FQN matching); add `- {{ via: <topic> }}` \
+                             between them"
+                        ),
+                    );
                 }
             }
         }
@@ -101,6 +140,53 @@ chains:
       - { scope: /a, path: p1 }
       - { via: /t1 }
       - { scope: /b, path: p2 }
+"#;
+        assert!(run(yaml).is_empty());
+    }
+
+    #[test]
+    fn adjacent_path_segments_without_via_error() {
+        let yaml = r#"
+version: 1
+chains:
+  glued_chain:
+    semantics: reaction
+    max_latency_ms: 100
+    segments:
+      - { scope: /a, path: p1 }
+      - { scope: /b, path: p2 }
+      - { via: /t1 }
+      - { scope: /c, path: p3 }
+"#;
+        let errors: Vec<_> = run(yaml)
+            .into_iter()
+            .filter(|d| d.severity == crate::Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert!(
+            errors[0].message.contains("adjacent path segments")
+                && errors[0].message.contains("via"),
+            "wrong message: {}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn every_hop_via_separated_does_not_error() {
+        // Multi-hop chain with an explicit via at every path/path boundary —
+        // the shape the 44.4 mapper's multi-node Segment merging consumes.
+        let yaml = r#"
+version: 1
+chains:
+  ok_chain:
+    semantics: reaction
+    max_latency_ms: 100
+    segments:
+      - { scope: /a, path: p1 }
+      - { via: /t1 }
+      - { scope: /b, path: p2 }
+      - { via: /t2 }
+      - { scope: /c, path: p3 }
 "#;
         assert!(run(yaml).is_empty());
     }

@@ -398,10 +398,11 @@ fn chain_aware_map(
     // cross-chain/bucket ties, never inversions) and we surface that as a
     // warning instead of silently violating design issue #5.
     let (priorities, band_overflow) = assign_priorities_compressed(&items, &band);
-    if let Some((distinct_classes, band_width)) = band_overflow {
+    if let Some(overflow) = band_overflow {
         warnings.push(MapWarning::BandTooNarrow {
-            distinct_classes,
-            band_width,
+            distinct_classes: overflow.distinct_classes,
+            band_width: overflow.band_width,
+            clamped: overflow.clamped,
         });
     }
 
@@ -467,15 +468,23 @@ fn chain_aware_map(
 /// runs first, then adjacent same-`coarse_group` runs, only while
 /// `runs.len()` exceeds the band width.
 ///
-/// Returns the per-item priorities plus `Some((distinct_classes,
-/// band_width))` when the band could not hold the remaining classes after
-/// every legal collapse — the low classes were clamped into `band.min`
-/// (cross-chain/bucket ties, never inversions) and the caller must surface
-/// a [`MapWarning::BandTooNarrow`].
+/// Band-overflow facts for a [`MapWarning::BandTooNarrow`]: the irreducible
+/// class count, the band width, and human-readable labels of the classes
+/// clamped into `band.min` (Phase 44.4 review, cosmetic-6).
+struct BandOverflow {
+    distinct_classes: usize,
+    band_width: usize,
+    clamped: Vec<String>,
+}
+
+/// Returns the per-item priorities plus `Some(BandOverflow)` when the band
+/// could not hold the remaining classes after every legal collapse — the
+/// low classes were clamped into `band.min` (cross-chain/bucket ties, never
+/// inversions) and the caller must surface a [`MapWarning::BandTooNarrow`].
 fn assign_priorities_compressed(
     items: &[RankItem],
     band: &PriorityBand,
-) -> (Vec<i64>, Option<(usize, usize)>) {
+) -> (Vec<i64>, Option<BandOverflow>) {
     let n = items.len();
     if n == 0 {
         return (Vec::new(), None);
@@ -549,7 +558,26 @@ fn assign_priorities_compressed(
     // overflow is reported to the caller for a `BandTooNarrow` warning
     // rather than silently swallowed.
     let overflow = if runs.len() > width {
-        Some((runs.len(), width))
+        // Labels for the runs that end up clamped into `band.min`: every
+        // run at index >= width shares band.min with the width-1-indexed
+        // run (the last one still on its own dense-rank priority). Name
+        // the chain that owns each clamped run, or the non-chain bucket —
+        // deduped, ranked order preserved.
+        let mut clamped: Vec<String> = Vec::new();
+        for (s, _) in runs.iter().skip(width) {
+            let label = match &items[*s].coarse_group {
+                Some(chain) => format!("chain '{chain}'"),
+                None => "non-chain bucket".to_string(),
+            };
+            if !clamped.contains(&label) {
+                clamped.push(label);
+            }
+        }
+        Some(BandOverflow {
+            distinct_classes: runs.len(),
+            band_width: width,
+            clamped,
+        })
     } else {
         None
     };
@@ -1020,14 +1048,16 @@ mod tests {
                 MapWarning::BandTooNarrow {
                     distinct_classes,
                     band_width,
-                } => Some((*distinct_classes, *band_width)),
+                    clamped,
+                } => Some((*distinct_classes, *band_width, clamped.clone())),
                 _ => None,
             })
             .collect();
         assert_eq!(
             band_warnings,
-            vec![(2, 1)],
-            "expected exactly one BandTooNarrow(2 classes, width 1): {:?}",
+            vec![(2, 1, vec!["non-chain bucket".to_string()])],
+            "expected exactly one BandTooNarrow(2 classes, width 1, clamped = the \
+             non-chain sim-timer bucket): {:?}",
             diag.warnings
         );
 
