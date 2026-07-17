@@ -21,7 +21,17 @@ pub mod mapper;
 pub mod platform;
 pub mod validate;
 
+// --- Phase 44.3: chain-aware mapper (clock-segmented chains). Additive:
+// v1/v2/legacy-bridge APIs above keep compiling and passing unchanged. ---
+pub mod chain;
+pub mod chain_aware_mapper;
+
 pub use bridge::parse_legacy_toml;
+pub use chain::{
+    ChainAwareDetail, ChainElement, ChainSemantics, EffectiveTrigger, MapDiagnostics, MapWarning,
+    MapperPath, ResolvedChain,
+};
+pub use chain_aware_mapper::ChainAwareMapper;
 pub use mapper::{
     Criticality, MapError, MapperInput, MapperNode, MapperRegistry, PlatformFacts, SchedMapper,
     SchedPlan,

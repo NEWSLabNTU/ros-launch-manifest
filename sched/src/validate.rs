@@ -149,6 +149,7 @@ mod tests {
             deadline_us,
             criticality: None,
             path_budget_ms: None,
+            paths: Vec::new(),
         }
     }
 
@@ -218,6 +219,7 @@ mod tests {
                 node("/slow", Some(1.0), None),
             ],
             legacy: None,
+            chains: Vec::new(),
         };
         let violations = rate_priority_contradictions(&input, &plan);
         assert_eq!(violations.len(), 1);
@@ -238,6 +240,7 @@ mod tests {
                 node("/c", Some(100.0), None),
             ],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = PlatformResources::Posix(PosixResources {
             rt_priority_band: Some(PriorityBand { min: 10, max: 40 }),
@@ -271,6 +274,7 @@ mod tests {
                 node("/loose", None, Some(100_000)),
             ],
             legacy: None,
+            chains: Vec::new(),
         };
         let violations = deadline_priority_contradictions(&input, &plan);
         assert_eq!(violations.len(), 1);
@@ -292,6 +296,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/a", Some(100.0), None), node("/b", Some(1.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         // Equal priority is not treated as a contradiction (only a strict
         // reversal is).
@@ -304,6 +309,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/a", Some(100.0), None), node("/b", Some(1.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         assert!(rate_priority_contradictions(&input, &plan).is_empty());
     }

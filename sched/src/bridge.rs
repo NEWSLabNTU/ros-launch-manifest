@@ -122,9 +122,11 @@ scope = "/perception/lidar"
                     deadline_us: None,
                     criticality: None,
                     path_budget_ms: None,
+                    paths: Vec::new(),
                 })
                 .collect(),
             legacy: file.legacy.clone(),
+            chains: Vec::new(),
         };
         let facts = match &file.resources {
             PlatformResources::Posix(p) => PlatformFacts::Posix(p.clone()),

@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
+    chain::{MapDiagnostics, ResolvedChain},
     platform::{PlatformResources, PriorityBand},
     resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError, SchedNode, resolve},
     types::SystemSched,
@@ -46,6 +47,14 @@ pub struct MapperNode {
     pub deadline_us: Option<u64>,
     pub criticality: Option<Criticality>,
     pub path_budget_ms: Option<f64>,
+    /// Per-path trigger facts (Phase 44.3, additive): the node's declared
+    /// causal paths with their resolved `trigger:`/`max_latency_ms` facts,
+    /// as translated by the caller from `ros-launch-manifest-types`'
+    /// `PathDecl`/`EffectiveTrigger` (W1). Empty for callers/mappers that
+    /// don't populate it (`rate_monotonic`/`deadline_monotonic`/`manual`
+    /// ignore this field entirely — only [`crate::chain_aware_mapper`]
+    /// consumes it).
+    pub paths: Vec<crate::chain::MapperPath>,
 }
 
 /// The mapper's input: every node's timing facts, plus (bridge path only) a
@@ -58,6 +67,14 @@ pub struct MapperInput {
     /// requires this and errors ([`MapError::MissingLegacySpec`]) without
     /// it. Other built-in mappers ignore this field.
     pub legacy: Option<SystemSched>,
+    /// Resolved `chains:` (Phase 44.3, additive), already flattened by the
+    /// caller (W4) against the launch DAG: `via` scopes resolved, and each
+    /// segment's `nodes_in_topo_order` already computed (fan-in
+    /// longest-path-to-sink/deadline/name tie-breaks are the caller's job —
+    /// it has the DAG; this crate stays FQN-string-based and
+    /// dependency-free). Empty for callers/mappers that don't populate it
+    /// (only [`crate::chain_aware_mapper`] consumes it).
+    pub chains: Vec<ResolvedChain>,
 }
 
 /// The parsed `resources:` facts for the mapper's target, per
@@ -103,6 +120,22 @@ pub trait SchedMapper {
 
     /// Derive a scheduling plan from per-node facts and platform facts.
     fn map(&self, input: &MapperInput, facts: &PlatformFacts) -> Result<SchedPlan, MapError>;
+
+    /// Richer variant returning per-(node, path) rank provenance and
+    /// diagnostics (warnings) alongside the plan (Phase 44.3, additive
+    /// defaulted method — design step 6/8: `--explain` support and
+    /// chain-feasibility warnings). The default implementation calls
+    /// [`SchedMapper::map`] and returns no diagnostics; existing built-ins
+    /// (`manual`/`rate_monotonic`/`deadline_monotonic`) need no changes.
+    /// [`crate::chain_aware_mapper::ChainAwareMapper`] overrides this.
+    fn map_with_diagnostics(
+        &self,
+        input: &MapperInput,
+        facts: &PlatformFacts,
+    ) -> Result<(SchedPlan, MapDiagnostics), MapError> {
+        let plan = self.map(input, facts)?;
+        Ok((plan, MapDiagnostics::default()))
+    }
 }
 
 /// `manual` — the legacy semantics: consumes `input.legacy` (tiers +
@@ -136,7 +169,10 @@ impl SchedMapper for ManualMapper {
 
 /// Extract the `posix` `rt_priority_band` from `facts`, or error naming
 /// `mapper_name`.
-fn require_posix_band(facts: &PlatformFacts, mapper_name: &str) -> Result<PriorityBand, MapError> {
+pub(crate) fn require_posix_band(
+    facts: &PlatformFacts,
+    mapper_name: &str,
+) -> Result<PriorityBand, MapError> {
     let PlatformResources::Posix(posix) = facts else {
         return Err(MapError::MissingPriorityBand {
             mapper: mapper_name.to_string(),
@@ -306,6 +342,7 @@ impl MapperRegistry {
         registry.register(Box::new(ManualMapper));
         registry.register(Box::new(RateMonotonicMapper));
         registry.register(Box::new(DeadlineMonotonicMapper));
+        registry.register(Box::new(crate::chain_aware_mapper::ChainAwareMapper));
         registry
     }
 }
@@ -323,6 +360,7 @@ mod tests {
             deadline_us,
             criticality: None,
             path_budget_ms: None,
+            paths: Vec::new(),
         }
     }
 
@@ -334,11 +372,12 @@ mod tests {
     }
 
     #[test]
-    fn with_builtins_registers_all_three() {
+    fn with_builtins_registers_all_four() {
         let registry = MapperRegistry::with_builtins();
         assert!(registry.get("manual").is_some());
         assert!(registry.get("rate_monotonic").is_some());
         assert!(registry.get("deadline_monotonic").is_some());
+        assert!(registry.get("chain_aware").is_some());
     }
 
     #[test]
@@ -357,6 +396,7 @@ mod tests {
                 node("/mid", Some(50.0), None),
             ],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -375,6 +415,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/b", Some(50.0), None), node("/a", Some(50.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -388,6 +429,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/rt", Some(100.0), None), node("/bg", None, None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -408,6 +450,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/only", Some(10.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -420,6 +463,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(None);
         let err = mapper.map(&input, &facts).unwrap_err();
@@ -432,6 +476,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = PlatformFacts::Raw(serde_yaml_ng::Value::Null);
         let err = mapper.map(&input, &facts).unwrap_err();
@@ -454,6 +499,7 @@ mod tests {
                 node("/n20", Some(20.0), None),
             ],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 12)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -509,6 +555,7 @@ mod tests {
                 node("/d5", None, Some(5_000)),
             ],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 12)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -536,6 +583,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         // 0 is not a legal SCHED_FIFO/SCHED_RR priority.
         let err = mapper.map(&input, &posix_facts(Some((0, 40)))).unwrap_err();
@@ -557,6 +605,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((40, 10)));
         let err = mapper.map(&input, &facts).unwrap_err();
@@ -573,6 +622,7 @@ mod tests {
                 node("/mid", None, Some(50_000)),
             ],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -589,6 +639,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/rt", None, Some(1_000)), node("/bg", None, None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -602,6 +653,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/b", None, Some(5_000)), node("/a", None, Some(5_000))],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
@@ -615,6 +667,7 @@ mod tests {
         let input = MapperInput {
             nodes: vec![node("/a", None, None)],
             legacy: None,
+            chains: Vec::new(),
         };
         let facts = posix_facts(None);
         let err = mapper.map(&input, &facts).unwrap_err();
