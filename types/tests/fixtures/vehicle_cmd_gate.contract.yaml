@@ -1,3 +1,6 @@
+# Source: https://github.com/autowarefoundation/autoware (Apache-2.0), via
+# https://github.com/tier4/autoware-contract — copied verbatim for test
+# fixture purposes (Phase 44.1/44.2).
 # autoware_vehicle_cmd_gate/vehicle_cmd_gate.launch.xml
 # Composable in /control/control_container (push-ros-namespace: control)
 #

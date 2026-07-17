@@ -1,3 +1,6 @@
+# Source: https://github.com/autowarefoundation/autoware (Apache-2.0), via
+# https://github.com/tier4/autoware-contract — copied verbatim for test
+# fixture purposes (Phase 44.1/44.2).
 # autoware_ground_segmentation/scan_ground_filter.launch.xml
 # Namespace: /perception/obstacle_segmentation
 #

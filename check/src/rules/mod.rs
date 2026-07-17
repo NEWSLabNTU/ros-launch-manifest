@@ -1,18 +1,25 @@
 //! Validation rules for manifest checking.
 
 mod causal_dag;
+mod chain_shape;
 mod consistency;
 mod dangling_entity;
 mod drop_sanity;
+mod endpoint_topic;
 mod endpoint_unique;
+mod explicit_trigger;
+mod inherited_rate;
+mod once_durability;
 mod qos_compat;
 mod qos_match;
+mod queue_drain_rate;
 mod rate_hierarchy;
 mod satisfiability;
 mod scope_budget;
 mod service_type;
 mod service_wiring;
 mod state_consistency;
+mod sync_feasibility;
 mod wiring;
 
 use crate::{check::CheckContext, graph::DataflowGraph};
@@ -41,5 +48,12 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(satisfiability::SatisfiabilityRule),
         Box::new(consistency::ConsistencyRule),
         Box::new(state_consistency::StateConsistencyRule),
+        // Vocabulary v2 rules (Phase 44.2).
+        Box::new(explicit_trigger::ExplicitTriggerRule),
+        Box::new(inherited_rate::InheritedRateRule),
+        Box::new(once_durability::OnceDurabilityRule),
+        Box::new(sync_feasibility::SyncFeasibilityRule),
+        Box::new(queue_drain_rate::QueueDrainRateRule),
+        Box::new(chain_shape::ChainShapeRule),
     ]
 }
