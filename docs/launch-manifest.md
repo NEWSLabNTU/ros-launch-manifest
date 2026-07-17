@@ -1590,9 +1590,52 @@ phase): `segments` must be non-empty; the first and last segments must
 be path segments; no two `via` segments may be adjacent; a segment may
 not mix `via` with `scope`/`path`.
 
+**Via required between segments.** Two path segments with no `via:`
+between them is **rejected** — the connecting topic must always be
+explicit (no silent FQN matching), so the cross-scope `chain-link` rule
+can verify every hop (output-of-preceding / consumed-by-following).
+This is a per-manifest checker rule (`chain-shape`, error severity — see
+[Static Validation](#static-validation)), not a parse-time structural
+check: parsing only enforces the shape rules above (no two `via` in a
+row, etc.); `chain-shape` additionally rejects adjacent path segments
+and cyclic chains (the same `{scope, path}` pair referenced twice).
+
+**Boundary consumption rule.** A `chain-link`-verified `via:` landing on
+a `timer`-triggered (boundary) segment is consumed through that
+segment's **node**, not through the path's own trigger — a timer
+callback has no input endpoint, but the node's ordinary `sub:`
+subscriptions (including any `state:` sub) are the sampling mechanism
+that makes the model clock-segmented in the first place. Without this
+rule a boundary could only ever be the *first* element of a chain
+(nothing precedes it to fail the "consumed by" check); with it, a
+boundary may appear anywhere in the chain, including interior positions
+(`S1 B1 S2 B2 S3`-shaped chains, matching the chain-aware mapper's own
+worked example). See the [chain-aware mapper
+design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md#boundary-consumption-rule-implementation-note-2026-07-17)
+for the full rationale; implemented in `chain_checks::resolve_segment`
+(`src/play_launch/src/ros/chain_checks.rs`, `play_launch`'s cross-scope
+layer — not this crate).
+
+**Chain rule severities** (see [Static Validation](#static-validation)
+for the full table): `chain-shape` (cyclic chains, missing `via:`
+between adjacent path segments) is an **error**, checked per-manifest in
+this crate. `chain-link` (every `via:` resolves: the topic exists, the
+preceding segment outputs it, the following segment consumes it — per
+the boundary consumption rule above) is an **error**, checked
+cross-scope in `play_launch`. `chain-budget` (declared-latency sum +
+sampling cost ≤ chain budget) and `chain-sampling-feasibility`
+(sampling cost alone ≥ chain budget — structurally infeasible,
+scheduling cannot fix it) are both **warnings**, also checked
+cross-scope in `play_launch` — a budget or feasibility problem doesn't
+block `check`, but is loud in its output and excludes the chain from
+`chain_aware` priority shaping (`MapWarning::ChainInfeasible`).
+
 ## Static Validation
 
-The checker runs 15 rules on each manifest:
+The table below lists 25 rules — the rules registered in this crate's
+`default_rules()`, plus 3 cross-scope Vocabulary v2 chain rules (marked
+`*`) that require the merged `ManifestIndex` and live in `play_launch`
+(`src/play_launch/src/ros/chain_checks.rs`) rather than this crate:
 
 | Rule                | What it catches                                                    | Severity      |
 |---------------------|--------------------------------------------------------------------|---------------|
@@ -1612,6 +1655,19 @@ The checker runs 15 rules on each manifest:
 | `satisfiability`    | Arg combination produces dangling entities; unreachable nodes      | Error/Warning |
 | `consistency`       | Same resolved topic/service has conflicting `type:`, `rate_hz:`, or topic-level `qos:` across scopes | Error |
 | `state-consistency` | Node has ≥2 sibling subs tagged `state: true` and *exactly one* other sub is neither tagged `state:` nor referenced as a path `input` — likely a missed `state:` tag | Warning |
+| `explicit-trigger` (Phase 44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation | Info |
+| `inherited-rate` (44.1/44.2) | A path has a non-`Input` explicit `trigger:` (`timer`/`once`/`spontaneous`) alongside a stale, now-ignored legacy `input:` list | Warning |
+| `once-durability` (44.1/44.2) | A `once`-triggered path's output topic is not `durability: transient_local` — late joiners lose the startup-latch message | Warning |
+| `sync-feasibility` (44.1/44.2) | `sync:` `max_interval_ms`/`timeout_ms` too narrow for the slowest declared input's inter-arrival period | Warning |
+| `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |
+| `chain-shape` (44.1/44.2) | A chain references the same `{scope, path}` segment twice (cyclic — a feedback loop is not a chain); two path segments with no `via:` between them (see [via required between segments](#cross-scope-chains-chains)) | Error |
+| `chain-link`\* (44.2/44.4) | A chain's `via:` topic doesn't exist, isn't output by the preceding segment, or isn't consumed by the following segment (per the [boundary consumption rule](#cross-scope-chains-chains) for segments landing on a timer boundary) | Error |
+| `chain-budget`\* (44.2) | Chain's declared segment-latency sum + sampling cost exceeds its `max_latency_ms` budget | Warning |
+| `chain-sampling-feasibility`\* (44.2/44.3) | Chain's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it | Warning |
+
+\* Cross-scope rule, implemented in `play_launch` (not this crate's
+`default_rules()`) — requires the merged `ManifestIndex` to resolve
+`via:` links and segment identities across manifest files.
 
 **Drop checking** is split between static and runtime:
 - **Static (`drop-sanity`)**: validates values are in range, scope drop
