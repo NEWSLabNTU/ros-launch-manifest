@@ -8,6 +8,7 @@ description = "SystemModel — the resolved, checked system artifact shared by p
 ros-launch-manifest-sched = { path = "../sched" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
+toml = "0.8"
 thiserror = "2"
 
 [dev-dependencies]

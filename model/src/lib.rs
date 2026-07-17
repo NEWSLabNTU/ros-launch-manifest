@@ -20,6 +20,8 @@
 
 use std::collections::BTreeMap;
 
+pub mod system_config;
+
 use serde::{Deserialize, Serialize};
 
 /// Schema version this crate reads and writes.
