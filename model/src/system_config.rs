@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::{Bridge, Deploy, Execution, ExtraValue, Target, Transport};
+use crate::{Autostart, Bridge, Deploy, Execution, ExtraValue, Target, Transport};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct SystemConfigToml {
@@ -30,6 +30,40 @@ pub struct SystemConfigToml {
     pub transports: Vec<TransportBlock>,
     #[serde(default, rename = "bridge")]
     pub bridges: Vec<BridgeBlock>,
+    /// nano-ros `[tiers.<name>]` scheduling tiers (RFC-0015). The block is
+    /// the shared-schema `sched::TierDef` verbatim — `spin_period_us` +
+    /// per-RTOS sub-tables — so it deserializes straight into
+    /// `execution.tiers`. (play_launch's own systems supply tiers via
+    /// `--sched`; nano-ros authors them inline in `system.toml`, and the
+    /// canonical-path decision is that `resolve` consumes `system.toml`.)
+    #[serde(default)]
+    pub tiers: BTreeMap<String, ros_launch_manifest_sched::TierDef>,
+    /// nano-ros `[lifecycle] autostart = "none|configure|active"`.
+    #[serde(default)]
+    pub lifecycle: Option<LifecycleBlock>,
+    /// nano-ros `[[component]]` rows — carry `group_tiers` (the
+    /// group→tier bindings) keyed by the component/node `name`.
+    #[serde(default, rename = "component")]
+    pub components: Vec<ComponentBlock>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct LifecycleBlock {
+    #[serde(default)]
+    pub autostart: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ComponentBlock {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub class: Option<String>,
+    #[serde(default)]
+    pub pkg: Option<String>,
+    /// `group_tiers = { <group> = <tier> }` — RFC-0047 group→tier binding.
+    #[serde(default)]
+    pub group_tiers: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -143,6 +177,37 @@ impl SystemConfigToml {
         let mut diags = Vec::new();
 
         execution.features = self.system.features.clone();
+
+        // nano-ros `[tiers.*]` → the execution tier table (verbatim schema).
+        execution.tiers = self.tiers.clone();
+
+        // `[[component]].group_tiers` → `execution.bindings`
+        // (`<node FQN>/<group>` → tier). Map the component `name` to its
+        // resolved node FQN (bare-name match against the launch nodes); an
+        // unmatched component is a diagnostic, not fatal (conditional nodes
+        // may be absent in this variant).
+        for c in &self.components {
+            let Some(name) = &c.name else { continue };
+            if c.group_tiers.is_empty() {
+                continue;
+            }
+            let fqn = node_fqns
+                .iter()
+                .find(|f| f.rsplit('/').next().unwrap_or(f) == name.as_str());
+            match fqn {
+                Some(fqn) => {
+                    for (group, tier) in &c.group_tiers {
+                        execution
+                            .bindings
+                            .insert(format!("{fqn}/{group}"), tier.clone());
+                    }
+                }
+                None => diags.push(format!(
+                    "system config: [[component]] '{name}' has group_tiers but no \
+                     matching launch node (absent in this variant?)"
+                )),
+            }
+        }
 
         for t in &self.transports {
             execution.transports.push(Transport {
@@ -264,6 +329,19 @@ impl SystemConfigToml {
         }
         Ok(diags)
     }
+
+    /// The `[lifecycle] autostart` level, if declared. The consumer applies
+    /// it to each lifecycle node's `structure.nodes[].lifecycle_autostart`
+    /// (it lives in the structure layer, which `apply_to` — execution-only —
+    /// cannot reach). Unknown strings return `None`.
+    pub fn lifecycle_autostart(&self) -> Option<Autostart> {
+        match self.lifecycle.as_ref()?.autostart.as_deref()? {
+            "active" => Some(Autostart::Active),
+            "configure" => Some(Autostart::Configure),
+            "none" => Some(Autostart::None),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +378,54 @@ from = "eth0"
 to = "can0"
 topics = ["/perception/objects"]
 "#;
+
+    #[test]
+    fn reads_tiers_lifecycle_and_group_tier_bindings() {
+        // nano-ros system.toml shape: inline [tiers.*], [[component]]
+        // group_tiers, [lifecycle].
+        let toml = r#"
+[system]
+rmw = "zenoh"
+[lifecycle]
+autostart = "active"
+[[component]]
+pkg = "ctrl_pkg"
+class = "ctrl_pkg::Ctrl"
+name = "control_node"
+group_tiers = { ctrl = "high" }
+[[component]]
+pkg = "telem_pkg"
+class = "telem_pkg::Telem"
+name = "telem_node"
+group_tiers = { telem = "low" }
+[tiers.high]
+spin_period_us = 1000
+[tiers.high.posix]
+priority = 80
+[tiers.high.zephyr]
+priority = 5
+[tiers.low]
+spin_period_us = 10000
+[tiers.low.posix]
+priority = 10
+"#;
+        let cfg = parse_system_config(toml).expect("parses");
+        let mut e = Execution::default();
+        let diags = cfg
+            .apply_to(&mut e, &["/control_node", "/telem_node"])
+            .expect("applies");
+        assert!(diags.is_empty(), "{diags:?}");
+        // tiers rode in verbatim.
+        assert_eq!(e.tiers.len(), 2);
+        assert_eq!(e.tiers["high"].spin_period_us, Some(1000));
+        assert_eq!(e.tiers["high"].posix.as_ref().unwrap().priority, 80);
+        assert_eq!(e.tiers["high"].zephyr.as_ref().unwrap().priority, 5);
+        // group_tiers → bindings keyed by FQN.
+        assert_eq!(e.bindings["/control_node/ctrl"], "high");
+        assert_eq!(e.bindings["/telem_node/telem"], "low");
+        // lifecycle autostart accessor.
+        assert_eq!(cfg.lifecycle_autostart(), Some(Autostart::Active));
+    }
 
     #[test]
     fn fills_execution_with_ladder_and_placement() {
