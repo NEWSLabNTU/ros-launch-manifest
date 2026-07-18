@@ -150,6 +150,16 @@ This requires `CAP_SYS_NICE` or root. The crate exposes the resolved `posix` num
 
 `codegen-system` calls `resolve(..., target = "freertos" | "zephyr" | ...)`, bakes the `ResolvedTierTable` into the system plan, and emits one task/executor per tier with the resolved platform numbers. The central `[[assign]]` table replaces scattered per-package callback-group authoring.
 
+#### Cross-repo design agreement (2026-07-18) — shared input, two mappers
+
+nano-ros and play_launch consume the **same input SystemModel** but run **independent mappers** (nano-ros half: nano-ros RFC-0052). The `tier` is a fixed-priority *realization*, not the model; nano-ros is evolving to a **causal-segment** unit with a six-dim agnostic scheduling requirement (`activation, urgency, deadline, budget, non_preempt_scope, placement`), realized per platform (kernel-native preferred; the nano-ros executor backfills EDF/sporadic/LET where a kernel lacks them; per-platform guarantee differences are **recorded**, never silent). Implications for this crate / the producer side:
+
+- **Chains / the causal DAG stay producer-derivable, not serialized into `model`.** A chain is a walk over `node_paths` (input→output) + wiring; each mapper reconstructs it. The 44.x `chains:` vocabulary (`types`/`sched`) lowers to priorities + age budgets — it does **not** need a `model.contracts.chains` field, so the consumed SystemModel `SCHEMA_VERSION` need not grow for chains.
+- **No chain-id on the wire.** Runtime E2E monitoring is `age = now − header.stamp` at the sink (`sub_endpoints.max_age_ms`), per the stamp-preservation convention in `launch-manifest.md` §Timestamps. The subscription topic disambiguates the budget; the message's own stamp is its origin reference.
+- **Reaction-across-timer-boundary stays static** (feasibility + priority shaping, per `sched`'s clock-segmented mapper); it is not a runtime chain-id monitor.
+
+This is the nano-ros consumer's position; it does not constrain producer-side use of the `chains:` vocabulary for static analysis. See nano-ros RFC-0050 §"Shared input, two independent mappers" and RFC-0052 §"Scheduling model evolution."
+
 ## Distribution & Cross-Repo Sharing
 
 - **Authored in:** `play_launch` (`src/ros-launch-manifest/sched/`)
