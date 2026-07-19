@@ -11,13 +11,37 @@
 //! [`crate::mapper::MapperNode`]. Callers (play_launch, wave 4) translate
 //! from the real `types` crate's `PathDecl::effective_trigger()` /
 //! `ChainDecl` into these when building [`crate::mapper::MapperInput`].
+//!
+//! **Phase 45.3 scoping note** (`docs/design/system-model-sched-ssot.md`
+//! "Type sharing"): retiring this mirror in favor of a `sched` → `types`
+//! dependency is a separate cleanup, deliberately NOT done here. What this
+//! phase adds is `Serialize`/`Deserialize` on the resolved types below
+//! (`ResolvedChain`, `ChainElement`, `MapperPath`, `ChainAwareDetail`,
+//! `ChainSemantics`, `EffectiveTrigger`) so the `model` crate can embed them
+//! verbatim as the shared scheduling-structure schema (nano-ros RFC-0050/52)
+//! — one resolved-side schema, no third hand-mirror. `MapWarning` /
+//! `MapDiagnostics` are a `--explain`-time diagnostic, not embedded in the
+//! model, and are intentionally left non-serializable.
+
+use serde::{Deserialize, Serialize};
 
 use crate::mapper::Criticality;
 
 /// Mirrors `ros_launch_manifest_types::EffectiveTrigger` (W1 report): the
 /// resolved trigger fact for one declared path, after the legacy-`input:`
 /// derivation rule has already been applied by the caller.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Serde shape: **adjacently tagged**, lowercase (`kind`/`value`) — e.g.
+/// `kind: timer\nvalue: { rate_hz: 10.0 }`, `kind: input\nvalue: [a, b]`,
+/// `kind: once` (no `value:`). Deliberately NOT externally tagged (the
+/// default, and what `types::Trigger` uses for its JSON-consumed form):
+/// `serde_yaml_ng` renders externally-tagged non-unit variants as a YAML
+/// *tag* (`!timer`) rather than a nested map, which round-trips but reads
+/// surprisingly in a hand-inspected `system_model.yaml`. Adjacent tagging
+/// gives a plain, uniform mapping shape across unit/newtype/struct variants
+/// and is what this type actually gets embedded through (YAML, not JSON).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "lowercase")]
 pub enum EffectiveTrigger {
     /// Clock-sampled: fires on a wall-clock timer at `rate_hz`.
     Timer { rate_hz: f64 },
@@ -46,22 +70,31 @@ impl EffectiveTrigger {
 }
 
 /// One of a node's declared causal paths, as seen by the mapper (design
-/// steps 1 and 6).
-#[derive(Clone, Debug, PartialEq)]
+/// steps 1 and 6). Also the per-(node, path) requirement-facts unit Phase
+/// 45.2 embeds in the model (`model::NodeSchedRequirement::paths`) — the
+/// shared-structure "mapper input" nano-ros's own RTOS mapper reads.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MapperPath {
     pub name: String,
     pub effective_trigger: EffectiveTrigger,
     /// Declared end-to-end latency budget for this path (`max_latency_ms`
     /// in the contract vocabulary), when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outputs: Vec<String>,
 }
 
 /// A chain's declared latency semantics (mirrors `types::ChainSemantics`).
 /// Not otherwise interpreted by the mapper (the reaction-vs-age distinction
 /// affects the companion checker's arithmetic, not rank assignment).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Serde shape: lowercase string (`reaction` | `age`), matching
+/// `types::ChainSemantics`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ChainSemantics {
     Reaction,
     Age,
@@ -74,7 +107,14 @@ pub enum ChainSemantics {
 /// issue #3 — fan-in longest-path-to-sink/deadline/name tie-breaks require
 /// the launch DAG, which only the caller has; this crate consumes the
 /// already-linearized result).
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Serde shape: **adjacently tagged**, snake_case (`kind`/`value`) — same
+/// rationale as [`EffectiveTrigger`] (avoids `serde_yaml_ng`'s YAML-tag
+/// rendering of externally-tagged struct variants): `kind: segment\nvalue:
+/// { nodes_in_topo_order: [...] }` / `kind: boundary\nvalue: { node: ...,
+/// path: ..., period_ms: ... }`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ChainElement {
     /// A maximal run of `trigger: input` path links, in source-to-sink
     /// topological order. Each entry is `(node_name, path_name)`.
@@ -88,13 +128,16 @@ pub enum ChainElement {
         node: String,
         path: String,
         period_ms: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         exec_ms: Option<f64>,
     },
 }
 
 /// A declared chain (`chains:`), fully resolved against the launch DAG
-/// (design steps 1–2 input).
-#[derive(Clone, Debug, PartialEq)]
+/// (design steps 1–2 input). Phase 45.2's shared-structure schema: embedded
+/// verbatim in `model::Execution` (`ExecutionSched::chains`) — both
+/// play_launch and nano-ros's RTOS mapper read this same resolved shape.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedChain {
     pub name: String,
     /// Chain criticality, used for chain ordering (design step 3:
@@ -112,13 +155,19 @@ pub struct ResolvedChain {
 
 /// One rank decision's per-(node, path) detail, for `--explain` support
 /// (design step 8). Returned by
-/// [`crate::mapper::SchedMapper::map_with_diagnostics`].
-#[derive(Clone, Debug, PartialEq)]
+/// [`crate::mapper::SchedMapper::map_with_diagnostics`]. Phase 45.2 embeds
+/// these as the LINUX-REALIZATION half of `model::Execution`
+/// (`ExecutionSched::ranks`) — PiCAS fixed-priority ranks play_launch's
+/// Linux runtime applies; nano-ros ignores this vec entirely and derives
+/// its own kernel-feature bindings from the shared structure instead
+/// (`provenance` may still surface for cross-platform diagnostics).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChainAwareDetail {
     pub node: String,
     /// `None` only if a future caller ever needs a node-level (not
     /// path-level) rank decision; the `chain_aware` mapper always
     /// populates this today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// The path's final priority (POSIX RT priority, same convention as
     /// [`crate::resolve::ResolvedTier::priority`]).
@@ -171,4 +220,167 @@ pub enum MapWarning {
 pub struct MapDiagnostics {
     pub details: Vec<ChainAwareDetail>,
     pub warnings: Vec<MapWarning>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roundtrip<T>(value: &T) -> T
+    where
+        T: Serialize + serde::de::DeserializeOwned,
+    {
+        let yaml = serde_yaml_ng::to_string(value).expect("serialize");
+        serde_yaml_ng::from_str(&yaml).expect("deserialize")
+    }
+
+    #[test]
+    fn effective_trigger_roundtrips_every_variant() {
+        for v in [
+            EffectiveTrigger::Timer { rate_hz: 10.0 },
+            EffectiveTrigger::Input(vec!["a".into(), "b".into()]),
+            EffectiveTrigger::Once,
+            EffectiveTrigger::Spontaneous,
+            EffectiveTrigger::Unclassified,
+        ] {
+            assert_eq!(roundtrip(&v), v);
+        }
+    }
+
+    #[test]
+    fn effective_trigger_yaml_shape() {
+        // adjacently tagged: kind/value, no `!tag` YAML tag syntax.
+        let timer = EffectiveTrigger::Timer { rate_hz: 10.0 };
+        assert_eq!(
+            serde_yaml_ng::to_string(&timer).unwrap().trim(),
+            "kind: timer\nvalue:\n  rate_hz: 10.0"
+        );
+        let input = EffectiveTrigger::Input(vec!["a".into()]);
+        assert_eq!(
+            serde_yaml_ng::to_string(&input).unwrap().trim(),
+            "kind: input\nvalue:\n- a"
+        );
+        // unit variants: just the tag, no `value:` key at all.
+        let once = EffectiveTrigger::Once;
+        assert_eq!(
+            serde_yaml_ng::to_string(&once).unwrap().trim(),
+            "kind: once"
+        );
+        let unclassified = EffectiveTrigger::Unclassified;
+        assert_eq!(
+            serde_yaml_ng::to_string(&unclassified).unwrap().trim(),
+            "kind: unclassified"
+        );
+    }
+
+    #[test]
+    fn chain_semantics_roundtrips_lowercase() {
+        assert_eq!(
+            serde_yaml_ng::to_string(&ChainSemantics::Reaction)
+                .unwrap()
+                .trim(),
+            "reaction"
+        );
+        assert_eq!(
+            serde_yaml_ng::to_string(&ChainSemantics::Age)
+                .unwrap()
+                .trim(),
+            "age"
+        );
+        assert_eq!(
+            roundtrip(&ChainSemantics::Reaction),
+            ChainSemantics::Reaction
+        );
+        assert_eq!(roundtrip(&ChainSemantics::Age), ChainSemantics::Age);
+    }
+
+    #[test]
+    fn mapper_path_roundtrips() {
+        let p = MapperPath {
+            name: "main".into(),
+            effective_trigger: EffectiveTrigger::Timer { rate_hz: 20.0 },
+            max_latency_ms: Some(30.0),
+            inputs: vec!["/sensing/pointcloud".into()],
+            outputs: vec!["/perception/objects".into()],
+        };
+        assert_eq!(roundtrip(&p), p);
+    }
+
+    #[test]
+    fn chain_element_roundtrips_segment_and_boundary() {
+        let segment = ChainElement::Segment {
+            nodes_in_topo_order: vec![
+                ("detector".into(), "main".into()),
+                ("tracker".into(), "main".into()),
+            ],
+        };
+        assert_eq!(roundtrip(&segment), segment);
+
+        let boundary = ChainElement::Boundary {
+            node: "planner".into(),
+            path: "main".into(),
+            period_ms: 50.0,
+            exec_ms: Some(5.0),
+        };
+        assert_eq!(roundtrip(&boundary), boundary);
+
+        // adjacently tagged, snake_case
+        assert!(
+            serde_yaml_ng::to_string(&segment)
+                .unwrap()
+                .starts_with("kind: segment")
+        );
+        assert!(
+            serde_yaml_ng::to_string(&boundary)
+                .unwrap()
+                .starts_with("kind: boundary")
+        );
+    }
+
+    #[test]
+    fn resolved_chain_roundtrips() {
+        let chain = ResolvedChain {
+            name: "sensing_to_actuation".into(),
+            criticality: Criticality::High,
+            max_latency_ms: 100.0,
+            semantics: ChainSemantics::Reaction,
+            elements: vec![
+                ChainElement::Segment {
+                    nodes_in_topo_order: vec![("detector".into(), "main".into())],
+                },
+                ChainElement::Boundary {
+                    node: "planner".into(),
+                    path: "main".into(),
+                    period_ms: 20.0,
+                    exec_ms: None,
+                },
+            ],
+        };
+        assert_eq!(roundtrip(&chain), chain);
+    }
+
+    #[test]
+    fn chain_aware_detail_roundtrips() {
+        let d = ChainAwareDetail {
+            node: "/perception/tracker".into(),
+            path: Some("main".into()),
+            priority: 44,
+            provenance: "derived(chain_aware: sensing_to_actuation S2 drain 2/2 -> prio 44)".into(),
+        };
+        assert_eq!(roundtrip(&d), d);
+
+        // path: None is omitted, not written as `path: null`
+        let node_level = ChainAwareDetail {
+            node: "/perception/tracker".into(),
+            path: None,
+            priority: 10,
+            provenance: "derived(default)".into(),
+        };
+        assert!(
+            !serde_yaml_ng::to_string(&node_level)
+                .unwrap()
+                .contains("path")
+        );
+        assert_eq!(roundtrip(&node_level), node_level);
+    }
 }
