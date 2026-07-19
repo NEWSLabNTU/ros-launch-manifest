@@ -570,11 +570,14 @@ pub struct ExecutionSched {
     /// copy (`docs/design/system-model-sched-ssot.md` "Type sharing").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chains: Vec<ros_launch_manifest_sched::ResolvedChain>,
-    /// SHARED STRUCTURE — per-(node, path) requirement facts: effective
-    /// trigger, deadline, budget (optional — no invented WCET), and the
-    /// owning node's criticality. FQN-keyed; the facts nano-ros's RTOS
-    /// mapper needs to bind kernel features, carried once and never
-    /// re-derived per consumer.
+    /// SHARED STRUCTURE — per-(node, path) requirement facts, FQN-keyed:
+    /// the four facts nano-ros's six-dim RTOS mapper needs, carried once and
+    /// never re-derived per consumer. Per path (on
+    /// [`ros_launch_manifest_sched::MapperPath`]): effective **trigger**
+    /// (`effective_trigger`), **deadline** (`max_latency_ms`), and **budget**
+    /// (`exec_ms` — the WCET/execution-time dimension, distinct from the
+    /// deadline; optional, `None` when undeclared — no invented WCET). Per
+    /// node (on [`NodeSchedRequirement`]): **criticality**.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requirements: Vec<NodeSchedRequirement>,
     /// LINUX REALIZATION — identity of the `SchedMapper` that produced the
@@ -604,8 +607,9 @@ impl ExecutionSched {
 /// One node's per-path scheduling requirement facts (Phase 45.2) — FQN-
 /// keyed shared structure. Wraps [`ros_launch_manifest_sched::MapperPath`]
 /// (already exactly "per path: name / effective trigger / max_latency_ms /
-/// inputs / outputs") with the per-node `criticality` the FQN groups them
-/// under, rather than hand-mirroring a parallel `PathRequirement` type.
+/// exec_ms / inputs / outputs") with the per-node `criticality` the FQN
+/// groups them under, rather than hand-mirroring a parallel `PathRequirement`
+/// type.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NodeSchedRequirement {
     /// The node's fully-qualified name (matches [`Structure::nodes`] keys).
@@ -791,7 +795,7 @@ mod tests {
     fn execution_sched_roundtrips_with_full_structure() {
         use ros_launch_manifest_sched::{
             ChainAwareDetail, ChainElement, ChainSemantics, Criticality, EffectiveTrigger,
-            MapperPath, ResolvedChain,
+            MapperPath, ResolvedChain, SegmentNode,
         };
 
         let execution = Execution {
@@ -803,7 +807,10 @@ mod tests {
                     semantics: ChainSemantics::Reaction,
                     elements: vec![
                         ChainElement::Segment {
-                            nodes_in_topo_order: vec![("/sensing/detector".into(), "main".into())],
+                            nodes_in_topo_order: vec![SegmentNode {
+                                node: "/sensing/detector".into(),
+                                path: "main".into(),
+                            }],
                         },
                         ChainElement::Boundary {
                             node: "/planning/planner".into(),
@@ -822,6 +829,8 @@ mod tests {
                             "/sensing/pointcloud".into(),
                         ]),
                         max_latency_ms: Some(30.0),
+                        // budget (WCET) fact declared for this path.
+                        exec_ms: Some(4.0),
                         inputs: vec!["/sensing/pointcloud".into()],
                         outputs: vec!["/sensing/objects".into()],
                     }],
@@ -847,6 +856,10 @@ mod tests {
         // FQN-keyed requirement fact, not a map (Vec<NodeSchedRequirement>
         // with an explicit `node_fqn` field — see doc comment rationale).
         assert!(yaml.contains("node_fqn: /sensing/detector"), "{yaml}");
+        // per-path budget (WCET) fact carried alongside the deadline.
+        assert!(yaml.contains("exec_ms: 4.0"), "{yaml}");
+        // named segment entries: node:/path: mappings, not bare tuples.
+        assert!(yaml.contains("node: /sensing/detector"), "{yaml}");
 
         let reparsed: Execution = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(execution, reparsed);

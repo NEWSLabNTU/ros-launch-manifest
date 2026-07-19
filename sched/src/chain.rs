@@ -73,14 +73,33 @@ impl EffectiveTrigger {
 /// steps 1 and 6). Also the per-(node, path) requirement-facts unit Phase
 /// 45.2 embeds in the model (`model::NodeSchedRequirement::paths`) — the
 /// shared-structure "mapper input" nano-ros's own RTOS mapper reads.
+///
+/// Carries two of the four per-path requirement facts the cross-repo
+/// agreement names (this crate's `docs/scheduling.md` §"Cross-repo design
+/// agreement"): the effective **trigger** and the **deadline**
+/// (`max_latency_ms`). The third, **criticality**, lives one level up on
+/// [`crate::mapper::MapperNode`] / `model::NodeSchedRequirement` (it is a
+/// per-node, not per-path, fact). The fourth, **budget** (the six-dim RTOS
+/// mapper's WCET/execution-time dimension — distinct from the deadline), is
+/// [`Self::exec_ms`]: usually `None` today (contracts declare deadlines, not
+/// WCETs), but the shared schema must carry a slot for the fact the
+/// consumer's mapper wants. Unit matches [`ChainElement::Boundary::exec_ms`]
+/// (milliseconds, no invented WCET).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MapperPath {
     pub name: String,
     pub effective_trigger: EffectiveTrigger,
     /// Declared end-to-end latency budget for this path (`max_latency_ms`
-    /// in the contract vocabulary), when present.
+    /// in the contract vocabulary) — the **deadline** fact, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
+    /// Declared execution-time **budget** (WCET) for this path, in
+    /// milliseconds — the six-dim RTOS mapper's `budget` dimension, distinct
+    /// from the deadline. `None` when not declared (no WCET is ever
+    /// invented). Same unit/convention as
+    /// [`ChainElement::Boundary::exec_ms`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec_ms: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -100,6 +119,17 @@ pub enum ChainSemantics {
     Age,
 }
 
+/// One `(node, path)` link inside a chain [`ChainElement::Segment`], in
+/// source-to-sink topological order. A named struct (rather than a bare
+/// `(String, String)` tuple) so the cross-repo `system_model.yaml` is
+/// self-documenting — the fields serialize as `node:`/`path:` mappings, not
+/// an unlabeled two-element sequence.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SegmentNode {
+    pub node: String,
+    pub path: String,
+}
+
 /// One element of a resolved chain's clock-segmented decomposition (design
 /// "Model: clock-segmented chains"). Already resolved by the caller
 /// (wave 4): `via` scopes flattened, and each segment's
@@ -117,9 +147,9 @@ pub enum ChainSemantics {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ChainElement {
     /// A maximal run of `trigger: input` path links, in source-to-sink
-    /// topological order. Each entry is `(node_name, path_name)`.
+    /// topological order. Each entry is a [`SegmentNode`].
     Segment {
-        nodes_in_topo_order: Vec<(String, String)>,
+        nodes_in_topo_order: Vec<SegmentNode>,
     },
     /// A `trigger: timer` hop crossed by the chain. `period_ms` is
     /// `1000 / rate_hz`; `exec_ms` is an optional declared execution-time
@@ -296,22 +326,46 @@ mod tests {
 
     #[test]
     fn mapper_path_roundtrips() {
+        // with both deadline (max_latency_ms) and budget (exec_ms) present
         let p = MapperPath {
             name: "main".into(),
             effective_trigger: EffectiveTrigger::Timer { rate_hz: 20.0 },
             max_latency_ms: Some(30.0),
+            exec_ms: Some(4.5),
             inputs: vec!["/sensing/pointcloud".into()],
             outputs: vec!["/perception/objects".into()],
         };
+        let yaml = serde_yaml_ng::to_string(&p).unwrap();
+        assert!(yaml.contains("max_latency_ms: 30.0"), "{yaml}");
+        assert!(yaml.contains("exec_ms: 4.5"), "{yaml}");
         assert_eq!(roundtrip(&p), p);
+
+        // exec_ms omitted when None (the common case: contracts declare a
+        // deadline, rarely a WCET) — the slot exists but isn't emitted.
+        let no_budget = MapperPath {
+            exec_ms: None,
+            ..p.clone()
+        };
+        assert!(
+            !serde_yaml_ng::to_string(&no_budget)
+                .unwrap()
+                .contains("exec_ms"),
+        );
+        assert_eq!(roundtrip(&no_budget), no_budget);
     }
 
     #[test]
     fn chain_element_roundtrips_segment_and_boundary() {
         let segment = ChainElement::Segment {
             nodes_in_topo_order: vec![
-                ("detector".into(), "main".into()),
-                ("tracker".into(), "main".into()),
+                SegmentNode {
+                    node: "detector".into(),
+                    path: "main".into(),
+                },
+                SegmentNode {
+                    node: "tracker".into(),
+                    path: "main".into(),
+                },
             ],
         };
         assert_eq!(roundtrip(&segment), segment);
@@ -324,12 +378,12 @@ mod tests {
         };
         assert_eq!(roundtrip(&boundary), boundary);
 
-        // adjacently tagged, snake_case
-        assert!(
-            serde_yaml_ng::to_string(&segment)
-                .unwrap()
-                .starts_with("kind: segment")
-        );
+        // adjacently tagged, snake_case; segment entries are named
+        // node:/path: mappings, not unlabeled tuples.
+        let seg_yaml = serde_yaml_ng::to_string(&segment).unwrap();
+        assert!(seg_yaml.starts_with("kind: segment"), "{seg_yaml}");
+        assert!(seg_yaml.contains("node: detector"), "{seg_yaml}");
+        assert!(seg_yaml.contains("path: main"), "{seg_yaml}");
         assert!(
             serde_yaml_ng::to_string(&boundary)
                 .unwrap()
@@ -346,7 +400,10 @@ mod tests {
             semantics: ChainSemantics::Reaction,
             elements: vec![
                 ChainElement::Segment {
-                    nodes_in_topo_order: vec![("detector".into(), "main".into())],
+                    nodes_in_topo_order: vec![SegmentNode {
+                        node: "detector".into(),
+                        path: "main".into(),
+                    }],
                 },
                 ChainElement::Boundary {
                     node: "planner".into(),

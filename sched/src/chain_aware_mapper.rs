@@ -159,10 +159,10 @@ fn chain_item_order(chain: &ResolvedChain, group_counter: &mut usize) -> Vec<Ran
                 let fine = *group_counter;
                 *group_counter += 1;
                 let n = nodes_in_topo_order.len();
-                for (idx, (node, path)) in nodes_in_topo_order.iter().enumerate().rev() {
+                for (idx, sn) in nodes_in_topo_order.iter().enumerate().rev() {
                     out.push(RankItem {
-                        node: node.clone(),
-                        path: path.clone(),
+                        node: sn.node.clone(),
+                        path: sn.path.clone(),
                         fine_group: fine,
                         coarse_group: Some(chain.name.clone()),
                         tie_group: None,
@@ -596,7 +596,7 @@ fn assign_priorities_compressed(
 mod tests {
     use super::*;
     use crate::{
-        chain::ChainSemantics,
+        chain::{ChainSemantics, SegmentNode},
         mapper::{MapperNode, MapperRegistry},
         platform::PosixResources,
     };
@@ -612,7 +612,10 @@ mod tests {
         ChainElement::Segment {
             nodes_in_topo_order: nodes
                 .iter()
-                .map(|(n, p)| (n.to_string(), p.to_string()))
+                .map(|(n, p)| SegmentNode {
+                    node: n.to_string(),
+                    path: p.to_string(),
+                })
                 .collect(),
         }
     }
@@ -631,6 +634,7 @@ mod tests {
             name: name.to_string(),
             effective_trigger: EffectiveTrigger::Timer { rate_hz },
             max_latency_ms: None,
+            exec_ms: None,
             inputs: vec![],
             outputs: vec![],
         }
@@ -641,6 +645,7 @@ mod tests {
             name: name.to_string(),
             effective_trigger: EffectiveTrigger::Input(vec!["in".to_string()]),
             max_latency_ms,
+            exec_ms: None,
             inputs: vec!["in".to_string()],
             outputs: vec![],
         }
@@ -651,6 +656,7 @@ mod tests {
             name: name.to_string(),
             effective_trigger: EffectiveTrigger::Once,
             max_latency_ms: None,
+            exec_ms: None,
             inputs: vec![],
             outputs: vec![],
         }

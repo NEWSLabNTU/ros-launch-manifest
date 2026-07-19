@@ -29,7 +29,7 @@ pub mod chain_aware_mapper;
 pub use bridge::parse_legacy_toml;
 pub use chain::{
     ChainAwareDetail, ChainElement, ChainSemantics, EffectiveTrigger, MapDiagnostics, MapWarning,
-    MapperPath, ResolvedChain,
+    MapperPath, ResolvedChain, SegmentNode,
 };
 pub use chain_aware_mapper::ChainAwareMapper;
 pub use mapper::{
