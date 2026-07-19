@@ -18,7 +18,7 @@
 //! All collections are `BTreeMap`/sorted so serialization is deterministic —
 //! the YAML form is hashed for provenance and caching.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub mod system_config;
 
@@ -593,6 +593,20 @@ pub struct ExecutionSched {
     /// interface.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ranks: Vec<ros_launch_manifest_sched::ChainAwareDetail>,
+    /// LINUX REALIZATION — FQNs of nodes whose final priority/class/core was
+    /// pinned by an explicit `overrides.<selector>` entry in the platform
+    /// file (Phase 45.6 review). This is the fact `--explain`'s provenance
+    /// renderer needs to label a node `override(...)` **exactly**: an
+    /// override's applied value can coincide with what the mapper would have
+    /// derived anyway (a pinning override, or coincidence after a contract
+    /// change), so a model consumer cannot recover "was this overridden?"
+    /// from `bindings`/`tiers`/`ranks` alone — carrying the set is the only
+    /// way to reproduce the fresh-derive renderer's classification (which
+    /// reads its own live `overridden` map). nano-ros IGNORES this. Empty /
+    /// absent when nothing was overridden (or an older artifact) — old
+    /// models parse unchanged.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub overrides: BTreeSet<String>,
 }
 
 impl ExecutionSched {
@@ -601,6 +615,7 @@ impl ExecutionSched {
             && self.requirements.is_empty()
             && self.mapper.is_none()
             && self.ranks.is_empty()
+            && self.overrides.is_empty()
     }
 }
 
@@ -842,17 +857,21 @@ mod tests {
                     priority: 44,
                     provenance: "derived(chain_aware: sensing_to_actuation S1 -> prio 44)".into(),
                 }],
+                overrides: BTreeSet::from(["/planning/planner".to_string()]),
             }),
             ..Default::default()
         };
 
         let yaml = serde_yaml_ng::to_string(&execution).unwrap();
-        // structure/realization grouping — one `sched:` key, four sub-keys.
+        // structure/realization grouping — one `sched:` key, five sub-keys.
         assert!(yaml.contains("sched:"), "{yaml}");
         assert!(yaml.contains("chains:"), "{yaml}");
         assert!(yaml.contains("requirements:"), "{yaml}");
         assert!(yaml.contains("mapper: chain_aware"), "{yaml}");
         assert!(yaml.contains("ranks:"), "{yaml}");
+        // overridden-node set (Phase 45.6): FQNs pinned by platform overrides.
+        assert!(yaml.contains("overrides:"), "{yaml}");
+        assert!(yaml.contains("- /planning/planner"), "{yaml}");
         // FQN-keyed requirement fact, not a map (Vec<NodeSchedRequirement>
         // with an explicit `node_fqn` field — see doc comment rationale).
         assert!(yaml.contains("node_fqn: /sensing/detector"), "{yaml}");
@@ -907,5 +926,42 @@ bindings:
         let yaml = serde_yaml_ng::to_string(&sched).unwrap();
         let reparsed: ExecutionSched = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(sched, reparsed);
+    }
+
+    /// Backward-compat for the Phase 45.6 `overrides` field: a `sched:`
+    /// block written before that field existed (no `overrides:` key) parses
+    /// with the field defaulting to an empty set; and a set with entries
+    /// round-trips losslessly, emitting the key only when non-empty
+    /// (`skip_serializing_if`).
+    #[test]
+    fn execution_sched_overrides_field_is_backward_compatible() {
+        // 1. Old artifact: a `sched:` with mapper/ranks but no `overrides:`.
+        let old_yaml = "\
+mapper: chain_aware
+ranks:
+  - node: /a
+    priority: 44
+    provenance: 'derived(chain_aware: c -> prio 44)'
+";
+        let sched: ExecutionSched = serde_yaml_ng::from_str(old_yaml).unwrap();
+        assert!(
+            sched.overrides.is_empty(),
+            "missing overrides: key must default to empty"
+        );
+
+        // 2. Empty set is omitted from the emitted YAML (no noise).
+        let re_emitted = serde_yaml_ng::to_string(&sched).unwrap();
+        assert!(!re_emitted.contains("overrides:"), "{re_emitted}");
+
+        // 3. A populated set round-trips.
+        let with_overrides = ExecutionSched {
+            mapper: Some("chain_aware".into()),
+            overrides: BTreeSet::from(["/a".to_string(), "/b/c".to_string()]),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&with_overrides).unwrap();
+        assert!(yaml.contains("overrides:"), "{yaml}");
+        let reparsed: ExecutionSched = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(with_overrides, reparsed);
     }
 }
