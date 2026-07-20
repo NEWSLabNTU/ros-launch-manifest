@@ -31,6 +31,17 @@ structure:
       scope: /perception/detection
       pkg: lidar_centerpoint
       exec: detector_node
+      remaps:
+        - from: /points
+          to: /sensing/lidar/points
+      ros_args:
+        - --log-level
+        - detector_node:=debug
+      respawn: true
+      respawn_delay: 2.5
+      env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: '0'
     /sensing/imu_node:
       scope: /perception
       pkg: imu_driver

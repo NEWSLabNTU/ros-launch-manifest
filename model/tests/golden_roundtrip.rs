@@ -66,6 +66,30 @@ fn structure_layer_resolved_shapes() {
     let det = &s.nodes["/perception/detection/detector"];
     assert_eq!(det.exec.as_deref(), Some("detector_node"));
     assert!(!det.lifecycle);
+    // Phase 46.1b — launch spawn inputs (remaps/ros_args/respawn/env).
+    assert_eq!(
+        det.remaps,
+        vec![Remap {
+            from: "/points".to_string(),
+            to: "/sensing/lidar/points".to_string(),
+        }]
+    );
+    assert_eq!(
+        det.ros_args,
+        vec![
+            "--log-level".to_string(),
+            "detector_node:=debug".to_string()
+        ]
+    );
+    assert_eq!(det.respawn, Some(true));
+    assert_eq!(det.respawn_delay, Some(2.5));
+    assert_eq!(
+        det.env,
+        vec![EnvVar {
+            name: "CUDA_VISIBLE_DEVICES".to_string(),
+            value: "0".to_string(),
+        }]
+    );
     assert_eq!(
         s.nodes["/sensing/imu_node"].criticality.as_deref(),
         Some("high")
@@ -93,6 +117,12 @@ fn structure_layer_resolved_shapes() {
         Some("/perception/pipeline_container")
     );
     assert!(tracker.lifecycle);
+    // no explicit launch-spawn-fields on this node → additive-schema defaults.
+    assert!(tracker.remaps.is_empty());
+    assert!(tracker.ros_args.is_empty());
+    assert_eq!(tracker.respawn, None);
+    assert_eq!(tracker.respawn_delay, None);
+    assert!(tracker.env.is_empty());
     // wiring uses "<node FQN>/<endpoint>" refs
     assert_eq!(
         s.topics["/perception/objects"].publishers,
@@ -171,6 +201,7 @@ fn execution_layer_slices() {
         imu.extra["features"],
         ExtraValue::StrList(vec!["safety".to_string()])
     );
+
     let t = &e.transports[0];
     assert_eq!(t.kind, "ethernet");
     assert_eq!(t.id.as_deref(), Some("eth0"));
@@ -191,4 +222,33 @@ fn execution_layer_slices() {
     assert_eq!(posix.core, Some(2));
     assert_eq!(high.threadx.as_ref().unwrap().preempt_threshold, Some(4));
     assert_eq!(e.bindings["/sensing/imu_node/ctrl"], "high");
+}
+
+/// Phase 46.1b backward-compat: a `NodeInstance` written before
+/// remaps/ros_args/respawn/env existed (no such keys at all) must still
+/// parse, with every new field defaulting to empty/`None` — the
+/// additive-schema guarantee `docs/design/unified-system-model.md` promises
+/// nano-ros (it vendors this crate and must keep reading old models).
+#[test]
+fn node_instance_without_launch_fields_parses_with_defaults() {
+    let yaml = "\
+scope: /perception
+pkg: lidar_centerpoint
+exec: detector_node
+";
+    let node: NodeInstance = serde_yaml_ng::from_str(yaml).unwrap();
+    assert_eq!(node.exec.as_deref(), Some("detector_node"));
+    assert!(node.remaps.is_empty());
+    assert!(node.ros_args.is_empty());
+    assert_eq!(node.respawn, None);
+    assert_eq!(node.respawn_delay, None);
+    assert!(node.env.is_empty());
+
+    // and re-emitting it doesn't invent any of the new keys (no noise for
+    // artifacts that never carried them).
+    let re_emitted = serde_yaml_ng::to_string(&node).unwrap();
+    assert!(!re_emitted.contains("remaps:"), "{re_emitted}");
+    assert!(!re_emitted.contains("ros_args:"), "{re_emitted}");
+    assert!(!re_emitted.contains("respawn:"), "{re_emitted}");
+    assert!(!re_emitted.contains("env:"), "{re_emitted}");
 }

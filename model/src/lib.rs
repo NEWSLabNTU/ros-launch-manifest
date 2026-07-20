@@ -192,6 +192,60 @@ pub struct NodeInstance {
     /// dashboards. Unrecognized values are ignored, never an error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub criticality: Option<String>,
+
+    // -- Phase 46.1b — launch spawn inputs (docs/design/unified-system-model.md
+    // decision (a)) -------------------------------------------------------
+    //
+    // The following four fields are launch-derived spawn INPUTS play_launch's
+    // Linux runtime consumes to derive argv/env at spawn time (Phase 46.3);
+    // nano-ros IGNORES all four — it bakes from resolved `structure.topics`,
+    // not raw remaps ("remaps NOT a gap" — its own finding), and has no
+    // argv/process/respawn model for its embedded targets. They ride along
+    // per the "all launch info in the shared model" principle rather than a
+    // play_launch-private side channel. Additive: old models with none of
+    // these keys parse unchanged (all default to empty/`None`).
+    /// Topic/service name remappings (`<remap from= to=/>`), in launch
+    /// declaration order. Regular nodes, containers, and composable nodes
+    /// (`load_node`) may all carry remaps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaps: Vec<Remap>,
+    /// Extra CLI args appended after `--ros-args` (the launch API's
+    /// `ros_arguments`/`ros_args`, distinct from the plain `args` a raw
+    /// executable gets). Only regular nodes and containers have a process
+    /// to append these to; composable nodes don't spawn one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ros_args: Vec<String>,
+    /// Respawn-on-exit policy. `None` = launch default (no respawn).
+    /// Nodes/containers only — composable nodes have no process lifecycle
+    /// independent of their container.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn: Option<bool>,
+    /// Delay in seconds before a respawn attempt. Only meaningful when
+    /// `respawn` is `Some(true)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn_delay: Option<f64>,
+    /// Launch-declared environment variables (`<env name= value=/>`), in
+    /// declaration order — a `Vec` (not `BTreeMap`) because launch env lists
+    /// may legitimately repeat a name (last one spawn-time wins) and order
+    /// is part of the launch author's intent. Nodes/containers only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<EnvVar>,
+}
+
+/// One `<remap from= to=/>` pair. Named struct (not a bare tuple) so the
+/// YAML reads as `- from: … / to: …` — same "named struct over tuple"
+/// precedent as [`ros_launch_manifest_sched::SegmentNode`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Remap {
+    pub from: String,
+    pub to: String,
+}
+
+/// One `<env name= value=/>` pair.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EnvVar {
+    pub name: String,
+    pub value: String,
 }
 
 /// R1-M6 — lifecycle boot autostart policy.
@@ -963,5 +1017,72 @@ ranks:
         assert!(yaml.contains("overrides:"), "{yaml}");
         let reparsed: ExecutionSched = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(with_overrides, reparsed);
+    }
+
+    /// Phase 46.1b — `NodeInstance` launch spawn fields round-trip with
+    /// clean named-struct YAML shapes (not bare tuples): `remaps` as
+    /// `- from: … / to: …` and `env` as `- name: … / value: …`, mirroring
+    /// the `SegmentNode` precedent for pair lists in this crate.
+    #[test]
+    fn node_instance_launch_fields_roundtrip() {
+        let node = NodeInstance {
+            scope: "/perception".into(),
+            pkg: Some("lidar_centerpoint".into()),
+            exec: Some("detector_node".into()),
+            remaps: vec![
+                Remap {
+                    from: "/points".into(),
+                    to: "/sensing/lidar/points".into(),
+                },
+                Remap {
+                    from: "/diagnostics".into(),
+                    to: "/diag/detector".into(),
+                },
+            ],
+            ros_args: vec!["--log-level".into(), "detector_node:=debug".into()],
+            respawn: Some(true),
+            respawn_delay: Some(2.5),
+            env: vec![EnvVar {
+                name: "CUDA_VISIBLE_DEVICES".into(),
+                value: "0".into(),
+            }],
+            ..Default::default()
+        };
+
+        let yaml = serde_yaml_ng::to_string(&node).unwrap();
+        // named struct shapes, not bare tuples.
+        assert!(yaml.contains("from: /points"), "{yaml}");
+        assert!(yaml.contains("to: /sensing/lidar/points"), "{yaml}");
+        assert!(yaml.contains("name: CUDA_VISIBLE_DEVICES"), "{yaml}");
+        assert!(yaml.contains("value: '0'"), "{yaml}");
+        assert!(yaml.contains("respawn: true"), "{yaml}");
+        assert!(yaml.contains("respawn_delay: 2.5"), "{yaml}");
+
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(node, reparsed);
+    }
+
+    /// Backward-compat: a `NodeInstance` with none of the Phase 46.1b launch
+    /// fields (pre-46 artifact) parses with every new field defaulting to
+    /// empty/`None`, and re-emitting it invents none of the new keys.
+    #[test]
+    fn node_instance_without_launch_fields_parses_with_defaults() {
+        let yaml = "\
+scope: /perception
+pkg: lidar_centerpoint
+exec: detector_node
+";
+        let node: NodeInstance = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(node.remaps.is_empty());
+        assert!(node.ros_args.is_empty());
+        assert_eq!(node.respawn, None);
+        assert_eq!(node.respawn_delay, None);
+        assert!(node.env.is_empty());
+
+        let re_emitted = serde_yaml_ng::to_string(&node).unwrap();
+        assert!(!re_emitted.contains("remaps:"), "{re_emitted}");
+        assert!(!re_emitted.contains("ros_args:"), "{re_emitted}");
+        assert!(!re_emitted.contains("respawn:"), "{re_emitted}");
+        assert!(!re_emitted.contains("env:"), "{re_emitted}");
     }
 }
