@@ -18,7 +18,7 @@
 //! All collections are `BTreeMap`/sorted so serialization is deterministic —
 //! the YAML form is hashed for provenance and caching.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 pub mod system_config;
 
@@ -604,14 +604,12 @@ pub struct Execution {
     /// Unknown names are a consumer bake-time error.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
-    /// Phase 45.2 — the resolved scheduling plan (`docs/design/
-    /// system-model-sched-ssot.md`: "SSoT owns the structure; each back-end
-    /// owns its realization"). `None` when `resolve` had no chain/mapper
-    /// facts to embed (no `chains:`/platform-file mapper input) — old
-    /// `system_model.yaml` artifacts (tiers+bindings only) parse unchanged.
-    /// See [`ExecutionSched`] for the structure/realization split.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sched: Option<ExecutionSched>,
+    // NOTE: the resolved scheduling plan is NOT carried in the model
+    // (2026-07-20 maintainer decision — reverted the 45.2/45.3 `sched`
+    // embedding). The model is INPUT only; causality + execution modeling is
+    // each consumer's job (nano-ros RFC-0050/0052; scheduling.md §"Cross-repo
+    // design agreement"). The chain/DAG algorithm is a standalone reusable
+    // crate both runtimes call, not an embedded output.
 }
 
 /// R1-M2 — one transport/session declaration.
@@ -680,113 +678,7 @@ impl Execution {
             && self.transports.is_empty()
             && self.bridges.is_empty()
             && self.features.is_empty()
-            && self.sched.is_none()
     }
-}
-
-// ---------------------------------------------------------------------------
-// layer 3 — resolved scheduling plan (Phase 45.2/45.3)
-// ---------------------------------------------------------------------------
-
-/// The resolved scheduling plan the SSoT design
-/// (`docs/design/system-model-sched-ssot.md`) embeds in `execution:`.
-/// Reconciled with the nano-ros track 2026-07-19
-/// (`src/ros-launch-manifest/docs/scheduling.md` §"Cross-repo design
-/// agreement"; nano-ros RFC-0050/0052): **the SSoT owns the *structure*;
-/// each back-end owns its *realization*.**
-///
-/// - [`Self::chains`] and [`Self::requirements`] are SHARED STRUCTURE — the
-///   mapper INPUT both play_launch's Linux runtime and nano-ros's own
-///   RTOS-framework-aware mapper read. Resolved once, at `resolve` time
-///   (`sched_derive::resolve_chains`, play_launch, Phase 44.4), never
-///   re-derived per consumer.
-/// - [`Self::mapper`] and [`Self::ranks`] are the LINUX REALIZATION —
-///   play_launch writes and reads them (PiCAS fixed-priority ranks); nano-ros
-///   IGNORES both fields and derives its own kernel-feature bindings
-///   (EDF / preemption-threshold / sporadic / affinity) from the shared
-///   structure above.
-///
-/// All four fields are independently optional/empty — a `resolve` with only
-/// a manual `system.toml` (no `chains:`, no derived mapper) may embed
-/// `mapper`/`ranks` but empty `chains`/`requirements`, and vice versa for a
-/// hypothetical structure-only embed. The whole struct is `None` when there
-/// is nothing to embed at all (see [`Execution::sched`]).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ExecutionSched {
-    /// SHARED STRUCTURE — resolved chains: FQN-qualified `via` topics, the
-    /// segment/boundary decomposition, each chain's budget/semantics.
-    /// Embedded verbatim from `ros_launch_manifest_sched` — no parallel
-    /// copy (`docs/design/system-model-sched-ssot.md` "Type sharing").
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub chains: Vec<ros_launch_manifest_sched::ResolvedChain>,
-    /// SHARED STRUCTURE — per-(node, path) requirement facts, FQN-keyed:
-    /// the four facts nano-ros's six-dim RTOS mapper needs, carried once and
-    /// never re-derived per consumer. Per path (on
-    /// [`ros_launch_manifest_sched::MapperPath`]): effective **trigger**
-    /// (`effective_trigger`), **deadline** (`max_latency_ms`), and **budget**
-    /// (`exec_ms` — the WCET/execution-time dimension, distinct from the
-    /// deadline; optional, `None` when undeclared — no invented WCET). Per
-    /// node (on [`NodeSchedRequirement`]): **criticality**.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub requirements: Vec<NodeSchedRequirement>,
-    /// LINUX REALIZATION — identity of the `SchedMapper` that produced the
-    /// applied plan (provenance: `"chain_aware"`, `"rate_monotonic"`,
-    /// `"deadline_monotonic"`, `"manual"`, …). nano-ros IGNORES this: it
-    /// runs its own mapper over [`Self::chains`]/[`Self::requirements`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mapper: Option<String>,
-    /// LINUX REALIZATION — per-(node, path) PiCAS fixed-priority ranks +
-    /// provenance, play_launch's Linux-specific projection of the shared
-    /// structure. Harmless to carry (nano-ros ignores it; `provenance` may
-    /// still surface for cross-platform diagnostics) but NOT the shared
-    /// interface.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ranks: Vec<ros_launch_manifest_sched::ChainAwareDetail>,
-    /// LINUX REALIZATION — FQNs of nodes whose final priority/class/core was
-    /// pinned by an explicit `overrides.<selector>` entry in the platform
-    /// file (Phase 45.6 review). This is the fact `--explain`'s provenance
-    /// renderer needs to label a node `override(...)` **exactly**: an
-    /// override's applied value can coincide with what the mapper would have
-    /// derived anyway (a pinning override, or coincidence after a contract
-    /// change), so a model consumer cannot recover "was this overridden?"
-    /// from `bindings`/`tiers`/`ranks` alone — carrying the set is the only
-    /// way to reproduce the fresh-derive renderer's classification (which
-    /// reads its own live `overridden` map). nano-ros IGNORES this. Empty /
-    /// absent when nothing was overridden (or an older artifact) — old
-    /// models parse unchanged.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub overrides: BTreeSet<String>,
-}
-
-impl ExecutionSched {
-    pub fn is_empty(&self) -> bool {
-        self.chains.is_empty()
-            && self.requirements.is_empty()
-            && self.mapper.is_none()
-            && self.ranks.is_empty()
-            && self.overrides.is_empty()
-    }
-}
-
-/// One node's per-path scheduling requirement facts (Phase 45.2) — FQN-
-/// keyed shared structure. Wraps [`ros_launch_manifest_sched::MapperPath`]
-/// (already exactly "per path: name / effective trigger / max_latency_ms /
-/// exec_ms / inputs / outputs") with the per-node `criticality` the FQN
-/// groups them under, rather than hand-mirroring a parallel `PathRequirement`
-/// type.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct NodeSchedRequirement {
-    /// The node's fully-qualified name (matches [`Structure::nodes`] keys).
-    pub node_fqn: String,
-    /// Advisory scheduling criticality carried through from the manifest
-    /// (mirrors [`NodeInstance::criticality`], but typed — this is the
-    /// mapper-facing fact, not the diagnostics-facing string).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub criticality: Option<ros_launch_manifest_sched::Criticality>,
-    /// The node's declared causal paths with their resolved trigger/budget
-    /// facts.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub paths: Vec<ros_launch_manifest_sched::MapperPath>,
 }
 
 /// Where a node runs.
@@ -948,170 +840,6 @@ mod tests {
             !yaml.contains("execution:"),
             "empty execution serialized: {yaml}"
         );
-    }
-
-    /// Phase 45.2/45.3 — builds an `Execution` with the full sched
-    /// structure (chains + per-node requirements + realization
-    /// mapper/ranks), round-trips it through YAML, and asserts both
-    /// equality and the shape of the emitted document (structure vs
-    /// realization grouping under one `sched:` key).
-    #[test]
-    fn execution_sched_roundtrips_with_full_structure() {
-        use ros_launch_manifest_sched::{
-            ChainAwareDetail, ChainElement, ChainSemantics, Criticality, EffectiveTrigger,
-            MapperPath, ResolvedChain, SegmentNode,
-        };
-
-        let execution = Execution {
-            sched: Some(ExecutionSched {
-                chains: vec![ResolvedChain {
-                    name: "sensing_to_actuation".into(),
-                    criticality: Criticality::High,
-                    max_latency_ms: 100.0,
-                    semantics: ChainSemantics::Reaction,
-                    elements: vec![
-                        ChainElement::Segment {
-                            nodes_in_topo_order: vec![SegmentNode {
-                                node: "/sensing/detector".into(),
-                                path: "main".into(),
-                            }],
-                        },
-                        ChainElement::Boundary {
-                            node: "/planning/planner".into(),
-                            path: "main".into(),
-                            period_ms: 20.0,
-                            exec_ms: None,
-                        },
-                    ],
-                }],
-                requirements: vec![NodeSchedRequirement {
-                    node_fqn: "/sensing/detector".into(),
-                    criticality: Some(Criticality::High),
-                    paths: vec![MapperPath {
-                        name: "main".into(),
-                        effective_trigger: EffectiveTrigger::Input(vec![
-                            "/sensing/pointcloud".into(),
-                        ]),
-                        max_latency_ms: Some(30.0),
-                        // budget (WCET) fact declared for this path.
-                        exec_ms: Some(4.0),
-                        inputs: vec!["/sensing/pointcloud".into()],
-                        outputs: vec!["/sensing/objects".into()],
-                    }],
-                }],
-                mapper: Some("chain_aware".into()),
-                ranks: vec![ChainAwareDetail {
-                    node: "/sensing/detector".into(),
-                    path: Some("main".into()),
-                    priority: 44,
-                    provenance: "derived(chain_aware: sensing_to_actuation S1 -> prio 44)".into(),
-                }],
-                overrides: BTreeSet::from(["/planning/planner".to_string()]),
-            }),
-            ..Default::default()
-        };
-
-        let yaml = serde_yaml_ng::to_string(&execution).unwrap();
-        // structure/realization grouping — one `sched:` key, five sub-keys.
-        assert!(yaml.contains("sched:"), "{yaml}");
-        assert!(yaml.contains("chains:"), "{yaml}");
-        assert!(yaml.contains("requirements:"), "{yaml}");
-        assert!(yaml.contains("mapper: chain_aware"), "{yaml}");
-        assert!(yaml.contains("ranks:"), "{yaml}");
-        // overridden-node set (Phase 45.6): FQNs pinned by platform overrides.
-        assert!(yaml.contains("overrides:"), "{yaml}");
-        assert!(yaml.contains("- /planning/planner"), "{yaml}");
-        // FQN-keyed requirement fact, not a map (Vec<NodeSchedRequirement>
-        // with an explicit `node_fqn` field — see doc comment rationale).
-        assert!(yaml.contains("node_fqn: /sensing/detector"), "{yaml}");
-        // per-path budget (WCET) fact carried alongside the deadline.
-        assert!(yaml.contains("exec_ms: 4.0"), "{yaml}");
-        // named segment entries: node:/path: mappings, not bare tuples.
-        assert!(yaml.contains("node: /sensing/detector"), "{yaml}");
-
-        let reparsed: Execution = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(execution, reparsed);
-    }
-
-    /// An old `system_model.yaml` execution block (tiers+bindings only, no
-    /// sched structure at all) must still parse, with the new fields
-    /// defaulting to empty/`None` — the additive-schema guarantee.
-    #[test]
-    fn execution_without_sched_key_parses_with_defaults() {
-        let yaml = "\
-tiers:
-  high:
-    posix:
-      priority: 80
-bindings:
-  /some/node: high
-";
-        let execution: Execution = serde_yaml_ng::from_str(yaml).unwrap();
-        assert_eq!(execution.tiers["high"].posix.as_ref().unwrap().priority, 80);
-        assert_eq!(execution.bindings["/some/node"], "high");
-        assert!(execution.sched.is_none());
-        assert!(!execution.is_empty());
-
-        // and round-tripping it back doesn't invent a `sched:` key.
-        let re_emitted = serde_yaml_ng::to_string(&execution).unwrap();
-        assert!(!re_emitted.contains("sched:"), "{re_emitted}");
-    }
-
-    /// `ExecutionSched` itself round-trips (belt-and-suspenders on top of
-    /// the full-`Execution` test above).
-    #[test]
-    fn execution_sched_struct_roundtrips_standalone() {
-        use ros_launch_manifest_sched::Criticality;
-
-        let sched = ExecutionSched {
-            mapper: Some("rate_monotonic".into()),
-            requirements: vec![NodeSchedRequirement {
-                node_fqn: "/a/b".into(),
-                criticality: Some(Criticality::Medium),
-                paths: vec![],
-            }],
-            ..Default::default()
-        };
-        let yaml = serde_yaml_ng::to_string(&sched).unwrap();
-        let reparsed: ExecutionSched = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(sched, reparsed);
-    }
-
-    /// Backward-compat for the Phase 45.6 `overrides` field: a `sched:`
-    /// block written before that field existed (no `overrides:` key) parses
-    /// with the field defaulting to an empty set; and a set with entries
-    /// round-trips losslessly, emitting the key only when non-empty
-    /// (`skip_serializing_if`).
-    #[test]
-    fn execution_sched_overrides_field_is_backward_compatible() {
-        // 1. Old artifact: a `sched:` with mapper/ranks but no `overrides:`.
-        let old_yaml = "\
-mapper: chain_aware
-ranks:
-  - node: /a
-    priority: 44
-    provenance: 'derived(chain_aware: c -> prio 44)'
-";
-        let sched: ExecutionSched = serde_yaml_ng::from_str(old_yaml).unwrap();
-        assert!(
-            sched.overrides.is_empty(),
-            "missing overrides: key must default to empty"
-        );
-
-        // 2. Empty set is omitted from the emitted YAML (no noise).
-        let re_emitted = serde_yaml_ng::to_string(&sched).unwrap();
-        assert!(!re_emitted.contains("overrides:"), "{re_emitted}");
-
-        // 3. A populated set round-trips.
-        let with_overrides = ExecutionSched {
-            mapper: Some("chain_aware".into()),
-            overrides: BTreeSet::from(["/a".to_string(), "/b/c".to_string()]),
-            ..Default::default()
-        };
-        let yaml = serde_yaml_ng::to_string(&with_overrides).unwrap();
-        assert!(yaml.contains("overrides:"), "{yaml}");
-        let reparsed: ExecutionSched = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(with_overrides, reparsed);
     }
 
     /// Phase 46.1b — `NodeInstance` launch spawn fields round-trip with

@@ -70,15 +70,17 @@ impl EffectiveTrigger {
 }
 
 /// One of a node's declared causal paths, as seen by the mapper (design
-/// steps 1 and 6). Also the per-(node, path) requirement-facts unit Phase
-/// 45.2 embeds in the model (`model::NodeSchedRequirement::paths`) — the
-/// shared-structure "mapper input" nano-ros's own RTOS mapper reads.
+/// steps 1 and 6). Also the per-(node, path) requirement-facts unit — the
+/// "mapper input" both play_launch's Linux runtime and nano-ros's own RTOS
+/// mapper read. (The 45.2 model-embedding of this was reverted 2026-07-20;
+/// consumers call this algorithm crate directly. See scheduling.md
+/// §"Cross-repo design agreement".)
 ///
 /// Carries two of the four per-path requirement facts the cross-repo
 /// agreement names (this crate's `docs/scheduling.md` §"Cross-repo design
 /// agreement"): the effective **trigger** and the **deadline**
 /// (`max_latency_ms`). The third, **criticality**, lives one level up on
-/// [`crate::mapper::MapperNode`] / `model::NodeSchedRequirement` (it is a
+/// [`crate::mapper::MapperNode`] (it is a
 /// per-node, not per-path, fact). The fourth, **budget** (the six-dim RTOS
 /// mapper's WCET/execution-time dimension — distinct from the deadline), is
 /// [`Self::exec_ms`]: usually `None` today (contracts declare deadlines, not
@@ -164,9 +166,10 @@ pub enum ChainElement {
 }
 
 /// A declared chain (`chains:`), fully resolved against the launch DAG
-/// (design steps 1–2 input). Phase 45.2's shared-structure schema: embedded
-/// verbatim in `model::Execution` (`ExecutionSched::chains`) — both
-/// play_launch and nano-ros's RTOS mapper read this same resolved shape.
+/// (design steps 1–2 input). The resolved chain shape both play_launch's
+/// Linux runtime and nano-ros's RTOS mapper consume — via this algorithm
+/// crate directly, not embedded in the model (the 45.2 embedding was
+/// reverted 2026-07-20).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedChain {
     pub name: String,
@@ -185,11 +188,10 @@ pub struct ResolvedChain {
 
 /// One rank decision's per-(node, path) detail, for `--explain` support
 /// (design step 8). Returned by
-/// [`crate::mapper::SchedMapper::map_with_diagnostics`]. Phase 45.2 embeds
-/// these as the LINUX-REALIZATION half of `model::Execution`
-/// (`ExecutionSched::ranks`) — PiCAS fixed-priority ranks play_launch's
-/// Linux runtime applies; nano-ros ignores this vec entirely and derives
-/// its own kernel-feature bindings from the shared structure instead
+/// [`crate::mapper::SchedMapper::map_with_diagnostics`]. These are the
+/// LINUX REALIZATION — PiCAS fixed-priority ranks play_launch's
+/// Linux runtime applies; nano-ros ignores them entirely and derives
+/// its own kernel-feature bindings from the resolved structure instead
 /// (`provenance` may still surface for cross-platform diagnostics).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChainAwareDetail {
