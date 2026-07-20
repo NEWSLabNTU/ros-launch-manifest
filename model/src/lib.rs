@@ -182,7 +182,14 @@ pub struct NodeInstance {
     /// R1-M4 — RESOLVED ROS parameter values for this node. Parameters
     /// are system semantics (not spawn info — the two-artifact split
     /// excludes cmd/env/param FILES, not values); the embedded consumer
-    /// has no record.json to read them from.
+    /// has no record.json to read them from. Phase 46.3a: the producer
+    /// pre-merges scope-wide `SetParameter`/global params (lower
+    /// precedence) with node-specific inline `<param>` values (higher
+    /// precedence, matching `node_cmdline.rs`'s `global` → `node_specific`
+    /// chain order) BEFORE lowering into this map — global params have no
+    /// separate field here, they're already folded in with the right
+    /// precedence. See [`Self::params_files`] for externally-referenced
+    /// YAML, which is NOT folded into this map (kept verbatim).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, ParamValue>,
     /// Advisory scheduling criticality (`high` | `medium` | `low`) carried
@@ -230,6 +237,52 @@ pub struct NodeInstance {
     /// is part of the launch author's intent. Nodes/containers only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvVar>,
+
+    // -- Phase 46.3a — close the spawn-completeness gaps found while
+    // auditing whether the model can drive `play_launch replay` (Wave B)
+    // without `record.json` (`docs/design/unified-system-model.md`,
+    // `.superpowers/sdd/p46-w3-analysis.md`). Additive: old models with
+    // none of these keys parse unchanged (all default to empty). --------
+    /// Extra non-ROS CLI arguments appended before `--ros-args` (the launch
+    /// API's `arguments=[...]` / `<node><arg .../></node>`), distinct from
+    /// [`Self::ros_args`] which lands *after* `--ros-args`. Regular nodes
+    /// and containers only — composable nodes have no process to append
+    /// these to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Resolved content of externally referenced param YAML files
+    /// (`<param from="…"/>`, or the launch API's `parameters=[...]` file
+    /// list), one string per file, in declaration order. Already
+    /// `$(var …)`-resolved by the parser (`load_and_resolve_param_file`) —
+    /// carried VERBATIM, not flattened into [`Self::params`]: nested/
+    /// wildcard YAML (`/**: ros__parameters: {...}`) cannot survive a flat
+    /// `String -> ParamValue` map without losing the wildcard-vs-node
+    /// namespace distinction. The consumer materializes each string to a
+    /// temp file and passes `--params-file <path>` at spawn — the exact
+    /// pattern `node_cmdline.rs` already uses for `NodeRecord::params_files`
+    /// today. Regular nodes and containers only (composable nodes take
+    /// parameters only via [`Self::params`] in their `LoadNode` request).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params_files: Vec<String>,
+    /// Raw command line for `<executable>` tags — a non-ROS process with no
+    /// package/executable identity ([`Self::pkg`] is `None` and
+    /// [`Self::exec`] carries no meaningful ament-resolvable value in this
+    /// case). Mirrors `NodeRecord::cmd` verbatim: the first element is the
+    /// full command string (split on whitespace at spawn time, the same way
+    /// `node_cmdline.rs::from_raw_executable` does it today), remaining
+    /// elements are extra args appended as-is. Empty for every regular ROS
+    /// node/container (`pkg` is `Some`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raw_cmd: Vec<String>,
+    /// Composable-node LoadNode extra arguments (⊃ `use_intra_process_comms`),
+    /// forwarded verbatim into the `LoadNode` service request's
+    /// `extra_arguments`. The C++ container reads only
+    /// `use_intra_process_comms` from it today (per project docs); the rest
+    /// rides along for forward-compat. Composable nodes only — regular
+    /// nodes/containers have no equivalent load-time argument channel
+    /// (their extra CLI input is [`Self::args`]/[`Self::ros_args`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra_args: BTreeMap<String, String>,
 }
 
 /// One `<remap from= to=/>` pair. Named struct (not a bare tuple) so the
@@ -1084,5 +1137,78 @@ exec: detector_node
         assert!(!re_emitted.contains("ros_args:"), "{re_emitted}");
         assert!(!re_emitted.contains("respawn:"), "{re_emitted}");
         assert!(!re_emitted.contains("env:"), "{re_emitted}");
+    }
+
+    /// Phase 46.3a — the six spawn-completeness gap fields (`args`,
+    /// `params_files`, `raw_cmd`, `extra_args`) round-trip. `args`/
+    /// `params_files` on a regular node, `extra_args` on a composable node,
+    /// `raw_cmd` on a raw-executable-shaped instance (no `pkg`/`exec`).
+    #[test]
+    fn node_instance_gap_fields_roundtrip() {
+        let node = NodeInstance {
+            scope: "/perception".into(),
+            pkg: Some("lidar_centerpoint".into()),
+            exec: Some("detector_node".into()),
+            args: vec!["--verbose".into(), "--config".into(), "a.yaml".into()],
+            params_files: vec!["/**:\n  ros__parameters:\n    a: 1\n".into()],
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&node).unwrap();
+        assert!(yaml.contains("args:"), "{yaml}");
+        assert!(yaml.contains("--verbose"), "{yaml}");
+        assert!(yaml.contains("params_files:"), "{yaml}");
+        assert!(yaml.contains("ros__parameters"), "{yaml}");
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(node, reparsed);
+
+        let composable = NodeInstance {
+            scope: "/perception".into(),
+            plugin: Some("tracker::TrackerNode".into()),
+            container: Some("/perception/pipeline_container".into()),
+            extra_args: BTreeMap::from([(
+                "use_intra_process_comms".to_string(),
+                "True".to_string(),
+            )]),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&composable).unwrap();
+        assert!(yaml.contains("extra_args:"), "{yaml}");
+        assert!(yaml.contains("use_intra_process_comms"), "{yaml}");
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(composable, reparsed);
+
+        let raw_exec = NodeInstance {
+            scope: "/".into(),
+            raw_cmd: vec!["/usr/bin/carla-server".into(), "-quality-level=Low".into()],
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&raw_exec).unwrap();
+        assert!(yaml.contains("raw_cmd:"), "{yaml}");
+        assert!(yaml.contains("carla-server"), "{yaml}");
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(raw_exec, reparsed);
+    }
+
+    /// Backward-compat: the Phase 46.3a fields default to empty and are
+    /// omitted from re-emitted YAML when unset (pre-46.3a artifacts parse
+    /// unchanged, and models that never touch these gaps stay noise-free).
+    #[test]
+    fn node_instance_without_gap_fields_parses_with_defaults() {
+        let yaml = "\
+scope: /perception
+pkg: lidar_centerpoint
+exec: detector_node
+";
+        let node: NodeInstance = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(node.args.is_empty());
+        assert!(node.params_files.is_empty());
+        assert!(node.raw_cmd.is_empty());
+        assert!(node.extra_args.is_empty());
+
+        let re_emitted = serde_yaml_ng::to_string(&node).unwrap();
+        assert!(!re_emitted.contains("args:"), "{re_emitted}");
+        assert!(!re_emitted.contains("params_files:"), "{re_emitted}");
+        assert!(!re_emitted.contains("raw_cmd:"), "{re_emitted}");
+        assert!(!re_emitted.contains("extra_args:"), "{re_emitted}");
     }
 }
