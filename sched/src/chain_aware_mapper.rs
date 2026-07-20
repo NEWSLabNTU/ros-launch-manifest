@@ -86,6 +86,16 @@ impl SchedMapper for ChainAwareMapper {
     }
 }
 
+impl ChainAwareMapper {
+    /// Platform-agnostic ranking (design steps 1–4): the priorityless
+    /// [`RankedPlan`] an RTOS realizer (nano-ros) consumes instead of the
+    /// `posix` band-compressed [`SchedPlan`]. No `PlatformFacts` — no band, no
+    /// OS priorities. Thin wrapper over [`chain_aware_rank`].
+    pub fn rank(&self, input: &MapperInput) -> RankedPlan {
+        chain_aware_rank(input)
+    }
+}
+
 // --- Step 1/2: feasibility ------------------------------------------------
 
 /// One chain's feasibility facts (design "Model: clock-segmented chains").
@@ -117,20 +127,29 @@ fn chain_feasibility(chain: &ResolvedChain) -> ChainFeasibility {
 
 // --- Ranking items ---------------------------------------------------------
 
-/// One (node, path) ranked item, prior to band compression.
+/// One (node, path) ranked item — the **priorityless** unit of the
+/// platform-agnostic core's output (design steps 1–4). The `Vec<RankItem>`
+/// order IS the priority order (highest first); no OS priority numbers are
+/// assigned here. Each platform realizer turns this into concrete scheduling:
+/// play_launch's `posix` realizer band-compresses into
+/// [`crate::resolve::ResolvedTierTable`] (steps 5–6), while nano-ros's RTOS
+/// realizer maps segments → executors + kernel features (EDF /
+/// preemption-threshold / sporadic / affinity) from the same ordering.
 #[derive(Clone, Debug, PartialEq)]
-struct RankItem {
-    node: String,
-    path: String,
+pub struct RankItem {
+    pub node: String,
+    pub path: String,
     /// The finest mergeable scope (a chain's segment / boundary-run, or a
     /// non-chain criticality+budget bucket). Adjacent items sharing a
-    /// `fine_group` are the first to collapse under band scarcity.
-    fine_group: usize,
+    /// `fine_group` are the first to collapse under band scarcity. Doubles as
+    /// the **segment membership** an RTOS realizer groups a run-to-completion
+    /// executor by.
+    pub fine_group: usize,
     /// The next-coarser mergeable scope: the chain name for chain items
     /// (collapse across segments of the *same* chain is allowed under
     /// scarcity), `None` for non-chain items (never merge further — never
     /// across the chain/non-chain divide or a criticality bucket).
-    coarse_group: Option<String>,
+    pub coarse_group: Option<String>,
     /// Set only for non-chain items with *exactly* equal (criticality,
     /// budget) facts (Phase 41 tie-collapse decision): items sharing a
     /// `Some` `tie_group` always collapse to one rank, unconditionally
@@ -139,8 +158,23 @@ struct RankItem {
     /// items (a chain's ranks are always distinct absent scarcity — see
     /// the worked example: `preproc`/`concat`/`detector` get 3 distinct
     /// ranks when the band has room).
-    tie_group: Option<usize>,
-    provenance: String,
+    pub tie_group: Option<usize>,
+    pub provenance: String,
+}
+
+/// The platform-agnostic core's output (design steps 1–4): the priorityless
+/// ordered/segmented ranking plus the feasibility warnings. No band, no OS
+/// priorities — each runtime's realizer turns this into concrete scheduling.
+/// Produced by [`chain_aware_rank`] / [`ChainAwareMapper::rank`]; consumed by
+/// the `posix` realizer ([`chain_aware_map`]) and by nano-ros's RTOS realizer.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RankedPlan {
+    /// Ranked (node, path) items, highest-priority-first.
+    pub items: Vec<RankItem>,
+    /// Feasibility warnings from step 2 (e.g. [`MapWarning::ChainInfeasible`]).
+    /// The `posix` realizer appends its own band-scarcity warning; an RTOS
+    /// realizer appends whatever its realization surfaces.
+    pub warnings: Vec<MapWarning>,
 }
 
 /// Walk one feasible chain's elements from sink to source (design step 3),
@@ -343,11 +377,14 @@ fn non_chain_item_order(
 
 // --- Step 6: node projection + plan assembly --------------------------------
 
-fn chain_aware_map(
-    input: &MapperInput,
-    facts: &PlatformFacts,
-) -> Result<(SchedPlan, MapDiagnostics), MapError> {
-    let band = require_posix_band(facts, "chain_aware")?;
+/// Platform-agnostic core (design steps 1–4): feasibility → chain order →
+/// per-chain + non-chain ranking. Produces the priorityless [`RankedPlan`] —
+/// no band, no OS priorities. Both play_launch's `posix` realizer
+/// ([`chain_aware_map`]) and nano-ros's RTOS realizer consume this same
+/// ordering; the split (2026-07-20) lets each apply its own realization
+/// without inheriting the other's (see the crate's `docs/scheduling.md`
+/// §"Cross-repo design agreement" + play_launch phase-45 §45.10).
+pub fn chain_aware_rank(input: &MapperInput) -> RankedPlan {
     let mut warnings = Vec::new();
     let mut group_counter = 0usize;
 
@@ -393,11 +430,38 @@ fn chain_aware_map(
     // their paths were never added to `covered`).
     items.extend(non_chain_item_order(input, &covered, &mut group_counter));
 
+    RankedPlan { items, warnings }
+}
+
+/// `chain_aware` map: the agnostic core ([`chain_aware_rank`]) followed by the
+/// `posix` (Linux) realizer. Backward-compatible with the pre-split combined
+/// path — byte-identical output.
+fn chain_aware_map(
+    input: &MapperInput,
+    facts: &PlatformFacts,
+) -> Result<(SchedPlan, MapDiagnostics), MapError> {
+    realize_posix(&chain_aware_rank(input), input, facts)
+}
+
+/// The `posix` (Linux) realizer (design steps 5–6): band-compress the agnostic
+/// ranking into OS priorities, project per-node (max over paths), and emit a
+/// [`ResolvedTierTable`]. play_launch's Linux apply layer consumes this;
+/// nano-ros does NOT — it writes its own RTOS realizer over the same
+/// [`RankedPlan`] ([`chain_aware_rank`]).
+fn realize_posix(
+    ranked: &RankedPlan,
+    input: &MapperInput,
+    facts: &PlatformFacts,
+) -> Result<(SchedPlan, MapDiagnostics), MapError> {
+    let band = require_posix_band(facts, "chain_aware")?;
+    let items = &ranked.items;
+    let mut warnings = ranked.warnings.clone();
+
     // Step 5: band compression. When even the legal collapses can't fit
     // the band, the assignment clamps into `band.min` (introducing
     // cross-chain/bucket ties, never inversions) and we surface that as a
     // warning instead of silently violating design issue #5.
-    let (priorities, band_overflow) = assign_priorities_compressed(&items, &band);
+    let (priorities, band_overflow) = assign_priorities_compressed(items, &band);
     if let Some(overflow) = band_overflow {
         warnings.push(MapWarning::BandTooNarrow {
             distinct_classes: overflow.distinct_classes,
@@ -724,6 +788,43 @@ mod tests {
             .iter()
             .find(|t| t.members.iter().any(|m| m == node))
             .map(|t| (t.name.as_str(), t.priority))
+    }
+
+    /// 45.10.b — the agnostic core is callable WITHOUT a platform / band and
+    /// produces a priorityless ordering (highest-first), and the `posix`
+    /// realizer over that ranking is byte-identical to the pre-split combined
+    /// `map` (regression parity).
+    #[test]
+    fn chain_aware_rank_is_priorityless_and_split_is_parity() {
+        let input = worked_example_input();
+
+        // Core: no PlatformFacts, no band — just the ordering.
+        let ranked = ChainAwareMapper.rank(&input);
+        assert!(!ranked.items.is_empty());
+        // Feasible chain → no ChainInfeasible warning at the core stage
+        // (band-scarcity warnings only appear in the realizer).
+        assert!(
+            ranked
+                .warnings
+                .iter()
+                .all(|w| !matches!(w, MapWarning::ChainInfeasible { .. })),
+            "feasible worked example must not warn ChainInfeasible: {:?}",
+            ranked.warnings
+        );
+        // Highest-priority item is the last segment's SINK (later segments
+        // above earlier; drain-toward-sink within a segment).
+        assert_eq!(ranked.items.first().unwrap().node, "/gate");
+        // Segment membership rides on `fine_group` for the RTOS realizer.
+        assert!(ranked.items.iter().any(|it| it.node == "/follower"
+            && it.fine_group == ranked.items[0].fine_group));
+
+        // Parity: realize_posix(core(input)) == the old combined path.
+        let facts = posix_facts(5, 45);
+        let (split_plan, split_diag) = realize_posix(&ranked, &input, &facts).expect("realize");
+        let (combined_plan, combined_diag) =
+            ChainAwareMapper.map_with_diagnostics(&input, &facts).expect("map");
+        assert_eq!(split_plan, combined_plan, "split plan must match combined");
+        assert_eq!(split_diag, combined_diag, "split diagnostics must match combined");
     }
 
     #[test]

@@ -31,7 +31,7 @@ pub use chain::{
     ChainAwareDetail, ChainElement, ChainSemantics, EffectiveTrigger, MapDiagnostics, MapWarning,
     MapperPath, ResolvedChain, SegmentNode,
 };
-pub use chain_aware_mapper::ChainAwareMapper;
+pub use chain_aware_mapper::{ChainAwareMapper, RankItem, RankedPlan, chain_aware_rank};
 pub use mapper::{
     Criticality, MapError, MapperInput, MapperNode, MapperRegistry, PlatformFacts, SchedMapper,
     SchedPlan,
