@@ -123,8 +123,12 @@ pub struct ResolverInfo {
 /// for diagnostics and budget attribution). All names fully qualified.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Structure {
-    /// Scope id (e.g. `/perception/object_recognition/tracking`) → info.
-    /// The scope id is its resolved namespace path.
+    /// Scope id (e.g. `autoware_launch/planning_simulator.launch.xml`) → info.
+    /// The scope id is STRUCTURAL — the launch file (`<pkg>/<file>`) the scope
+    /// corresponds to, disambiguated with `#<id>` when a file is included more
+    /// than once. It is NOT a namespace (Phase 48: namespace is a per-node
+    /// property, not a scope property). `<group>` scopes are folded into their
+    /// launch file, so this map is the include tree.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub scopes: BTreeMap<String, ScopeInfo>,
     /// Node FQN (`/ns/node_name`) → instance.
@@ -141,7 +145,8 @@ pub struct Structure {
     pub actions: BTreeMap<String, ServiceWiring>,
 }
 
-/// One scope (launch file / group) in the resolved tree.
+/// One launch-file scope in the resolved include tree (Phase 48: group scopes
+/// are folded into their file scope).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ScopeInfo {
     /// Parent scope id; `None` for the root.
@@ -150,6 +155,12 @@ pub struct ScopeInfo {
     /// Source manifest path, when this scope had one (diagnostics only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest: Option<String>,
+    /// ROS package of the launch file, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Launch file basename (e.g. `control.launch.xml`), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 /// One resolved node instance.
