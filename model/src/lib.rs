@@ -283,6 +283,48 @@ pub struct NodeInstance {
     /// (their extra CLI input is [`Self::args`]/[`Self::ros_args`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra_args: BTreeMap<String, String>,
+
+    // -- Phase 46.3b — provenance the model previously inferred and lost,
+    // needed for a faithful model-driven spawn (`.superpowers/sdd/
+    // p46-w3b-review.md`). Additive: old models without these keys parse
+    // unchanged (`node_name` defaults to `None`, `is_container` to
+    // `false`). ----------------------------------------------------------
+    /// The node name AS DECLARED in the launch file (`<node name="…">` /
+    /// `Node(name=…)`), distinct from [`Self::exec`] — `None` when the
+    /// launch declared no `name=` at all.
+    ///
+    /// Why this can't be recovered from the `structure.nodes` FQN key: the
+    /// key is `name.or(exec_name)` (Phase 46.3a's GAP-1 fallback, so
+    /// `name=None` nodes aren't dropped from the model), which erases
+    /// whether the last FQN segment came from an explicit `name=` or the
+    /// `exec_name` fallback. The Linux spawn path needs that distinction to
+    /// decide whether to emit the `-r __node:=<name>` remap: forcing
+    /// `__node` onto a `name=None` node silently renames it away from its
+    /// own internally-hardcoded default name, breaking service/action
+    /// discovery for e.g. LifecycleNodes whose lifecycle services register
+    /// under the internal name — the exact regression play_launch's
+    /// `af7c524` ("Use None for the node name if it's not set instead of
+    /// exec_name fallback") fixed on the record path. With this field the
+    /// model path reproduces that conditional exactly (emit `__node` iff
+    /// `node_name.is_some()`). Containers and composable nodes always carry
+    /// `Some` (their record types have a non-optional name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
+    /// Whether this instance is a `<node_container>` (as opposed to a plain
+    /// `<node>` or a composable `<composable_node>`). The producer knows
+    /// this unambiguously (it comes from the record's `dump.container[]`
+    /// array); a consumer CANNOT reconstruct it from the other fields —
+    /// `model_builder` emits containers with `plugin: None, container:
+    /// None`, structurally identical to a plain node. The Linux spawn path
+    /// keys the `--container-mode` package/executable override
+    /// (`play_launch_container` + `--isolated`/`--use_multi_threaded_executor`)
+    /// off this bit; inferring it by reverse-resolving composable
+    /// `container=` references (the pre-46.3b heuristic) could misclassify
+    /// a regular node whose name coincides with a dangling/ambiguous
+    /// composable target and then corrupt its executable. Plain nodes and
+    /// composable nodes carry `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_container: bool,
 }
 
 /// One `<remap from= to=/>` pair. Named struct (not a bare tuple) so the
@@ -1210,5 +1252,72 @@ exec: detector_node
         assert!(!re_emitted.contains("params_files:"), "{re_emitted}");
         assert!(!re_emitted.contains("raw_cmd:"), "{re_emitted}");
         assert!(!re_emitted.contains("extra_args:"), "{re_emitted}");
+    }
+
+    /// Phase 46.3b — `node_name` (declared name, distinct from `exec`) and
+    /// `is_container` round-trip, and a `name=None` node emits neither
+    /// key (the whole point: the model must be able to say "no declared
+    /// name").
+    #[test]
+    fn node_instance_provenance_fields_roundtrip() {
+        let named = NodeInstance {
+            scope: "/perception".into(),
+            pkg: Some("lidar_centerpoint".into()),
+            exec: Some("detector_node".into()),
+            node_name: Some("detector".into()),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&named).unwrap();
+        assert!(yaml.contains("node_name: detector"), "{yaml}");
+        assert!(!yaml.contains("is_container"), "{yaml}");
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(named, reparsed);
+
+        let container = NodeInstance {
+            scope: "/perception".into(),
+            pkg: Some("rclcpp_components".into()),
+            exec: Some("component_container".into()),
+            node_name: Some("pipeline_container".into()),
+            is_container: true,
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&container).unwrap();
+        assert!(yaml.contains("is_container: true"), "{yaml}");
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(container, reparsed);
+
+        // name=None node: node_name is None, so no `node_name:` key at all
+        // (that absence IS the "no declared name" signal the spawn path
+        // reads).
+        let unnamed = NodeInstance {
+            scope: "/perception".into(),
+            pkg: Some("lidar_centerpoint".into()),
+            exec: Some("detector_node".into()),
+            node_name: None,
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&unnamed).unwrap();
+        assert!(!yaml.contains("node_name"), "{yaml}");
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(unnamed, reparsed);
+        assert_eq!(reparsed.node_name, None);
+    }
+
+    /// Backward-compat: pre-46.3b artifacts (no `node_name`/`is_container`)
+    /// parse with `node_name: None`, `is_container: false`.
+    #[test]
+    fn node_instance_without_provenance_fields_parses_with_defaults() {
+        let yaml = "\
+scope: /perception
+pkg: lidar_centerpoint
+exec: detector_node
+";
+        let node: NodeInstance = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(node.node_name, None);
+        assert!(!node.is_container);
+
+        let re_emitted = serde_yaml_ng::to_string(&node).unwrap();
+        assert!(!re_emitted.contains("node_name"), "{re_emitted}");
+        assert!(!re_emitted.contains("is_container"), "{re_emitted}");
     }
 }
