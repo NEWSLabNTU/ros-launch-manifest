@@ -161,6 +161,10 @@ pub struct ScopeInfo {
     /// Launch file basename (e.g. `control.launch.xml`), when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    /// Resolved launch arguments passed to this include (`<include>`'s
+    /// `<arg>`s), for launch-tree inspection. File scopes only.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub args: BTreeMap<String, String>,
 }
 
 /// One resolved node instance.
