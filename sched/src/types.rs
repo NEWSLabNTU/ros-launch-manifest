@@ -87,6 +87,18 @@ pub struct TierPlatformSpec {
     /// Per-platform deadline override (µs), tighter than the generic head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_us: Option<u64>,
+    /// Per-platform sporadic execution budget (µs) — nano-ros phase-296
+    /// W5.9: lets ONE platform's kernel sporadic server (NuttX
+    /// SCHED_SPORADIC) engage without flipping every other platform's
+    /// executor into cooperative Sporadic gating (a GENERIC head budget
+    /// applies everywhere). Same sub-table-override precedent as
+    /// `deadline_us`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_us: Option<u64>,
+    /// Per-platform sporadic replenishment period (µs) — pairs with
+    /// `budget_us` (both required for a sporadic policy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period_us: Option<u64>,
 }
 
 /// A sparse binding rule. A node matches if it is named in `nodes` OR falls
