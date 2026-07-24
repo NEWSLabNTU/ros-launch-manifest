@@ -183,13 +183,13 @@ fn execution_layer_slices() {
     // the two consumer slices
     assert_eq!(
         e.deploy["/perception/detection/detector"].target,
-        Target::Linux
+        Some(Target::Linux)
     );
     assert_eq!(
         e.deploy["/sensing/imu_node"].target,
-        Target::Mcu {
+        Some(Target::Mcu {
             board: "stm32f4".into()
-        }
+        })
     );
     // R1-M1/M2/M3 — deploy fields, transports, bridges, features
     let imu = &e.deploy["/sensing/imu_node"];

@@ -300,7 +300,7 @@ impl SystemConfigToml {
             execution.deploy.insert(
                 (*fqn).to_string(),
                 Deploy {
-                    target,
+                    target: Some(target),
                     host: None,
                     // RFC-0004 ladder: deploy override > system default.
                     domain: clamp_domain(block.domain_id, &mut diags, dname)
@@ -437,13 +437,13 @@ priority = 10
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(e.features, vec!["safety"]);
         let ctrl = &e.deploy["/ctrl/control_node"];
-        assert_eq!(ctrl.target, Target::Linux);
+        assert_eq!(ctrl.target, Some(Target::Linux));
         assert_eq!(ctrl.domain, Some(7), "system default rides the ladder");
         assert_eq!(ctrl.rmw.as_deref(), Some("zenoh"));
         assert_eq!(ctrl.extra["profile"], ExtraValue::Str("release".into()));
         let imu = &e.deploy["/sensing/imu_node"];
         assert_eq!(
-            imu.target,
+            imu.target.clone().unwrap(),
             Target::Mcu {
                 board: "stm32f4".into()
             }
@@ -473,6 +473,6 @@ priority = 10
         let mut e = Execution::default();
         cfg.apply_to(&mut e, &["/a", "/b"]).expect("applies");
         assert_eq!(e.deploy.len(), 2);
-        assert_eq!(e.deploy["/a"].target, Target::Linux);
+        assert_eq!(e.deploy["/a"].target, Some(Target::Linux));
     }
 }

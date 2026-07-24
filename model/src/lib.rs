@@ -699,8 +699,15 @@ impl Execution {
 /// Where a node runs.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Deploy {
-    /// `linux` or `mcu:<board>` (see [`Target`]).
-    pub target: Target,
+    /// `linux` or `mcu:<board>` (see [`Target`]). `None` = **unplaced** —
+    /// the deploy entry exists for its other facts (e.g. a `host` derived
+    /// from `<node machine=>` in a launch-only resolve) but names no board
+    /// placement, so the consuming entry's own board decides (nano-ros issue
+    /// #236: board is orthogonal to host — one host can be realized by
+    /// different boards). A placement from the system config is always
+    /// `Some`; only launch-derived deploys are unplaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<Target>,
     /// Host name for multi-host Linux deployments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
