@@ -218,14 +218,15 @@ pub struct NodeInstance {
     // -- Phase 46.1b — launch spawn inputs (docs/design/unified-system-model.md
     // decision (a)) -------------------------------------------------------
     //
-    // The following four fields are launch-derived spawn INPUTS play_launch's
-    // Linux runtime consumes to derive argv/env at spawn time (Phase 46.3);
-    // nano-ros IGNORES all four — it bakes from resolved `structure.topics`,
-    // not raw remaps ("remaps NOT a gap" — its own finding), and has no
-    // argv/process/respawn model for its embedded targets. They ride along
-    // per the "all launch info in the shared model" principle rather than a
-    // play_launch-private side channel. Additive: old models with none of
-    // these keys parse unchanged (all default to empty/`None`).
+    // The following fields are launch-derived spawn INPUTS play_launch's
+    // Linux runtime consumes to derive argv/env at spawn time (Phase 46.3).
+    // nano-ros consumes `remaps` (its entry codegen bakes the rules into
+    // entity creation — nano-ros issue 0255 / phase-305 W3) and IGNORES the
+    // other three — it has no argv/process/respawn model for its embedded
+    // targets. They ride along per the "all launch info in the shared model"
+    // principle rather than a play_launch-private side channel. Additive: old
+    // models with none of these keys parse unchanged (all default to
+    // empty/`None`).
     /// Topic/service name remappings (`<remap from= to=/>`), in launch
     /// declaration order. Regular nodes, containers, and composable nodes
     /// (`load_node`) may all carry remaps.
