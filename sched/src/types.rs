@@ -99,6 +99,12 @@ pub struct TierPlatformSpec {
     /// `budget_us` (both required for a sporadic policy).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period_us: Option<u64>,
+    /// Per-platform round-robin time slice (µs) — nano-ros #0266: requests
+    /// time-slicing among same-priority tiers. ThreadX-only today (its
+    /// `tx_thread_create` takes a per-thread slice); ignored elsewhere.
+    /// Same sub-table-scoped precedent as `preempt_threshold`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_slice_us: Option<u64>,
 }
 
 /// A sparse binding rule. A node matches if it is named in `nodes` OR falls
