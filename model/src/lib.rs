@@ -381,6 +381,109 @@ pub enum ParamValue {
     StrList(Vec<String>),
 }
 
+impl NodeInstance {
+    /// nano-ros #276 — project `params_files` YAML into concrete parameter
+    /// values, merged under the inline [`Self::params`].
+    ///
+    /// Embedded consumers have no launch runtime to pass `--params-file` to:
+    /// they bake parameters into the image, so an upstream node that declares
+    /// a parameter with NO default and receives its value from a
+    /// `config/*.param.yaml` needs those values resolved at bake time. This is
+    /// that projection — the same precedence a spawn would produce
+    /// (param files in declaration order, each overriding the previous; inline
+    /// `<param>` values win over all of them).
+    ///
+    /// Section matching follows ROS 2: a file maps NODE KEYS to a
+    /// `ros__parameters` block. A key matches this node when it is the
+    /// wildcard `/**`, the node's fully-qualified name, or its bare name
+    /// (with or without a leading `/`). Nested maps under `ros__parameters`
+    /// flatten with `.` (`qos.depth: 10` → `"qos.depth"`), matching rclcpp's
+    /// nested-parameter naming. Sequences become [`ParamValue::StrList`];
+    /// nulls and unmatched sections are skipped. A file that fails to parse
+    /// is skipped (the resolver already validated it; a consumer must not
+    /// hard-fail a bake on a YAML dialect it does not model).
+    pub fn resolved_params(&self, fqn: &str) -> BTreeMap<String, ParamValue> {
+        let bare = fqn.rsplit('/').next().unwrap_or(fqn);
+        let mut out: BTreeMap<String, ParamValue> = BTreeMap::new();
+        for raw in &self.params_files {
+            let Ok(doc) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(raw) else {
+                continue;
+            };
+            let serde_yaml_ng::Value::Mapping(sections) = doc else {
+                continue;
+            };
+            for (key, body) in sections {
+                let Some(k) = key.as_str() else { continue };
+                let k_trim = k.trim_start_matches('/');
+                let matches = k == "/**"
+                    || k == fqn
+                    || k_trim == fqn.trim_start_matches('/')
+                    || k_trim == bare;
+                if !matches {
+                    continue;
+                }
+                let Some(params) = body.get("ros__parameters") else {
+                    continue;
+                };
+                flatten_params("", params, &mut out);
+            }
+        }
+        // Inline `<param>` values are highest precedence.
+        for (k, v) in &self.params {
+            out.insert(k.clone(), v.clone());
+        }
+        out
+    }
+}
+
+/// Flatten a `ros__parameters` subtree into dotted keys.
+fn flatten_params(
+    prefix: &str,
+    node: &serde_yaml_ng::Value,
+    out: &mut BTreeMap<String, ParamValue>,
+) {
+    let serde_yaml_ng::Value::Mapping(map) = node else {
+        return;
+    };
+    for (k, v) in map {
+        let Some(name) = k.as_str() else { continue };
+        let full = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        match v {
+            serde_yaml_ng::Value::Mapping(_) => flatten_params(&full, v, out),
+            serde_yaml_ng::Value::Bool(b) => {
+                out.insert(full, ParamValue::Bool(*b));
+            }
+            serde_yaml_ng::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    out.insert(full, ParamValue::Int(i));
+                } else if let Some(f) = n.as_f64() {
+                    out.insert(full, ParamValue::Float(f));
+                }
+            }
+            serde_yaml_ng::Value::String(st) => {
+                out.insert(full, ParamValue::Str(st.clone()));
+            }
+            serde_yaml_ng::Value::Sequence(seq) => {
+                let items: Vec<String> = seq
+                    .iter()
+                    .map(|e| match e {
+                        serde_yaml_ng::Value::String(s) => s.clone(),
+                        serde_yaml_ng::Value::Bool(b) => b.to_string(),
+                        serde_yaml_ng::Value::Number(n) => n.to_string(),
+                        _ => String::new(),
+                    })
+                    .collect();
+                out.insert(full, ParamValue::StrList(items));
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Topic wiring: type + endpoint refs (`"<node FQN>/<endpoint>"`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TopicWiring {
