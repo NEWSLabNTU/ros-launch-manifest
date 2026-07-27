@@ -302,12 +302,29 @@ impl SystemConfigToml {
                 }
                 (k.as_str(), b)
             } else {
+                // Placement sources, in order:
+                //   1. an explicit `nodes = [..]` entry;
+                //   2. the node's own `<node machine="…">`, which `model_builder`
+                //      has already recorded as `execution.deploy[fqn].host`.
+                //
+                // (2) matters because `machine=` IS a placement — the multi-host
+                // example says `machine="robot1"` and expects `[deploy.robot1]`.
+                // Demanding a duplicate `nodes = [..]` for something the launch
+                // file already states is redundant, and made that example
+                // unresolvable (nano-ros issue 0291).
+                let by_machine = execution
+                    .deploy
+                    .get(*fqn)
+                    .and_then(|d| d.host.as_deref())
+                    .and_then(|h| in_scope.iter().find(|(k, _)| k.as_str() == h))
+                    .map(|(k, b)| (k.as_str(), *b));
                 match in_scope
                     .iter()
                     .find(|(_, b)| b.nodes.iter().any(|n| n == fqn))
-                    .map(|(k, b)| (*k, *b))
+                    .map(|(k, b)| (k.as_str(), *b))
+                    .or(by_machine)
                 {
-                    Some((k, b)) => (k.as_str(), b),
+                    Some((k, b)) => (k, b),
                     None => {
                         return Err(format!(
                             "system config: node '{fqn}' is not placed — with multiple \
@@ -349,11 +366,15 @@ impl SystemConfigToml {
                 "deploy_name".to_string(),
                 ExtraValue::Str(dname.to_string()),
             );
+            // Preserve a launch-derived host (`<node machine="…">`) — this
+            // insert replaces the whole entry, and blanking it here dropped
+            // the very placement that selected this block (issue 0291).
+            let existing_host = execution.deploy.get(*fqn).and_then(|d| d.host.clone());
             execution.deploy.insert(
                 (*fqn).to_string(),
                 Deploy {
                     target: Some(target),
-                    host: None,
+                    host: existing_host,
                     // RFC-0004 ladder: deploy override > system default.
                     domain: clamp_domain(block.domain_id, &mut diags, dname)
                         .or_else(|| clamp_domain(self.system.domain_id, &mut diags, "[system]")),
@@ -547,6 +568,55 @@ launch = "multihost.launch.xml"
             cfg.apply_to(&mut e4, &["/talker"]).is_err(),
             "an unknown launch file must not silently narrow the scope"
         );
+    }
+
+    /// nano-ros issue 0291 — `<node machine="robot1">` IS a placement.
+    ///
+    /// `model_builder` records it as `execution.deploy[fqn].host` before this
+    /// runs, so demanding a duplicate `nodes = [..]` for the same fact made
+    /// the multi-host example unresolvable. A host naming an in-scope deploy
+    /// block places the node.
+    #[test]
+    fn node_machine_attribute_places_without_a_nodes_list() {
+        let toml = r#"
+[system]
+name = "demo"
+
+[deploy.native]
+kind = "self"
+
+[deploy.robot1]
+kind = "self"
+launch = "multihost.launch.xml"
+
+[deploy.robot2]
+kind = "self"
+launch = "multihost.launch.xml"
+"#;
+        let cfg = parse_system_config(toml).expect("parses");
+
+        // What `model_builder` leaves behind for `<node machine="…">`.
+        let mut e = Execution::default();
+        e.deploy.entry("/talker".to_string()).or_default().host = Some("robot1".into());
+        e.deploy.entry("/listener".to_string()).or_default().host = Some("robot2".into());
+
+        cfg.apply_to_launch(
+            &mut e,
+            &["/talker", "/listener"],
+            Some("multihost.launch.xml"),
+        )
+        .expect("machine= places both nodes");
+
+        assert_eq!(e.deploy["/talker"].host.as_deref(), Some("robot1"));
+        assert_eq!(e.deploy["/listener"].host.as_deref(), Some("robot2"));
+
+        // A host naming no deploy block is still unplaced -> fail loud.
+        let mut e2 = Execution::default();
+        e2.deploy.entry("/ghost".to_string()).or_default().host = Some("nowhere".into());
+        let err = cfg
+            .apply_to_launch(&mut e2, &["/ghost"], Some("multihost.launch.xml"))
+            .expect_err("an unknown host is not a placement");
+        assert!(err.contains("is not placed"), "{err}");
     }
 
     #[test]
