@@ -193,3 +193,85 @@ fn file_sources_fold_left_to_right() {
     let out = n.resolved_params("/ctrl/planner");
     assert_eq!(out.get("a"), Some(&ParamValue::Int(3)), "{out:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Within-file section precedence is by SPECIFICITY, not textual order.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_specific_section_beats_a_wildcard_written_after_it() {
+    // rcl buckets a file's sections per node; a node-specific block overrides
+    // `/**` however the two are ordered. nano-ros's (now retired) duplicate
+    // matcher had this right and the model did not — regression guard.
+    let yaml = r#"
+/ctrl/planner:
+  ros__parameters:
+    rate: 25
+/**:
+  ros__parameters:
+    rate: 10
+    shared: 1
+"#;
+    let n = node_with(vec![yaml.to_string()], &[]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("rate"), Some(&ParamValue::Int(25)), "{out:?}");
+    assert_eq!(out.get("shared"), Some(&ParamValue::Int(1)), "{out:?}");
+}
+
+#[test]
+fn a_partial_wildcard_sits_between_the_global_one_and_a_literal() {
+    let yaml = r#"
+/ctrl/planner:
+  ros__parameters:
+    rank: 3
+/**:
+  ros__parameters:
+    rank: 1
+/ctrl/**:
+  ros__parameters:
+    rank: 2
+"#;
+    let n = node_with(vec![yaml.to_string()], &[]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("rank"), Some(&ParamValue::Int(3)), "{out:?}");
+
+    // Drop the literal section: the partial wildcard must still beat `/**`.
+    let no_literal = yaml.replace(
+        "/ctrl/planner:\n  ros__parameters:\n    rank: 3\n",
+        "",
+    );
+    let n = node_with(vec![no_literal], &[]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("rank"), Some(&ParamValue::Int(2)), "{out:?}");
+}
+
+#[test]
+fn equally_specific_sections_keep_file_order() {
+    // Two spellings of the same node — no specificity difference, so the later
+    // one wins, as a plain last-writer merge would.
+    let yaml = r#"
+planner:
+  ros__parameters:
+    rate: 1
+/ctrl/planner:
+  ros__parameters:
+    rate: 2
+"#;
+    let n = node_with(vec![yaml.to_string()], &[]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("rate"), Some(&ParamValue::Int(2)), "{out:?}");
+}
+
+#[test]
+fn bake_strings_keep_a_float_a_float() {
+    // `1.0f64.to_string()` is "1", which a runtime that re-types by inference
+    // reads back as an INTEGER.
+    assert_eq!(ParamValue::Float(1.0).to_bake_string(), "1.0");
+    assert_eq!(ParamValue::Int(1).to_bake_string(), "1");
+    assert_eq!(ParamValue::Bool(true).to_bake_string(), "true");
+    assert_eq!(ParamValue::Str("a".into()).to_bake_string(), "a");
+    assert_eq!(
+        ParamValue::StrList(vec!["a".into(), "b".into()]).to_bake_string(),
+        "a,b"
+    );
+}

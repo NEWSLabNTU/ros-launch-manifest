@@ -388,6 +388,26 @@ pub enum ParamValue {
     StrList(Vec<String>),
 }
 
+impl ParamValue {
+    /// Render for a consumer that bakes parameters as STRINGS — nano-ros's
+    /// compile-time entry codegen, where the value is re-typed at runtime by
+    /// inference over this text.
+    ///
+    /// Single-sourced because the inference is unforgiving: `1.0f64.to_string()`
+    /// is `"1"`, which re-types as an INTEGER and silently changes a launch
+    /// double's type. `{:?}` keeps the `.0`. Every consumer that hand-rolled
+    /// this match got at least one arm wrong.
+    pub fn to_bake_string(&self) -> String {
+        match self {
+            ParamValue::Bool(b) => b.to_string(),
+            ParamValue::Int(i) => i.to_string(),
+            ParamValue::Float(f) => format!("{f:?}"),
+            ParamValue::Str(s) => s.clone(),
+            ParamValue::StrList(l) => l.join(","),
+        }
+    }
+}
+
 /// phase-54 / play_launch issue 0007 — one parameter source, in ROS's ORDERED
 /// model.
 ///
@@ -466,6 +486,13 @@ impl NodeInstance {
 }
 
 /// Merge one param-file YAML's matching sections into `out`.
+///
+/// Section precedence inside a file is by SPECIFICITY, not by textual order:
+/// rcl buckets a file's entries per node and lets a node-specific block
+/// override what `/**` set, however the two are ordered in the YAML. So a file
+/// that writes `/ctrl/planner:` above `/**:` still resolves `planner`'s own
+/// value — ordering only decides between sources ([`ParamSource`]), never
+/// between sections of one file.
 fn merge_param_file(raw: &str, fqn: &str, bare: &str, out: &mut BTreeMap<String, ParamValue>) {
     let Ok(doc) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(raw) else {
         return;
@@ -473,7 +500,8 @@ fn merge_param_file(raw: &str, fqn: &str, bare: &str, out: &mut BTreeMap<String,
     let serde_yaml_ng::Value::Mapping(sections) = doc else {
         return;
     };
-    for (key, body) in sections {
+    let mut matched: Vec<(u8, &serde_yaml_ng::Value)> = Vec::new();
+    for (key, body) in &sections {
         let Some(k) = key.as_str() else { continue };
         if !node_key_matches(k, fqn, bare) {
             continue;
@@ -481,7 +509,23 @@ fn merge_param_file(raw: &str, fqn: &str, bare: &str, out: &mut BTreeMap<String,
         let Some(params) = body.get("ros__parameters") else {
             continue;
         };
+        matched.push((key_specificity(k), params));
+    }
+    // Stable: equally-specific sections keep file order, so two `/**` blocks
+    // (or two spellings of the same node) still resolve last-wins.
+    matched.sort_by_key(|(rank, _)| *rank);
+    for (_, params) in matched {
         flatten_params("", params, out);
+    }
+}
+
+/// How specific a param-file node key is: pure wildcard < partial wildcard <
+/// literal. Only the ORDER matters, not the numbers.
+fn key_specificity(key: &str) -> u8 {
+    match key.trim().trim_start_matches('/') {
+        "**" | "*" => 0,
+        k if k.contains('*') => 1,
+        _ => 2,
     }
 }
 
