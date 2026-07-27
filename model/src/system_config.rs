@@ -103,6 +103,33 @@ pub struct DeployBlock {
     /// R1-P1 placement — node FQNs deployed to this target.
     #[serde(default)]
     pub nodes: Vec<String>,
+    /// Launch file this block applies to, relative to the bringup pkg
+    /// (`multihost.launch.xml`). `None` means "every launch file".
+    ///
+    /// nano-ros has always written this key (its own `DeployTarget` mirror
+    /// carries a `launch` field), but this struct did not declare it and
+    /// serde silently dropped it. Placement then counted launch-scoped blocks
+    /// against launch files they were never meant to govern — see
+    /// [`Self::applies_to_launch`] and nano-ros issue 0291.
+    #[serde(default)]
+    pub launch: Option<String>,
+}
+
+impl DeployBlock {
+    /// Whether this block governs `launch_file`.
+    ///
+    /// An unscoped block (`launch` absent) governs every launch file. A scoped
+    /// one governs only its own — compared on the file NAME, since the key is
+    /// written relative to the bringup pkg while callers hold a full path.
+    /// An unknown caller launch (`None`) keeps every block, preserving the
+    /// pre-0291 behaviour for callers that cannot say which file they resolve.
+    pub fn applies_to_launch(&self, launch_file: Option<&str>) -> bool {
+        let (Some(scope), Some(current)) = (self.launch.as_deref(), launch_file) else {
+            return true;
+        };
+        let base = |p: &str| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string();
+        base(scope) == base(current)
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -174,6 +201,23 @@ impl SystemConfigToml {
         execution: &mut Execution,
         node_fqns: &[&str],
     ) -> Result<Vec<String>, String> {
+        self.apply_to_launch(execution, node_fqns, None)
+    }
+
+    /// [`Self::apply_to`], told WHICH launch file is being resolved.
+    ///
+    /// Deploy blocks scoped with `launch = "…"` are filtered out when they
+    /// name a different file. Without this, a bringup with one unscoped block
+    /// plus two scoped ones looked like "three deploy blocks" to every launch
+    /// file, and the multi-block rule below demanded an explicit
+    /// `nodes = [..]` for nodes the scoped blocks never governed — a hard
+    /// error on a config that is correct (nano-ros issue 0291).
+    pub fn apply_to_launch(
+        &self,
+        execution: &mut Execution,
+        node_fqns: &[&str],
+        launch_file: Option<&str>,
+    ) -> Result<Vec<String>, String> {
         let mut diags = Vec::new();
 
         execution.features = self.system.features.clone();
@@ -240,8 +284,16 @@ impl SystemConfigToml {
             return Ok(diags);
         }
 
-        // Placement resolution.
-        let single = (self.deploy.len() == 1).then(|| self.deploy.keys().next().unwrap());
+        // Placement resolution — over the blocks that GOVERN this launch file.
+        let in_scope: Vec<(&String, &DeployBlock)> = self
+            .deploy
+            .iter()
+            .filter(|(_, b)| b.applies_to_launch(launch_file))
+            .collect();
+        if in_scope.is_empty() {
+            return Ok(diags);
+        }
+        let single = (in_scope.len() == 1).then(|| in_scope[0].0);
         for fqn in node_fqns {
             let (dname, block) = if let Some(k) = single {
                 let b = &self.deploy[k];
@@ -250,10 +302,10 @@ impl SystemConfigToml {
                 }
                 (k.as_str(), b)
             } else {
-                match self
-                    .deploy
+                match in_scope
                     .iter()
                     .find(|(_, b)| b.nodes.iter().any(|n| n == fqn))
+                    .map(|(k, b)| (*k, *b))
                 {
                     Some((k, b)) => (k.as_str(), b),
                     None => {
@@ -425,6 +477,76 @@ priority = 10
         assert_eq!(e.bindings["/telem_node/telem"], "low");
         // lifecycle autostart accessor.
         assert_eq!(cfg.lifecycle_autostart(), Some(Autostart::Active));
+    }
+
+    /// nano-ros issue 0291 — a bringup with ONE unscoped deploy block plus
+    /// launch-scoped siblings must not trip the multi-block placement rule.
+    ///
+    /// This is `examples/workspaces/cpp/src/demo_bringup` verbatim: three
+    /// `[deploy.*]` blocks, no `nodes = [..]` anywhere, robot1/robot2 scoped
+    /// to `multihost.launch.xml`. Resolving `system.launch.xml` used to fail
+    /// with "node '/listener' is not placed" because `launch` was not a field
+    /// on `DeployBlock` at all — serde dropped it and all three blocks counted.
+    #[test]
+    fn launch_scoped_deploy_blocks_do_not_govern_other_launch_files() {
+        let toml = r#"
+[system]
+name = "demo"
+
+[deploy.native]
+kind = "self"
+target = "x86_64-unknown-linux-gnu"
+
+[deploy.robot1]
+kind = "self"
+target = "x86_64-unknown-linux-gnu"
+launch = "multihost.launch.xml"
+
+[deploy.robot2]
+kind = "self"
+target = "x86_64-unknown-linux-gnu"
+launch = "multihost.launch.xml"
+"#;
+        let cfg = parse_system_config(toml).expect("parses");
+
+        // The key must round-trip now, not be silently dropped.
+        assert_eq!(
+            cfg.deploy["robot1"].launch.as_deref(),
+            Some("multihost.launch.xml"),
+            "`launch` must be a declared field, not swallowed by serde"
+        );
+
+        // system.launch.xml: only `native` is in scope -> implicit placement.
+        let mut e = Execution::default();
+        cfg.apply_to_launch(&mut e, &["/talker", "/listener"], Some("system.launch.xml"))
+            .expect("one in-scope block places implicitly");
+        assert!(e.deploy.contains_key("/talker"));
+        assert!(e.deploy.contains_key("/listener"));
+
+        // A full path resolves the same — comparison is on the file name.
+        let mut e2 = Execution::default();
+        cfg.apply_to_launch(
+            &mut e2,
+            &["/talker"],
+            Some("/abs/src/demo_bringup/launch/system.launch.xml"),
+        )
+        .expect("path and bare name agree");
+        assert!(e2.deploy.contains_key("/talker"));
+
+        // multihost.launch.xml: native + both robots are in scope -> genuinely
+        // ambiguous without `nodes = [..]`, so the fail-loud rule still fires.
+        let mut e3 = Execution::default();
+        let err = cfg
+            .apply_to_launch(&mut e3, &["/talker"], Some("multihost.launch.xml"))
+            .expect_err("three in-scope blocks with no placement is still an error");
+        assert!(err.contains("is not placed"), "{err}");
+
+        // Callers that cannot name the launch file keep the old behaviour.
+        let mut e4 = Execution::default();
+        assert!(
+            cfg.apply_to(&mut e4, &["/talker"]).is_err(),
+            "an unknown launch file must not silently narrow the scope"
+        );
     }
 
     #[test]
