@@ -280,6 +280,12 @@ pub struct NodeInstance {
     /// parameters only via [`Self::params`] in their `LoadNode` request).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params_files: Vec<String>,
+    /// phase-54 / play_launch issue 0007 — the ORDERED parameter-source list.
+    /// [`Self::params`] and [`Self::params_files`] are the legacy split views,
+    /// which cannot express ROS's ordering (they force files-then-inline).
+    /// When this is non-empty it is AUTHORITATIVE: fold it in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_sources: Vec<ParamSource>,
     /// Raw command line for `<executable>` tags — a non-ROS process with no
     /// package/executable identity ([`Self::pkg`] is `None` and
     /// [`Self::exec`] carries no meaningful ament-resolvable value in this
@@ -382,6 +388,30 @@ pub enum ParamValue {
     StrList(Vec<String>),
 }
 
+/// phase-54 / play_launch issue 0007 — one parameter source, in ROS's ORDERED
+/// model.
+///
+/// `launch_ros` keeps a single list per node: `parse_nested_parameters` appends
+/// one entry per `<param>` child in document order, and `execute` emits
+/// `--params-file` / `-p` in that order — materializing an inline dict into a
+/// temp params FILE first. Kind therefore carries NO precedence; position does,
+/// and a file written after an inline value wins.
+///
+/// A consumer that cannot delegate to rcl (the nano-ros compile-time bake) must
+/// fold this list IN ORDER, applying [`Self::File`] entries with FILE semantics
+/// (`ros__parameters` sections, `/**` and partial wildcards) rather than as a
+/// flat key/value overlay.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParamSource {
+    /// An inline `<param name= value=/>`, or a global param — globals occupy
+    /// the HEAD of the list, mirroring ROS applying them before the node's own.
+    Inline { name: String, value: ParamValue },
+    /// A `<param from=/>` file: the resolved YAML CONTENT, same shape as the
+    /// entries of [`NodeInstance::params_files`].
+    File { content: String },
+}
+
 impl NodeInstance {
     /// nano-ros #276 — project `params_files` YAML into concrete parameter
     /// values, merged under the inline [`Self::params`].
@@ -406,29 +436,52 @@ impl NodeInstance {
     pub fn resolved_params(&self, fqn: &str) -> BTreeMap<String, ParamValue> {
         let bare = fqn.rsplit('/').next().unwrap_or(fqn);
         let mut out: BTreeMap<String, ParamValue> = BTreeMap::new();
-        for raw in &self.params_files {
-            let Ok(doc) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(raw) else {
-                continue;
-            };
-            let serde_yaml_ng::Value::Mapping(sections) = doc else {
-                continue;
-            };
-            for (key, body) in sections {
-                let Some(k) = key.as_str() else { continue };
-                if !node_key_matches(k, fqn, bare) {
-                    continue;
+
+        // phase-54 — when the ORDERED list is present it is authoritative: fold
+        // in list order, so a file written AFTER an inline value wins (ROS's
+        // rule; the legacy split below cannot express it).
+        if !self.param_sources.is_empty() {
+            for src in &self.param_sources {
+                match src {
+                    ParamSource::Inline { name, value } => {
+                        out.insert(name.clone(), value.clone());
+                    }
+                    ParamSource::File { content } => {
+                        merge_param_file(content, fqn, bare, &mut out);
+                    }
                 }
-                let Some(params) = body.get("ros__parameters") else {
-                    continue;
-                };
-                flatten_params("", params, &mut out);
             }
+            return out;
         }
-        // Inline `<param>` values are highest precedence.
+
+        for raw in &self.params_files {
+            merge_param_file(raw, fqn, bare, &mut out);
+        }
+        // Legacy split view: inline `<param>` values are highest precedence.
         for (k, v) in &self.params {
             out.insert(k.clone(), v.clone());
         }
         out
+    }
+}
+
+/// Merge one param-file YAML's matching sections into `out`.
+fn merge_param_file(raw: &str, fqn: &str, bare: &str, out: &mut BTreeMap<String, ParamValue>) {
+    let Ok(doc) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(raw) else {
+        return;
+    };
+    let serde_yaml_ng::Value::Mapping(sections) = doc else {
+        return;
+    };
+    for (key, body) in sections {
+        let Some(k) = key.as_str() else { continue };
+        if !node_key_matches(k, fqn, bare) {
+            continue;
+        }
+        let Some(params) = body.get("ros__parameters") else {
+            continue;
+        };
+        flatten_params("", params, out);
     }
 }
 

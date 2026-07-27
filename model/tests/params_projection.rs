@@ -1,6 +1,6 @@
 //! nano-ros #276 — `params_files` YAML projects into concrete parameters.
 
-use ros_launch_manifest_model::{NodeInstance, ParamValue};
+use ros_launch_manifest_model::{NodeInstance, ParamSource, ParamValue};
 
 fn node_with(files: Vec<String>, inline: &[(&str, ParamValue)]) -> NodeInstance {
     let mut n = NodeInstance {
@@ -98,4 +98,98 @@ fn rcl_style_wildcard_sections_match() {
     // A single-segment wildcard must NOT span two segments.
     let too_deep = n.resolved_params("/a/b/planner");
     assert!(too_deep.get("from_single_seg").is_none(), "{too_deep:?}");
+}
+
+// ---------------------------------------------------------------------------
+// phase-54 / play_launch issue 0007 — the ORDERED source list.
+// ---------------------------------------------------------------------------
+
+const A_IS_2: &str = r#"
+/**:
+  ros__parameters:
+    a: 2
+"#;
+
+fn ordered(sources: Vec<ParamSource>) -> NodeInstance {
+    NodeInstance {
+        param_sources: sources,
+        ..Default::default()
+    }
+}
+
+fn inline_src(name: &str, value: ParamValue) -> ParamSource {
+    ParamSource::Inline {
+        name: name.to_string(),
+        value,
+    }
+}
+
+#[test]
+fn inline_then_file_lets_the_file_win() {
+    // <param name="a" value="1"/> then <param from="a_is_2.yaml"/> — ROS emits
+    // both as --params-file in order, so the FILE wins.
+    let n = ordered(vec![
+        inline_src("a", ParamValue::Int(1)),
+        ParamSource::File {
+            content: A_IS_2.to_string(),
+        },
+    ]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("a"), Some(&ParamValue::Int(2)), "{out:?}");
+}
+
+#[test]
+fn file_then_inline_lets_the_inline_win() {
+    // The mirror case — proves the fix is a reordering, not an inversion.
+    let n = ordered(vec![
+        ParamSource::File {
+            content: A_IS_2.to_string(),
+        },
+        inline_src("a", ParamValue::Int(1)),
+    ]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("a"), Some(&ParamValue::Int(1)), "{out:?}");
+}
+
+#[test]
+fn ordered_list_shadows_the_legacy_split_views() {
+    // When param_sources is present it is authoritative: the legacy fields must
+    // not re-apply on top (that would restore "inline always wins").
+    let mut n = ordered(vec![
+        inline_src("a", ParamValue::Int(1)),
+        ParamSource::File {
+            content: A_IS_2.to_string(),
+        },
+    ]);
+    n.params.insert("a".to_string(), ParamValue::Int(1));
+    n.params_files.push(A_IS_2.to_string());
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("a"), Some(&ParamValue::Int(2)), "{out:?}");
+}
+
+#[test]
+fn empty_ordered_list_falls_back_to_the_legacy_split() {
+    // Records written before phase-54 carry only the split view.
+    let n = node_with(vec![A_IS_2.to_string()], &[("a", ParamValue::Int(1))]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("a"), Some(&ParamValue::Int(1)), "{out:?}");
+}
+
+#[test]
+fn file_sources_fold_left_to_right() {
+    let later = r#"
+/**:
+  ros__parameters:
+    a: 3
+"#;
+    let n = ordered(vec![
+        ParamSource::File {
+            content: A_IS_2.to_string(),
+        },
+        ParamSource::File {
+            content: later.to_string(),
+        },
+    ]);
+    let out = n.resolved_params("/ctrl/planner");
+    assert_eq!(out.get("a"), Some(&ParamValue::Int(3)), "{out:?}");
 }
