@@ -101,6 +101,33 @@ pub struct Meta {
     pub record: Option<InputHash>,
 }
 
+/// Render an input path for [`InputHash::path`], relative to `base` when the
+/// path lies under it.
+///
+/// These were `canonicalize`d absolute paths, baked into a COMMITTED artifact.
+/// That is not merely untidy — consumers read them back (nano-ros's
+/// `nros::main!` looks for the `.toml` input to find the system.toml the model
+/// was resolved against), and an absolute path from another machine fails its
+/// existence check and silently falls back to a fixed filename, reintroducing
+/// the per-target leak that recording the input was meant to prevent
+/// (nano-ros issue 0293).
+///
+/// Relative to the bringup package root the model is portable, and the
+/// consumer resolves it against its own root. An input OUTSIDE that root (an
+/// include from a sibling package) keeps its absolute path: no relative form
+/// is meaningful across packages, and a `../..` chain would be worse than
+/// useless in an install space.
+pub fn input_path_string(path: &std::path::Path, base: Option<&std::path::Path>) -> String {
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if let Some(base) = base {
+        let base = std::fs::canonicalize(base).unwrap_or_else(|_| base.to_path_buf());
+        if let Ok(rel) = canon.strip_prefix(&base) {
+            return rel.display().to_string();
+        }
+    }
+    canon.display().to_string()
+}
+
 /// One input file's content hash.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InputHash {
@@ -1042,6 +1069,47 @@ pub use ros_launch_manifest_sched::types::{TierDef, TierPlatformSpec};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// nano-ros issue 0293 — `meta.inputs` paths must be portable.
+    ///
+    /// They used to be canonicalised into a COMMITTED artifact, so a model was
+    /// only correct on the machine that produced it: everywhere else the
+    /// consumer's existence check failed and it silently fell back to a fixed
+    /// filename.
+    #[test]
+    fn input_paths_are_recorded_relative_to_the_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bringup = tmp.path().join("src").join("demo_bringup");
+        std::fs::create_dir_all(bringup.join("launch")).unwrap();
+        let launch = bringup.join("launch").join("system.launch.xml");
+        std::fs::write(&launch, "<launch/>").unwrap();
+        let sys = bringup.join("system.toml");
+        std::fs::write(&sys, "[system]\n").unwrap();
+
+        assert_eq!(
+            input_path_string(&launch, Some(&bringup)),
+            "launch/system.launch.xml"
+        );
+        assert_eq!(input_path_string(&sys, Some(&bringup)), "system.toml");
+
+        // No base -> absolute, the pre-0293 behaviour, kept for callers that
+        // have no meaningful root.
+        assert!(
+            std::path::Path::new(&input_path_string(&launch, None)).is_absolute(),
+            "without a base the path stays absolute"
+        );
+
+        // Outside the root (an include from a sibling package) has no useful
+        // relative form, so it stays absolute rather than growing a `../..`
+        // chain that means nothing in an install space.
+        let elsewhere = tmp.path().join("other_pkg").join("extra.launch.xml");
+        std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+        std::fs::write(&elsewhere, "<launch/>").unwrap();
+        assert!(
+            std::path::Path::new(&input_path_string(&elsewhere, Some(&bringup))).is_absolute(),
+            "an input outside the base stays absolute"
+        );
+    }
 
     #[test]
     fn target_string_forms() {

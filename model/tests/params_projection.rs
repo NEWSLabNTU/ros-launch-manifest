@@ -236,10 +236,7 @@ fn a_partial_wildcard_sits_between_the_global_one_and_a_literal() {
     assert_eq!(out.get("rank"), Some(&ParamValue::Int(3)), "{out:?}");
 
     // Drop the literal section: the partial wildcard must still beat `/**`.
-    let no_literal = yaml.replace(
-        "/ctrl/planner:\n  ros__parameters:\n    rank: 3\n",
-        "",
-    );
+    let no_literal = yaml.replace("/ctrl/planner:\n  ros__parameters:\n    rank: 3\n", "");
     let n = node_with(vec![no_literal], &[]);
     let out = n.resolved_params("/ctrl/planner");
     assert_eq!(out.get("rank"), Some(&ParamValue::Int(2)), "{out:?}");
