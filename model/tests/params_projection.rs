@@ -65,3 +65,37 @@ fn unparsable_file_is_skipped_not_fatal() {
     let n = node_with(vec!["{{{ not yaml".to_string()], &[]);
     assert!(n.resolved_params("/x").is_empty());
 }
+
+#[test]
+fn rcl_style_wildcard_sections_match() {
+    // Partial wildcards are what real Autoware configs use; rcl's
+    // `rcl_yaml_param_parser` accepts `**` (any depth) and `*` (one segment).
+    let yaml = r#"
+/sensing/**:
+  ros__parameters:
+    from_subtree: 1
+/*/planner:
+  ros__parameters:
+    from_single_seg: 2
+/other/**:
+  ros__parameters:
+    must_not_apply: 3
+"#;
+    let n = node_with(vec![yaml.to_string()], &[]);
+
+    let deep = n.resolved_params("/sensing/lidar/driver");
+    assert_eq!(deep.get("from_subtree"), Some(&ParamValue::Int(1)));
+    assert!(deep.get("must_not_apply").is_none(), "{deep:?}");
+
+    let one = n.resolved_params("/ctrl/planner");
+    assert_eq!(one.get("from_single_seg"), Some(&ParamValue::Int(2)));
+    assert!(one.get("from_subtree").is_none(), "{one:?}");
+
+    // `**` also matches zero segments: /sensing itself.
+    let zero = n.resolved_params("/sensing");
+    assert_eq!(zero.get("from_subtree"), Some(&ParamValue::Int(1)));
+
+    // A single-segment wildcard must NOT span two segments.
+    let too_deep = n.resolved_params("/a/b/planner");
+    assert!(too_deep.get("from_single_seg").is_none(), "{too_deep:?}");
+}

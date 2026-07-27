@@ -414,12 +414,7 @@ impl NodeInstance {
             };
             for (key, body) in sections {
                 let Some(k) = key.as_str() else { continue };
-                let k_trim = k.trim_start_matches('/');
-                let matches = k == "/**"
-                    || k == fqn
-                    || k_trim == fqn.trim_start_matches('/')
-                    || k_trim == bare;
-                if !matches {
+                if !node_key_matches(k, fqn, bare) {
                     continue;
                 }
                 let Some(params) = body.get("ros__parameters") else {
@@ -433,6 +428,43 @@ impl NodeInstance {
             out.insert(k.clone(), v.clone());
         }
         out
+    }
+}
+
+/// Does a param-file node key select this node?
+///
+/// Mirrors `rcl_yaml_param_parser`'s matching so a bake-time projection sees
+/// the same sections a spawned node would: an exact fully-qualified name, or a
+/// pattern using `**` (matches any number of namespace segments, including
+/// none) and `*` (exactly one segment) — e.g. `/**`, `/sensing/**`,
+/// `/*/planner`, `/foo/*/bar`. A bare node name (no leading `/`) is also
+/// accepted as the convenience form launch files commonly use for
+/// root-namespace nodes.
+fn node_key_matches(key: &str, fqn: &str, bare: &str) -> bool {
+    if key == fqn {
+        return true;
+    }
+    let segs: Vec<&str> = key.trim_start_matches('/').split('/').collect();
+    // Bare-name convenience: a single literal segment naming the node.
+    if segs.len() == 1 && !segs[0].contains('*') {
+        return segs[0] == bare;
+    }
+    let target: Vec<&str> = fqn.trim_start_matches('/').split('/').collect();
+    glob_match(&segs, &target)
+}
+
+/// Segment-wise glob: `**` consumes any number of segments, `*` exactly one.
+fn glob_match(pat: &[&str], target: &[&str]) -> bool {
+    match pat.split_first() {
+        None => target.is_empty(),
+        Some((&"**", rest)) => {
+            // `**` may consume 0..=target.len() segments.
+            (0..=target.len()).any(|skip| glob_match(rest, &target[skip..]))
+        }
+        Some((&head, rest)) => match target.split_first() {
+            Some((&t, t_rest)) if head == "*" || head == t => glob_match(rest, t_rest),
+            _ => false,
+        },
     }
 }
 
