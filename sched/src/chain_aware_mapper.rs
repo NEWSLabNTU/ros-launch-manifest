@@ -815,16 +815,24 @@ mod tests {
         // above earlier; drain-toward-sink within a segment).
         assert_eq!(ranked.items.first().unwrap().node, "/gate");
         // Segment membership rides on `fine_group` for the RTOS realizer.
-        assert!(ranked.items.iter().any(|it| it.node == "/follower"
-            && it.fine_group == ranked.items[0].fine_group));
+        assert!(
+            ranked
+                .items
+                .iter()
+                .any(|it| it.node == "/follower" && it.fine_group == ranked.items[0].fine_group)
+        );
 
         // Parity: realize_posix(core(input)) == the old combined path.
         let facts = posix_facts(5, 45);
         let (split_plan, split_diag) = realize_posix(&ranked, &input, &facts).expect("realize");
-        let (combined_plan, combined_diag) =
-            ChainAwareMapper.map_with_diagnostics(&input, &facts).expect("map");
+        let (combined_plan, combined_diag) = ChainAwareMapper
+            .map_with_diagnostics(&input, &facts)
+            .expect("map");
         assert_eq!(split_plan, combined_plan, "split plan must match combined");
-        assert_eq!(split_diag, combined_diag, "split diagnostics must match combined");
+        assert_eq!(
+            split_diag, combined_diag,
+            "split diagnostics must match combined"
+        );
     }
 
     #[test]

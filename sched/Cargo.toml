@@ -1,7 +1,10 @@
 [package]
 name = "ros-launch-manifest-sched"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+description = "Portable scheduling spec and chain-aware mapping for launch-based systems, shared by Linux and RTOS realizers"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

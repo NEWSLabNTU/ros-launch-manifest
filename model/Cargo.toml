@@ -1,8 +1,10 @@
 [package]
 name = "ros-launch-manifest-model"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "SystemModel — the resolved, checked system artifact shared by play_launch (Linux runtime) and nano-ros (embedded build)"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 ros-launch-manifest-sched = { path = "../sched" }

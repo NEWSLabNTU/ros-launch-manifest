@@ -1,7 +1,10 @@
 [package]
 name = "ros-launch-manifest-types"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+description = "Launch-manifest format: typed AST, YAML parser with spans, conditions and substitutions"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 yaml-rust2 = "0.9"
