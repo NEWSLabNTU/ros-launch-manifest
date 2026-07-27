@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{Autostart, Bridge, Deploy, Execution, ExtraValue, Target, Transport};
 
@@ -68,40 +68,52 @@ pub struct ComponentBlock {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct SystemDefaults {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rmw: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain_id: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locator: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// One `[deploy.<name>]` block.
+///
+/// **This is the single definition of the `system.toml` deploy schema**
+/// (nano-ros issue 0293). It used to be mirrored by nano-ros's own
+/// `DeployTarget`, and the two drifted: this struct lacked `launch`, so serde
+/// silently dropped it and launch-scoped blocks were counted against every
+/// launch file. nano-ros re-exports this type rather than redeclaring it.
+///
+/// `deny_unknown_fields` makes the next divergence a loud parse error instead
+/// of a silently ignored key. Safe to add: nano-ros's mirror already denied,
+/// so any `system.toml` in use already satisfies this field set.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeployBlock {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub framework: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rmw: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain_id: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locator: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optimize: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
     /// R1-P1 placement — node FQNs deployed to this target.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<String>,
     /// Launch file this block applies to, relative to the bringup pkg
     /// (`multihost.launch.xml`). `None` means "every launch file".
@@ -111,7 +123,7 @@ pub struct DeployBlock {
     /// serde silently dropped it. Placement then counted launch-scoped blocks
     /// against launch files they were never meant to govern — see
     /// [`Self::applies_to_launch`] and nano-ros issue 0291.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<String>,
 }
 
@@ -134,7 +146,7 @@ impl DeployBlock {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct TransportBlock {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(default)]
     pub id: Option<String>,
@@ -154,9 +166,9 @@ pub struct TransportBlock {
     pub device: Option<String>,
     #[serde(default)]
     pub baudrate: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rmw: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locator: Option<String>,
     #[serde(default)]
     pub domain: Option<u32>,
@@ -508,6 +520,42 @@ priority = 10
     /// to `multihost.launch.xml`. Resolving `system.launch.xml` used to fail
     /// with "node '/listener' is not placed" because `launch` was not a field
     /// on `DeployBlock` at all — serde dropped it and all three blocks counted.
+    /// nano-ros issue 0293 (SSoT half) — this struct is the ONE definition of
+    /// the deploy schema, and `deny_unknown_fields` makes the next divergence
+    /// loud. A key no field claims is now a parse error, not a silent drop —
+    /// silently dropping `launch` is exactly how the original bug happened.
+    #[test]
+    fn deploy_block_rejects_unknown_keys_and_round_trips() {
+        let toml = r#"
+[system]
+name = "demo"
+
+[deploy.robot1]
+kind = "self"
+target = "x86_64-unknown-linux-gnu"
+launch = "multihost.launch.xml"
+nodes = ["/talker"]
+"#;
+        let cfg = parse_system_config(toml).expect("parses");
+        let b = &cfg.deploy["robot1"];
+        assert_eq!(b.launch.as_deref(), Some("multihost.launch.xml"));
+        assert_eq!(b.nodes, vec!["/talker".to_string()]);
+
+        // Serialize is required because nano-ros WRITES system.toml through
+        // this same type; absent options must not appear.
+        let out = toml::to_string(b).expect("serializes");
+        assert!(out.contains("launch = "), "{out}");
+        assert!(
+            !out.contains("board"),
+            "absent options must be skipped:\n{out}"
+        );
+
+        // A key no field claims fails loudly.
+        let bad = toml.replace("nodes", "nodez");
+        let err = parse_system_config(&bad).expect_err("unknown key must be rejected");
+        assert!(err.contains("nodez"), "error should name the key: {err}");
+    }
+
     #[test]
     fn launch_scoped_deploy_blocks_do_not_govern_other_launch_files() {
         let toml = r#"
