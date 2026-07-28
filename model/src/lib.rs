@@ -94,11 +94,11 @@ pub struct Meta {
     /// Checker warnings embedded at resolve time (Errors refuse emission).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<String>,
-    /// The spawn-info companion (record.json) this model is bound to —
-    /// the runtime refuses a record whose hash differs (Phase 43.1).
-    /// `None` when the model was resolved to stdout (nothing to bind).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub record: Option<InputHash>,
+    // nano-ros issue 0320 — the `record` field (a bound `record.json`
+    // companion) is retired: the producer only ever wrote `None`, the files it
+    // named were never committed, and its sole reader was a round-trip test.
+    // Old models still carry `record:` on disk; without `deny_unknown_fields`
+    // it deserializes and is dropped, so removal is backward-compatible on read.
 }
 
 /// Render an input path for [`InputHash::path`], relative to `base` when the
