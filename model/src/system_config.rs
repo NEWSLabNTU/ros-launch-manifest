@@ -296,12 +296,44 @@ impl SystemConfigToml {
             return Ok(diags);
         }
 
-        // Placement resolution — over the blocks that GOVERN this launch file.
-        let in_scope: Vec<(&String, &DeployBlock)> = self
+        // Placement resolution — over the blocks that GOVERN this launch file
+        // AND that actually PARTITION nodes.
+        //
+        // `[deploy.*]` carries two different meanings, and only one of them is a
+        // placement:
+        //
+        //   * `kind = "self"`  — a machine. Multiple of these PARTITION the
+        //     nodes between them, which is what `machine="robot1"` selects.
+        //   * `kind = "embedded"` — a BOARD BUILD of the whole system. Every
+        //     such block runs every node; they are alternatives, not shares.
+        //
+        // Counting embedded blocks as placement domains asks "which of these
+        // six machines runs /talker" about six builds of one image, and the
+        // answer is "all of them". `ws-realtime-c` states this plainly: native
+        // + zephyr + nuttx, two nodes, no `nodes = [..]` anywhere — and it
+        // could not re-resolve at all, failing `node '/ctrl_node' is not
+        // placed`. It only looked healthy because its committed model predates
+        // this resolver and was never regenerated (nano-ros issue 0320).
+        //
+        // Same class as issue 0291 immediately above: placement counting blocks
+        // it was never meant to govern. That one was a dropped `launch` field;
+        // this one is a conflated axis.
+        let partitioning: Vec<(&String, &DeployBlock)> = self
             .deploy
             .iter()
             .filter(|(_, b)| b.applies_to_launch(launch_file))
+            .filter(|(_, b)| b.kind.as_deref() != Some("embedded"))
             .collect();
+        // An embedded-only bringup still has a target to name, so fall back to
+        // the governing set rather than reporting "no deploy at all".
+        let in_scope: Vec<(&String, &DeployBlock)> = if partitioning.is_empty() {
+            self.deploy
+                .iter()
+                .filter(|(_, b)| b.applies_to_launch(launch_file))
+                .collect()
+        } else {
+            partitioning
+        };
         if in_scope.is_empty() {
             return Ok(diags);
         }
