@@ -303,7 +303,7 @@ impl SystemConfigToml {
         // placement:
         //
         //   * `kind = "self"`  — a machine. Multiple of these PARTITION the
-        //     nodes between them, which is what `machine="robot1"` selects.
+        //     nodes between them via their `nodes = [..]` lists.
         //   * `kind = "embedded"` — a BOARD BUILD of the whole system. Every
         //     such block runs every node; they are alternatives, not shares.
         //
@@ -377,27 +377,20 @@ impl SystemConfigToml {
                 }
                 (k.as_str(), b)
             } else {
-                // Placement sources, in order:
-                //   1. an explicit `nodes = [..]` entry;
-                //   2. the node's own `<node machine="…">`, which `model_builder`
-                //      has already recorded as `execution.deploy[fqn].host`.
+                // The one placement source: an explicit `nodes = [..]` entry.
                 //
-                // (2) matters because `machine=` IS a placement — the multi-host
-                // example says `machine="robot1"` and expects `[deploy.robot1]`.
-                // Demanding a duplicate `nodes = [..]` for something the launch
-                // file already states is redundant, and made that example
-                // unresolvable (nano-ros issue 0291).
-                let by_machine = execution
-                    .deploy
-                    .get(*fqn)
-                    .and_then(|d| d.host.as_deref())
-                    .and_then(|h| in_scope.iter().find(|(k, _)| k.as_str() == h))
-                    .map(|(k, b)| (k.as_str(), *b));
+                // There used to be a second — the node's `<node machine="…">`,
+                // recorded by `model_builder` as `execution.deploy[fqn].host`
+                // (nano-ros issue 0291) — but `machine=` is ROS 1 roslaunch
+                // syntax that ROS 2's frontend rejects, so the capture and the
+                // `Deploy.host` field are gone (nano-ros issue 0364). Per-host
+                // slicing now happens at RESOLVE time via an ordinary launch
+                // argument + `if=` conditions; each per-host model then
+                // contains only that host's nodes.
                 match in_scope
                     .iter()
                     .find(|(_, b)| b.nodes.iter().any(|n| n == fqn))
                     .map(|(k, b)| (k.as_str(), *b))
-                    .or(by_machine)
                 {
                     Some((k, b)) => (k, b),
                     None => {
@@ -444,15 +437,10 @@ impl SystemConfigToml {
                 "deploy_name".to_string(),
                 ExtraValue::Str(dname.to_string()),
             );
-            // Preserve a launch-derived host (`<node machine="…">`) — this
-            // insert replaces the whole entry, and blanking it here dropped
-            // the very placement that selected this block (issue 0291).
-            let existing_host = execution.deploy.get(*fqn).and_then(|d| d.host.clone());
             execution.deploy.insert(
                 (*fqn).to_string(),
                 Deploy {
                     target,
-                    host: existing_host,
                     // RFC-0004 ladder: deploy override > system default.
                     domain: clamp_domain(block.domain_id, &mut diags, dname)
                         .or_else(|| clamp_domain(self.system.domain_id, &mut diags, "[system]")),
@@ -741,14 +729,12 @@ board = "nuttx-qemu-arm"
         );
     }
 
-    /// nano-ros issue 0291 — `<node machine="robot1">` IS a placement.
-    ///
-    /// `model_builder` records it as `execution.deploy[fqn].host` before this
-    /// runs, so demanding a duplicate `nodes = [..]` for the same fact made
-    /// the multi-host example unresolvable. A host naming an in-scope deploy
-    /// block places the node.
+    /// nano-ros issue 0364 — with `machine=` gone (ROS 1 roslaunch syntax;
+    /// its `Deploy.host` fallback of issue 0291 went with it), `nodes = [..]`
+    /// is the ONLY placement source when multiple self blocks are in scope.
+    /// A node in no list fails loud instead of riding a launch-derived host.
     #[test]
-    fn node_machine_attribute_places_without_a_nodes_list() {
+    fn nodes_lists_are_the_only_placement_with_multiple_self_blocks() {
         let toml = r#"
 [system]
 name = "demo"
@@ -759,34 +745,37 @@ kind = "self"
 [deploy.robot1]
 kind = "self"
 launch = "multihost.launch.xml"
+nodes = ["/talker"]
 
 [deploy.robot2]
 kind = "self"
 launch = "multihost.launch.xml"
+nodes = ["/listener"]
 "#;
         let cfg = parse_system_config(toml).expect("parses");
 
-        // What `model_builder` leaves behind for `<node machine="…">`.
         let mut e = Execution::default();
-        e.deploy.entry("/talker".to_string()).or_default().host = Some("robot1".into());
-        e.deploy.entry("/listener".to_string()).or_default().host = Some("robot2".into());
-
         cfg.apply_to_launch(
             &mut e,
             &["/talker", "/listener"],
             Some("multihost.launch.xml"),
         )
-        .expect("machine= places both nodes");
+        .expect("nodes lists place both nodes");
 
-        assert_eq!(e.deploy["/talker"].host.as_deref(), Some("robot1"));
-        assert_eq!(e.deploy["/listener"].host.as_deref(), Some("robot2"));
+        assert_eq!(
+            e.deploy["/talker"].extra.get("deploy_name"),
+            Some(&ExtraValue::Str("robot1".into()))
+        );
+        assert_eq!(
+            e.deploy["/listener"].extra.get("deploy_name"),
+            Some(&ExtraValue::Str("robot2".into()))
+        );
 
-        // A host naming no deploy block is still unplaced -> fail loud.
-        let mut e2 = Execution::default();
-        e2.deploy.entry("/ghost".to_string()).or_default().host = Some("nowhere".into());
+        // A node in no list is unplaced -> fail loud (pre-0291 behaviour,
+        // restored because the machine=-derived fact no longer exists).
         let err = cfg
-            .apply_to_launch(&mut e2, &["/ghost"], Some("multihost.launch.xml"))
-            .expect_err("an unknown host is not a placement");
+            .apply_to_launch(&mut e, &["/ghost"], Some("multihost.launch.xml"))
+            .expect_err("a node in no nodes list is not placed");
         assert!(err.contains("is not placed"), "{err}");
     }
 
