@@ -344,7 +344,13 @@ deadline_us = 40000        # optional per-platform tighten
 - **`TierPlatformSpec`** per target sub-table (`posix`, `freertos`,
   `zephyr`, `threadx`, `nuttx`): `priority: i64` (i64 admits Zephyr
   negative coop priorities), `stack_bytes`, `core`, `sched_class`,
-  `preempt_threshold`, `deadline_us` (overrides the generic head).
+  `preempt_threshold`, and per-platform overrides of the generic head:
+  `deadline_us`, `budget_us`/`period_us` (sporadic budget +
+  replenishment period, both required for a sporadic policy — lets one
+  platform's kernel sporadic server engage, e.g. NuttX
+  `SCHED_SPORADIC`, without affecting other targets), and
+  `time_slice_us` (round-robin slice among same-priority tiers;
+  ThreadX-only today, ignored elsewhere).
 - **`resolve(tiers, assigns, nodes, target) -> ResolvedTierTable`**
   (`resolve.rs`): explicit `nodes` selectors win over `scope` selectors
   (silently); a same-level double-claim for two *different* tiers →
