@@ -324,15 +324,31 @@ impl SystemConfigToml {
             .filter(|(_, b)| b.applies_to_launch(launch_file))
             .filter(|(_, b)| b.kind.as_deref() != Some("embedded"))
             .collect();
-        // An embedded-only bringup still has a target to name, so fall back to
-        // the governing set rather than reporting "no deploy at all".
-        let in_scope: Vec<(&String, &DeployBlock)> = if partitioning.is_empty() {
-            self.deploy
-                .iter()
-                .filter(|(_, b)| b.applies_to_launch(launch_file))
-                .collect()
-        } else {
+        // An embedded-only bringup still has a target worth naming — but only
+        // when there is exactly ONE of them.
+        //
+        // With a single embedded block, falling back gives every node that
+        // target, which is unambiguous and useful. With SEVERAL, the fallback
+        // asks which of N whole-system board builds runs a given node, and the
+        // answer is "all of them" — a node->target map cannot say that. The
+        // first version of this fell back unconditionally and so turned two
+        // embedded blocks into `node '/ctrl_node' is not placed`, which is the
+        // very error this filter exists to prevent (nano-ros ws-realtime-c-mps2
+        // and ws-realtime-cpp-mps2 both declare freertos + mps2-an385-freertos).
+        //
+        // So: emit NO placement instead. Consumers already treat a board the
+        // map never mentions as unconstrained, which is exactly right here.
+        let governing: Vec<(&String, &DeployBlock)> = self
+            .deploy
+            .iter()
+            .filter(|(_, b)| b.applies_to_launch(launch_file))
+            .collect();
+        let in_scope: Vec<(&String, &DeployBlock)> = if !partitioning.is_empty() {
             partitioning
+        } else if governing.len() == 1 {
+            governing
+        } else {
+            return Ok(diags);
         };
         if in_scope.is_empty() {
             return Ok(diags);
