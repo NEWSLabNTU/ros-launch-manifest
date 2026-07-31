@@ -337,6 +337,21 @@ impl SystemConfigToml {
         if in_scope.is_empty() {
             return Ok(diags);
         }
+        // nano-ros issue 0356 — a system that ALSO declares `kind = "embedded"`
+        // board builds is multi-board: the same nodes run on the self machine(s)
+        // AND on every embedded board. The model deploy is single-target per
+        // node, so pinning a placed node to its self-block's concrete target
+        // (e.g. `linux`) makes `nros codegen entry --board <embedded>` drop it
+        // (`keep()` only keeps a `linux` node for the `native`/`posix` boards) —
+        // the model placed talker/listener on native, and the freertos entry
+        // found nothing. Leave such nodes board-AGNOSTIC (`target = None`): the
+        // codegen `keep()` includes a `None` node on EVERY board, and each
+        // entry's own `--board` supplies the concrete target. Single-target
+        // (no embedded) workspaces keep their exact placement.
+        let multi_board = self
+            .deploy
+            .values()
+            .any(|b| b.kind.as_deref() == Some("embedded"));
         let single = (in_scope.len() == 1).then(|| in_scope[0].0);
         for fqn in node_fqns {
             let (dname, block) = if let Some(k) = single {
@@ -377,12 +392,15 @@ impl SystemConfigToml {
                     }
                 }
             };
-            let target = if let Some(board) = &block.board {
-                Target::Mcu {
+            let target = if multi_board {
+                // Board-agnostic (issue 0356): the entry's `--board` decides.
+                None
+            } else if let Some(board) = &block.board {
+                Some(Target::Mcu {
                     board: board.clone(),
-                }
+                })
             } else {
-                Target::Linux
+                Some(Target::Linux)
             };
             let mut extra = BTreeMap::new();
             if let Some(v) = &block.kind {
@@ -417,7 +435,7 @@ impl SystemConfigToml {
             execution.deploy.insert(
                 (*fqn).to_string(),
                 Deploy {
-                    target: Some(target),
+                    target,
                     host: existing_host,
                     // RFC-0004 ladder: deploy override > system default.
                     domain: clamp_domain(block.domain_id, &mut diags, dname)
@@ -647,6 +665,63 @@ launch = "multihost.launch.xml"
         assert!(
             cfg.apply_to(&mut e4, &["/talker"]).is_err(),
             "an unknown launch file must not silently narrow the scope"
+        );
+    }
+
+    /// nano-ros issue 0356 — a system that declares BOTH self machines and
+    /// `kind = "embedded"` board builds is multi-board: the same nodes run on
+    /// native AND on every embedded board. Because the model deploy is
+    /// single-target per node, such placements must be board-AGNOSTIC
+    /// (`target = None`), so `nros codegen entry --board <b>` (whose `keep()`
+    /// admits a `None` node on every board) includes them for native and each
+    /// embedded board alike. Pinning `native`'s `linux` target here made the
+    /// freertos/nuttx/threadx entries codegen-fail "no nodes on board".
+    #[test]
+    fn embedded_blocks_make_placement_board_agnostic() {
+        let toml = r#"
+[system]
+name = "demo"
+
+[deploy.native]
+kind = "self"
+target = "x86_64-unknown-linux-gnu"
+
+[deploy.freertos]
+kind = "embedded"
+board = "mps2-an385-freertos"
+
+[deploy.nuttx]
+kind = "embedded"
+board = "nuttx-qemu-arm"
+"#;
+        let cfg = parse_system_config(toml).expect("parses");
+        let mut e = Execution::default();
+        cfg.apply_to_launch(&mut e, &["/talker", "/listener"], Some("system.launch.xml"))
+            .expect("embedded blocks do not partition; native places implicitly");
+        // Placed, but board-agnostic — the entry's `--board` decides.
+        for n in ["/talker", "/listener"] {
+            let d = e.deploy.get(n).unwrap_or_else(|| panic!("{n} placed"));
+            assert!(
+                d.target.is_none(),
+                "{n} must be board-agnostic (target=None) in a multi-board system, got {:?}",
+                d.target
+            );
+        }
+
+        // Control: WITHOUT any embedded block, the same native placement keeps
+        // its concrete Linux target (single-board behaviour is unchanged).
+        let single = toml
+            .split("[deploy.freertos]")
+            .next()
+            .expect("prefix before embedded blocks");
+        let cfg1 = parse_system_config(single).expect("parses");
+        let mut e1 = Execution::default();
+        cfg1.apply_to_launch(&mut e1, &["/talker"], Some("system.launch.xml"))
+            .expect("single self block places");
+        assert!(
+            matches!(e1.deploy["/talker"].target, Some(Target::Linux)),
+            "single-board native placement must keep its Linux target, got {:?}",
+            e1.deploy["/talker"].target
         );
     }
 
