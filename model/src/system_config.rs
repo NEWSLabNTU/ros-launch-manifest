@@ -18,7 +18,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Autostart, Bridge, Deploy, Execution, ExtraValue, Target, Transport};
+use crate::{
+    Autostart, Bridge, Deploy, Execution, ExtraValue, NodeInstance, ParamSource, ParamValue,
+    Target, Transport,
+};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct SystemConfigToml {
@@ -79,6 +82,23 @@ pub struct ComponentBlock {
     /// `group_tiers = { <group> = <tier> }` — RFC-0047 group→tier binding.
     #[serde(default)]
     pub group_tiers: BTreeMap<String, String>,
+    /// `params = { <name> = <value> }` — deployment-time parameter values for
+    /// this component's node, equivalent to an inline `<param>` in the launch
+    /// file.
+    ///
+    /// Some parameters are a property of the DEPLOYMENT rather than of the
+    /// launch description — a `qos_overrides.…` entry chosen per system is the
+    /// motivating case (nano-ros `ws-qos-rust`). Before this existed the only
+    /// way to express one was to type it into the resolved model by hand, so
+    /// re-resolving silently dropped it: the model was both the artifact and
+    /// the only record of the intent.
+    #[serde(default)]
+    pub params: BTreeMap<String, toml::Value>,
+    /// `params_files = ["<yaml content>", …]` — parameter FILE contents for
+    /// this component's node, same shape as `NodeInstance::params_files` and
+    /// the `<param from=…>` launch form. Applied in order, before `params`.
+    #[serde(default)]
+    pub params_files: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -223,6 +243,73 @@ impl SystemConfigToml {
     /// FQNs. Returns human-readable diagnostics (unknown placement nodes,
     /// clamped domains); ambiguity (multiple deploy blocks, none listing a
     /// node) is an `Err` — fail-loud, never silent partial placement.
+    /// Project `[[component]] params` / `params_files` onto the STRUCTURE
+    /// layer, the way `[lifecycle] autostart` is projected by the resolver.
+    ///
+    /// `apply_to` only reaches `Execution`; parameters are a per-node property
+    /// and live in `structure.nodes`, so this is a separate entry point rather
+    /// than a widening of that signature.
+    ///
+    /// Components match nodes by BARE NAME, the same rule `group_tiers` uses,
+    /// and an unmatched component is a diagnostic rather than an error — a
+    /// conditional node may legitimately be absent from this variant.
+    ///
+    /// Precedence follows ROS and the launch path: `params_files` apply in
+    /// order, then inline `params` win. Values already present on the node
+    /// (from the launch file) are NOT overwritten — the launch description is
+    /// the more specific statement.
+    pub fn apply_params_to_nodes(&self, nodes: &mut BTreeMap<String, NodeInstance>) -> Vec<String> {
+        let mut diags = Vec::new();
+        for c in &self.components {
+            let Some(name) = &c.name else { continue };
+            if c.params.is_empty() && c.params_files.is_empty() {
+                continue;
+            }
+            let fqn = nodes
+                .keys()
+                .find(|f| f.rsplit('/').next().unwrap_or(f) == name.as_str())
+                .cloned();
+            let Some(fqn) = fqn else {
+                diags.push(format!(
+                    "system config: [[component]] '{name}' declares params but has no \
+                     matching launch node (absent in this variant?)"
+                ));
+                continue;
+            };
+            let Some(inst) = nodes.get_mut(&fqn) else {
+                continue;
+            };
+            for content in &c.params_files {
+                if !inst.params_files.iter().any(|f| f == content) {
+                    inst.params_files.push(content.clone());
+                    inst.param_sources.push(ParamSource::File {
+                        content: content.clone(),
+                    });
+                }
+            }
+            for (k, v) in &c.params {
+                let Some(pv) = toml_to_param_value(v) else {
+                    diags.push(format!(
+                        "system config: [[component]] '{name}' param '{k}' has an \
+                         unsupported type; expected bool, integer, float, string or \
+                         string list"
+                    ));
+                    continue;
+                };
+                // The launch file is more specific — do not overwrite it.
+                if inst.params.contains_key(k) {
+                    continue;
+                }
+                inst.params.insert(k.clone(), pv.clone());
+                inst.param_sources.push(ParamSource::Inline {
+                    name: k.clone(),
+                    value: pv,
+                });
+            }
+        }
+        diags
+    }
+
     pub fn apply_to(
         &self,
         execution: &mut Execution,
@@ -838,6 +925,66 @@ nodes = ["/listener"]
     }
 
     #[test]
+    fn component_params_and_files_project_onto_the_node() {
+        let cfg = parse_system_config(
+            "[system]\nrmw = \"zenoh\"\n\
+             [[component]]\nname = \"talker\"\n\
+             params = { qos = \"best_effort\", rate = 10 }\n\
+             params_files = [\"talker:\\n  ros__parameters:\\n    x: 1\\n\"]\n\
+             [deploy.native]\nkind = \"self\"\n",
+        )
+        .expect("parses");
+        let mut nodes = BTreeMap::new();
+        nodes.insert("/talker".to_string(), NodeInstance::default());
+        let diags = cfg.apply_params_to_nodes(&mut nodes);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let n = &nodes["/talker"];
+        assert_eq!(
+            n.params.get("qos"),
+            Some(&ParamValue::Str("best_effort".into()))
+        );
+        assert_eq!(n.params.get("rate"), Some(&ParamValue::Int(10)));
+        assert_eq!(n.params_files.len(), 1);
+        // one File source + two Inline sources
+        assert_eq!(n.param_sources.len(), 3);
+    }
+
+    #[test]
+    fn launch_params_win_over_component_params() {
+        let cfg = parse_system_config(
+            "[system]\nrmw = \"zenoh\"\n\
+             [[component]]\nname = \"talker\"\nparams = { rate = 10 }\n\
+             [deploy.native]\nkind = \"self\"\n",
+        )
+        .expect("parses");
+        let mut inst = NodeInstance::default();
+        inst.params.insert("rate".into(), ParamValue::Int(99));
+        let mut nodes = BTreeMap::new();
+        nodes.insert("/talker".to_string(), inst);
+        cfg.apply_params_to_nodes(&mut nodes);
+        // The launch description is the more specific statement.
+        assert_eq!(
+            nodes["/talker"].params.get("rate"),
+            Some(&ParamValue::Int(99))
+        );
+    }
+
+    #[test]
+    fn unmatched_component_with_params_is_a_diagnostic_not_a_panic() {
+        let cfg = parse_system_config(
+            "[system]\nrmw = \"zenoh\"\n\
+             [[component]]\nname = \"ghost\"\nparams = { a = 1 }\n\
+             [deploy.native]\nkind = \"self\"\n",
+        )
+        .expect("parses");
+        let mut nodes = BTreeMap::new();
+        nodes.insert("/talker".to_string(), NodeInstance::default());
+        let diags = cfg.apply_params_to_nodes(&mut nodes);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].contains("ghost"), "{diags:?}");
+    }
+
+    #[test]
     fn bare_param_services_section_projects_into_features() {
         let cfg = parse_system_config(
             "[system]\nrmw = \"zenoh\"\n[param_services]\n[deploy.native]\nkind = \"self\"\n",
@@ -870,4 +1017,24 @@ nodes = ["/listener"]
         assert_eq!(e.deploy.len(), 2);
         assert_eq!(e.deploy["/a"].target, Some(Target::Linux));
     }
+}
+
+/// TOML scalar → [`ParamValue`]. Returns `None` for shapes the model has no
+/// representation for (tables, mixed arrays), which the caller reports as a
+/// diagnostic rather than dropping silently.
+fn toml_to_param_value(v: &toml::Value) -> Option<ParamValue> {
+    Some(match v {
+        toml::Value::Boolean(b) => ParamValue::Bool(*b),
+        toml::Value::Integer(i) => ParamValue::Int(*i),
+        toml::Value::Float(f) => ParamValue::Float(*f),
+        toml::Value::String(s) => ParamValue::Str(s.clone()),
+        toml::Value::Array(a) => {
+            let mut out = Vec::with_capacity(a.len());
+            for e in a {
+                out.push(e.as_str()?.to_string());
+            }
+            ParamValue::StrList(out)
+        }
+        _ => return None,
+    })
 }
