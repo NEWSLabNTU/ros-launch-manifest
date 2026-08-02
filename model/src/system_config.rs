@@ -45,7 +45,22 @@ pub struct SystemConfigToml {
     /// group→tier bindings) keyed by the component/node `name`.
     #[serde(default, rename = "component")]
     pub components: Vec<ComponentBlock>,
+    /// nano-ros `[param_services]` — presence enables the runtime parameter
+    /// services capability. The historical nano-ros spelling is a bare table
+    /// (`[param_services]`), equivalent to `[system] features =
+    /// ["param_services"]`; before this field existed the section was
+    /// SILENTLY ignored (no top-level deny), so a resolver-produced model
+    /// lost the capability while the hand-migrated ones kept it — nano-ros
+    /// issue 0387's params arm.
+    #[serde(default)]
+    pub param_services: Option<ParamServicesBlock>,
 }
+
+/// The `[param_services]` capability block. Empty today; a table (not a
+/// bool) so future knobs (e.g. persistence) can land without a schema
+/// break.
+#[derive(Debug, Default, Deserialize)]
+pub struct ParamServicesBlock {}
 
 #[derive(Debug, Default, Deserialize)]
 pub struct LifecycleBlock {
@@ -233,6 +248,12 @@ impl SystemConfigToml {
         let mut diags = Vec::new();
 
         execution.features = self.system.features.clone();
+        // `[param_services]` is sugar for `features = ["param_services"]`.
+        if self.param_services.is_some()
+            && !execution.features.iter().any(|f| f == "param_services")
+        {
+            execution.features.push("param_services".to_string());
+        }
 
         // nano-ros `[tiers.*]` → the execution tier table (verbatim schema).
         execution.tiers = self.tiers.clone();
@@ -814,6 +835,28 @@ nodes = ["/listener"]
             .apply_to(&mut e, &["/ctrl/control_node", "/ghost"])
             .unwrap_err();
         assert!(err.contains("'/ghost' is not placed"), "{err}");
+    }
+
+    #[test]
+    fn bare_param_services_section_projects_into_features() {
+        let cfg = parse_system_config(
+            "[system]\nrmw = \"zenoh\"\n[param_services]\n[deploy.native]\nkind = \"self\"\n",
+        )
+        .expect("parses");
+        let mut e = Execution::default();
+        cfg.apply_to(&mut e, &["/a"]).expect("applies");
+        assert_eq!(e.features, vec!["param_services"]);
+    }
+
+    #[test]
+    fn param_services_section_does_not_duplicate_explicit_feature() {
+        let cfg = parse_system_config(
+            "[system]\nrmw = \"zenoh\"\nfeatures = [\"param_services\"]\n[param_services]\n[deploy.native]\nkind = \"self\"\n",
+        )
+        .expect("parses");
+        let mut e = Execution::default();
+        cfg.apply_to(&mut e, &["/a"]).expect("applies");
+        assert_eq!(e.features, vec!["param_services"]);
     }
 
     #[test]
