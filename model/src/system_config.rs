@@ -269,6 +269,23 @@ impl SystemConfigToml {
                 .keys()
                 .find(|f| f.rsplit('/').next().unwrap_or(f) == name.as_str())
                 .cloned();
+            // Fall back to the component's PACKAGE when the instance name does
+            // not match a launch node name. A consolidated workspace gives
+            // `[[component]] name` a workspace-unique spelling
+            // (`rust_params_param_talker`) while the launch file keeps the plain
+            // node name (`param_talker`), so bare-name matching silently finds
+            // nothing — every per-node projection then no-ops without saying so.
+            // Only an UNAMBIGUOUS pkg counts: two instances of one package are
+            // exactly the case the instance name exists to tell apart.
+            let fqn = fqn.or_else(|| {
+                let pkg = c.pkg.as_deref()?;
+                let mut it = nodes
+                    .iter()
+                    .filter(|(_, inst)| inst.pkg.as_deref() == Some(pkg))
+                    .map(|(f, _)| f.clone());
+                let first = it.next()?;
+                it.next().is_none().then_some(first)
+            });
             let Some(fqn) = fqn else {
                 diags.push(format!(
                     "system config: [[component]] '{name}' declares params but has no \
@@ -947,6 +964,49 @@ nodes = ["/listener"]
         assert_eq!(n.params_files.len(), 1);
         // one File source + two Inline sources
         assert_eq!(n.param_sources.len(), 3);
+    }
+
+    #[test]
+    fn component_matches_by_pkg_when_the_instance_name_differs() {
+        // A consolidated workspace renames `[[component]] name` for uniqueness
+        // while the launch file keeps the plain node name. Bare-name matching
+        // finds nothing; the pkg is what still ties them together.
+        let cfg = parse_system_config(
+            "[system]\nrmw = \"zenoh\"\n\
+             [[component]]\npkg = \"rust_param_talker_pkg\"\n\
+             name = \"rust_params_param_talker\"\nparams = { rate = 7 }\n\
+             [deploy.native]\nkind = \"self\"\n",
+        )
+        .expect("parses");
+        let mut inst = NodeInstance::default();
+        inst.pkg = Some("rust_param_talker_pkg".to_string());
+        let mut nodes = BTreeMap::new();
+        nodes.insert("/param_talker".to_string(), inst);
+        let diags = cfg.apply_params_to_nodes(&mut nodes);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(nodes["/param_talker"].params.get("rate"), Some(&ParamValue::Int(7)));
+    }
+
+    #[test]
+    fn an_ambiguous_pkg_does_not_match() {
+        // Two instances of one package are exactly what the instance name is
+        // for — guessing between them would be worse than the diagnostic.
+        let cfg = parse_system_config(
+            "[system]\nrmw = \"zenoh\"\n\
+             [[component]]\npkg = \"talker_pkg\"\nname = \"ghost\"\nparams = { a = 1 }\n\
+             [deploy.native]\nkind = \"self\"\n",
+        )
+        .expect("parses");
+        let mut nodes = BTreeMap::new();
+        for fqn in ["/talker_one", "/talker_two"] {
+            let mut i = NodeInstance::default();
+            i.pkg = Some("talker_pkg".to_string());
+            nodes.insert(fqn.to_string(), i);
+        }
+        let diags = cfg.apply_params_to_nodes(&mut nodes);
+        assert_eq!(diags.len(), 1, "expected the unmatched diagnostic: {diags:?}");
+        assert!(nodes["/talker_one"].params.is_empty());
+        assert!(nodes["/talker_two"].params.is_empty());
     }
 
     #[test]
