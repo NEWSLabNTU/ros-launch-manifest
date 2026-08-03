@@ -18,6 +18,7 @@
 //! All collections are `BTreeMap`/sorted so serialization is deterministic —
 //! the YAML form is hashed for provenance and caching.
 
+use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
 pub mod system_config;
@@ -159,8 +160,16 @@ pub struct Structure {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub scopes: BTreeMap<String, ScopeInfo>,
     /// Node FQN (`/ns/node_name`) → instance.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub nodes: BTreeMap<String, NodeInstance>,
+    ///
+    /// Issue 0382 — an ORDER-PRESERVING map, not a `BTreeMap`. Construct order
+    /// is semantic: components initialize (and `configure()`) in the order the
+    /// emitter walks this mapping, and the launch file is where the user
+    /// expresses it. A `BTreeMap` alphabetized that away at resolve time, so a
+    /// launch declaring `talker` before `listener` produced an entry that built
+    /// `listener` first. The resolver already inserts in launch-traversal
+    /// order; this keeps it.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub nodes: IndexMap<String, NodeInstance>,
     /// Topic FQN → wiring. Endpoint refs are `"<node FQN>/<endpoint>"`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<String, TopicWiring>,
@@ -1060,6 +1069,37 @@ impl<'de> Deserialize<'de> for Target {
 /// `deadline_us` override). One schema for the authoring form
 /// (`system.toml`), the model, and the `SchedMapper` pipeline.
 pub use ros_launch_manifest_sched::types::{TierDef, TierPlatformSpec};
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    /// Issue 0382 — `structure.nodes` keeps DECLARATION order through a
+    /// serialize/deserialize round trip. A `BTreeMap` alphabetized it away, so
+    /// a launch declaring `talker` before `listener` emitted an entry that
+    /// constructed `listener` first. Names chosen so alphabetical != insertion.
+    #[test]
+    fn nodes_keep_declaration_order_through_yaml() {
+        let mut st = Structure::default();
+        for fqn in ["/talker", "/listener", "/aaa_last"] {
+            st.nodes.insert(fqn.to_string(), NodeInstance::default());
+        }
+        let before: Vec<&str> = st.nodes.keys().map(String::as_str).collect();
+        assert_eq!(before, vec!["/talker", "/listener", "/aaa_last"]);
+
+        let yaml = serde_yaml_ng::to_string(&st).expect("serialize");
+        // The wire form must not be alphabetized either — the emitter reads it
+        // in file order.
+        let t = yaml.find("/talker").expect("talker in yaml");
+        let l = yaml.find("/listener").expect("listener in yaml");
+        let a = yaml.find("/aaa_last").expect("aaa_last in yaml");
+        assert!(t < l && l < a, "yaml lost declaration order:\n{yaml}");
+
+        let back: Structure = serde_yaml_ng::from_str(&yaml).expect("deserialize");
+        let after: Vec<&str> = back.nodes.keys().map(String::as_str).collect();
+        assert_eq!(after, before, "round trip lost declaration order");
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -198,6 +198,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -370,6 +372,7 @@ dependencies = [
 name = "ros-launch-manifest-model"
 version = "0.1.2"
 dependencies = [
+ "indexmap",
  "pretty_assertions",
  "ros-launch-manifest-sched",
  "serde",

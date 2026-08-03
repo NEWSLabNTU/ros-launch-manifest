@@ -14,6 +14,7 @@
 //! means "every node" (the common single-image case); multiple blocks
 //! require explicit lists (ambiguity is an error — fail-loud).
 
+use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -258,7 +259,7 @@ impl SystemConfigToml {
     /// order, then inline `params` win. Values already present on the node
     /// (from the launch file) are NOT overwritten — the launch description is
     /// the more specific statement.
-    pub fn apply_params_to_nodes(&self, nodes: &mut BTreeMap<String, NodeInstance>) -> Vec<String> {
+    pub fn apply_params_to_nodes(&self, nodes: &mut IndexMap<String, NodeInstance>) -> Vec<String> {
         let mut diags = Vec::new();
         for c in &self.components {
             let Some(name) = &c.name else { continue };
@@ -951,7 +952,7 @@ nodes = ["/listener"]
              [deploy.native]\nkind = \"self\"\n",
         )
         .expect("parses");
-        let mut nodes = BTreeMap::new();
+        let mut nodes = IndexMap::new();
         nodes.insert("/talker".to_string(), NodeInstance::default());
         let diags = cfg.apply_params_to_nodes(&mut nodes);
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -980,7 +981,7 @@ nodes = ["/listener"]
         .expect("parses");
         let mut inst = NodeInstance::default();
         inst.pkg = Some("rust_param_talker_pkg".to_string());
-        let mut nodes = BTreeMap::new();
+        let mut nodes = IndexMap::new();
         nodes.insert("/param_talker".to_string(), inst);
         let diags = cfg.apply_params_to_nodes(&mut nodes);
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -997,7 +998,7 @@ nodes = ["/listener"]
              [deploy.native]\nkind = \"self\"\n",
         )
         .expect("parses");
-        let mut nodes = BTreeMap::new();
+        let mut nodes = IndexMap::new();
         for fqn in ["/talker_one", "/talker_two"] {
             let mut i = NodeInstance::default();
             i.pkg = Some("talker_pkg".to_string());
@@ -1019,7 +1020,7 @@ nodes = ["/listener"]
         .expect("parses");
         let mut inst = NodeInstance::default();
         inst.params.insert("rate".into(), ParamValue::Int(99));
-        let mut nodes = BTreeMap::new();
+        let mut nodes = IndexMap::new();
         nodes.insert("/talker".to_string(), inst);
         cfg.apply_params_to_nodes(&mut nodes);
         // The launch description is the more specific statement.
@@ -1037,7 +1038,7 @@ nodes = ["/listener"]
              [deploy.native]\nkind = \"self\"\n",
         )
         .expect("parses");
-        let mut nodes = BTreeMap::new();
+        let mut nodes = IndexMap::new();
         nodes.insert("/talker".to_string(), NodeInstance::default());
         let diags = cfg.apply_params_to_nodes(&mut nodes);
         assert_eq!(diags.len(), 1);
