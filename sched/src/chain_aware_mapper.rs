@@ -104,24 +104,40 @@ struct ChainFeasibility {
     sampling_cost_ms: f64,
     controllable_ms: f64,
     feasible: bool,
+    /// `node/path` of every boundary whose WCET was ABSENT and therefore
+    /// counted as zero. A verdict computed with these is optimistic by an
+    /// unknown amount; the caller reports it rather than presenting a bare
+    /// `feasible` (nano-ros issue 0259).
+    boundaries_without_wcet: Vec<String>,
 }
 
 fn chain_feasibility(chain: &ResolvedChain) -> ChainFeasibility {
-    let sampling_cost_ms: f64 = chain
-        .elements
-        .iter()
-        .filter_map(|e| match e {
-            ChainElement::Boundary {
-                period_ms, exec_ms, ..
-            } => Some(period_ms + exec_ms.unwrap_or(0.0)),
-            ChainElement::Segment { .. } => None,
-        })
-        .sum();
+    // `exec_ms.unwrap_or(0.0)` is still how an absent WCET is COUNTED — there is
+    // nothing better to count — but the absence is now recorded instead of
+    // vanishing into the sum. Absent is not zero; a verdict that cannot tell
+    // them apart reports headroom nobody measured.
+    let mut boundaries_without_wcet = Vec::new();
+    let mut sampling_cost_ms = 0.0f64;
+    for e in &chain.elements {
+        if let ChainElement::Boundary {
+            node,
+            path,
+            period_ms,
+            exec_ms,
+        } = e
+        {
+            if exec_ms.is_none() {
+                boundaries_without_wcet.push(format!("{node}/{path}"));
+            }
+            sampling_cost_ms += period_ms + exec_ms.unwrap_or(0.0);
+        }
+    }
     let controllable_ms = chain.max_latency_ms - sampling_cost_ms;
     ChainFeasibility {
         sampling_cost_ms,
         controllable_ms,
         feasible: controllable_ms > 0.0,
+        boundaries_without_wcet,
     }
 }
 
@@ -393,6 +409,14 @@ pub fn chain_aware_rank(input: &MapperInput) -> RankedPlan {
     for chain in &input.chains {
         let feas = chain_feasibility(chain);
         if feas.feasible {
+            // Feasible ON THE EVIDENCE AVAILABLE. Say so when some of that
+            // evidence was missing, at the point the assumption is made.
+            if !feas.boundaries_without_wcet.is_empty() {
+                warnings.push(MapWarning::ChainFeasibleWithoutWcet {
+                    chain: chain.name.clone(),
+                    boundaries_without_wcet: feas.boundaries_without_wcet.clone(),
+                });
+            }
             candidates.push((chain, feas));
         } else {
             warnings.push(MapWarning::ChainInfeasible {
@@ -846,9 +870,37 @@ mod tests {
         // Feasibility: sampling_cost = 20 + 100 = 120ms; controllable = 30ms > 0
         // => feasible, no ChainInfeasible warning.
         assert!(
-            diag.warnings.is_empty(),
+            !diag
+                .warnings
+                .iter()
+                .any(|w| matches!(w, MapWarning::ChainInfeasible { .. })),
             "chain is feasible: {:?}",
             diag.warnings
+        );
+        // ...but feasible ON INCOMPLETE EVIDENCE. The design doc's worked
+        // example declares periods and deadlines, never WCETs, so both of its
+        // boundaries were counted as zero execution time. That is worth pinning
+        // rather than hiding: the canonical example is itself an instance of
+        // the optimism nano-ros issue 0259 describes, and the 30 ms of
+        // "controllable" slack above is an upper bound, not a measurement.
+        let assumed: Vec<_> = diag
+            .warnings
+            .iter()
+            .filter_map(|w| match w {
+                MapWarning::ChainFeasibleWithoutWcet {
+                    boundaries_without_wcet,
+                    ..
+                } => Some(boundaries_without_wcet.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            assumed,
+            vec![vec![
+                "/ekf/p_ekf".to_string(),
+                "/planning/p_planning".to_string()
+            ]],
+            "the worked example carries no WCETs; the verdict must say so"
         );
 
         // Pinned-exact per the design doc's worked example table.
@@ -970,6 +1022,95 @@ mod tests {
         assert!(
             shared_prio > lo_sink_prio,
             "/shared must keep its high-chain rank (max over paths), not its low-chain rank"
+        );
+    }
+
+    /// Helper twin of `boundary` that CARRIES a measured WCET.
+    fn boundary_with_wcet(node: &str, path: &str, period_ms: f64, exec_ms: f64) -> ChainElement {
+        ChainElement::Boundary {
+            node: node.to_string(),
+            path: path.to_string(),
+            period_ms,
+            exec_ms: Some(exec_ms),
+        }
+    }
+
+    /// nano-ros issue 0259 — a chain judged feasible while a boundary carries
+    /// NO WCET says so. The sum still counts the missing hop as zero (there is
+    /// nothing better to count), but "absent" and "zero" stop being the same
+    /// answer: the verdict is optimistic by an unknown amount and reports it.
+    #[test]
+    fn feasible_chain_reports_boundaries_counted_as_zero() {
+        let mapper = ChainAwareMapper;
+        // budget 100ms against one 20ms-period boundary: comfortably feasible
+        // ON THE EVIDENCE — but the boundary's execution time is unmeasured.
+        let chain = ResolvedChain {
+            name: "optimistic".to_string(),
+            criticality: Criticality::High,
+            max_latency_ms: 100.0,
+            semantics: ChainSemantics::Reaction,
+            elements: vec![boundary("/ekf", "p_ekf", 20.0)],
+        };
+        let input = MapperInput {
+            nodes: vec![node(
+                "/ekf",
+                Some(Criticality::High),
+                vec![timer_path("p_ekf", 50.0)],
+            )],
+            legacy: None,
+            chains: vec![chain],
+        };
+        let facts = posix_facts(10, 40);
+        let (_plan, diag) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+
+        let reported: Vec<_> = diag
+            .warnings
+            .iter()
+            .filter_map(|w| match w {
+                MapWarning::ChainFeasibleWithoutWcet {
+                    chain,
+                    boundaries_without_wcet,
+                } => Some((chain.clone(), boundaries_without_wcet.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            reported,
+            vec![("optimistic".to_string(), vec!["/ekf/p_ekf".to_string()])],
+            "a feasible verdict computed with an absent WCET must say which hop it assumed away"
+        );
+    }
+
+    /// The converse, so the warning cannot degrade into noise: once the WCET is
+    /// supplied, the verdict rests on measured evidence and stays silent.
+    #[test]
+    fn feasible_chain_with_measured_wcet_is_silent() {
+        let mapper = ChainAwareMapper;
+        let chain = ResolvedChain {
+            name: "measured".to_string(),
+            criticality: Criticality::High,
+            max_latency_ms: 100.0,
+            semantics: ChainSemantics::Reaction,
+            elements: vec![boundary_with_wcet("/ekf", "p_ekf", 20.0, 3.0)],
+        };
+        let input = MapperInput {
+            nodes: vec![node(
+                "/ekf",
+                Some(Criticality::High),
+                vec![timer_path("p_ekf", 50.0)],
+            )],
+            legacy: None,
+            chains: vec![chain],
+        };
+        let facts = posix_facts(10, 40);
+        let (_plan, diag) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+        assert!(
+            !diag
+                .warnings
+                .iter()
+                .any(|w| matches!(w, MapWarning::ChainFeasibleWithoutWcet { .. })),
+            "a WCET was supplied — nothing was assumed away: {:?}",
+            diag.warnings
         );
     }
 
