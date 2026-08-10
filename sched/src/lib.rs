@@ -44,7 +44,7 @@ pub use mapper::{
 pub use platform::{
     POSIX_RT_PRIORITY_MAX, POSIX_RT_PRIORITY_MIN, PlatformError, PlatformFile,
     PlatformOverrideEntry, PlatformResources, PosixOverride, PosixResources, PriorityBand,
-    parse_platform_file, parse_platform_file_yaml,
+    ReservationMode, parse_platform_file, parse_platform_file_yaml, validate_posix_override,
 };
 pub use posix::{
     PosixAffinity, PosixError, PosixPlacement, PosixPolicyKind, PosixSched, UCLAMP_MAX,

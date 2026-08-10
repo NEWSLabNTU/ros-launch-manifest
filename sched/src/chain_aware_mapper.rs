@@ -693,6 +693,7 @@ mod tests {
         PlatformFacts::Posix(PosixResources {
             rt_priority_band: Some(PriorityBand { min, max }),
             isolated_cpus: vec![],
+            rr_timeslice_us: None,
         })
     }
 
