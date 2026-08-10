@@ -985,7 +985,10 @@ nodes = ["/listener"]
         nodes.insert("/param_talker".to_string(), inst);
         let diags = cfg.apply_params_to_nodes(&mut nodes);
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
-        assert_eq!(nodes["/param_talker"].params.get("rate"), Some(&ParamValue::Int(7)));
+        assert_eq!(
+            nodes["/param_talker"].params.get("rate"),
+            Some(&ParamValue::Int(7))
+        );
     }
 
     #[test]
@@ -1005,7 +1008,11 @@ nodes = ["/listener"]
             nodes.insert(fqn.to_string(), i);
         }
         let diags = cfg.apply_params_to_nodes(&mut nodes);
-        assert_eq!(diags.len(), 1, "expected the unmatched diagnostic: {diags:?}");
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected the unmatched diagnostic: {diags:?}"
+        );
         assert!(nodes["/talker_one"].params.is_empty());
         assert!(nodes["/talker_two"].params.is_empty());
     }

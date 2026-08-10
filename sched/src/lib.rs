@@ -26,6 +26,11 @@ pub mod validate;
 pub mod chain;
 pub mod chain_aware_mapper;
 
+// --- Phase 60: typed `posix` placement. Additive: `sched_class`/`priority`/
+// `core` stay on `ResolvedTier`/`TierPlatformSpec` for one release so
+// consumers migrate without a lockstep bump. ---
+pub mod posix;
+
 pub use bridge::parse_legacy_toml;
 pub use chain::{
     ChainAwareDetail, ChainElement, ChainSemantics, EffectiveTrigger, MapDiagnostics, MapWarning,
@@ -40,6 +45,9 @@ pub use platform::{
     POSIX_RT_PRIORITY_MAX, POSIX_RT_PRIORITY_MIN, PlatformError, PlatformFile,
     PlatformOverrideEntry, PlatformResources, PosixOverride, PosixResources, PriorityBand,
     parse_platform_file, parse_platform_file_yaml,
+};
+pub use posix::{
+    PosixAffinity, PosixError, PosixPlacement, PosixPolicyKind, PosixSched, UCLAMP_MAX,
 };
 pub use validate::{
     BandViolation, Contradiction, band_violations, deadline_priority_contradictions,
