@@ -59,11 +59,16 @@ per-target vocabulary.
 ```yaml
 target: posix                # required, non-empty
 mapper: chain_aware          # SchedMapper name, looked up in MapperRegistry
+reservations: off            # off (default) | required — POLICY, so not under resources
 resources:                   # platform facts, typed per target
   rt_priority_band: { min: 10, max: 40 }
   isolated_cpus: [0]
+  rr_timeslice_us: 100000    # the host's GLOBAL SCHED_RR slice; absent = unknown
 overrides:                   # explicit per-node pins; beat derived values, always
   control_node: { priority: 20, core: 0 }
+  obstacle_detector: { budget_us: 8000, uclamp_max: 800 }
+  telemetry_logger: { sched_class: SCHED_BATCH, nice: 10 }
+  planner: { cpus: [4, 5] }
 ```
 
 - **`posix` `resources`** (`PosixResources`, `deny_unknown_fields`):
@@ -74,10 +79,45 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   range `1..=99` (`POSIX_RT_PRIORITY_MIN`/`MAX`), else
   `PlatformError::InvalidPriorityBand`.
 - **`posix` `overrides.<node>`** (`PosixOverride`): `priority:
-  Option<i64>`, `core: Option<u32>`, `sched_class: Option<String>`.
+  Option<i64>`, `core: Option<u32>`, `cpus: Vec<u32>`, `sched_class:
+  Option<String>`, `nice: Option<i32>`, `uclamp_min`/`uclamp_max:
+  Option<u32>`, `budget_us: Option<u64>`.
   Keys use the same selector vocabulary as v1 `[[assign]].nodes`: full
   FQN or bare last segment. Parsing lives here; *applying* overrides is
   the caller's job (see [Consumers](#consumers)).
+
+  Every combination rule is checked at parse time
+  (`validate_posix_override`), because an override that reaches the
+  syscall layer comes back as an `EINVAL` with no node name attached:
+  `sched_class` must be one of the six real policies (**unknown is an
+  error** — it used to become `SCHED_OTHER` silently, so a typo dropped a
+  node out of real-time); `priority` only with `SCHED_FIFO`/`SCHED_RR`
+  and `nice` only with `SCHED_OTHER`/`SCHED_BATCH`; `SCHED_DEADLINE`
+  takes no CPU pin at all; `core` and `cpus` are mutually exclusive;
+  `nice ∈ -20..=19`; `uclamp ∈ 0..=1024` with `min <= max`.
+
+  `budget_us` is the **declared execution cost** — the only legitimate
+  source for a `SCHED_DEADLINE` reservation's runtime. It is not a proven
+  WCET; it is a declared high-percentile observed cost used *as* an upper
+  bound. `budget_us: 0` is rejected: absent and zero are different
+  answers, and a declared zero would silently mean "free".
+
+- **`reservations`** (`ReservationMode`, top level beside `mapper:`):
+  `off` (default) or `required`. Deliberately not inside `resources:` —
+  that holds facts about the machine, and whether to reserve is a policy
+  choice. Opt-in because reservations are all-or-nothing within a band: a
+  reserved node preempts every fixed-priority thread regardless of
+  priority, so a band holding both loses the ordering the mapper
+  computed. Without the switch, adding one `budget_us` would turn that
+  rule into a hard error nobody asked for.
+
+- **`rr_timeslice_us`**: the host's `SCHED_RR` slice. A platform *fact*,
+  which is why it sits in `resources:` — on Linux the slice is a global
+  sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`, default **100 ms**),
+  not a per-task value, so `TierPlatformSpec::time_slice_us` cannot
+  express it. The `chain_aware` mapper needs it to decide whether
+  `SCHED_RR` is worth deriving for a priority tie at all. Absent means
+  unknown, never "assume the default".
 - **Unknown target** (`zephyr`, `freertos`, …): `resources`/`overrides`
   parse as raw `serde_yaml_ng::Value` (`PlatformResources::Raw` /
   `PlatformOverrideEntry::Raw`) — untyped, never range-validated (e.g.
@@ -92,6 +132,7 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
 pub struct PlatformFile {
     pub target: String,
     pub mapper: String,
+    pub reservations: ReservationMode,
     pub resources: PlatformResources,
     pub overrides: BTreeMap<String, PlatformOverrideEntry>,
     pub legacy: Option<SystemSched>,   // Some only via the .toml bridge
@@ -483,3 +524,56 @@ RFC-0052 §"system-model RTOS mapper".
   — cross-repo agreement: input-only model, algorithm-shared-not-output,
   per-consumer realizers (2026-07-20, supersedes the earlier
   "scheduling SSoT" direction).
+
+## Typed `posix` Placement (`posix.rs`)
+
+`sched_class: Option<String>` + `priority: i64` + `core: Option<u32>` made
+illegal states representable and left every consumer re-deriving which fields
+were live from a string. A tier could carry `sched_class: "SCHED_OTHER"` beside
+`priority: 10` — a state Linux cannot express, which shipped into
+`system_model.yaml` and was fatal under strict mode.
+
+```rust
+pub enum PosixSched {
+    Idle,
+    Batch    { nice: i32 },
+    Other    { nice: i32 },
+    Fifo     { priority: i32 },
+    Rr       { priority: i32 },
+    Deadline { runtime_ns: u64, deadline_ns: u64, period_ns: u64, overrun: bool },
+}
+
+pub enum PosixAffinity { Inherit, Cpus { cpus: Vec<u32> }, Cpuset { path: String } }
+
+pub struct PosixPlacement {
+    pub sched: PosixSched,
+    pub affinity: PosixAffinity,
+    pub uclamp: Option<(u32, u32)>,
+}
+```
+
+Each variant names only the parameters that policy actually has, so `Batch` has
+no priority, `Fifo` has no nice, and `Deadline` has neither — it carries a
+reservation. `PosixAffinity` is an enum rather than two optional fields because
+a CPU mask and a cpuset are mutually exclusive *and* policy-dependent:
+`SCHED_DEADLINE` may not use `sched_setaffinity(2)` at all, since a deadline
+thread's affinity may not be narrower than the root domain it was created on
+(`EPERM`). `PosixPlacement::validate` rejects the rest.
+
+Two consequences worth stating, because both correspond to shipped defects:
+
+- **`PosixSched::priority()` returns `None` for `Deadline`** — absent, not
+  zero. A deadline thread preempts every fixed-priority thread regardless of RT
+  priority, which is why the kernel gives it a reservation instead of a number.
+  `band_violations` skips such tiers rather than comparing them against the RT
+  band, the same way it skips the default tier.
+- **`requires_reset_on_fork()` is a method, not a field**, and true only for
+  `Deadline`. `SCHED_FLAG_RESET_ON_FORK` reads as hygiene but the kernel resets
+  scheduling in `sched_fork()`, which runs for *thread* creation as well — so
+  setting it on `SCHED_FIFO` stops threads created after an apply sweep from
+  inheriting the policy, leaving an arbitrary subset of a node's threads at
+  `SCHED_OTHER`. Measured downstream, not theorised.
+
+`ResolvedTier::posix: Option<PosixPlacement>` is **additive**: `sched_class`,
+`priority` and `core` remain for one release so consumers migrate without a
+lockstep bump. When present, the typed placement is authoritative.
