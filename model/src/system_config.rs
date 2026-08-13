@@ -125,7 +125,10 @@ pub struct SystemDefaults {
 /// `deny_unknown_fields` makes the next divergence a loud parse error instead
 /// of a silently ignored key. Safe to add: nano-ros's mirror already denied,
 /// so any `system.toml` in use already satisfies this field set.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+// `Eq` dropped when `nros` was added: `toml::Value` is only `PartialEq`
+// (floats). `==` still works; nothing in this repo or in nano-ros used
+// `DeployBlock` as a set key or otherwise required total equality.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeployBlock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -161,6 +164,22 @@ pub struct DeployBlock {
     /// [`Self::applies_to_launch`] and nano-ros issue 0291.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<String>,
+
+    /// `[deploy.<name>.nros]` — the consumer's own deploy configuration,
+    /// carried verbatim and **not interpreted by this crate**.
+    ///
+    /// This crate models launch and system STRUCTURE. A consumer's site
+    /// configuration — where its RTOS SDK lives, which network stack it chose,
+    /// where its config headers are, how it flashes a board — is not that
+    /// vocabulary, and declaring those keys here would mean cutting a spec
+    /// release every time a consumer adds one.
+    ///
+    /// Opaque on purpose. `DeployBlock` is `deny_unknown_fields` so that a
+    /// mistyped key is an error rather than a silent drop; this field is the
+    /// one sanctioned extension point, and the consumer applies its own schema
+    /// (including its own `deny_unknown_fields`) to the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nros: Option<toml::Value>,
 }
 
 impl DeployBlock {
@@ -1105,4 +1124,45 @@ fn toml_to_param_value(v: &toml::Value) -> Option<ParamValue> {
         }
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod deploy_consumer_block_tests {
+    use super::DeployBlock;
+
+    /// The sanctioned extension point: a consumer's own keys ride in
+    /// `[deploy.<n>.nros]` and are carried verbatim.
+    #[test]
+    fn a_consumer_block_is_carried_verbatim() {
+        let b: DeployBlock = toml::from_str(
+            r#"
+            kind = "self"
+            board = "mps2-an385-freertos"
+            [nros]
+            netstack = "lwip"
+            sdk = { freertos = "{env:FREERTOS_DIR}" }
+            "#,
+        )
+        .expect("parses");
+        let nros = b.nros.expect("consumer block present");
+        assert_eq!(nros.get("netstack").and_then(|v| v.as_str()), Some("lwip"));
+        assert!(nros.get("sdk").and_then(|v| v.get("freertos")).is_some());
+    }
+
+    /// Absent is the common case and must stay cheap — every existing
+    /// system.toml in the wild omits it.
+    #[test]
+    fn absent_consumer_block_is_none() {
+        let b: DeployBlock = toml::from_str(r#"kind = "self""#).expect("parses");
+        assert!(b.nros.is_none());
+    }
+
+    /// The extension point must NOT weaken the typo guard: an unknown key at
+    /// the deploy level is still an error. That is why this is one named
+    /// opaque field rather than a flattened catch-all.
+    #[test]
+    fn unknown_top_level_keys_are_still_rejected() {
+        let e = toml::from_str::<DeployBlock>(r#"netstck = "lwip""#).unwrap_err();
+        assert!(e.to_string().contains("netstck"), "got: {e}");
+    }
 }
