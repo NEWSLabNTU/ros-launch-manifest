@@ -159,7 +159,34 @@ pub struct Structure {
     /// launch file, so this map is the include tree.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub scopes: BTreeMap<String, ScopeInfo>,
-    /// Node FQN (`/ns/node_name`) → instance.
+    /// Node key → instance.
+    ///
+    /// **The key is a resolve-time identity, not necessarily a ROS name.** It
+    /// is the node's fully-qualified ROS name exactly when the launch file
+    /// declared one (`NodeInstance::node_name.is_some()`, always true for
+    /// containers and composable nodes). For a `<node>` with no `name=`, the
+    /// key is built from the EXECUTABLE — with a `-N` ordinal marking it as
+    /// such — while the process registers whatever name it was compiled with:
+    ///
+    /// ```text
+    /// key:   /localization/pose_twist_fusion_filter/autoware_ekf_localizer_node-1
+    /// graph: /localization/pose_twist_fusion_filter/ekf_localizer
+    /// ```
+    ///
+    /// So **do not join this map against `ros2 node list` unless
+    /// `node_name.is_some()`.** 17 of 145 keys on one Autoware stack are
+    /// executable-derived, and the mismatch raises no error: nothing in the
+    /// resolve pipeline looks at a live system, and the checker builds its
+    /// graph from the manifest.
+    ///
+    /// A producer must NOT close the gap by emitting `-r __node:=<key>`.
+    /// Stock `launch_ros` emits that remap only for a declared name
+    /// (`node.py:493`), so forcing it renames a node away from its
+    /// internally-hardcoded default and breaks discovery for anything
+    /// addressing it by that name — LifecycleNode services included. The key
+    /// is the synthetic identifier; the node's own name is authoritative.
+    /// (play_launch issue #0017, which also carries the live-graph mapping and
+    /// how the real name can be observed.)
     ///
     /// Issue 0382 — an ORDER-PRESERVING map, not a `BTreeMap`. Construct order
     /// is semantic: components initialize (and `configure()`) in the order the
