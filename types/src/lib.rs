@@ -4,6 +4,7 @@
 //! provides a parser that reads YAML with source span tracking.
 
 pub mod cond;
+pub mod duration;
 pub mod parse;
 pub mod span;
 pub mod subst;

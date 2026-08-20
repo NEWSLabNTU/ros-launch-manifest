@@ -3,6 +3,7 @@
 //! Parses YAML into typed [`Manifest`] AST. Handles both plain list
 //! and map forms for endpoints (e.g., `pub: [a, b]` vs `pub: {a: {min_rate_hz: 10}}`).
 
+use crate::duration::Duration;
 use crate::{span::SpanIndex, types::*};
 use std::{collections::BTreeMap, path::Path};
 use yaml_rust2::{Yaml, YamlLoader};
@@ -874,6 +875,66 @@ fn yaml_string(doc: &Yaml, key: &str) -> Option<String> {
     doc[key].as_str().map(|s| s.to_string())
 }
 
+/// Read a duration field, accepting the phase-59 spelling and the deprecated
+/// unit-suffixed name.
+///
+/// `canonical` is the new field name (`max_latency`); `legacy` is the old one
+/// (`max_latency_ms`) with the unit its name implied. The new spelling REQUIRES
+/// a unit in the value and rejects a bare number — that rejection is the whole
+/// point of the phase, so it must not be softened into a fallback. The old
+/// spelling keeps its old meaning exactly, because a contract that has not been
+/// migrated must not change behaviour.
+///
+/// Returns the value and whether the deprecated name was used, so the caller
+/// can lint without this function needing to know how warnings are reported.
+fn yaml_duration(
+    doc: &Yaml,
+    canonical: &str,
+    legacy: &str,
+    legacy_scale: LegacyUnit,
+) -> Result<(Option<Duration>, bool), String> {
+    // New spelling wins when both are present: an author who wrote the new one
+    // meant it, and silently preferring the old would make a migration a no-op.
+    match &doc[canonical] {
+        Yaml::String(s) => {
+            let d = s
+                .parse::<Duration>()
+                .map_err(|e| format!("`{canonical}`: {e}"))?;
+            return Ok((Some(d), false));
+        }
+        // A bare number under the NEW name is the 1000x error this phase
+        // exists to prevent. Refuse it and say what to write.
+        Yaml::Integer(i) => {
+            return Err(format!(
+                "`{canonical}: {i}` has no unit — write `{canonical}: {i}ms` (or ns/us/s). \
+                 The unit is required so a value cannot be 1000x wrong and still parse"
+            ));
+        }
+        Yaml::Real(r) => {
+            return Err(format!(
+                "`{canonical}: {r}` has no unit — write `{canonical}: {r}ms` (or ns/us/s)"
+            ));
+        }
+        _ => {}
+    }
+
+    if let Some(v) = yaml_f64(doc, legacy) {
+        let d = match legacy_scale {
+            LegacyUnit::Millis => Duration::from_millis_f64(v),
+            LegacyUnit::Micros => Duration::from_micros(v as i64),
+        };
+        return Ok((Some(d), true));
+    }
+    Ok((None, false))
+}
+
+/// The unit a deprecated field name implied.
+#[derive(Debug, Clone, Copy)]
+enum LegacyUnit {
+    Millis,
+    Micros,
+}
+
 fn yaml_f64(doc: &Yaml, key: &str) -> Option<f64> {
     match &doc[key] {
         Yaml::Real(s) => s.parse().ok(),
@@ -934,6 +995,73 @@ fn format_path(ctx: &str, field: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Phase 59: both spellings parse to the same value, and the new one
+    /// refuses a bare number.
+    ///
+    /// The migration's whole safety argument is that an un-migrated contract
+    /// behaves EXACTLY as before, so these must agree to the nanosecond.
+    #[test]
+    fn duration_field_accepts_both_spellings_and_refuses_bare_numbers() {
+        use yaml_rust2::YamlLoader;
+
+        let load = |text: &str| YamlLoader::load_from_str(text).unwrap().remove(0);
+
+        // Deprecated spelling: unit implied by the name.
+        let old = load("max_latency_ms: 12");
+        let (v, legacy) =
+            yaml_duration(&old, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
+        assert_eq!(v.unwrap().as_nanos(), 12_000_000);
+        assert!(legacy, "the old name must be reported as deprecated");
+
+        // New spelling: unit in the value, same result.
+        let new = load("max_latency: 12ms");
+        let (v2, legacy2) =
+            yaml_duration(&new, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
+        assert_eq!(v2, v, "both spellings must mean the same duration");
+        assert!(!legacy2);
+
+        // The new name with a bare number is the 1000x error. Refused, with a
+        // message naming what to write.
+        let bare = load("max_latency: 12");
+        let err =
+            yaml_duration(&bare, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap_err();
+        assert!(err.contains("has no unit"), "{err}");
+        assert!(err.contains("max_latency: 12ms"), "{err}");
+
+        // Absent under either name is None, not an error.
+        let none = load("other: 1");
+        let (v3, _) =
+            yaml_duration(&none, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
+        assert!(v3.is_none());
+    }
+
+    /// The new spelling wins when both are present: an author who wrote it
+    /// meant it, and preferring the old would make a migration a silent no-op.
+    #[test]
+    fn the_new_spelling_wins_over_the_deprecated_one() {
+        use yaml_rust2::YamlLoader;
+        let doc = YamlLoader::load_from_str("max_latency: 5ms\nmax_latency_ms: 99")
+            .unwrap()
+            .remove(0);
+        let (v, legacy) =
+            yaml_duration(&doc, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
+        assert_eq!(v.unwrap().as_millis_f64(), 5.0);
+        assert!(!legacy);
+    }
+
+    /// Microsecond-named platform fields keep their meaning too.
+    #[test]
+    fn deprecated_microsecond_names_keep_their_unit() {
+        use yaml_rust2::YamlLoader;
+        let doc = YamlLoader::load_from_str("budget_us: 8000")
+            .unwrap()
+            .remove(0);
+        let (v, legacy) = yaml_duration(&doc, "budget", "budget_us", LegacyUnit::Micros).unwrap();
+        assert_eq!(v.unwrap().as_millis_f64(), 8.0);
+        assert!(legacy);
+    }
+
     use super::*;
 
     #[test]
