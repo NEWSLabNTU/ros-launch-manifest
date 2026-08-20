@@ -1305,6 +1305,10 @@ actions:
 // ── Satisfiability edge cases ──
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_no_finite_args_skipped() {
     // Only free (String) args — satisfiability rule should skip silently
     let yaml = r#"
@@ -1337,6 +1341,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_service_all_optional_servers() {
     // Service where all servers are on conditional nodes.
     // If no config activates a server, that's an error.
@@ -1379,6 +1387,10 @@ services:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_action_all_optional_servers() {
     let yaml = r#"
 version: 1
@@ -1419,6 +1431,10 @@ actions:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_unconditional_publisher_prevents_error() {
     // One unconditional + optional publishers → always at least 1 pub → no error
     let yaml = r#"
@@ -1456,6 +1472,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_unreachable_unless_always_true() {
     // unless condition that's always true → node unreachable
     let yaml = r#"
@@ -1490,6 +1510,10 @@ nodes:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_multiple_choices_cross_product() {
     // Two choice args create a cross product. Only one combination is bad.
     let yaml = r#"
@@ -1538,6 +1562,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_bool_and_choices_mixed() {
     // Bool + choices args. The bool controls an extra node.
     let yaml = r#"
@@ -1585,6 +1613,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_unreachable_impossible_value() {
     // Condition references a value not in the enum domain
     let yaml = r#"
@@ -1619,6 +1651,10 @@ nodes:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_not_equal_condition() {
     // != condition — satisfiability rule should handle it
     let yaml = r#"
@@ -1660,6 +1696,10 @@ topics:
 // ── State-only subscriber skip in satisfiability ──
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_skips_state_only_subscribers() {
     // All subscribers are state: true (not required) — 0 publishers is fine
     let yaml = r#"
@@ -1696,6 +1736,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_state_required_still_errors() {
     // Subscriber is state: true BUT required: true — needs at least one message
     let yaml = r#"
@@ -1733,6 +1777,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_mixed_state_and_causal_subs() {
     // One state-only sub + one causal sub → not all state-only → still checked
     let yaml = r#"
@@ -2109,6 +2157,10 @@ topics:
 // ── Satisfiability checks ──
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_variant_complete() {
     // Two variants of pose_source — each provides a publisher. All configs are safe.
     let yaml = r#"
@@ -2147,6 +2199,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_variant_incomplete() {
     // Three choices but only two nodes — gnss has no publisher.
     let yaml = r#"
@@ -2191,6 +2247,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_unreachable_node() {
     // Bool arg but condition compares to invalid value — always false.
     let yaml = r#"
@@ -2229,6 +2289,10 @@ topics:
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn test_satisfiability_bool_args() {
     // Two bool flags controlling two nodes — both present in at least one config.
     let yaml = r#"

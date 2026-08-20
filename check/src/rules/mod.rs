@@ -14,7 +14,40 @@ mod qos_compat;
 mod qos_match;
 mod queue_drain_rate;
 mod rate_hierarchy;
+#[cfg(feature = "smt")]
 mod satisfiability;
+// Built without `smt`: register a STUB under the same rule id that says the
+// analysis was not run. A missing rule would be silent under-checking — a
+// resolve that reports less than it used to, with nothing marking the gap
+// (the same failure shape as a dropped [patch] entry: wrong by omission).
+#[cfg(not(feature = "smt"))]
+mod satisfiability {
+    use super::ValidationRule;
+    use crate::{
+        check::{CheckContext, Severity},
+        graph::DataflowGraph,
+    };
+    use ros_launch_manifest_types::Manifest;
+
+    pub struct SatisfiabilityRule;
+
+    impl ValidationRule for SatisfiabilityRule {
+        fn id(&self) -> &str {
+            "satisfiability"
+        }
+        fn check(&self, _manifest: &Manifest, _graph: &DataflowGraph, ctx: &mut CheckContext) {
+            ctx.emit(
+                self.id(),
+                Severity::Info,
+                "",
+                "satisfiability analysis not run: this checker was built without the \
+                 `smt` feature (z3), so conditional-arg dangling-entity/unreachable-node \
+                 checks are unavailable"
+                    .to_string(),
+            );
+        }
+    }
+}
 mod scope_budget;
 mod service_type;
 mod service_wiring;

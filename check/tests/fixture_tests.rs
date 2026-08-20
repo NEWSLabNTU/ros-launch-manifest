@@ -653,6 +653,10 @@ fn fixture_service_scope_structure() {
 // ── manifest_satisfiability: multi-variant localization ──
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn fixture_satisfiability_parses() {
     let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
     assert_eq!(m.nodes.len(), 5, "3 pose sources + twist_estimator + ekf");
@@ -666,6 +670,10 @@ fn fixture_satisfiability_parses() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn fixture_satisfiability_variant_complete() {
     // All 3 pose sources provide a publisher for localization_pose.
     // Z3 should find no arg combination that leaves it dangling.
@@ -683,6 +691,10 @@ fn fixture_satisfiability_variant_complete() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn fixture_satisfiability_no_unreachable() {
     let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
     let result = run_checks(&m);
@@ -698,6 +710,10 @@ fn fixture_satisfiability_no_unreachable() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn fixture_satisfiability_ndt_filter() {
     let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
     let scope_args = HashMap::from([
@@ -727,6 +743,10 @@ fn fixture_satisfiability_ndt_filter() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn fixture_satisfiability_eagleye_with_twist() {
     let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
     let scope_args = HashMap::from([
@@ -752,6 +772,10 @@ fn fixture_satisfiability_eagleye_with_twist() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn fixture_satisfiability_gnss_minimal() {
     let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
     let scope_args = HashMap::from([
@@ -781,6 +805,10 @@ fn fixture_satisfiability_gnss_minimal() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "smt"),
+    ignore = "satisfiability rule needs the smt feature (z3)"
+)]
 fn fixture_satisfiability_reject_invalid_choice() {
     let m = parse_manifest(&fixture_path("manifest_satisfiability")).unwrap();
     let scope_args = HashMap::from([

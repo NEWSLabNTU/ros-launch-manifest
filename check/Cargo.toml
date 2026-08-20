@@ -7,6 +7,15 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+default = ["smt"]
+# The SMT-backed satisfiability rule (the only z3 user in the crate). ON by
+# default so every existing consumer is byte-for-byte unchanged. Turning it
+# off removes the z3 -> z3-sys -> bindgen build chain — and with it the
+# consumer-host prerequisites libz3-dev and libclang — at the cost of ONE
+# rule; a no-smt build registers a stub with the same rule id that emits a
+# single Info diagnostic saying the analysis was not run, so checking less
+# is never silent.
+smt = ["dep:z3"]
 # Exposes `fixture_dir()` for dependent crates' tests. Off by default: it is
 # test-support surface, not part of the checker's API.
 testdata = []
@@ -16,4 +25,4 @@ ros-launch-manifest-types = { path = "../types" }
 petgraph = "0.8"
 thiserror = "2"
 codespan-reporting = "0.11"
-z3 = "0.12"
+z3 = { version = "0.12", optional = true }
