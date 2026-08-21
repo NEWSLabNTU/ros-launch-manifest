@@ -40,15 +40,22 @@ scope = "/perception/lidar"
         let sched = parse_system_sched(src).expect("must parse");
         let control = sched.tiers.get("control").expect("control tier");
         assert_eq!(control.class.as_deref(), Some("real_time"));
-        assert_eq!(control.deadline_us, Some(50000));
+        // The input still uses the deprecated `deadline_us` spelling, so this
+        // asserts the phase-59 alias as well as the value. 50000us unchanged.
+        assert_eq!(control.deadline.unwrap().as_micros(), 50_000);
         assert_eq!(control.platform("posix").unwrap().priority, 80);
         assert_eq!(
             control.platform("posix").unwrap().sched_class.as_deref(),
             Some("SCHED_FIFO")
         );
         assert_eq!(
-            control.platform("freertos").unwrap().deadline_us,
-            Some(40000)
+            control
+                .platform("freertos")
+                .unwrap()
+                .deadline
+                .unwrap()
+                .as_micros(),
+            40_000
         );
         assert_eq!(sched.assign.len(), 2);
         assert_eq!(

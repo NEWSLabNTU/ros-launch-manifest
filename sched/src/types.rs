@@ -26,19 +26,23 @@ pub struct TierDef {
     pub class: Option<String>,
     /// Generic relative deadline (µs); a platform sub-table may tighten it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deadline_us: Option<u64>,
+    #[serde(alias = "deadline_us")]
+    pub deadline: Option<crate::compat::PlatformDuration>,
     /// Callback period (µs) for periodic / time_triggered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub period_us: Option<u64>,
+    #[serde(alias = "period_us")]
+    pub period: Option<crate::compat::PlatformDuration>,
     /// Execution-time budget (µs) — EDF/sporadic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_us: Option<u64>,
+    #[serde(alias = "budget_us")]
+    pub budget: Option<crate::compat::PlatformDuration>,
     /// `ignore | warn | skip | fault`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_policy: Option<String>,
     /// Executor spin period (µs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spin_period_us: Option<u64>,
+    #[serde(alias = "spin_period_us")]
+    pub spin_period: Option<crate::compat::PlatformDuration>,
 
     // Per-platform placement sub-tables. `posix` is Linux RT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,7 +90,8 @@ pub struct TierPlatformSpec {
     pub preempt_threshold: Option<i64>,
     /// Per-platform deadline override (µs), tighter than the generic head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deadline_us: Option<u64>,
+    #[serde(alias = "deadline_us")]
+    pub deadline: Option<crate::compat::PlatformDuration>,
     /// Per-platform sporadic execution budget (µs) — nano-ros phase-296
     /// W5.9: lets ONE platform's kernel sporadic server (NuttX
     /// SCHED_SPORADIC) engage without flipping every other platform's
@@ -94,17 +99,20 @@ pub struct TierPlatformSpec {
     /// applies everywhere). Same sub-table-override precedent as
     /// `deadline_us`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_us: Option<u64>,
+    #[serde(alias = "budget_us")]
+    pub budget: Option<crate::compat::PlatformDuration>,
     /// Per-platform sporadic replenishment period (µs) — pairs with
     /// `budget_us` (both required for a sporadic policy).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub period_us: Option<u64>,
+    #[serde(alias = "period_us")]
+    pub period: Option<crate::compat::PlatformDuration>,
     /// Per-platform round-robin time slice (µs) — nano-ros #0266: requests
     /// time-slicing among same-priority tiers. ThreadX-only today (its
     /// `tx_thread_create` takes a per-thread slice); ignored elsewhere.
     /// Same sub-table-scoped precedent as `preempt_threshold`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub time_slice_us: Option<u64>,
+    #[serde(alias = "time_slice_us")]
+    pub time_slice: Option<crate::compat::PlatformDuration>,
 }
 
 /// A sparse binding rule. A node matches if it is named in `nodes` OR falls

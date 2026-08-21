@@ -209,8 +209,8 @@ fn execution_layer_slices() {
     // tier table (sched crate TierDef schema) + per-callback-group binding
     let high = &e.tiers["high"];
     assert_eq!(high.class.as_deref(), Some("real_time"));
-    assert_eq!(high.deadline_us, Some(2000));
-    assert_eq!(high.spin_period_us, Some(1000));
+    assert_eq!(high.deadline.unwrap().as_micros(), 2_000);
+    assert_eq!(high.spin_period.unwrap().as_micros(), 1_000);
     let posix = high.posix.as_ref().unwrap();
     assert_eq!(posix.priority, 80);
     assert_eq!(posix.sched_class.as_deref(), Some("SCHED_FIFO"));

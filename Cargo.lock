@@ -386,7 +386,9 @@ dependencies = [
 name = "ros-launch-manifest-sched"
 version = "0.1.4"
 dependencies = [
+ "ros-launch-manifest-types",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
  "thiserror",
  "toml",

@@ -701,7 +701,7 @@ priority = 10
         assert!(diags.is_empty(), "{diags:?}");
         // tiers rode in verbatim.
         assert_eq!(e.tiers.len(), 2);
-        assert_eq!(e.tiers["high"].spin_period_us, Some(1000));
+        assert_eq!(e.tiers["high"].spin_period.unwrap().as_micros(), 1_000);
         assert_eq!(e.tiers["high"].posix.as_ref().unwrap().priority, 80);
         assert_eq!(e.tiers["high"].zephyr.as_ref().unwrap().priority, 5);
         // group_tiers → bindings keyed by FQN.

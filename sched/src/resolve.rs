@@ -265,11 +265,15 @@ pub fn resolve(
             sched_class: spec.sched_class.clone(),
             preempt_threshold: spec.preempt_threshold,
             class: def.class.clone(),
-            period_us: def.period_us,
-            budget_us: def.budget_us,
-            deadline_us: spec.deadline_us.or(def.deadline_us),
+            // W2 seam: TierDef now carries durations, ResolvedTier still
+            // speaks microseconds because it is the wire to play_launch and
+            // nano-ros. Both sides of that boundary move together in W4,
+            // under one tag; converting here keeps W2 inside this repo.
+            period_us: def.period.map(|d| d.as_micros()),
+            budget_us: def.budget.map(|d| d.as_micros()),
+            deadline_us: spec.deadline.or(def.deadline).map(|d| d.as_micros()),
             deadline_policy: def.deadline_policy.clone(),
-            spin_period_us: def.spin_period_us,
+            spin_period_us: def.spin_period.map(|d| d.as_micros()),
             members,
         });
     }
@@ -483,7 +487,7 @@ nodes = ["/a"]
         assert_eq!(t.priority, 80);
         assert_eq!(t.core, Some(1));
         assert_eq!(t.class.as_deref(), Some("real_time"));
-        assert_eq!(t.deadline_us, Some(40000)); // platform override wins
+        assert_eq!(t.deadline_us, Some(40000)); // platform override wins (ResolvedTier still speaks us)
         assert_eq!(t.members, vec!["/a".to_string()]);
     }
 
