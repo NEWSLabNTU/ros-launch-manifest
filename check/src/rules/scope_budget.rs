@@ -34,7 +34,7 @@ impl ValidationRule for ScopeBudgetRule {
             let max_lat = node
                 .paths
                 .values()
-                .filter_map(|p| p.max_latency_ms)
+                .filter_map(|p| p.max_latency.map(|d| d.as_millis_f64()))
                 .fold(0.0_f64, f64::max);
             if max_lat > 0.0 {
                 node_latencies.insert(node_name.clone(), max_lat);
@@ -47,7 +47,7 @@ impl ValidationRule for ScopeBudgetRule {
                 let max_lat = inner
                     .paths
                     .values()
-                    .filter_map(|p| p.max_latency_ms)
+                    .filter_map(|p| p.max_latency.map(|d| d.as_millis_f64()))
                     .fold(0.0_f64, f64::max);
                 if max_lat > 0.0 {
                     node_latencies.insert(scope_name.clone(), max_lat);
@@ -60,17 +60,17 @@ impl ValidationRule for ScopeBudgetRule {
         let topic_transport: f64 = manifest
             .topics
             .values()
-            .filter_map(|t| t.max_transport_ms)
+            .filter_map(|t| t.max_transport.map(|d| d.as_millis_f64()))
             .sum();
         let undeclared_transport_count = manifest
             .topics
             .values()
-            .filter(|t| t.max_transport_ms.is_none())
+            .filter(|t| t.max_transport.map(|d| d.as_millis_f64()).is_none())
             .count();
 
         // Check scope-level paths
         for (path_name, path) in &manifest.paths {
-            if let Some(declared) = path.max_latency_ms {
+            if let Some(declared) = path.max_latency.map(|d| d.as_millis_f64()) {
                 // Sum: node latencies + declared topic transport.
                 // Topics without max_transport_ms contribute 0; their transport
                 // is absorbed into the scope's residual headroom.

@@ -859,7 +859,7 @@ fn fixture_standalone_subscriber_max_age_ms() {
     let m = parse_manifest(&fixture_path("manifest_standalone")).unwrap();
     let consumer = &m.nodes["consumer"];
     let odometry = &consumer.subscribers["odometry"];
-    assert_eq!(odometry.max_age_ms, Some(100.0));
+    assert_eq!(odometry.max_age.map(|d| d.as_millis_f64()), Some(100.0));
     assert_eq!(odometry.min_rate_hz, Some(50.0));
 }
 

@@ -106,11 +106,21 @@ pub struct EndpointProps {
     pub min_rate_hz: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_rate_hz: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub jitter_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "jitter_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub jitter: Option<crate::duration::Duration>,
     /// Sub endpoint: max data age at receive (now - header.stamp), runtime-checked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_age_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "max_age_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_age: Option<crate::duration::Duration>,
     /// Sub endpoint: read-latest, not causal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<bool>,
@@ -126,8 +136,13 @@ pub struct EndpointProps {
     /// Used as the edge weight from publisher to this subscriber in
     /// scope-path critical-path computation. Inherits topic-level
     /// `max_transport_ms` when not declared.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_transport_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "max_transport_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_transport: Option<crate::duration::Duration>,
     /// Sub endpoint: buffering discipline for a `state: true` subscription
     /// (Vocabulary v2, Phase 44.1 §3). `latest` (default) — staleness is
     /// the failure mode; `queue` — backlog is the failure mode, drained
@@ -154,8 +169,13 @@ pub enum Buffer {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SrvEndpointProps {
     /// Max time from request to response (runtime monitoring only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_response_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "max_response_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_response: Option<crate::duration::Duration>,
 }
 
 /// Topic declaration.
@@ -176,8 +196,13 @@ pub struct TopicDecl {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_hz: Option<f64>,
     /// Worst-case transport latency (ms) for this topic hop.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_transport_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "max_transport_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_transport: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
     /// Per-topic external override. When set, the matching side
@@ -272,8 +297,13 @@ pub struct QosDecl {
     pub depth: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lifespan_ms: Option<u64>,
+    #[serde(
+        default,
+        alias = "lifespan_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lifespan: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub liveliness: Option<String>,
 }
@@ -294,9 +324,9 @@ impl QosDecl {
                 .and_then(|q| q.depth)
                 .or_else(|| topic.and_then(|q| q.depth)),
             history: pick_str(|q| q.history.as_ref()),
-            lifespan_ms: endpoint
-                .and_then(|q| q.lifespan_ms)
-                .or_else(|| topic.and_then(|q| q.lifespan_ms)),
+            lifespan: endpoint
+                .and_then(|q| q.lifespan)
+                .or_else(|| topic.and_then(|q| q.lifespan)),
             liveliness: pick_str(|q| q.liveliness.as_ref()),
         }
     }
@@ -315,12 +345,22 @@ pub struct PathDecl {
     /// Node paths: endpoint names. Scope paths: topic names (relative/absolute).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_latency_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "max_latency_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_latency: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tolerance_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "tolerance_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tolerance: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
     /// Explicit closed-taxonomy cause of this path's output (Vocabulary
@@ -406,12 +446,22 @@ pub struct Sync {
     pub policy: SyncPolicy,
     /// Match window for `exact`/`approximate` (required for those
     /// policies).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_interval_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "max_interval_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_interval: Option<crate::duration::Duration>,
     /// Collect-until-timeout duration for `timeout_any` (required for
     /// that policy).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<f64>,
+    #[serde(
+        default,
+        alias = "timeout_ms",
+        deserialize_with = "crate::duration::compat::opt_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub timeout: Option<crate::duration::Duration>,
 }
 
 /// Fan-in sync matching policy.
@@ -434,7 +484,11 @@ pub struct ChainDecl {
     /// (data staleness at the sink) — the two diverge at junctions.
     pub semantics: ChainSemantics,
     /// End-to-end budget (ms) the chain's segments must fit within.
-    pub max_latency_ms: f64,
+    #[serde(
+        alias = "max_latency_ms",
+        deserialize_with = "crate::duration::compat::millis"
+    )]
+    pub max_latency: crate::duration::Duration,
     /// Alternating path/via segments. First and last must be path
     /// segments; no two `via` segments may be adjacent. Cross-file link
     /// resolution is a checker concern (W2's `chain-link` rule).

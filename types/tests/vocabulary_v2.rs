@@ -128,8 +128,10 @@ nodes:
         fuse.sync,
         Some(Sync {
             policy: SyncPolicy::Approximate,
-            max_interval_ms: Some(50.0),
-            timeout_ms: Some(100.0),
+            max_interval: Some(
+                ros_launch_manifest_types::duration::Duration::from_millis_f64(50.0)
+            ),
+            timeout: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(100.0)),
         })
     );
 }
@@ -172,7 +174,7 @@ chains:
     let m = parse_manifest_str(yaml).unwrap();
     let chain = &m.chains["sensing_to_actuation"];
     assert_eq!(chain.semantics, ChainSemantics::Reaction);
-    assert_eq!(chain.max_latency_ms, 150.0);
+    assert_eq!(chain.max_latency.as_millis_f64(), 150.0);
     assert_eq!(chain.segments.len(), 5);
     assert_eq!(
         chain.segments[0],
@@ -473,7 +475,9 @@ nodes:
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("timeout_ms"), "got: {err}");
+    // Names the canonical spelling: the field is absent under both, so the
+    // useful thing to report is what to write, not what was deprecated.
+    assert!(err.to_string().contains("timeout"), "got: {err}");
 }
 
 #[test]
@@ -491,7 +495,8 @@ nodes:
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("max_interval_ms"), "got: {err}");
+    // Canonical spelling; see sync_timeout_any_requires_timeout_ms.
+    assert!(err.to_string().contains("max_interval"), "got: {err}");
 }
 
 #[test]
@@ -509,7 +514,7 @@ nodes:
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("max_interval_ms"), "got: {err}");
+    assert!(err.to_string().contains("max_interval"), "got: {err}");
 }
 
 #[test]
@@ -754,7 +759,8 @@ chains:
       - { scope: /s2, path: p2 }
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("max_latency_ms"), "got: {err}");
+    // Canonical spelling, same reasoning as the sync timeout case.
+    assert!(err.to_string().contains("max_latency"), "got: {err}");
 }
 
 #[test]

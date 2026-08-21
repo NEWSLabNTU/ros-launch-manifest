@@ -55,7 +55,7 @@ impl ValidationRule for SyncFeasibilityRule {
 
                 match sync.policy {
                     SyncPolicy::Exact | SyncPolicy::Approximate => {
-                        let Some(window) = sync.max_interval_ms else {
+                        let Some(window) = sync.max_interval.map(|d| d.as_millis_f64()) else {
                             continue;
                         };
                         if window < slowest_period_ms {
@@ -63,7 +63,7 @@ impl ValidationRule for SyncFeasibilityRule {
                                 self.id(),
                                 &format!("nodes.{node_name}.paths.{path_name}.sync"),
                                 format!(
-                                    "node '{node_name}' path '{path_name}' sync.max_interval_ms \
+                                    "node '{node_name}' path '{path_name}' sync.max_interval.map(|d| d.as_millis_f64()) \
                                      ({window}) is less than the slowest input's period \
                                      ({slowest_period_ms:.2}ms, from rate {slowest_rate}Hz) — the \
                                      match window can never span the slowest input"
@@ -72,7 +72,7 @@ impl ValidationRule for SyncFeasibilityRule {
                         }
                     }
                     SyncPolicy::TimeoutAny => {
-                        let Some(timeout) = sync.timeout_ms else {
+                        let Some(timeout) = sync.timeout.map(|d| d.as_millis_f64()) else {
                             continue;
                         };
                         if timeout < slowest_period_ms {
@@ -80,7 +80,7 @@ impl ValidationRule for SyncFeasibilityRule {
                                 self.id(),
                                 &format!("nodes.{node_name}.paths.{path_name}.sync"),
                                 format!(
-                                    "node '{node_name}' path '{path_name}' sync.timeout_ms \
+                                    "node '{node_name}' path '{path_name}' sync.timeout.map(|d| d.as_millis_f64()) \
                                      ({timeout}) is less than the slowest input's period \
                                      ({slowest_period_ms:.2}ms, from rate {slowest_rate}Hz) — the \
                                      timeout always expires before the slowest input can \

@@ -355,6 +355,17 @@ pub mod compat {
         };
     }
 
+    /// Required-field variants. `ChainDecl::max_latency` is not optional, and
+    /// `Option<T>`-shaped adapters cannot serve it.
+    pub fn millis<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        Ok(CompatMillis::deserialize(d)?.0)
+    }
+
+    #[allow(dead_code)]
+    pub fn micros<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        Ok(CompatMicros::deserialize(d)?.0)
+    }
+
     compat_newtype!(CompatMillis, LegacyUnit::Millis, opt_millis);
     compat_newtype!(CompatMicros, LegacyUnit::Micros, opt_micros);
 }

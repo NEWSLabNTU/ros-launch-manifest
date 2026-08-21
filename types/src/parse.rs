@@ -161,12 +161,12 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     let props = EndpointProps {
         min_rate_hz: yaml_f64(yaml, "min_rate_hz"),
         max_rate_hz: yaml_f64(yaml, "max_rate_hz"),
-        jitter_ms: yaml_f64(yaml, "jitter_ms"),
-        max_age_ms: yaml_f64(yaml, "max_age_ms"),
+        jitter: yaml_duration(yaml, "jitter", "jitter_ms")?,
+        max_age: yaml_duration(yaml, "max_age", "max_age_ms")?,
         state: yaml_bool(yaml, "state"),
         required: yaml_bool(yaml, "required"),
-        qos: parse_qos(yaml),
-        max_transport_ms: yaml_f64(yaml, "max_transport_ms"),
+        qos: parse_qos(yaml)?,
+        max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
         buffer: parse_buffer(yaml, ctx)?,
     };
     if props.buffer.is_some() && props.state != Some(true) {
@@ -217,10 +217,10 @@ fn parse_srv_endpoints(
             for (k, v) in hash {
                 let name = yaml_str_owned(k);
                 let props = SrvEndpointProps {
-                    max_response_ms: if v.is_null() || v.is_badvalue() {
+                    max_response: if v.is_null() || v.is_badvalue() {
                         None
                     } else {
-                        yaml_f64(v, "max_response_ms")
+                        yaml_duration(v, "max_response", "max_response_ms")?
                     },
                 };
                 eps.insert(name, props);
@@ -284,7 +284,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
             subscribers: vec![],
             qos: None,
             rate_hz: None,
-            max_transport_ms: None,
+            max_transport: None,
             drop: None,
             external: None,
         });
@@ -296,9 +296,9 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
             .ok_or_else(|| field_err(ctx, "type", "topic must have a type"))?,
         publishers: yaml_string_list(yaml, "pub"),
         subscribers: yaml_string_list(yaml, "sub"),
-        qos: parse_qos(yaml),
+        qos: parse_qos(yaml)?,
         rate_hz: yaml_f64(yaml, "rate_hz"),
-        max_transport_ms: yaml_f64(yaml, "max_transport_ms"),
+        max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external: parse_external_side(yaml, "external", ctx)?,
     })
@@ -343,7 +343,7 @@ fn parse_external_topics(
             ExternalTopicDecl {
                 side,
                 msg_type: yaml_string(v, "type"),
-                qos: parse_qos(v),
+                qos: parse_qos(v)?,
             },
         );
     }
@@ -556,9 +556,9 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         unless_condition: yaml_string(yaml, "unless"),
         input,
         output: yaml_string_list(yaml, "output"),
-        max_latency_ms: yaml_f64(yaml, "max_latency_ms"),
+        max_latency: yaml_duration(yaml, "max_latency", "max_latency_ms")?,
         correlation: yaml_string(yaml, "correlation"),
-        tolerance_ms: yaml_f64(yaml, "tolerance_ms"),
+        tolerance: yaml_duration(yaml, "tolerance", "tolerance_ms")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         trigger,
         sync,
@@ -673,23 +673,23 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
             ));
         }
     };
-    let max_interval_ms = yaml_f64(section, "max_interval_ms");
-    let timeout_ms = yaml_f64(section, "timeout_ms");
+    let max_interval = yaml_duration(section, "max_interval", "max_interval_ms")?;
+    let timeout = yaml_duration(section, "timeout", "timeout_ms")?;
     match policy {
         SyncPolicy::TimeoutAny => {
-            if timeout_ms.is_none() {
+            if timeout.is_none() {
                 return Err(field_err(
                     ctx,
-                    "sync.timeout_ms",
+                    "sync.timeout",
                     "required when policy is 'timeout_any'",
                 ));
             }
         }
         SyncPolicy::Exact | SyncPolicy::Approximate => {
-            if max_interval_ms.is_none() {
+            if max_interval.is_none() {
                 return Err(field_err(
                     ctx,
-                    "sync.max_interval_ms",
+                    "sync.max_interval",
                     "required when policy is 'exact' or 'approximate'",
                 ));
             }
@@ -697,8 +697,8 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
     }
     Ok(Some(Sync {
         policy,
-        max_interval_ms,
-        timeout_ms,
+        max_interval,
+        timeout,
     }))
 }
 
@@ -737,12 +737,13 @@ fn parse_chain_decl(yaml: &Yaml, ctx: &str) -> Result<ChainDecl, ParseError> {
             ));
         }
     };
-    let max_latency_ms = yaml_f64(yaml, "max_latency_ms")
-        .ok_or_else(|| field_err(ctx, "max_latency_ms", "required"))?;
+    // ChainDecl's latency is required, so absence is an error rather than None.
+    let max_latency = yaml_duration(yaml, "max_latency", "max_latency_ms")?
+        .ok_or_else(|| field_err(ctx, "max_latency", "required"))?;
     let segments = parse_chain_segments(yaml, ctx)?;
     Ok(ChainDecl {
         semantics,
-        max_latency_ms,
+        max_latency,
         segments,
     })
 }
@@ -844,19 +845,22 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
 
 // ── QoS ──
 
-fn parse_qos(doc: &Yaml) -> Option<QosDecl> {
+/// Returns `Err` rather than `None` on a malformed duration: phase 59's whole
+/// argument is that a wrong unit must not pass quietly, and swallowing the
+/// error here to keep an `Option` return would do exactly that.
+fn parse_qos(doc: &Yaml) -> Result<Option<QosDecl>, ParseError> {
     let section = &doc["qos"];
     if section.is_badvalue() {
-        return None;
+        return Ok(None);
     }
-    Some(QosDecl {
+    Ok(Some(QosDecl {
         reliability: yaml_string(section, "reliability"),
         durability: yaml_string(section, "durability"),
         depth: yaml_u32(section, "depth"),
         history: yaml_string(section, "history"),
-        lifespan_ms: yaml_u64(section, "lifespan_ms"),
+        lifespan: yaml_duration(section, "lifespan", "lifespan_ms")?,
         liveliness: yaml_string(section, "liveliness"),
-    })
+    }))
 }
 
 // ── YAML helpers ──
@@ -875,64 +879,46 @@ fn yaml_string(doc: &Yaml, key: &str) -> Option<String> {
     doc[key].as_str().map(|s| s.to_string())
 }
 
-/// Read a duration field, accepting the phase-59 spelling and the deprecated
-/// unit-suffixed name.
+/// Read a duration field: the phase-59 spelling, or the deprecated name.
 ///
-/// `canonical` is the new field name (`max_latency`); `legacy` is the old one
-/// (`max_latency_ms`) with the unit its name implied. The new spelling REQUIRES
-/// a unit in the value and rejects a bare number — that rejection is the whole
-/// point of the phase, so it must not be softened into a fallback. The old
-/// spelling keeps its old meaning exactly, because a contract that has not been
-/// migrated must not change behaviour.
+/// This is the entry point serde cannot provide. The contract reader is
+/// hand-rolled so it can produce source spans for checker diagnostics, and
+/// that same hand-rolling lets it do something the serde adapters cannot: see
+/// WHICH spelling was used, and therefore **reject a bare number under the new
+/// name**. That rejection is the point of phase 59, and this is the only path
+/// where it is fully enforceable.
 ///
-/// Returns the value and whether the deprecated name was used, so the caller
-/// can lint without this function needing to know how warnings are reported.
+/// The conversion itself is `duration::from_legacy_scalar`, shared with the
+/// serde adapters so the two cannot drift.
 fn yaml_duration(
     doc: &Yaml,
     canonical: &str,
     legacy: &str,
-    legacy_scale: LegacyUnit,
-) -> Result<(Option<Duration>, bool), String> {
-    // New spelling wins when both are present: an author who wrote the new one
-    // meant it, and silently preferring the old would make a migration a no-op.
+) -> Result<Option<Duration>, ParseError> {
+    use crate::duration::{LegacyUnit, from_legacy_scalar};
+
+    let no_unit = |shown: String| {
+        field_err(
+            "",
+            canonical,
+            &format!(
+                "`{canonical}: {shown}` has no unit — write `{canonical}: {shown}ms` \
+                 (or ns/us/s). The unit is required so a value cannot be 1000x wrong \
+                 and still parse"
+            ),
+        )
+    };
+
     match &doc[canonical] {
-        Yaml::String(s) => {
-            let d = s
-                .parse::<Duration>()
-                .map_err(|e| format!("`{canonical}`: {e}"))?;
-            return Ok((Some(d), false));
-        }
-        // A bare number under the NEW name is the 1000x error this phase
-        // exists to prevent. Refuse it and say what to write.
-        Yaml::Integer(i) => {
-            return Err(format!(
-                "`{canonical}: {i}` has no unit — write `{canonical}: {i}ms` (or ns/us/s). \
-                 The unit is required so a value cannot be 1000x wrong and still parse"
-            ));
-        }
-        Yaml::Real(r) => {
-            return Err(format!(
-                "`{canonical}: {r}` has no unit — write `{canonical}: {r}ms` (or ns/us/s)"
-            ));
-        }
-        _ => {}
+        Yaml::String(text) => from_legacy_scalar(Some(text), None, LegacyUnit::Millis)
+            .map_err(|e| field_err("", canonical, &e.to_string())),
+        Yaml::Integer(i) => Err(no_unit(i.to_string())),
+        Yaml::Real(r) => Err(no_unit(r.clone())),
+        // Deprecated spelling keeps its implied unit exactly, so an
+        // un-migrated contract cannot change meaning.
+        _ => from_legacy_scalar(None, yaml_f64(doc, legacy), LegacyUnit::Millis)
+            .map_err(|e| field_err("", legacy, &e.to_string())),
     }
-
-    if let Some(v) = yaml_f64(doc, legacy) {
-        let d = match legacy_scale {
-            LegacyUnit::Millis => Duration::from_millis_f64(v),
-            LegacyUnit::Micros => Duration::from_micros(v as i64),
-        };
-        return Ok((Some(d), true));
-    }
-    Ok((None, false))
-}
-
-/// The unit a deprecated field name implied.
-#[derive(Debug, Clone, Copy)]
-enum LegacyUnit {
-    Millis,
-    Micros,
 }
 
 fn yaml_f64(doc: &Yaml, key: &str) -> Option<f64> {
@@ -999,67 +985,51 @@ mod tests {
     /// Phase 59: both spellings parse to the same value, and the new one
     /// refuses a bare number.
     ///
-    /// The migration's whole safety argument is that an un-migrated contract
-    /// behaves EXACTLY as before, so these must agree to the nanosecond.
+    /// The migration's safety argument is that an un-migrated contract behaves
+    /// EXACTLY as before, so these must agree to the nanosecond.
     #[test]
     fn duration_field_accepts_both_spellings_and_refuses_bare_numbers() {
         use yaml_rust2::YamlLoader;
+        let load = |t: &str| YamlLoader::load_from_str(t).unwrap().remove(0);
 
-        let load = |text: &str| YamlLoader::load_from_str(text).unwrap().remove(0);
+        let old = yaml_duration(&load("max_latency_ms: 12"), "max_latency", "max_latency_ms")
+            .unwrap()
+            .unwrap();
+        let new = yaml_duration(&load("max_latency: 12ms"), "max_latency", "max_latency_ms")
+            .unwrap()
+            .unwrap();
+        assert_eq!(old, new, "both spellings must mean the same duration");
+        assert_eq!(new.as_millis_f64(), 12.0);
 
-        // Deprecated spelling: unit implied by the name.
-        let old = load("max_latency_ms: 12");
-        let (v, legacy) =
-            yaml_duration(&old, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
-        assert_eq!(v.unwrap().as_nanos(), 12_000_000);
-        assert!(legacy, "the old name must be reported as deprecated");
-
-        // New spelling: unit in the value, same result.
-        let new = load("max_latency: 12ms");
-        let (v2, legacy2) =
-            yaml_duration(&new, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
-        assert_eq!(v2, v, "both spellings must mean the same duration");
-        assert!(!legacy2);
-
-        // The new name with a bare number is the 1000x error. Refused, with a
-        // message naming what to write.
-        let bare = load("max_latency: 12");
-        let err =
-            yaml_duration(&bare, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap_err();
+        // A bare number under the NEW name is the 1000x error. This is the one
+        // path that can refuse it, because it can see which name was used —
+        // the serde adapters cannot.
+        let err = yaml_duration(&load("max_latency: 12"), "max_latency", "max_latency_ms")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("has no unit"), "{err}");
         assert!(err.contains("max_latency: 12ms"), "{err}");
 
         // Absent under either name is None, not an error.
-        let none = load("other: 1");
-        let (v3, _) =
-            yaml_duration(&none, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
-        assert!(v3.is_none());
+        assert!(
+            yaml_duration(&load("other: 1"), "max_latency", "max_latency_ms")
+                .unwrap()
+                .is_none()
+        );
     }
 
-    /// The new spelling wins when both are present: an author who wrote it
-    /// meant it, and preferring the old would make a migration a silent no-op.
+    /// The new spelling wins when both appear: an author who wrote it meant
+    /// it, and preferring the old would make a migration a silent no-op.
     #[test]
     fn the_new_spelling_wins_over_the_deprecated_one() {
         use yaml_rust2::YamlLoader;
         let doc = YamlLoader::load_from_str("max_latency: 5ms\nmax_latency_ms: 99")
             .unwrap()
             .remove(0);
-        let (v, legacy) =
-            yaml_duration(&doc, "max_latency", "max_latency_ms", LegacyUnit::Millis).unwrap();
-        assert_eq!(v.unwrap().as_millis_f64(), 5.0);
-        assert!(!legacy);
-    }
-
-    /// Microsecond-named platform fields keep their meaning too.
-    #[test]
-    fn deprecated_microsecond_names_keep_their_unit() {
-        use yaml_rust2::YamlLoader;
-        let doc = YamlLoader::load_from_str("budget_us: 8000")
+        let v = yaml_duration(&doc, "max_latency", "max_latency_ms")
             .unwrap()
-            .remove(0);
-        let (v, legacy) = yaml_duration(&doc, "budget", "budget_us", LegacyUnit::Micros).unwrap();
-        assert_eq!(v.unwrap().as_millis_f64(), 8.0);
-        assert!(legacy);
+            .unwrap();
+        assert_eq!(v.as_millis_f64(), 5.0);
     }
 
     use super::*;
@@ -1123,7 +1093,12 @@ nodes:
         assert_eq!(ndt.subscribers["regularization_pose"].state, Some(true));
         assert_eq!(ndt.publishers["ndt_pose"].min_rate_hz, Some(10.0));
         assert!(ndt.publishers.contains_key("exe_time_ms"));
-        assert_eq!(ndt.srv["trigger_node"].max_response_ms, Some(100.0));
+        assert_eq!(
+            ndt.srv["trigger_node"]
+                .max_response
+                .map(|d| d.as_millis_f64()),
+            Some(100.0)
+        );
     }
 
     #[test]
@@ -1188,7 +1163,7 @@ nodes:
         let loc = &ndt.paths["localization"];
         assert_eq!(loc.input, vec!["sensor_points"]);
         assert_eq!(loc.output, vec!["ndt_pose"]);
-        assert_eq!(loc.max_latency_ms, Some(50.0));
+        assert_eq!(loc.max_latency.map(|d| d.as_millis_f64()), Some(50.0));
         let drop = loc.drop.as_ref().unwrap();
         assert_eq!(drop.max_count.as_ref().unwrap().n, 10);
         assert_eq!(drop.max_count.as_ref().unwrap().w, 100);
@@ -1196,7 +1171,7 @@ nodes:
 
         let debug = &ndt.paths["debug"];
         assert_eq!(debug.input, vec!["sensor_points"]);
-        assert!(debug.max_latency_ms.is_none());
+        assert!(debug.max_latency.is_none());
     }
 
     #[test]
@@ -1283,7 +1258,7 @@ paths:
         let main = &m.paths["main"];
         assert_eq!(main.input, vec!["raw_data"]);
         assert_eq!(main.output, vec!["detections"]);
-        assert_eq!(main.max_latency_ms, Some(50.0));
+        assert_eq!(main.max_latency.map(|d| d.as_millis_f64()), Some(50.0));
     }
 
     #[test]
@@ -1306,7 +1281,7 @@ nodes:
         let path = &m.nodes["fusion"].paths["fusion"];
         assert_eq!(path.input, vec!["lidar_objects", "camera_objects"]);
         assert_eq!(path.correlation.as_deref(), Some("timestamp"));
-        assert_eq!(path.tolerance_ms, Some(50.0));
+        assert_eq!(path.tolerance.map(|d| d.as_millis_f64()), Some(50.0));
     }
 
     #[test]
@@ -1382,16 +1357,22 @@ nodes:
         let lidar_qos = lidar_pub.qos.as_ref().unwrap();
         assert_eq!(lidar_qos.reliability.as_deref(), Some("best_effort"));
         assert_eq!(lidar_qos.depth, Some(5));
-        assert_eq!(lidar_pub.max_transport_ms, None);
+        assert_eq!(lidar_pub.max_transport, None);
 
         let perception_sub = &m.nodes["perception"].subscribers["pointcloud"];
         let perception_qos = perception_sub.qos.as_ref().unwrap();
         assert_eq!(perception_qos.reliability.as_deref(), Some("reliable"));
-        assert_eq!(perception_sub.max_transport_ms, Some(0.0));
+        assert_eq!(
+            perception_sub.max_transport.map(|d| d.as_millis_f64()),
+            Some(0.0)
+        );
 
         let remote_sub = &m.nodes["remote_viz"].subscribers["pointcloud"];
         assert!(remote_sub.qos.is_none());
-        assert_eq!(remote_sub.max_transport_ms, Some(10.0));
+        assert_eq!(
+            remote_sub.max_transport.map(|d| d.as_millis_f64()),
+            Some(10.0)
+        );
     }
 
     #[test]

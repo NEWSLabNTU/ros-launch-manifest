@@ -325,7 +325,19 @@ nodes:
         let yaml = "nodes:\n  a:\n    paths:\n      main:\n        max_latency_ms: 50\n";
         let idx = SpanIndex::build(yaml);
 
+        // Span keys are the document's own keys, so this follows whichever
+        // spelling the file used — not the struct field name.
         assert!(idx.get("nodes.a.paths.main.max_latency_ms").is_some());
+    }
+
+    /// Phase 59: a migrated contract must index just as well, because the
+    /// checker's source excerpts come from these spans and a diagnostic
+    /// without one is a diagnostic without a location.
+    #[test]
+    fn test_span_index_paths_phase59_spelling() {
+        let yaml = "nodes:\n  a:\n    paths:\n      main:\n        max_latency: 50ms\n";
+        let idx = SpanIndex::build(yaml);
+        assert!(idx.get("nodes.a.paths.main.max_latency").is_some());
     }
 
     #[test]
