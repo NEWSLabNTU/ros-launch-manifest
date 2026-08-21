@@ -68,7 +68,21 @@ impl ValidationRule for DeprecatedUnitSuffixRule {
 
         let mut found: Vec<(String, &str, &str)> = Vec::new();
         for path in spans.spans.keys() {
-            let leaf = path.rsplit('.').next().unwrap_or(path);
+            let mut segs = path.rsplit('.');
+            let leaf = segs.next().unwrap_or(path);
+            let parent = segs.next().unwrap_or("");
+            // A schema field never sits directly under a NAME map. Endpoint
+            // and topic names are author-chosen and can be anything — this
+            // corpus has topics ending in `processing_time_ms` — so matching
+            // a leaf without checking its position would report a ROS topic
+            // as a deprecated field. Not hypothetical: a first pass over 77
+            // Autoware contracts produced 70 such hits.
+            if matches!(
+                parent,
+                "pub" | "sub" | "srv" | "cli" | "topics" | "external_topics"
+            ) {
+                continue;
+            }
             if let Some((old, new)) = RENAMED.iter().find(|(o, _)| *o == leaf) {
                 found.push((path.clone(), old, new));
             }
@@ -136,5 +150,22 @@ mod tests {
     fn leaves_rate_fields_alone() {
         let d = run("nodes:\n  a:\n    pub:\n      t:\n        min_rate_hz: 50\n");
         assert!(d.is_empty(), "rate fields are out of scope: {d:?}");
+    }
+
+    /// A topic or endpoint NAME that happens to end in a unit suffix is not a
+    /// deprecated field. The Autoware corpus publishes
+    /// `.../debug/processing_time_ms`, and an endpoint could just as easily be
+    /// named `max_latency_ms`; reporting either as a rename would be noise an
+    /// author cannot act on.
+    #[test]
+    fn does_not_flag_endpoint_or_topic_names() {
+        let d = run(concat!(
+            "nodes:\n  a:\n    pub:\n      max_latency_ms: {}\n",
+            "topics:\n  /debug/processing_time_ms:\n    type: std_msgs/msg/Float64\n"
+        ));
+        assert!(
+            d.is_empty(),
+            "author-chosen names must not be flagged: {d:?}"
+        );
     }
 }
