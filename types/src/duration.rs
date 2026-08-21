@@ -475,3 +475,41 @@ mod compat_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod emission_tests {
+    use super::*;
+    use crate::parse_manifest_str;
+
+    /// W3: a contract read in either spelling is WRITTEN in the canonical one,
+    /// so writing a file back migrates it.
+    #[test]
+    fn a_deprecated_contract_is_emitted_canonically() {
+        let legacy = "nodes:\n  a:\n    paths:\n      main:\n        max_latency_ms: 12\n";
+        let m = parse_manifest_str(legacy).expect("legacy spelling still parses");
+        let out = serde_json::to_string(&m).expect("serialize");
+        assert!(out.contains("\"max_latency\":\"12ms\""), "{out}");
+        assert!(
+            !out.contains("max_latency_ms"),
+            "the deprecated name must not be written back"
+        );
+    }
+
+    /// Both spellings emit IDENTICAL output. That is the property that makes
+    /// migrating a file safe: re-emitting it changes the spelling and nothing
+    /// else, so a regenerated artifact diffs only where the author edited.
+    ///
+    /// (`Manifest` is serialize-only, so this compares two parses rather than
+    /// round-tripping one through the struct.)
+    #[test]
+    fn both_spellings_emit_the_same_bytes() {
+        let legacy = "nodes:\n  a:\n    paths:\n      main:\n        max_latency_ms: 12\n";
+        let modern = "nodes:\n  a:\n    paths:\n      main:\n        max_latency: 12ms\n";
+        let a = serde_json::to_string(&parse_manifest_str(legacy).unwrap()).unwrap();
+        let b = serde_json::to_string(&parse_manifest_str(modern).unwrap()).unwrap();
+        assert_eq!(
+            a, b,
+            "the deprecated spelling must be invisible after parsing"
+        );
+    }
+}

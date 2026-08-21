@@ -933,10 +933,6 @@ fn yaml_u32(doc: &Yaml, key: &str) -> Option<u32> {
     doc[key].as_i64().map(|i| i as u32)
 }
 
-fn yaml_u64(doc: &Yaml, key: &str) -> Option<u64> {
-    doc[key].as_i64().map(|i| i as u64)
-}
-
 fn yaml_bool(doc: &Yaml, key: &str) -> Option<bool> {
     doc[key].as_bool()
 }
