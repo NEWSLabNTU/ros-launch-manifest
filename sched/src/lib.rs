@@ -5,7 +5,6 @@
 //! platform-independent and carries no priority numbers; per-platform
 //! placement lives in `[tiers.<name>.<target>]` sub-tables.
 
-pub mod compat;
 pub mod parse;
 pub mod resolve;
 pub mod types;

@@ -67,6 +67,10 @@ impl Duration {
     pub const fn as_nanos(self) -> i64 {
         self.nanos
     }
+    /// Whole microseconds, for the platform boundary that still speaks them.
+    pub fn as_micros(self) -> u64 {
+        (self.nanos / 1_000).max(0) as u64
+    }
     pub fn as_micros_f64(self) -> f64 {
         self.nanos as f64 / US as f64
     }
@@ -274,5 +278,189 @@ mod tests {
         assert_eq!(d.as_micros_f64(), 12_000.0);
         assert_eq!(Duration::from_millis_f64(12.0), d);
         assert_eq!(Duration::from_micros(12_000), d);
+    }
+}
+
+/// serde adapters for the phase-59 deprecation window.
+///
+/// One type (`Duration`) and one pair of functions, applied uniformly to every
+/// timing field rather than a bespoke wrapper per side. A field gets:
+///
+/// ```ignore
+/// #[serde(default, alias = "budget_us", deserialize_with = "compat::opt_micros")]
+/// pub budget: Option<Duration>,
+/// ```
+///
+/// The adapter accepts the phase-59 spelling (`"8ms"`, unit in the value) and
+/// the deprecated one (`8000`, unit implied by the field name it was aliased
+/// from). Serialization is always canonical, so writing a file back migrates
+/// it.
+///
+/// **Why a bare number is accepted here and refused elsewhere.** `serde`'s
+/// alias mechanism gives the deserializer ONE field; it cannot report which
+/// spelling matched. Refusing bare numbers under the new name would therefore
+/// require a hand-written `Deserialize` for every containing struct. Reading a
+/// bare number as the legacy unit is the conservative alternative — an
+/// un-migrated file cannot change meaning — and the leniency disappears with
+/// the alias at the phase-63 W6 sunset.
+///
+/// The hand-rolled contract parser, which exists for source spans that serde
+/// cannot provide, applies the SAME rule through [`from_legacy_scalar`], so the
+/// two paths cannot drift.
+pub mod compat {
+    use super::{Duration, LegacyUnit};
+    use serde::{Deserialize, Deserializer, de};
+    use std::fmt;
+
+    /// One newtype per legacy unit, so `Option<T>` deserialization comes free
+    /// from serde and no intermediate value type is needed. Routing through
+    /// `serde_json::Value` was the first attempt and was wrong twice: the
+    /// error types do not line up, and it drags JSON into a YAML path.
+    macro_rules! compat_newtype {
+        ($name:ident, $unit:expr, $fname:ident) => {
+            struct $name(Duration);
+
+            impl<'de> Deserialize<'de> for $name {
+                fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                    struct V;
+                    impl de::Visitor<'_> for V {
+                        type Value = Duration;
+                        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                            write!(
+                                f,
+                                "a duration like `8ms`, or a bare number of {}",
+                                $unit.name()
+                            )
+                        }
+                        fn visit_str<E: de::Error>(self, v: &str) -> Result<Duration, E> {
+                            v.parse().map_err(E::custom)
+                        }
+                        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Duration, E> {
+                            Ok($unit.scale(v as f64))
+                        }
+                        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Duration, E> {
+                            Ok($unit.scale(v as f64))
+                        }
+                        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Duration, E> {
+                            Ok($unit.scale(v))
+                        }
+                    }
+                    d.deserialize_any(V).map($name)
+                }
+            }
+
+            pub fn $fname<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
+                Ok(Option::<$name>::deserialize(d)?.map(|x| x.0))
+            }
+        };
+    }
+
+    compat_newtype!(CompatMillis, LegacyUnit::Millis, opt_millis);
+    compat_newtype!(CompatMicros, LegacyUnit::Micros, opt_micros);
+}
+
+/// The unit a deprecated field name implied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyUnit {
+    Millis,
+    Micros,
+}
+
+impl LegacyUnit {
+    pub fn name(self) -> &'static str {
+        match self {
+            LegacyUnit::Millis => "milliseconds",
+            LegacyUnit::Micros => "microseconds",
+        }
+    }
+    pub fn scale(self, v: f64) -> Duration {
+        match self {
+            LegacyUnit::Millis => Duration::from_millis_f64(v),
+            LegacyUnit::Micros => Duration::from_micros(v as i64),
+        }
+    }
+}
+
+/// Read a value that may be either spelling, for callers that are not serde.
+///
+/// The hand-rolled contract parser uses this so its behaviour and the serde
+/// adapters' cannot drift: one rule, two entry points.
+pub fn from_legacy_scalar(
+    text: Option<&str>,
+    number: Option<f64>,
+    unit: LegacyUnit,
+) -> Result<Option<Duration>, DurationParseError> {
+    if let Some(t) = text {
+        return t.parse().map(Some);
+    }
+    Ok(number.map(|n| unit.scale(n)))
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+
+    /// One type, one rule, two entry points. These moved here when the
+    /// sched-local wrapper type was deleted — the tests that pin the
+    /// deprecation behaviour belong beside the thing that implements it.
+    #[derive(serde::Deserialize)]
+    struct Holder {
+        #[serde(default, alias = "budget_us", deserialize_with = "compat::opt_micros")]
+        budget: Option<Duration>,
+        #[serde(
+            default,
+            alias = "max_latency_ms",
+            deserialize_with = "compat::opt_millis"
+        )]
+        max_latency: Option<Duration>,
+    }
+
+    #[test]
+    fn compat_adapters_accept_both_spellings() {
+        let new: Holder = serde_json::from_str(r#"{"budget":"8ms"}"#).unwrap();
+        let old: Holder = serde_json::from_str(r#"{"budget_us":8000}"#).unwrap();
+        assert_eq!(new.budget, old.budget);
+        assert_eq!(new.budget.unwrap().as_micros(), 8_000);
+
+        let new_ms: Holder = serde_json::from_str(r#"{"max_latency":"12ms"}"#).unwrap();
+        let old_ms: Holder = serde_json::from_str(r#"{"max_latency_ms":12}"#).unwrap();
+        assert_eq!(new_ms.max_latency, old_ms.max_latency);
+        assert_eq!(new_ms.max_latency.unwrap().as_millis_f64(), 12.0);
+    }
+
+    /// The documented asymmetry: through serde a bare number takes the legacy
+    /// unit, because `alias` cannot report which spelling matched. Pinned so
+    /// the leniency is deliberate and visible, and so removing it at the W6
+    /// sunset is a test change rather than a surprise.
+    #[test]
+    fn a_bare_number_takes_the_legacy_unit_through_serde() {
+        let h: Holder = serde_json::from_str(r#"{"budget":50000}"#).unwrap();
+        assert_eq!(
+            h.budget.unwrap().as_millis_f64(),
+            50.0,
+            "bare number is microseconds"
+        );
+        let h2: Holder = serde_json::from_str(r#"{"max_latency":12}"#).unwrap();
+        assert_eq!(
+            h2.max_latency.unwrap().as_millis_f64(),
+            12.0,
+            "bare number is milliseconds"
+        );
+    }
+
+    /// The non-serde entry point must agree with the serde one. The
+    /// hand-rolled contract parser uses `from_legacy_scalar` because it needs
+    /// source spans serde cannot provide, and the two must not drift.
+    #[test]
+    fn the_two_entry_points_agree() {
+        let via_serde: Holder = serde_json::from_str(r#"{"budget_us":8000}"#).unwrap();
+        let via_scalar = from_legacy_scalar(None, Some(8000.0), LegacyUnit::Micros).unwrap();
+        assert_eq!(via_serde.budget, via_scalar);
+
+        let text = from_legacy_scalar(Some("8ms"), None, LegacyUnit::Micros).unwrap();
+        assert_eq!(
+            text, via_scalar,
+            "a unit in the value overrides the legacy unit"
+        );
     }
 }
