@@ -595,8 +595,11 @@ fn realize_posix(
     // is too narrow), and under SCHED_FIFO a tie means one node can starve
     // the others. SCHED_RR would time-slice between them — but only if the
     // host's slice is short enough to matter. See `rr_policy_for_ties`.
+    // Microseconds are what `rr_policy_for_ties` and the period comparison
+    // downstream speak, so convert once at the seam rather than threading a
+    // `Duration` through the tie analysis.
     let rr_slice_us = match facts {
-        crate::PlatformResources::Posix(p) => p.rr_timeslice_us,
+        crate::PlatformResources::Posix(p) => p.rr_timeslice.map(|d| d.as_micros()),
         crate::PlatformResources::Raw(_) => None,
     };
     let (rr_nodes, tie_warnings) = rr_policy_for_ties(&node_priority, input, rr_slice_us);
@@ -797,7 +800,7 @@ mod tests {
         PlatformFacts::Posix(PosixResources {
             rt_priority_band: Some(PriorityBand { min, max }),
             isolated_cpus: vec![],
-            rr_timeslice_us: None,
+            rr_timeslice: None,
         })
     }
 

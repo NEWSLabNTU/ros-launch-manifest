@@ -62,11 +62,11 @@ pub struct PosixResources {
     /// play_launch/nano-ros placement policy, not enforced by this crate).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub isolated_cpus: Vec<u32>,
-    /// The host's `SCHED_RR` time slice, in microseconds.
+    /// The host's `SCHED_RR` time slice.
     ///
     /// A platform *fact*, which is why it lives here: on Linux the slice is a
     /// global sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`, default
-    /// **100 ms**), not a per-task value, so `TierPlatformSpec::time_slice_us`
+    /// **100 ms**), not a per-task value, so `TierPlatformSpec::time_slice`
     /// cannot express it. The mapper needs it to decide whether `SCHED_RR` is
     /// worth deriving at all: at 100 ms, two tied 10 Hz nodes get a slice as
     /// long as their entire period, so RR degenerates to FIFO while looking
@@ -75,8 +75,19 @@ pub struct PosixResources {
     /// Absent means "unknown" — the mapper then declines to derive RR rather
     /// than assuming the default, since assuming is how a cosmetic change gets
     /// presented as a real one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rr_timeslice_us: Option<u64>,
+    ///
+    /// Phase 63: spelled `rr_timeslice: 100ms`, with `rr_timeslice_us: 100000`
+    /// still accepted. Reading it as `100ms` rather than `100000` is the point
+    /// of the campaign — this is a field whose whole job is to be compared
+    /// against a node's period, and a bare six-digit integer is exactly where
+    /// a factor-of-1000 slip hides.
+    #[serde(
+        default,
+        alias = "rr_timeslice_us",
+        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rr_timeslice: Option<ros_launch_manifest_types::duration::Duration>,
 }
 
 /// An inclusive RT priority band, e.g. `{ min: 10, max: 40 }`.
@@ -487,6 +498,35 @@ overrides:
         assert!(file.legacy.is_none());
     }
 
+    /// Both spellings of the RR slice parse to the same duration.
+    ///
+    /// This field's whole job is to be compared against a node's period, so a
+    /// factor-of-1000 slip here does not crash — it silently decides that RR
+    /// is or is not worth deriving. `100ms` says out loud what `100000` only
+    /// implies.
+    #[test]
+    fn an_rr_timeslice_parses_in_both_spellings() {
+        let slice = |body: &str| {
+            let src = format!("target: posix\nmapper: chain_aware\nresources:\n{body}");
+            let file = parse_platform_file_yaml(&src).expect("must parse");
+            let PlatformResources::Posix(res) = &file.resources else {
+                panic!("posix resources");
+            };
+            res.rr_timeslice.map(|d| d.as_micros())
+        };
+        assert_eq!(slice("  rr_timeslice: 100ms\n"), Some(100_000));
+        assert_eq!(
+            slice("  rr_timeslice_us: 100000\n"),
+            Some(100_000),
+            "the deprecated spelling still parses"
+        );
+        assert_eq!(slice("  rr_timeslice: 100000us\n"), Some(100_000));
+        // Absent stays absent — the mapper declines to derive RR rather than
+        // assuming the 100 ms kernel default, and a zero would be a different
+        // claim entirely.
+        assert_eq!(slice("  isolated_cpus: [2]\n"), None);
+    }
+
     /// Both spellings of a budget parse to the same cost.
     ///
     /// The unit-suffixed form is not cosmetic here: `play_launch measure`
@@ -586,7 +626,7 @@ overrides:
         let PlatformResources::Posix(res) = &file.resources else {
             panic!("expected posix resources");
         };
-        assert_eq!(res.rr_timeslice_us, Some(100_000));
+        assert_eq!(res.rr_timeslice.map(|d| d.as_micros()), Some(100_000));
 
         let PlatformOverrideEntry::Posix(det) = file.overrides.get("obstacle_detector").unwrap()
         else {

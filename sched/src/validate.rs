@@ -261,7 +261,7 @@ mod tests {
         let facts = PlatformResources::Posix(PosixResources {
             rt_priority_band: Some(PriorityBand { min: 10, max: 40 }),
             isolated_cpus: vec![],
-            rr_timeslice_us: None,
+            rr_timeslice: None,
         });
         let plan = mapper.map(&input, &facts).expect("maps");
         assert!(rate_priority_contradictions(&input, &plan).is_empty());
