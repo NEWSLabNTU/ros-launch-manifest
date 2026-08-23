@@ -158,10 +158,10 @@ pub struct PosixOverride {
     /// RT thread run *below* the maximum performance point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uclamp_max: Option<u32>,
-    /// Declared execution cost, in microseconds.
+    /// Declared execution cost.
     ///
-    /// The field `TierDef::budget_us` has always meant "execution-time budget
-    /// — EDF/sporadic", but only the deprecated v1 TOML bridge could populate
+    /// The field `TierDef::budget` has always meant "execution-time budget —
+    /// EDF/sporadic", but only the deprecated v1 TOML bridge could populate
     /// it, so on every v2 path it was `None` and the derivation substituted a
     /// path's *deadline* for its cost. This is what makes cost authorable, and
     /// it is the only legitimate source for a `SCHED_DEADLINE` reservation's
@@ -169,8 +169,22 @@ pub struct PosixOverride {
     ///
     /// Not a proven WCET — there is no static analysis here. It is a declared
     /// high-percentile observed cost, used *as* an upper bound.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_us: Option<u64>,
+    ///
+    /// Phase 63: spelled `budget: 8000us`, with `budget_us: 8000` still
+    /// accepted. This is the field `play_launch measure` writes, and it was
+    /// missed by the W2 sweep — that wave scoped itself to the fields it
+    /// believed "the v2 schema has none of", which was true of `TierDef` and
+    /// false here. The result was a shipped verb whose output the loader
+    /// rejected outright: `deny_unknown_fields` turned `budget:` into
+    /// "unknown field", so a measured budget could not be pasted into the
+    /// platform file it was generated for.
+    #[serde(
+        default,
+        alias = "budget_us",
+        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub budget: Option<ros_launch_manifest_types::duration::Duration>,
 }
 
 /// The parsed `resources:` block, typed for known targets and raw otherwise.
@@ -343,9 +357,9 @@ pub fn validate_posix_override(node: &str, ov: &PosixOverride) -> Result<(), Pla
         )));
     }
 
-    if ov.budget_us == Some(0) {
+    if ov.budget.map(|d| d.as_micros()) == Some(0) {
         return Err(bad(
-            "`budget_us` 0 is not a cost — omit the field to say the cost is unknown. \
+            "`budget` 0 is not a cost — omit the field to say the cost is unknown. \
              Absent and zero are different answers."
                 .to_string(),
         ));
@@ -473,6 +487,79 @@ overrides:
         assert!(file.legacy.is_none());
     }
 
+    /// Both spellings of a budget parse to the same cost.
+    ///
+    /// The unit-suffixed form is not cosmetic here: `play_launch measure`
+    /// emits `budget: <n>us`, and while this struct carried only `budget_us`
+    /// under `deny_unknown_fields`, that output was rejected as an unknown
+    /// field — a verb whose whole purpose is to produce a pasteable fragment
+    /// produced one the loader refused. Neither spelling may regress.
+    #[test]
+    fn a_budget_parses_in_both_spellings() {
+        let with_unit = r#"
+target: posix
+mapper: chain_aware
+overrides:
+  obstacle_detector: { budget: 8000us }
+"#;
+        let legacy = r#"
+target: posix
+mapper: chain_aware
+overrides:
+  obstacle_detector: { budget_us: 8000 }
+"#;
+        let cost = |src: &str| {
+            let file = parse_platform_file_yaml(src).expect("must parse");
+            let PlatformOverrideEntry::Posix(ov) = file.overrides.get("obstacle_detector").unwrap()
+            else {
+                panic!("posix override");
+            };
+            ov.budget.map(|d| d.as_micros())
+        };
+        assert_eq!(cost(with_unit), Some(8000));
+        assert_eq!(
+            cost(legacy),
+            Some(8000),
+            "the deprecated spelling still parses"
+        );
+
+        // Milliseconds are the same cost written differently — a unit is read,
+        // not assumed.
+        let millis = r#"
+target: posix
+mapper: chain_aware
+overrides:
+  obstacle_detector: { budget: 8ms }
+"#;
+        assert_eq!(cost(millis), Some(8000));
+    }
+
+    /// Canonical emission uses the unit-suffixed spelling, so a file this
+    /// crate writes back does not seed the deprecated form.
+    #[test]
+    fn a_budget_is_emitted_with_its_unit() {
+        let src = r#"
+target: posix
+mapper: chain_aware
+overrides:
+  obstacle_detector: { budget_us: 8000 }
+"#;
+        let file = parse_platform_file_yaml(src).expect("must parse");
+        let PlatformOverrideEntry::Posix(ov) = file.overrides.get("obstacle_detector").unwrap()
+        else {
+            panic!("posix override");
+        };
+        let out = serde_yaml_ng::to_string(ov).expect("serialize");
+        assert!(
+            out.contains("budget: 8ms") || out.contains("budget: 8000us"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("budget_us:"),
+            "must not re-emit the deprecated name:\n{out}"
+        );
+    }
+
     #[test]
     fn override_vocabulary_parses() {
         let src = r#"
@@ -505,7 +592,7 @@ overrides:
         else {
             panic!("posix override");
         };
-        assert_eq!(det.budget_us, Some(8000));
+        assert_eq!(det.budget.map(|d| d.as_micros()), Some(8000));
         assert_eq!(det.uclamp_max, Some(800));
 
         let PlatformOverrideEntry::Posix(log) = file.overrides.get("telemetry_logger").unwrap()
