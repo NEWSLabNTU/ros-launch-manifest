@@ -97,6 +97,15 @@ pub struct NodeDecl {
     /// this field is advisory, not schema-enforced.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub criticality: Option<String>,
+    /// Which of this node's paths may NOT run concurrently (phase 67).
+    ///
+    /// Absent means **every path of this node serializes**, which is what both
+    /// realizations already default to — `rclcpp`'s implicit per-node callback
+    /// group is `MutuallyExclusive`, and nano-ros's `default_cbg_type` is the
+    /// same string. So nothing is written unless an author claims MORE
+    /// concurrency than the safe answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<ConcurrencyDecl>,
 }
 
 /// Publisher/subscriber endpoint properties (all optional).
@@ -306,6 +315,24 @@ pub struct QosDecl {
     pub lifespan: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub liveliness: Option<String>,
+    /// `deadline` QoS — the maximum time DDS will allow between messages
+    /// before it reports a violation (phase 67).
+    ///
+    /// The runtime-enforced counterpart of a subscriber's `min_rate_hz`, and
+    /// one of only two ROS 2 QoS policies that turn a declared timing
+    /// requirement into a callback. Enforcement is opt-in on the node's side:
+    /// `rclcpp`'s `QosOverridingOptions()` defaults to "no overrides allowed",
+    /// so a derived value can be applied only where the author opted in, and
+    /// must be REPORTED rather than silently dropped where they did not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<crate::duration::Duration>,
+    /// `liveliness` lease duration (phase 67).
+    ///
+    /// `liveliness` alone names a policy kind; the lease is the actual
+    /// fault-detection interval, and is the closest thing this vocabulary has
+    /// to ISO 26262's FDTI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_duration: Option<crate::duration::Duration>,
 }
 
 impl QosDecl {
@@ -328,6 +355,12 @@ impl QosDecl {
                 .and_then(|q| q.lifespan)
                 .or_else(|| topic.and_then(|q| q.lifespan)),
             liveliness: pick_str(|q| q.liveliness.as_ref()),
+            deadline: endpoint
+                .and_then(|q| q.deadline)
+                .or_else(|| topic.and_then(|q| q.deadline)),
+            lease_duration: endpoint
+                .and_then(|q| q.lease_duration)
+                .or_else(|| topic.and_then(|q| q.lease_duration)),
         }
     }
 }
@@ -372,6 +405,28 @@ pub struct PathDecl {
     /// ≥2 endpoints (Vocabulary v2, Phase 44.1 §2).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync: Option<Sync>,
+    /// Tolerable variation in this path's contribution to end-to-end latency
+    /// (phase 67).
+    ///
+    /// A *spread*, not a second budget: control stability depends on how much
+    /// latency VARIES, not only on its maximum, which is why AADL treats
+    /// latency jitter as a first-class analysis output rather than a
+    /// by-product. Checking it needs a lower bound as well as an upper one —
+    /// see [`PathDecl::min_latency`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_jitter: Option<crate::duration::Duration>,
+    /// Best-case latency for this path (phase 67).
+    ///
+    /// Optional, and expected to be *measured* rather than authored in most
+    /// cases — `play_launch measure` already computes per-invocation
+    /// distributions. It exists because every other bound this vocabulary
+    /// carries is an upper one, so `max_jitter` would otherwise be
+    /// unfalsifiable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_latency: Option<crate::duration::Duration>,
+    /// What a missed deadline costs and what to do about it (phase 67).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss: Option<MissSpec>,
 }
 
 impl PathDecl {
@@ -532,6 +587,65 @@ pub struct DropSpec {
 pub struct DropCount {
     pub n: u32,
     pub w: u32,
+}
+
+/// Deadline-miss tolerance and handling (phase 67).
+///
+/// Deliberately **not** [`DropSpec`], though it borrows its spelling. A dropped
+/// message and a late message are different failures with different
+/// consequences, and a controller tolerates them differently; sharing the
+/// author-facing shape helps, sharing the type would force one event's fields
+/// onto the other.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct MissSpec {
+    /// "N / W" format: at most N missed deadlines per W releases — the
+    /// weakly-hard (m,K) model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tolerate: Option<DropCount>,
+    /// Maximum consecutive misses. Distinct from `tolerate`: a controller can
+    /// survive a scattered 2-in-100 and be destabilised by 2 in a row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consecutive: Option<u32>,
+    /// What to do when a deadline IS missed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<MissAction>,
+}
+
+/// What happens to a job that misses its deadline.
+///
+/// The three from the weakly-hard literature. They are **not equally
+/// realizable on Linux**, which is a fact about the platform rather than the
+/// vocabulary: `Continue` is what CBS already does, while `SkipNext` and
+/// `Abort` describe an obligation on the node — `rclcpp` offers no hook to
+/// interrupt a callback mid-execution. A realizer that cannot deliver the
+/// requested action must say so rather than silently substituting `Continue`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MissAction {
+    /// Run the job to completion past its deadline.
+    #[default]
+    Continue,
+    /// Discard the next release rather than the overrunning job.
+    SkipNext,
+    /// Abandon the overrunning job at its deadline.
+    Abort,
+}
+
+/// Which of a node's paths may not run concurrently (phase 67).
+///
+/// An **exclusion relation**, from which callback groups are derived — a
+/// maximal mutually exclusive set IS a group. The group is a consequence, so
+/// it is never authored; nano-ros already infers groups from causal coupling
+/// and treats declaration as an override.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ConcurrencyDecl {
+    /// Sets of path names that must not run concurrently with one another.
+    ///
+    /// An empty declaration is meaningful and is NOT the same as omitting the
+    /// field: `concurrency: { exclusive: [] }` says every path of this node may
+    /// run concurrently, while an absent `concurrency:` means none may.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclusive: Vec<Vec<String>>,
 }
 
 impl DropCount {

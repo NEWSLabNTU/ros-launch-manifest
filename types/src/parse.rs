@@ -118,6 +118,7 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
         cli: parse_endpoints(yaml, "cli", ctx)?,
         paths: parse_paths(yaml, ctx)?,
         criticality: yaml_string(yaml, "criticality"),
+        concurrency: parse_concurrency(yaml, ctx)?,
     })
 }
 
@@ -562,6 +563,9 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         trigger,
         sync,
+        max_jitter: yaml_duration_new(yaml, "max_jitter")?,
+        min_latency: yaml_duration_new(yaml, "min_latency")?,
+        miss: parse_miss_spec(yaml, ctx)?,
     };
 
     // Vocabulary v2 §2: sync only meaningful with an input trigger with
@@ -860,6 +864,8 @@ fn parse_qos(doc: &Yaml) -> Result<Option<QosDecl>, ParseError> {
         history: yaml_string(section, "history"),
         lifespan: yaml_duration(section, "lifespan", "lifespan_ms")?,
         liveliness: yaml_string(section, "liveliness"),
+        deadline: yaml_duration_new(section, "deadline")?,
+        lease_duration: yaml_duration_new(section, "lease_duration")?,
     }))
 }
 
@@ -919,6 +925,112 @@ fn yaml_duration(
         _ => from_legacy_scalar(None, yaml_f64(doc, legacy), LegacyUnit::Millis)
             .map_err(|e| field_err("", legacy, &e.to_string())),
     }
+}
+
+/// A duration field introduced AFTER the unit-suffix migration, so it has no
+/// deprecated `_ms` spelling to fall back to and the unit is simply required.
+///
+/// Written as its own helper rather than calling `yaml_duration(doc, k, k)`
+/// because "the legacy name is the same as the canonical name" is a confusing
+/// way to say "there is no legacy name".
+fn yaml_duration_new(doc: &Yaml, key: &str) -> Result<Option<Duration>, ParseError> {
+    use crate::duration::{LegacyUnit, from_legacy_scalar};
+    let no_unit = |shown: String| {
+        field_err(
+            "",
+            key,
+            &format!(
+                "`{key}: {shown}` has no unit — write `{key}: {shown}ms` (or ns/us/s). \
+                 The unit is required so a value cannot be 1000x wrong and still parse"
+            ),
+        )
+    };
+    match &doc[key] {
+        Yaml::String(text) => from_legacy_scalar(Some(text), None, LegacyUnit::Millis)
+            .map_err(|e| field_err("", key, &e.to_string())),
+        Yaml::Integer(i) => Err(no_unit(i.to_string())),
+        Yaml::Real(r) => Err(no_unit(r.clone())),
+        _ => Ok(None),
+    }
+}
+
+/// `miss:` — deadline-miss tolerance and handling (phase 67).
+///
+/// Mirrors `parse_drop_spec`'s author-facing shape, including the "N / W"
+/// shorthand, because it is the same arithmetic on a different event. The
+/// types stay distinct: a dropped message and a late message are different
+/// failures.
+fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError> {
+    let section = &doc["miss"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    // Shorthand: `miss: "2 / 100"` — tolerance only, default action.
+    if let Some(text) = section.as_str() {
+        let count: DropCount = text
+            .parse()
+            .map_err(|e: String| field_err(ctx, "miss", &e))?;
+        return Ok(Some(MissSpec {
+            tolerate: Some(count),
+            consecutive: None,
+            action: None,
+        }));
+    }
+    let tolerate = yaml_string(section, "tolerate")
+        .map(|s| {
+            s.parse::<DropCount>()
+                .map_err(|e| field_err(ctx, "miss.tolerate", &e.to_string()))
+        })
+        .transpose()?;
+    let action = match yaml_string(section, "action").as_deref() {
+        None => None,
+        Some("continue") => Some(MissAction::Continue),
+        Some("skip_next") => Some(MissAction::SkipNext),
+        Some("abort") => Some(MissAction::Abort),
+        Some(other) => {
+            return Err(field_err(
+                ctx,
+                "miss.action",
+                &format!(
+                    "unknown action '{other}' — expected `continue`, `skip_next` or `abort`"
+                ),
+            ));
+        }
+    };
+    Ok(Some(MissSpec {
+        tolerate,
+        consecutive: yaml_u32(section, "consecutive"),
+        action,
+    }))
+}
+
+/// `concurrency:` — which of a node's paths may not run concurrently.
+///
+/// An ABSENT section and an empty `exclusive:` list mean opposite things, so
+/// the distinction is preserved rather than normalised away: absent means every
+/// path serializes (the conservative default both `rclcpp` and nano-ros
+/// already take), while `exclusive: []` says they may all run concurrently.
+fn parse_concurrency(doc: &Yaml, ctx: &str) -> Result<Option<ConcurrencyDecl>, ParseError> {
+    let section = &doc["concurrency"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let mut exclusive: Vec<Vec<String>> = Vec::new();
+    if let Yaml::Array(groups) = &section["exclusive"] {
+        for (i, group) in groups.iter().enumerate() {
+            match group {
+                Yaml::Array(names) => exclusive.push(names.iter().map(yaml_str_owned).collect()),
+                _ => {
+                    return Err(field_err(
+                        ctx,
+                        &format!("concurrency.exclusive[{i}]"),
+                        "expected a list of path names, e.g. `- [to_boxes, to_masks]`",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(Some(ConcurrencyDecl { exclusive }))
 }
 
 fn yaml_f64(doc: &Yaml, key: &str) -> Option<f64> {
@@ -1492,5 +1604,135 @@ topics:
         assert_eq!(drop.max_count.as_ref().unwrap().n, 5);
         assert_eq!(drop.max_count.as_ref().unwrap().w, 100);
         assert!(drop.max_consecutive.is_none());
+    }
+
+    // ── phase 67 vocabulary ──
+
+    const P67: &str = r#"
+version: 1
+nodes:
+  detector:
+    sub: { image: { min_rate_hz: 30 } }
+    pub: { boxes: {}, masks: {} }
+    concurrency:
+      exclusive:
+        - [to_boxes, to_masks]
+    paths:
+      to_boxes:
+        trigger: { input: [image] }
+        output: [boxes]
+        max_latency: 20ms
+        min_latency: 6ms
+        max_jitter: 4ms
+        miss:
+          tolerate: 2 / 100
+          consecutive: 1
+          action: skip_next
+      to_masks:
+        trigger: { input: [image] }
+        output: [masks]
+        max_latency: 35ms
+topics:
+  /image:
+    type: sensor_msgs/msg/Image
+    qos:
+      reliability: reliable
+      deadline: 33ms
+      liveliness: automatic
+      lease_duration: 200ms
+"#;
+
+    /// The whole phase-67 vocabulary must survive the HAND-ROLLED parser,
+    /// which is the live path (`parse_manifest_with_spans`). A field added to
+    /// the struct but not to `parse.rs` would be silently `None` in production
+    /// while any serde round-trip test still passed.
+    #[test]
+    fn phase67_fields_reach_the_model_through_the_real_parser() {
+        let m = parse_manifest_str(P67).unwrap();
+        let d = &m.nodes["detector"];
+
+        let boxes = &d.paths["to_boxes"];
+        assert_eq!(boxes.max_jitter.unwrap().as_millis_f64(), 4.0);
+        assert_eq!(boxes.min_latency.unwrap().as_millis_f64(), 6.0);
+
+        let miss = boxes.miss.as_ref().expect("miss: parsed");
+        let tol = miss.tolerate.as_ref().expect("tolerate: parsed");
+        assert_eq!((tol.n, tol.w), (2, 100));
+        assert_eq!(miss.consecutive, Some(1));
+        assert_eq!(miss.action, Some(MissAction::SkipNext));
+
+        let ex = &d.concurrency.as_ref().expect("concurrency: parsed").exclusive;
+        assert_eq!(ex, &vec![vec!["to_boxes".to_string(), "to_masks".to_string()]]);
+
+        let qos = m.topics["/image"].qos.as_ref().expect("qos parsed");
+        assert_eq!(qos.deadline.unwrap().as_millis_f64(), 33.0);
+        assert_eq!(qos.lease_duration.unwrap().as_millis_f64(), 200.0);
+
+        // A path that declares none of it stays absent, not defaulted.
+        let masks = &d.paths["to_masks"];
+        assert!(masks.max_jitter.is_none() && masks.min_latency.is_none());
+        assert!(masks.miss.is_none());
+    }
+
+    /// New duration fields have no deprecated `_ms` spelling, so the unit is
+    /// required — a bare number is the mistake the type exists to catch.
+    #[test]
+    fn a_new_duration_field_rejects_a_bare_number() {
+        for field in ["max_jitter", "min_latency"] {
+            let yaml = format!(
+                "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        \
+                 output: [o]\n        {field}: 4\n"
+            );
+            let err = parse_manifest_str(&yaml).unwrap_err().to_string();
+            assert!(
+                err.contains("no unit") && err.contains(field),
+                "{field} should demand a unit, got: {err}"
+            );
+        }
+    }
+
+    /// An unknown `miss.action` is an error, not a silent `continue`. A
+    /// vocabulary where a misspelt action quietly becomes the default is worse
+    /// than one that offers fewer actions.
+    #[test]
+    fn an_unknown_miss_action_is_rejected() {
+        let yaml = "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        \
+                    output: [o]\n        miss: { action: kill_it }\n";
+        let err = parse_manifest_str(yaml).unwrap_err().to_string();
+        assert!(err.contains("kill_it") && err.contains("skip_next"), "got: {err}");
+    }
+
+    /// `miss: "2 / 100"` is the same shorthand `drop:` accepts — same
+    /// arithmetic, different event, so the author learns one spelling.
+    #[test]
+    fn miss_accepts_the_drop_shorthand() {
+        let yaml = "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        \
+                    output: [o]\n        miss: 3 / 50\n";
+        let m = parse_manifest_str(yaml).unwrap();
+        let miss = m.nodes["n"].paths["p"].miss.as_ref().unwrap();
+        let tol = miss.tolerate.as_ref().unwrap();
+        assert_eq!((tol.n, tol.w), (3, 50));
+        assert_eq!(miss.action, None, "shorthand states tolerance only");
+    }
+
+    /// ABSENT and EMPTY mean opposite things and must not be normalised
+    /// together: no `concurrency:` means every path serializes (the
+    /// conservative default), while `exclusive: []` says they may all run
+    /// concurrently.
+    #[test]
+    fn absent_concurrency_differs_from_an_empty_exclusive_list() {
+        let absent = parse_manifest_str(
+            "version: 1\nnodes:\n  n:\n    paths:\n      p: { output: [o] }\n",
+        )
+        .unwrap();
+        assert!(absent.nodes["n"].concurrency.is_none());
+
+        let empty = parse_manifest_str(
+            "version: 1\nnodes:\n  n:\n    concurrency: { exclusive: [] }\n    \
+             paths:\n      p: { output: [o] }\n",
+        )
+        .unwrap();
+        let c = empty.nodes["n"].concurrency.as_ref().expect("present");
+        assert!(c.exclusive.is_empty());
     }
 }
