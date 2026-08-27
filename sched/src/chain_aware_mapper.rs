@@ -833,6 +833,8 @@ mod tests {
             exec_ms: None,
             inputs: vec![],
             outputs: vec![],
+            max_jitter_ms: None,
+            miss: None,
         }
     }
 
@@ -844,6 +846,8 @@ mod tests {
             exec_ms: None,
             inputs: vec!["in".to_string()],
             outputs: vec![],
+            max_jitter_ms: None,
+            miss: None,
         }
     }
 
@@ -855,6 +859,8 @@ mod tests {
             exec_ms: None,
             inputs: vec![],
             outputs: vec![],
+            max_jitter_ms: None,
+            miss: None,
         }
     }
 
@@ -968,6 +974,7 @@ mod tests {
             criticality,
             path_budget_ms: None,
             paths,
+            claims_concurrency: false,
         }
     }
 

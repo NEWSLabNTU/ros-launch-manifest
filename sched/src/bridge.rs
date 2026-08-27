@@ -126,6 +126,7 @@ scope = "/perception/lidar"
                     criticality: None,
                     path_budget_ms: None,
                     paths: Vec::new(),
+                    claims_concurrency: false,
                 })
                 .collect(),
             legacy: file.legacy.clone(),

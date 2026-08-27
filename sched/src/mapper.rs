@@ -55,6 +55,20 @@ pub struct MapperNode {
     /// ignore this field entirely — only [`crate::chain_aware_mapper`]
     /// consumes it).
     pub paths: Vec<crate::chain::MapperPath>,
+    /// True when this node claims that SOME of its callbacks may run
+    /// concurrently — i.e. its declared `concurrency.exclusive` does not put
+    /// every path in one group (phase 67).
+    ///
+    /// The mapper needs exactly this one bit, not the groups themselves: a
+    /// node whose callbacks all serialise behaves as a single-threaded
+    /// executor, and one that claims concurrency does not. That distinction
+    /// decides whether a per-thread reservation is sound — see
+    /// `derive_reservations`.
+    ///
+    /// `false` is the safe default and matches an absent declaration, which
+    /// means every path serialises. (`MapperNode` is not a serde type — it is
+    /// built in memory by the caller, never parsed.)
+    pub claims_concurrency: bool,
 }
 
 /// The mapper's input: every node's timing facts, plus (bridge path only) a
@@ -361,6 +375,7 @@ mod tests {
             criticality: None,
             path_budget_ms: None,
             paths: Vec::new(),
+            claims_concurrency: false,
         }
     }
 

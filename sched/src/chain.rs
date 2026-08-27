@@ -106,6 +106,67 @@ pub struct MapperPath {
     pub inputs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outputs: Vec<String>,
+    /// Declared tolerable variation in this path's latency (phase 67
+    /// `max_jitter`). A *spread*, not a second deadline: a path carrying one
+    /// has a stability requirement that best-effort placement cannot honour,
+    /// which is the only thing the mapper does with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_jitter_ms: Option<f64>,
+    /// Declared deadline-miss handling (phase 67 `miss:`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss: Option<MapperMiss>,
+}
+
+/// Deadline-miss handling, mirrored from the contract vocabulary.
+///
+/// A mirror rather than a re-export because the mapper types are
+/// `Serialize + Deserialize` (they cross the plan boundary as data) while the
+/// contract types are Serialize-only — contracts are read by a hand-rolled
+/// parser that carries source spans serde cannot provide.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MapperMiss {
+    /// Weakly-hard (m,K): at most `n` missed deadlines per `w` releases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerate_n: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerate_w: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consecutive: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<MapperMissAction>,
+}
+
+impl MapperMiss {
+    /// True when this declaration requires the system to KNOW a deadline was
+    /// missed — which is every form of it. Tolerating `n` per `w` means
+    /// counting them; acting on one means noticing it. On a reservation that
+    /// is `SCHED_FLAG_DL_OVERRUN`.
+    pub fn requires_detection(&self) -> bool {
+        self.tolerate_n.is_some() || self.consecutive.is_some() || self.action.is_some()
+    }
+}
+
+/// What happens to a job that misses its deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MapperMissAction {
+    #[default]
+    Continue,
+    SkipNext,
+    Abort,
+}
+
+impl MapperMissAction {
+    /// Whether Linux can actually deliver this action, as opposed to merely
+    /// recording that it was asked for.
+    ///
+    /// `Continue` is what CBS already does when a reservation is exhausted.
+    /// The other two describe an obligation on the NODE — `rclcpp` offers no
+    /// hook to drop a release or interrupt a callback mid-execution — so a
+    /// realizer must report them rather than silently substituting `Continue`.
+    pub fn is_enforceable_on_linux(self) -> bool {
+        matches!(self, MapperMissAction::Continue)
+    }
 }
 
 /// A chain's declared latency semantics (mirrors `types::ChainSemantics`).
@@ -372,6 +433,8 @@ mod tests {
             exec_ms: Some(4.5),
             inputs: vec!["/sensing/pointcloud".into()],
             outputs: vec!["/perception/objects".into()],
+            max_jitter_ms: Some(2.0),
+            miss: None,
         };
         let yaml = serde_yaml_ng::to_string(&p).unwrap();
         assert!(yaml.contains("max_latency_ms: 30.0"), "{yaml}");
