@@ -63,7 +63,7 @@ impl ValidationRule for SyncFeasibilityRule {
                                 self.id(),
                                 &format!("nodes.{node_name}.paths.{path_name}.sync"),
                                 format!(
-                                    "node '{node_name}' path '{path_name}' sync.max_interval.map(|d| d.as_millis_f64()) \
+                                    "node '{node_name}' path '{path_name}' sync.max_interval \
                                      ({window}) is less than the slowest input's period \
                                      ({slowest_period_ms:.2}ms, from rate {slowest_rate}Hz) — the \
                                      match window can never span the slowest input"
@@ -80,7 +80,7 @@ impl ValidationRule for SyncFeasibilityRule {
                                 self.id(),
                                 &format!("nodes.{node_name}.paths.{path_name}.sync"),
                                 format!(
-                                    "node '{node_name}' path '{path_name}' sync.timeout.map(|d| d.as_millis_f64()) \
+                                    "node '{node_name}' path '{path_name}' sync.timeout \
                                      ({timeout}) is less than the slowest input's period \
                                      ({slowest_period_ms:.2}ms, from rate {slowest_rate}Hz) — the \
                                      timeout always expires before the slowest input can \
