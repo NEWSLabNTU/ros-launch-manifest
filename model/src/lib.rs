@@ -821,6 +821,28 @@ pub struct PathContract {
     /// E2E drop budget (scope paths only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropContract>,
+    /// Tolerable spread in this path's contribution to end-to-end latency
+    /// (phase 67). A *spread*, not a second budget: control stability depends
+    /// on how much latency VARIES, not only on its maximum.
+    ///
+    /// This is the field the endpoint-level `jitter:` was retired in favour
+    /// of, and it is carried HERE — on the model — because the model is the
+    /// only thing a second toolchain reads. Phase 67 added it to the contract
+    /// and to the sched crate's `MapperPath`, but not to this struct, so
+    /// nano-ros (which builds its `MapperPath` from the model rather than
+    /// from the manifest) could not see it at all: not "did not use it",
+    /// could not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_jitter_ms: Option<f64>,
+    /// What a missed deadline means for this path (phase 67): how many are
+    /// tolerated, and what to do about one.
+    ///
+    /// Deliberately `sched`'s own [`MapperMiss`] rather than a model-local
+    /// mirror of it. A second spelling of the same concept on either side of
+    /// this boundary is how two toolchains start scheduling the same system
+    /// from different information — the seam this field exists to close.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss: Option<ros_launch_manifest_sched::MapperMiss>,
 }
 
 /// Multi-input correlation mode.

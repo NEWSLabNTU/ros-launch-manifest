@@ -254,3 +254,47 @@ exec: detector_node
     assert!(!re_emitted.contains("respawn:"), "{re_emitted}");
     assert!(!re_emitted.contains("env:"), "{re_emitted}");
 }
+
+/// The two phase-67 facts that reach the model, and the reason they are
+/// carried here at all.
+///
+/// `max_jitter` and `miss` existed in the contract and in the sched crate's
+/// `MapperPath` from phase 67, but not on `PathContract` — and the model is
+/// the ONLY thing a second toolchain reads. nano-ros builds its `MapperPath`
+/// from the model rather than from the manifest, so it could not see either
+/// fact: not "chose not to use", could not. This asserts the boundary carries
+/// them, in `sched`'s own spelling rather than a model-local mirror.
+#[test]
+fn a_path_contract_carries_jitter_and_miss_across_the_boundary() {
+    use ros_launch_manifest_model::PathContract;
+    use ros_launch_manifest_sched::{MapperMiss, MapperMissAction};
+
+    let pc = PathContract {
+        output: vec!["/out".to_string()],
+        max_latency_ms: Some(20.0),
+        max_jitter_ms: Some(5.0),
+        miss: Some(MapperMiss {
+            tolerate_n: Some(1),
+            tolerate_w: Some(10),
+            consecutive: None,
+            action: Some(MapperMissAction::SkipNext),
+        }),
+        ..Default::default()
+    };
+    let yaml = serde_yaml_ng::to_string(&pc).expect("serializes");
+    assert!(yaml.contains("max_jitter_ms: 5.0"), "{yaml}");
+    assert!(yaml.contains("skip_next"), "the action must cross as sched spells it: {yaml}");
+
+    let back: PathContract = serde_yaml_ng::from_str(&yaml).expect("round-trips");
+    assert_eq!(back, pc);
+
+    // Absent stays absent — a path that declares neither must not gain an
+    // empty `miss:` in every model anyone emits.
+    let bare = PathContract {
+        output: vec!["/out".to_string()],
+        ..Default::default()
+    };
+    let yaml = serde_yaml_ng::to_string(&bare).unwrap();
+    assert!(!yaml.contains("max_jitter"), "{yaml}");
+    assert!(!yaml.contains("miss"), "{yaml}");
+}
