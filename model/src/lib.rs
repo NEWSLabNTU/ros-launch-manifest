@@ -762,9 +762,6 @@ pub struct PubContract {
     pub min_rate_hz: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_rate_hz: Option<f64>,
-    /// Max deviation from the ideal period.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jitter_ms: Option<f64>,
     /// R1-M5 — per-endpoint QoS (overrides the topic-level profile for
     /// this endpoint; manifest-side per-endpoint QoS + the retired 211.H
     /// launch-param overlay both land here).

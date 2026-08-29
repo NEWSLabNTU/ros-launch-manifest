@@ -132,9 +132,16 @@ fn structure_layer_resolved_shapes() {
 #[test]
 fn contracts_layer_numbers() {
     let c = golden().contracts;
-    assert_eq!(
-        c.pub_endpoints["/perception/detection/detector/objects"].jitter_ms,
-        Some(5.0)
+    // `jitter_ms` was removed from `PubContract` (phase 68): it was declared,
+    // copied here, and read by nothing on either side of the toolchain. The
+    // golden file on disk deliberately STILL CARRIES it — this asserts that an
+    // old model deserializes anyway, the same backward-compatible removal the
+    // retired `record:` field documents on `SystemModel`. If someone ever adds
+    // `deny_unknown_fields`, this test is what fails.
+    assert!(
+        include_str!("golden/perception.system_model.yaml").contains("jitter_ms:"),
+        "the golden model must keep a retired field, or it stops proving \
+         old models still load"
     );
     // R1-M5 — per-endpoint QoS
     assert_eq!(

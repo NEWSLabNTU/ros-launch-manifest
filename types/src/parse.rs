@@ -159,10 +159,33 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     if yaml.is_null() || yaml.is_badvalue() {
         return Ok(EndpointProps::default());
     }
+    // `jitter:` on an endpoint was removed (phase 68). It was declared, copied
+    // into the model, and read by NOTHING — no check, no mapper, no runtime
+    // monitor, on either side of the toolchain. Jitter is a property of a
+    // route, not of a single endpoint: what destabilises a controller is how
+    // much the END-TO-END latency varies, and one publisher's spread does not
+    // determine that. `max_jitter` on a path or scope path is the requirement
+    // that replaced it, and `jitter-feasibility` checks it against the
+    // sampling jitter the route already carries.
+    if !yaml["jitter"].is_badvalue() || !yaml["jitter_ms"].is_badvalue() {
+        return Err(field_err(
+            ctx,
+            "jitter",
+            "`jitter:` on an endpoint was removed — nothing ever read it, and \
+             jitter is a property of a ROUTE rather than of one endpoint. \
+             Declare it on the path or scope path whose end-to-end variation \
+             you mean:\n\
+             \x20 paths:\n\
+             \x20   <path name>:\n\
+             \x20     max_jitter: <the tolerable spread>\n\
+             `jitter-feasibility` then checks it against the sampling jitter \
+             the route already carries — one whole period per clock boundary \
+             crossed, which no priority assignment can reduce.",
+        ));
+    }
     let props = EndpointProps {
         min_rate_hz: yaml_f64(yaml, "min_rate_hz"),
         max_rate_hz: yaml_f64(yaml, "max_rate_hz"),
-        jitter: yaml_duration(yaml, "jitter", "jitter_ms")?,
         max_age: yaml_duration(yaml, "max_age", "max_age_ms")?,
         state: yaml_bool(yaml, "state"),
         required: yaml_bool(yaml, "required"),

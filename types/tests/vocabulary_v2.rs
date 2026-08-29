@@ -643,3 +643,47 @@ chains:
     assert!(err.contains("semantics"), "{err}");
     assert!(err.contains("max_age"), "must point at the fact that does state staleness: {err}");
 }
+
+// ── Endpoint `jitter:`, removed (phase 68) ──
+
+/// An endpoint `jitter:` is rejected, and the error names where the
+/// requirement now lives.
+///
+/// It was declared, copied into the model, and read by NOTHING — no check, no
+/// mapper, no runtime monitor, on either side of the toolchain. Rejecting is
+/// the point: ignoring it would leave an author believing a jitter
+/// requirement is being enforced when the only thing that ever happened to it
+/// was being written down.
+#[test]
+fn endpoint_jitter_is_rejected_and_names_the_path_requirement() {
+    let yaml = r#"
+version: 1
+nodes:
+  n:
+    pub:
+      out:
+        min_rate_hz: 10
+        jitter: 5ms
+"#;
+    let err = parse_manifest_str(yaml).unwrap_err().to_string();
+    assert!(err.contains("removed"), "{err}");
+    assert!(err.contains("max_jitter"), "must name the replacement: {err}");
+    assert!(err.contains("route"), "must say why an endpoint is the wrong place: {err}");
+}
+
+/// The legacy unit-suffixed spelling is rejected too — it was an alias for the
+/// same field, so leaving it accepted would let the removal be bypassed by
+/// writing the older form.
+#[test]
+fn the_legacy_jitter_ms_spelling_is_rejected_as_well() {
+    let yaml = r#"
+version: 1
+nodes:
+  n:
+    pub:
+      out:
+        jitter_ms: 5
+"#;
+    let err = parse_manifest_str(yaml).unwrap_err().to_string();
+    assert!(err.contains("max_jitter"), "{err}");
+}

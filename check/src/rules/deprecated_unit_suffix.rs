@@ -40,7 +40,6 @@ const RENAMED: &[(&str, &str)] = &[
     ("max_response_ms", "max_response"),
     ("max_interval_ms", "max_interval"),
     ("timeout_ms", "timeout"),
-    ("jitter_ms", "jitter"),
     ("tolerance_ms", "tolerance"),
     ("lifespan_ms", "lifespan"),
     ("deadline_us", "deadline"),

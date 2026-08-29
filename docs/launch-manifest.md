@@ -136,7 +136,7 @@ graph. Scopes contain nodes, topics, services, and child scopes.
 
 - **Endpoint.** A named port on a node. Four kinds: `pub` (publishes),
   `sub` (subscribes), `srv` (serves a service), `cli` (calls a service).
-  Endpoints can have properties: rate, jitter, state, required, max_age_ms.
+  Endpoints can have properties: rate, state, required, max_age.
   See [Nodes](#nodes),
   [Subscriber Modes](#subscriber-modes-state-and-required).
 
@@ -1202,8 +1202,15 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 |---------------|-------------------------------------------|------------|
 | `min_rate_hz` | Minimum publish rate                      | Not checked |
 | `max_rate_hz` | Maximum publish rate                      | Not checked |
-| `jitter_ms`   | Max deviation from ideal period           | Not checked |
 | `qos`         | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
+
+**`jitter:` on an endpoint was removed** (phase 68). It was declared, copied
+into the model, and read by nothing — its own row in this table said *"Not
+checked"* for its whole life. Jitter is a property of a ROUTE, not of one
+endpoint: what destabilises a controller is how much the end-to-end latency
+varies, and a single publisher's spread does not determine that. Declare
+`max_jitter:` on the path or scope path you mean; `jitter-feasibility` checks
+it against the sampling jitter the route already carries.
 
 **Service/client properties:**
 

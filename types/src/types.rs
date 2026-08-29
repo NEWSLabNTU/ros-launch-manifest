@@ -108,13 +108,6 @@ pub struct EndpointProps {
     pub min_rate_hz: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_rate_hz: Option<f64>,
-    #[serde(
-        default,
-        alias = "jitter_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub jitter: Option<crate::duration::Duration>,
     /// Sub endpoint: max data age at receive (now - header.stamp), runtime-checked.
     #[serde(
         default,
