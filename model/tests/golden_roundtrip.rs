@@ -298,3 +298,42 @@ fn a_path_contract_carries_jitter_and_miss_across_the_boundary() {
     assert!(!yaml.contains("max_jitter"), "{yaml}");
     assert!(!yaml.contains("miss"), "{yaml}");
 }
+
+/// Absent is not empty, across the boundary.
+///
+/// An absent `concurrency:` means every path of a node serialises; an empty
+/// `exclusive: []` means every path may run concurrently. They are opposite
+/// claims, and a `Vec` alone would make them identical — so the declaration is
+/// PRESENCE in the map, and this asserts a round-trip preserves both.
+#[test]
+fn an_empty_exclusion_survives_the_round_trip_and_is_not_an_absent_one() {
+    use ros_launch_manifest_model::Contracts;
+    use ros_launch_manifest_sched::ConcurrencyContract;
+
+    let mut c = Contracts::default();
+    c.node_concurrency.insert(
+        "/claims".to_string(),
+        ConcurrencyContract { exclusive: vec![] },
+    );
+    c.node_concurrency.insert(
+        "/serialises".to_string(),
+        ConcurrencyContract {
+            exclusive: vec![vec!["a".to_string(), "b".to_string()]],
+        },
+    );
+
+    let yaml = serde_yaml_ng::to_string(&c).expect("serializes");
+    let back: Contracts = serde_yaml_ng::from_str(&yaml).expect("round-trips");
+
+    assert!(
+        back.node_concurrency.contains_key("/claims"),
+        "an empty declaration must survive as a DECLARATION, not vanish into \
+         looking like an absent one: {yaml}"
+    );
+    assert!(back.node_concurrency["/claims"].exclusive.is_empty());
+    assert_eq!(back.node_concurrency["/serialises"].exclusive.len(), 1);
+    assert!(
+        !back.node_concurrency.contains_key("/undeclared"),
+        "and a node that declared nothing must not acquire an entry"
+    );
+}

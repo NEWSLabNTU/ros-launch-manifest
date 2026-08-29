@@ -724,6 +724,26 @@ pub struct Contracts {
     /// Scope end-to-end paths (entry topic → exit topic within the subtree).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub scope_paths: BTreeMap<String, PathContract>,
+    /// Which of a node's paths may not run concurrently (phase 67), keyed by
+    /// node FQN.
+    ///
+    /// **Presence in this map is the declaration.** An absent entry means
+    /// every path of that node serialises — the safe answer, and what both
+    /// realizations already do (`rclcpp`'s implicit callback group is
+    /// `MutuallyExclusive`; so is nano-ros's `default_cbg_type`). An entry
+    /// with an EMPTY `exclusive` is the opposite claim: every path may run
+    /// concurrently. Flattening the two is the mistake this shape exists to
+    /// prevent.
+    ///
+    /// Carried on the model because the model is the only artifact a second
+    /// toolchain reads. nano-ros INFERS callback groups from causal coupling
+    /// (`PlanCallbackGroup::inferred`) and defaults an uncoupled callback to
+    /// `Reentrant` — the OPPOSITE of the contract's default. A declared
+    /// relation is the fact that settles which is right for a given system,
+    /// and until it crossed this boundary neither side could see the other's
+    /// answer.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_concurrency: BTreeMap<String, ros_launch_manifest_sched::ConcurrencyContract>,
     /// Per-topic channel contracts (rate, transport, drops, QoS).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<String, TopicContract>,

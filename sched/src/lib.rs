@@ -33,8 +33,9 @@ pub mod posix;
 
 pub use bridge::parse_legacy_toml;
 pub use chain::{
-    ChainAwareDetail, ChainElement, ChainSemantics, EffectiveTrigger, MapDiagnostics, MapWarning,
-    MapperMiss, MapperMissAction, MapperPath, ResolvedChain, SegmentNode,
+    ChainAwareDetail, ChainElement, ChainSemantics, ConcurrencyContract, EffectiveTrigger,
+    MapDiagnostics, MapWarning, MapperMiss, MapperMissAction, MapperPath, ResolvedChain,
+    SegmentNode,
 };
 pub use chain_aware_mapper::{ChainAwareMapper, RankItem, RankedPlan, chain_aware_rank};
 pub use mapper::{

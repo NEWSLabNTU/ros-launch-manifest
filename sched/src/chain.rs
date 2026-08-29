@@ -169,6 +169,26 @@ impl MapperMissAction {
     }
 }
 
+/// A node's declared exclusion relation between its own paths (phase 67),
+/// mirrored here so the `model` crate can embed it — the same reason
+/// [`MapperMiss`] lives in this crate.
+///
+/// # Absent is not empty
+///
+/// This distinction is the whole content of the type and is easy to flatten by
+/// accident. An ABSENT declaration means every path serialises: that is the
+/// safe answer, and it is what both realizations already do (`rclcpp`'s
+/// implicit group is `MutuallyExclusive`, and so is nano-ros's
+/// `default_cbg_type`). `exclusive: []` is the OPPOSITE claim — every path may
+/// run concurrently. Modelling this as a bare `Vec` would make the two
+/// identical; it is carried as a presence/absence in the map that holds it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConcurrencyContract {
+    /// Sets of path names that must not run concurrently with one another.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclusive: Vec<Vec<String>>,
+}
+
 /// A chain's declared latency semantics.
 ///
 /// **Nothing branches on this** — not the mapper, not the checker, not any
