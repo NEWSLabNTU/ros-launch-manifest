@@ -55,13 +55,6 @@ pub struct Manifest {
     /// tree overrides the external mark.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub external_topics: BTreeMap<String, ExternalTopicDecl>,
-    /// Named cross-scope compositions of `paths:` into end-to-end budgets
-    /// (Vocabulary v2, Phase 44.1 §4). Integrator-owned — root contract or
-    /// overlay, same owner as the platform file. Cross-file link
-    /// resolution (`chain-link` rule) is a checker concern (W2); parsing
-    /// only validates local segment shape.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub chains: BTreeMap<String, ChainDecl>,
 }
 
 /// Node declaration.
@@ -529,48 +522,6 @@ pub enum SyncPolicy {
     Approximate,
     /// Collect-until-timeout, publish partial set.
     TimeoutAny,
-}
-
-/// Named cross-scope composition of `paths:` into an end-to-end budget
-/// (Vocabulary v2, Phase 44.1 §4).
-#[derive(Debug, Clone, Serialize)]
-pub struct ChainDecl {
-    /// Composition math: `reaction` (first-reaction latency) vs `age`
-    /// (data staleness at the sink) — the two diverge at junctions.
-    pub semantics: ChainSemantics,
-    /// End-to-end budget (ms) the chain's segments must fit within.
-    #[serde(
-        alias = "max_latency_ms",
-        deserialize_with = "crate::duration::compat::millis"
-    )]
-    pub max_latency: crate::duration::Duration,
-    /// Alternating path/via segments. First and last must be path
-    /// segments; no two `via` segments may be adjacent. Cross-file link
-    /// resolution is a checker concern (W2's `chain-link` rule).
-    pub segments: Vec<ChainSegment>,
-}
-
-/// Chain composition semantics (Vocabulary v2, Phase 44.1 §4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ChainSemantics {
-    /// First-reaction latency (TIMEX "reaction").
-    Reaction,
-    /// Data staleness at the sink (TIMEX "age").
-    Age,
-}
-
-/// One segment of a [`ChainDecl`]: either a scoped path reference or an
-/// explicit connecting topic (`via:`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum ChainSegment {
-    /// `{ scope: <scope>, path: <path-name> }` — a named path in the
-    /// given scope's manifest.
-    Path { scope: String, path: String },
-    /// `{ via: <topic-fqn> }` — the explicit connecting topic between two
-    /// path segments. No silent FQN matching.
-    Via { via: String },
 }
 
 /// Drop tolerance specification.

@@ -541,11 +541,17 @@ oldest input. With `correlation: latest`, age follows the primary
 
 ## Cross-Scope Chains and Sampling Cost
 
-Scope paths compose budgets *within* one scope subtree. **Chains**
-(Vocabulary v2, `chains:` in the manifest format) name an end-to-end
-cause-effect sequence that crosses scope boundaries: an alternating list
-of `{scope, path}` segments joined by `via:` topics, with one E2E
-`max_latency_ms` and a semantics tag (`reaction` or `age`).
+Scope paths compose budgets *within* one scope subtree, and the same
+spelling names an end-to-end requirement that crosses scope boundaries:
+two ends (`trigger: { input: [...] }` and `output:`) plus one E2E
+`max_latency`. The cause-effect sequence between them is DERIVED from
+the `trigger:`/`output:` facts the nodes already declare.
+
+An earlier vocabulary wrote that sequence by hand — `chains:`, an
+alternating list of `{scope, path}` segments joined by `via:` topics,
+with a `reaction`/`age` semantics tag. It was removed in phase 68 W4: a
+written route is a second copy of the graph, and the `chain-link` rule
+existed only to catch the two disagreeing.
 
 A chain's segments divide into two kinds, following the periodic
 composition rule above:

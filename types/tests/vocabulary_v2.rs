@@ -1,4 +1,4 @@
-//! Vocabulary v2 (Phase 44.1) — trigger, sync, buffer, chains.
+//! Vocabulary v2 (Phase 44.1) — trigger, sync, buffer.
 //!
 //! Covers: serde round-trip for every trigger form, golden parse of the
 //! design-spec's own worked examples, legacy-contract compatibility
@@ -6,7 +6,7 @@
 //! effective-trigger derivation), and every validation error case.
 
 use ros_launch_manifest_types::{
-    Buffer, ChainSegment, ChainSemantics, EffectiveTrigger, Sync, SyncPolicy, Trigger,
+    Buffer, EffectiveTrigger, Sync, SyncPolicy, Trigger,
     parse_manifest_str,
 };
 
@@ -152,50 +152,6 @@ nodes:
     let ekf = &m.nodes["ekf"];
     assert_eq!(ekf.subscribers["control_cmd"].buffer, None);
     assert_eq!(ekf.subscribers["twist"].buffer, Some(Buffer::Queue));
-}
-
-// ── Golden parse: chains (§4) ──
-
-#[test]
-fn golden_parse_chains_sensing_to_actuation() {
-    let yaml = r#"
-version: 1
-chains:
-  sensing_to_actuation:
-    semantics: reaction
-    max_latency_ms: 150
-    segments:
-      - { scope: /perception, path: preprocess }
-      - { via: /perception/objects }
-      - { scope: /planning, path: plan }
-      - { via: /planning/trajectory }
-      - { scope: /control, path: follow }
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let chain = &m.chains["sensing_to_actuation"];
-    assert_eq!(chain.semantics, ChainSemantics::Reaction);
-    assert_eq!(chain.max_latency.as_millis_f64(), 150.0);
-    assert_eq!(chain.segments.len(), 5);
-    assert_eq!(
-        chain.segments[0],
-        ChainSegment::Path {
-            scope: "/perception".into(),
-            path: "preprocess".into(),
-        }
-    );
-    assert_eq!(
-        chain.segments[1],
-        ChainSegment::Via {
-            via: "/perception/objects".into(),
-        }
-    );
-    assert_eq!(
-        chain.segments[4],
-        ChainSegment::Path {
-            scope: "/control".into(),
-            path: "follow".into(),
-        }
-    );
 }
 
 // ── Legacy compatibility ──
@@ -640,141 +596,50 @@ nodes:
     assert_eq!(m.nodes["n"].subscribers["x"].buffer, Some(Buffer::Queue));
 }
 
+
+// ── Chains, removed (phase 68 W4) ──
+
+/// `chains:` is rejected outright rather than ignored.
+///
+/// Ignoring it would leave a contract whose end-to-end budget is silently
+/// unchecked: it still resolves, still produces a schedule, and the missing
+/// requirement surfaces as a missed deadline on a running system instead of as
+/// a message. Phase 47 set the precedent when `record.json` became a clap
+/// failure rather than a warning.
 #[test]
-fn chains_segments_must_be_nonempty() {
+fn chains_is_rejected_and_names_the_replacement() {
     let yaml = r#"
 version: 1
 chains:
-  c:
+  sensing_to_actuation:
     semantics: reaction
-    max_latency_ms: 10
-    segments: []
-"#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("non-empty"), "got: {err}");
-}
-
-#[test]
-fn chains_first_segment_must_be_path() {
-    let yaml = r#"
-version: 1
-chains:
-  c:
-    semantics: reaction
-    max_latency_ms: 10
+    max_latency: 150ms
     segments:
-      - { via: /topic }
-      - { scope: /s, path: p }
+      - { scope: /sensing, path: capture }
+      - { via: /sensing/points }
+      - { scope: /control, path: react }
 "#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("first segment must be a path segment"),
-        "got: {err}"
-    );
+    let err = parse_manifest_str(yaml).unwrap_err().to_string();
+    assert!(err.contains("removed"), "{err}");
+    assert!(err.contains("paths:"), "must name the replacement: {err}");
+    assert!(err.contains("max_latency"), "{err}");
 }
 
+/// `semantics: age` is not a reason to keep `chains:`. Nothing ever branched
+/// on it — no check, no mapper, no arithmetic — so the error message says the
+/// line can be dropped rather than pretending a requirement is being lost.
 #[test]
-fn chains_last_segment_must_be_path() {
-    let yaml = r#"
-version: 1
-chains:
-  c:
-    semantics: reaction
-    max_latency_ms: 10
-    segments:
-      - { scope: /s, path: p }
-      - { via: /topic }
-"#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("last segment must be a path segment"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn chains_no_adjacent_via_segments() {
-    let yaml = r#"
-version: 1
-chains:
-  c:
-    semantics: reaction
-    max_latency_ms: 10
-    segments:
-      - { scope: /s1, path: p1 }
-      - { via: /topic1 }
-      - { via: /topic2 }
-      - { scope: /s2, path: p2 }
-"#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(
-        err.to_string().contains("adjacent 'via' segments"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn chains_segment_cannot_mix_via_and_scope_path() {
-    let yaml = r#"
-version: 1
-chains:
-  c:
-    semantics: reaction
-    max_latency_ms: 10
-    segments:
-      - { scope: /s1, path: p1, via: /oops }
-      - { scope: /s2, path: p2 }
-"#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("cannot be combined"), "got: {err}");
-}
-
-#[test]
-fn chains_invalid_semantics_is_error() {
-    let yaml = r#"
-version: 1
-chains:
-  c:
-    semantics: bogus
-    max_latency_ms: 10
-    segments:
-      - { scope: /s1, path: p1 }
-      - { scope: /s2, path: p2 }
-"#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("invalid semantics"), "got: {err}");
-}
-
-#[test]
-fn chains_missing_max_latency_ms_is_error() {
-    let yaml = r#"
-version: 1
-chains:
-  c:
-    semantics: reaction
-    segments:
-      - { scope: /s1, path: p1 }
-      - { scope: /s2, path: p2 }
-"#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    // Canonical spelling, same reasoning as the sync timeout case.
-    assert!(err.to_string().contains("max_latency"), "got: {err}");
-}
-
-#[test]
-fn chains_age_semantics_parses() {
+fn an_age_chain_is_rejected_too_and_says_the_line_can_go() {
     let yaml = r#"
 version: 1
 chains:
   c:
     semantics: age
-    max_latency_ms: 200
+    max_latency: 10ms
     segments:
-      - { scope: /s1, path: p1 }
-      - { scope: /s2, path: p2 }
+      - { scope: /, path: a }
 "#;
-    let m = parse_manifest_str(yaml).unwrap();
-    assert_eq!(m.chains["c"].semantics, ChainSemantics::Age);
+    let err = parse_manifest_str(yaml).unwrap_err().to_string();
+    assert!(err.contains("semantics"), "{err}");
+    assert!(err.contains("max_age"), "must point at the fact that does state staleness: {err}");
 }

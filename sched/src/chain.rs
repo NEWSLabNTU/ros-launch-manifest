@@ -169,12 +169,16 @@ impl MapperMissAction {
     }
 }
 
-/// A chain's declared latency semantics (mirrors `types::ChainSemantics`).
-/// Not otherwise interpreted by the mapper (the reaction-vs-age distinction
-/// affects the companion checker's arithmetic, not rank assignment).
+/// A chain's declared latency semantics.
 ///
-/// Serde shape: lowercase string (`reaction` | `age`), matching
-/// `types::ChainSemantics`.
+/// **Nothing branches on this** — not the mapper, not the checker, not any
+/// arithmetic anywhere. It used to mirror `types::ChainSemantics`, which was
+/// removed with `chains:` in phase 68 W4 precisely because it was write-only.
+/// It survives here only because it is a field of the derived `ResolvedChain`
+/// that crosses into `system_model.yaml` and on to nano-ros; every route this
+/// crate now sees is derived, and a derived route is `Reaction`.
+///
+/// Serde shape: lowercase string (`reaction` | `age`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChainSemantics {

@@ -37,7 +37,7 @@ joined with the launch tree:
 | `deadline_us` | min `max_latency_ms` over the node's declared `paths` (×1000) |
 | `criticality` | `nodes.<name>.criticality` (`high`/`medium`/`low`, advisory string on the node) |
 | per-path facts | each path's `effective_trigger` (timer/input/once/spontaneous/unclassified), `max_latency_ms`, inputs/outputs |
-| chains | `chains:` declarations, resolved cross-scope into segment/boundary structure |
+| chains | scope `paths:` declarations, whose route is DERIVED cross-scope into segment/boundary structure (`chains:` was removed in phase 68 W4) |
 
 This derivation is **per-consumer** (it needs a launch tree or a
 SystemModel, which this crate deliberately does not depend on):
@@ -199,7 +199,7 @@ pub trait SchedMapper {
 - **`deadline_monotonic`** — same shape, ranked by `deadline_us`
   ascending (shorter deadline → higher priority).
 - **`chain_aware`** — chain-first shaping; the primary mapper for
-  systems with `chains:` declarations. Detailed below.
+  systems declaring end-to-end scope `paths:`. Detailed below.
 
 Both simple mappers emit `sched_class: SCHED_FIFO`, `class: real_time`
 per ranked node.
@@ -318,13 +318,14 @@ tagged so their YAML stays plain mappings, no `!tags`:
 **Resolution the caller must do** before building `MapperInput`:
 resolve `via:` topics across scopes and provide each segment's
 `nodes_in_topo_order` — that needs the launch DAG, which this crate
-deliberately doesn't have. In practice `ros-launch-resolve` takes the
-chain declaration's segment order verbatim (a `segments:` list is
-already author-linearized source-to-sink); the fan-in tie-break rule in
-the crate's doc comments (longest-path-to-sink, then deadline, then
-name) is the contract for callers that must linearize a branching DAG —
-no caller implements it yet. Chains with any `chain-link`/shape errors
-are excluded from the mapper input.
+deliberately doesn't have. `ros-launch-resolve` derives the order from
+the topic graph: the critical path of the subgraph between a scope
+path's two ends, which is topologically sorted by construction and
+fork-join correct (`max` over branches, not a sum). Before phase 68 W4
+it instead took an authored `segments:` list verbatim, which was
+already author-linearized — so the fan-in tie-break rule in the crate's
+doc comments (longest-path-to-sink, then deadline, then name) had never
+had an input that would distinguish it from declaration order.
 
 ## Validation Helpers
 

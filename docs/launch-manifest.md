@@ -28,7 +28,7 @@ model says "manifest". They are one artifact, not two.
 - **[Background](#background)** — design principles, dataflow patterns, contracts, timing, and timestamps.
 - **[Worked Example](#worked-example)** — a complete multi-scope perception pipeline.
 - **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
-- **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, `chains:` (Phase 44.1).
+- **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, scope `paths:` (Phase 44.1).
 - **[Static Validation](#static-validation)** — checker rules and example diagnostics.
 
 ## From Launch Files to Manifests
@@ -1576,77 +1576,46 @@ sub:
 **Parse-time validation:** `buffer:` is only meaningful alongside
 `state: true` — a parse error otherwise.
 
-### Cross-scope chains (`chains:`)
+### Cross-scope end-to-end budgets (scope `paths:`)
 
-A top-level `chains:` section composes named `paths:` (from any scope)
-into an end-to-end budget, connected by explicit `via:` topics —
-integrator-owned (root contract or overlay), no silent FQN matching:
+An end-to-end requirement is stated as a top-level `paths:` entry naming
+its two ends and a budget. The route between them is **derived** from
+the `trigger:`/`output:` facts the nodes already declare, joined through
+the topic graph:
 
 ```yaml
-chains:
+paths:
   sensing_to_actuation:
-    semantics: reaction              # reaction | age
-    max_latency_ms: 150              # E2E budget
-    segments:
-      - { scope: /perception, path: preprocess }
-      - { via: /perception/objects }
-      - { scope: /planning, path: plan }
-      - { via: /planning/trajectory }
-      - { scope: /control, path: follow }
+    trigger: { input: [/perception/points] }   # where the requirement starts
+    output: [/control/cmd]                     # where it ends
+    max_latency: 150ms                         # end-to-end budget
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `semantics` | `reaction` (first-reaction latency) or `age` (data staleness at the sink) — composition math diverges at junctions. |
-| `max_latency_ms` | End-to-end budget the chain's segments must fit within. |
-| `segments` | Alternating path segments (`{ scope, path }`) and connecting-topic segments (`{ via }`). |
+| `trigger` | What starts the requirement. `{ input: [<topic>] }` for a route beginning at a topic. |
+| `output` | The topic(s) the requirement ends at. |
+| `max_latency` | End-to-end budget the derived route must fit within. |
 
-**Parse-time validation** (local shape only — cross-file link
-resolution is the checker's `chain-link` rule, not implemented in this
-phase): `segments` must be non-empty; the first and last segments must
-be path segments; no two `via` segments may be adjacent; a segment may
-not mix `via` with `scope`/`path`.
+The route is computed as the critical path of the subgraph between
+those ends, so a fork-join topology contributes `max` over branches
+rather than a sum, and a `timer`-triggered hop contributes one whole
+period of **sampling cost** on top of its own execution budget.
 
-**Via required between segments.** Two path segments with no `via:`
-between them is **rejected** — the connecting topic must always be
-explicit (no silent FQN matching), so the cross-scope `chain-link` rule
-can verify every hop (output-of-preceding / consumed-by-following).
-This is a per-manifest checker rule (`chain-shape`, error severity — see
-[Static Validation](#static-validation)), not a parse-time structural
-check: parsing only enforces the shape rules above (no two `via` in a
-row, etc.); `chain-shape` additionally rejects adjacent path segments
-and cyclic chains (the same `{scope, path}` pair referenced twice).
+**Rule severities** (see [Static Validation](#static-validation)):
+`scope-budget` (derived route total > declared `max_latency`) and
+`scope-sampling-feasibility` (sampling cost alone ≥ the budget —
+structurally infeasible, no priority assignment can fix it) are
+**warnings**, checked cross-scope in `play_launch`. `jitter-feasibility`
+fires when a declared `max_jitter` is below the sampling jitter the
+route already carries.
 
-**Boundary consumption rule.** A `chain-link`-verified `via:` landing on
-a `timer`-triggered (boundary) segment is consumed through that
-segment's **node**, not through the path's own trigger — a timer
-callback has no input endpoint, but the node's ordinary `sub:`
-subscriptions (including any `state:` sub) are the sampling mechanism
-that makes the model clock-segmented in the first place. Without this
-rule a boundary could only ever be the *first* element of a chain
-(nothing precedes it to fail the "consumed by" check); with it, a
-boundary may appear anywhere in the chain, including interior positions
-(`S1 B1 S2 B2 S3`-shaped chains, matching the chain-aware mapper's own
-worked example). See the play_launch repo's
-`docs/superpowers/specs/2026-07-17-chain-aware-mapper-design.md`
-(§boundary consumption rule) for the full rationale; implemented in
-`chain_checks::resolve_segment` (`ros-launch-resolve`
-`resolve/src/ros/chain_checks.rs`, the consumer's cross-scope layer —
-not this crate).
-
-**Chain rule severities** (see [Static Validation](#static-validation)
-for the full table): `chain-shape` (cyclic chains, missing `via:`
-between adjacent path segments) is an **error**, checked per-manifest in
-this crate. `chain-link` (every `via:` resolves: the topic exists, the
-preceding segment outputs it, the following segment consumes it — per
-the boundary consumption rule above) is an **error**, checked
-cross-scope in `play_launch`. `chain-budget` (declared-latency sum +
-sampling cost ≤ chain budget) and `chain-sampling-feasibility`
-(sampling cost alone ≥ chain budget — structurally infeasible,
-scheduling cannot fix it) are both **warnings**, also checked
-cross-scope in `play_launch` — a budget or feasibility problem doesn't
-block `check`, but is loud in its output and excludes the chain from
-`chain_aware` priority shaping (`MapWarning::ChainInfeasible`).
+**`chains:`/`segments:` were removed** (phase 68 W4). A written route
+was a second copy of the graph, and the `chain-link` rule existed
+solely to catch the two disagreeing; a contract still carrying `chains:`
+is now a parse error naming this replacement. A `semantics:` line can be
+dropped with it — nothing ever branched on `reaction` vs `age`, and a
+subscriber's `max_age:` is what states staleness today.
 
 ## Static Validation
 
@@ -1683,10 +1652,9 @@ topology-aware critical path), and `rate-hierarchy`, `qos-match`,
 | `once-durability` (44.1/44.2) | A `once`-triggered path's output topic is not `durability: transient_local` — late joiners lose the startup-latch message | Warning |
 | `sync-feasibility` (44.1/44.2) | `sync:` `max_interval_ms`/`timeout_ms` too narrow for the slowest declared input's inter-arrival period | Warning |
 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |
-| `chain-shape` (44.1/44.2) | A chain references the same `{scope, path}` segment twice (cyclic — a feedback loop is not a chain); two path segments with no `via:` between them (see [via required between segments](#cross-scope-chains-chains)) | Error |
-| `chain-link`\* (44.2/44.4) | A chain's `via:` topic doesn't exist, isn't output by the preceding segment, or isn't consumed by the following segment (per the [boundary consumption rule](#cross-scope-chains-chains) for segments landing on a timer boundary) | Error |
-| `chain-budget`\* (44.2) | Chain's declared segment-latency sum + sampling cost exceeds its `max_latency_ms` budget | Warning |
-| `chain-sampling-feasibility`\* (44.2/44.3) | Chain's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it | Warning |
+| `scope-budget`\* (68 W4) | A scope path's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency` | Warning |
+| `scope-sampling-feasibility`\* (68 W4) | A scope path's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it | Warning |
+| `jitter-feasibility`\* (68 W1) | A scope path's declared `max_jitter` is below the sampling jitter its route already carries — one whole period per clock boundary crossed | Warning |
 
 \* Cross-scope rule, implemented in `ros-launch-resolve`'s merge layer
 (not this crate's `default_rules()`) — requires the merged

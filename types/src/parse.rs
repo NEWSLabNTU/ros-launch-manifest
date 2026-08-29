@@ -67,6 +67,7 @@ pub fn parse_manifest_str_with_spans(source: &str) -> Result<ParseResult, ParseE
 }
 
 fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
+    reject_chains(doc, ctx)?;
     Ok(Manifest {
         version: yaml_u32(doc, "version").unwrap_or(1),
         args: parse_args(doc),
@@ -78,7 +79,6 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         includes: parse_includes(doc, ctx)?,
         paths: parse_paths(doc, ctx)?,
         external_topics: parse_external_topics(doc, ctx)?,
-        chains: parse_chains(doc, ctx)?,
     })
 }
 
@@ -706,115 +706,49 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
     }))
 }
 
-// ── Chains ──
+// ── Chains (removed) ──
 
-/// Parse the top-level `chains:` section (Vocabulary v2, Phase 44.1 §4).
-fn parse_chains(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ChainDecl>, ParseError> {
-    let mut out = BTreeMap::new();
-    let section = &doc["chains"];
-    if section.is_badvalue() {
-        return Ok(out);
+/// Reject a manifest that still carries the retired `chains:` section.
+///
+/// `chains:` named a route hop by hop. The route is derivable from the facts a
+/// contract must declare anyway — a path's `trigger:` says what causes it, its
+/// `output:` says what it publishes, and the topic graph joins the two — so an
+/// authored `segments:` list was a second copy of something the tool already
+/// knows, and `chain-link` existed solely to catch the two disagreeing.
+///
+/// This is a hard error, not a silent drop, for the reason phase 47 made
+/// `record.json` a clap failure rather than a warning: a contract whose
+/// end-to-end budget is quietly ignored still resolves, still produces a
+/// schedule, and the missing requirement shows up as a missed deadline on a
+/// running system rather than as a message.
+///
+/// # On `semantics: age`
+///
+/// A scope path has no `semantics:` field, so this looks like it drops a
+/// requirement. It does not: **nothing ever branched on `ChainSemantics`** —
+/// no check, no mapper, no arithmetic. `age` and `reaction` produced identical
+/// results, which made it a write-only field of exactly the kind
+/// `contract-axes.md` §2 is about. The fact that actually expresses staleness
+/// today is a subscriber's `max_age:`, which the `lifespan-age` rule reads.
+fn reject_chains(doc: &Yaml, ctx: &str) -> Result<(), ParseError> {
+    if doc["chains"].is_badvalue() {
+        return Ok(());
     }
-    let hash = section
-        .as_hash()
-        .ok_or_else(|| field_err(ctx, "chains", "expected mapping"))?;
-    for (k, v) in hash {
-        let name = yaml_str_owned(k);
-        let path = format_path(ctx, &format!("chains.{name}"));
-        let chain = parse_chain_decl(v, &path)?;
-        out.insert(name, chain);
-    }
-    Ok(out)
-}
-
-fn parse_chain_decl(yaml: &Yaml, ctx: &str) -> Result<ChainDecl, ParseError> {
-    let semantics_str = yaml_string(yaml, "semantics")
-        .ok_or_else(|| field_err(ctx, "semantics", "required: 'reaction' or 'age'"))?;
-    let semantics = match semantics_str.as_str() {
-        "reaction" => ChainSemantics::Reaction,
-        "age" => ChainSemantics::Age,
-        other => {
-            return Err(field_err(
-                ctx,
-                "semantics",
-                &format!("invalid semantics '{other}', expected 'reaction' or 'age'"),
-            ));
-        }
-    };
-    // ChainDecl's latency is required, so absence is an error rather than None.
-    let max_latency = yaml_duration(yaml, "max_latency", "max_latency_ms")?
-        .ok_or_else(|| field_err(ctx, "max_latency", "required"))?;
-    let segments = parse_chain_segments(yaml, ctx)?;
-    Ok(ChainDecl {
-        semantics,
-        max_latency,
-        segments,
-    })
-}
-
-fn parse_chain_segments(yaml: &Yaml, ctx: &str) -> Result<Vec<ChainSegment>, ParseError> {
-    let section = &yaml["segments"];
-    let arr = section
-        .as_vec()
-        .ok_or_else(|| field_err(ctx, "segments", "expected a non-empty list"))?;
-    if arr.is_empty() {
-        return Err(field_err(ctx, "segments", "must be non-empty"));
-    }
-    let mut segments = Vec::with_capacity(arr.len());
-    for (i, item) in arr.iter().enumerate() {
-        let seg_ctx = format_path(ctx, &format!("segments[{i}]"));
-        segments.push(parse_chain_segment(item, &seg_ctx)?);
-    }
-    // Local shape only (Phase 44.1 §4) — cross-file link resolution
-    // (does every `via` exist? is it produced/consumed correctly?) is
-    // the checker's `chain-link` rule (W2).
-    if !matches!(segments.first(), Some(ChainSegment::Path { .. })) {
-        return Err(field_err(
-            ctx,
-            "segments",
-            "first segment must be a path segment ({ scope, path })",
-        ));
-    }
-    if !matches!(segments.last(), Some(ChainSegment::Path { .. })) {
-        return Err(field_err(
-            ctx,
-            "segments",
-            "last segment must be a path segment ({ scope, path })",
-        ));
-    }
-    for w in segments.windows(2) {
-        if matches!(w[0], ChainSegment::Via { .. }) && matches!(w[1], ChainSegment::Via { .. }) {
-            return Err(field_err(
-                ctx,
-                "segments",
-                "two adjacent 'via' segments are not allowed",
-            ));
-        }
-    }
-    Ok(segments)
-}
-
-fn parse_chain_segment(yaml: &Yaml, ctx: &str) -> Result<ChainSegment, ParseError> {
-    let has_via = !yaml["via"].is_badvalue();
-    let has_scope = !yaml["scope"].is_badvalue();
-    let has_path = !yaml["path"].is_badvalue();
-    if has_via && (has_scope || has_path) {
-        return Err(field_err(
-            ctx,
-            "segment",
-            "'via' cannot be combined with 'scope'/'path'",
-        ));
-    }
-    if has_via {
-        let via =
-            yaml_string(yaml, "via").ok_or_else(|| field_err(ctx, "via", "expected a string"))?;
-        return Ok(ChainSegment::Via { via });
-    }
-    let scope = yaml_string(yaml, "scope")
-        .ok_or_else(|| field_err(ctx, "scope", "path segment requires 'scope'"))?;
-    let path = yaml_string(yaml, "path")
-        .ok_or_else(|| field_err(ctx, "path", "path segment requires 'path'"))?;
-    Ok(ChainSegment::Path { scope, path })
+    Err(field_err(
+        ctx,
+        "chains",
+        "`chains:`/`segments:` were removed — a written route is a second copy \
+         of the graph. State the same requirement as a scope path, which names \
+         only its two ends and lets the route be derived from the `trigger:` \
+         and `output:` facts the nodes already declare:\n\
+         \x20 paths:\n\
+         \x20   <chain name>:\n\
+         \x20     trigger: { input: [<first topic>] }\n\
+         \x20     output: [<last topic>]\n\
+         \x20     max_latency: <the chain's max_latency>\n\
+         A `semantics:` line can be dropped: nothing ever branched on it, and \
+         a subscriber's `max_age:` is what states staleness today.",
+    ))
 }
 
 // ── Drop ──
