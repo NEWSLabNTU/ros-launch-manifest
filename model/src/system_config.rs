@@ -30,6 +30,24 @@ pub struct SystemConfigToml {
     pub system: SystemDefaults,
     #[serde(default)]
     pub deploy: BTreeMap<String, DeployBlock>,
+    /// `[host.<name>]` — a MACHINE, and the only thing that partitions nodes.
+    ///
+    /// nano-ros issue 0939. `[deploy.*]` carries two meanings and the resolver
+    /// below has to filter one of them out to work: `kind = "self"` is a
+    /// machine that takes a SHARE of the nodes, `kind = "embedded"` is a whole
+    /// board build that runs ALL of them. The comment in `apply_to_launch`
+    /// calls that "a conflated axis", and the filter is the workaround.
+    ///
+    /// `[host.*]` is the un-conflated half. A block here is always a machine,
+    /// so no `kind` is needed and none is accepted; placement reads these
+    /// blocks alone when any exist. The consumer's build-side table (nano-ros
+    /// calls it `[image.*]`) owns the other half.
+    ///
+    /// Additive on purpose: when no `[host.*]` exists the `[deploy.*]` path
+    /// runs exactly as before, so every file written against the old schema
+    /// keeps resolving.
+    #[serde(default)]
+    pub host: BTreeMap<String, HostBlock>,
     #[serde(default, rename = "transport")]
     pub transports: Vec<TransportBlock>,
     #[serde(default, rename = "bridge")]
@@ -112,6 +130,54 @@ pub struct SystemDefaults {
     pub locator: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
+}
+
+/// `[host.<name>]` — one machine in a multi-host system (nano-ros issue 0939).
+///
+/// The half of `[deploy.*]` that is genuinely a placement. Deliberately tiny:
+/// a machine is identified by its name, says which nodes it runs, and
+/// optionally scopes itself to one launch file. Everything else a deploy block
+/// carried — board, target, rmw, profile, features — describes a BUILD and
+/// belongs to the consumer's build table.
+///
+/// `deny_unknown_fields` for the same reason `DeployBlock` has it: a mistyped
+/// key here silently unplaces a node, which surfaces far away as an empty
+/// entry binary (nano-ros issues 0356/0370).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostBlock {
+    /// Node FQNs this machine runs. Empty means "every node", which is only
+    /// meaningful when this is the sole host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<String>,
+    /// Launch file this block applies to, relative to the bringup package.
+    /// `None` means every launch file — same rule as `DeployBlock::launch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<String>,
+    /// Session domain, if this machine overrides the system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_id: Option<u32>,
+    /// Session locator, if this machine overrides the system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
+}
+
+impl HostBlock {
+    /// Does this block govern `launch_file`? Same rule as
+    /// [`DeployBlock::applies_to_launch`]: an unscoped block governs
+    /// everything, a scoped one compares on basename, and a caller asking
+    /// about no particular file keeps every block.
+    #[must_use]
+    pub fn applies_to_launch(&self, launch_file: Option<&str>) -> bool {
+        match (&self.launch, launch_file) {
+            (None, _) => true,
+            (Some(_), None) => true,
+            (Some(mine), Some(theirs)) => {
+                let base = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+                base(mine) == base(theirs)
+            }
+        }
+    }
 }
 
 /// One `[deploy.<name>]` block.
@@ -435,6 +501,70 @@ impl SystemConfigToml {
                 topics: b.topics.clone(),
                 bidirectional: b.bidirectional,
             });
+        }
+
+        // `[host.*]` placement — nano-ros issue 0939, and the un-conflated
+        // path. When any host block exists it is the ONLY placement source;
+        // `[deploy.*]` is not consulted, so a migrating file does not have to
+        // keep both in agreement.
+        //
+        // Target is deliberately `None` for every placed node. A host says
+        // WHERE a node runs; what it is built as comes from the consumer's own
+        // build table, and the entry's `--board` supplies the concrete target.
+        // That is the same conclusion nano-ros issue 0356 forced on the
+        // multi-board deploy path, reached here by construction instead of by
+        // a special case.
+        if !self.host.is_empty() {
+            let in_scope: Vec<(&String, &HostBlock)> = self
+                .host
+                .iter()
+                .filter(|(_, b)| b.applies_to_launch(launch_file))
+                .collect();
+            if in_scope.is_empty() {
+                return Ok(diags);
+            }
+            let single = (in_scope.len() == 1).then(|| in_scope[0].0);
+            for fqn in node_fqns {
+                let (hname, block) = if let Some(k) = single {
+                    let b = &self.host[k];
+                    if !b.nodes.is_empty() && !b.nodes.iter().any(|n| n == fqn) {
+                        continue; // explicitly not placed
+                    }
+                    (k.as_str(), b)
+                } else {
+                    match in_scope
+                        .iter()
+                        .find(|(_, b)| b.nodes.iter().any(|n| n == fqn))
+                        .map(|(k, b)| (k.as_str(), *b))
+                    {
+                        Some((k, b)) => (k, b),
+                        None => {
+                            return Err(format!(
+                                "system config: node '{fqn}' is not placed — with multiple \
+                                 [host.*] blocks every node needs a `nodes = [..]` entry"
+                            ));
+                        }
+                    }
+                };
+                let mut extra = BTreeMap::new();
+                extra.insert("host_name".to_string(), ExtraValue::Str(hname.to_string()));
+                execution.deploy.insert(
+                    (*fqn).to_string(),
+                    Deploy {
+                        target: None,
+                        domain: clamp_domain(block.domain_id, &mut diags, hname).or_else(|| {
+                            clamp_domain(self.system.domain_id, &mut diags, "[system]")
+                        }),
+                        locator: block
+                            .locator
+                            .clone()
+                            .or_else(|| self.system.locator.clone()),
+                        rmw: self.system.rmw.clone(),
+                        extra,
+                    },
+                );
+            }
+            return Ok(diags);
         }
 
         if self.deploy.is_empty() {
@@ -1103,6 +1233,163 @@ nodes = ["/listener"]
         cfg.apply_to(&mut e, &["/a", "/b"]).expect("applies");
         assert_eq!(e.deploy.len(), 2);
         assert_eq!(e.deploy["/a"].target, Some(Target::Linux));
+    }
+
+    // ---- [host.*] placement — nano-ros issue 0939 ----
+
+    fn place(
+        toml_src: &str,
+        fqns: &[&str],
+        launch: Option<&str>,
+    ) -> (Execution, Result<Vec<String>, String>) {
+        let cfg: SystemConfigToml = toml::from_str(toml_src).expect("parse");
+        let mut ex = Execution::default();
+        let r = cfg.apply_to_launch(&mut ex, fqns, launch);
+        (ex, r)
+    }
+
+    #[test]
+    fn hosts_partition_nodes_between_machines() {
+        let (ex, r) = place(
+            r#"
+[system]
+name = "d"
+
+[host.robot1]
+nodes = ["/talker"]
+
+[host.robot2]
+nodes = ["/listener"]
+"#,
+            &["/talker", "/listener"],
+            None,
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(ex.deploy.len(), 2);
+        assert_eq!(
+            ex.deploy["/talker"].extra["host_name"],
+            ExtraValue::Str("robot1".into())
+        );
+        assert_eq!(
+            ex.deploy["/listener"].extra["host_name"],
+            ExtraValue::Str("robot2".into())
+        );
+    }
+
+    /// A host says WHERE, never WHAT. The build half lives in the consumer's
+    /// own table, so a placed node is board-agnostic and the entry's `--board`
+    /// decides — the conclusion nano-ros issue 0356 forced on the deploy path,
+    /// here true by construction.
+    #[test]
+    fn a_host_placement_is_board_agnostic() {
+        let (ex, _) = place(
+            "[system]\nname = \"d\"\n\n[host.robot1]\nnodes = [\"/talker\"]\n",
+            &["/talker"],
+            None,
+        );
+        assert!(ex.deploy["/talker"].target.is_none());
+    }
+
+    #[test]
+    fn an_unplaced_node_is_an_error_not_a_silent_drop() {
+        let (_, r) = place(
+            r#"
+[system]
+name = "d"
+
+[host.a]
+nodes = ["/x"]
+
+[host.b]
+nodes = ["/y"]
+"#,
+            &["/x", "/z"],
+            None,
+        );
+        let e = r.expect_err("an unplaced node must fail loudly");
+        assert!(e.contains("/z") && e.contains("not placed"), "{e}");
+    }
+
+    /// The migration property: hosts WIN outright, so a file part-way through
+    /// migration does not have to keep two tables in agreement.
+    #[test]
+    fn hosts_are_the_only_source_when_present() {
+        let (ex, _) = place(
+            r#"
+[system]
+name = "d"
+
+[deploy.old]
+kind = "self"
+board = "some-board"
+nodes = ["/talker"]
+
+[host.robot1]
+nodes = ["/talker"]
+"#,
+            &["/talker"],
+            None,
+        );
+        assert_eq!(
+            ex.deploy["/talker"].extra["host_name"],
+            ExtraValue::Str("robot1".into())
+        );
+        assert!(
+            !ex.deploy["/talker"].extra.contains_key("deploy_name"),
+            "the deploy block must not contribute when a host exists"
+        );
+        assert!(
+            ex.deploy["/talker"].target.is_none(),
+            "and no Mcu target from its board"
+        );
+    }
+
+    /// Absent `[host.*]`, every existing file resolves exactly as before.
+    #[test]
+    fn without_hosts_the_deploy_path_is_untouched() {
+        let (ex, r) = place(
+            r#"
+[system]
+name = "d"
+
+[deploy.native]
+kind = "self"
+board = "linux-x86"
+"#,
+            &["/talker"],
+            None,
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(
+            ex.deploy["/talker"].extra["deploy_name"],
+            ExtraValue::Str("native".into())
+        );
+    }
+
+    #[test]
+    fn a_host_scoped_to_a_launch_file_only_governs_that_one() {
+        let src = r#"
+[system]
+name = "d"
+
+[host.robot1]
+launch = "multihost.launch.xml"
+nodes = ["/talker"]
+"#;
+        let (ex, _) = place(src, &["/talker"], Some("multihost.launch.xml"));
+        assert_eq!(ex.deploy.len(), 1);
+        let (ex2, _) = place(src, &["/talker"], Some("other.launch.xml"));
+        assert!(ex2.deploy.is_empty(), "an out-of-scope host must not place");
+    }
+
+    #[test]
+    fn a_mistyped_host_key_is_an_error() {
+        let e = toml::from_str::<HostBlock>("noeds = [\"/x\"]\n")
+            .expect_err("deny_unknown_fields must reject a typo that would unplace a node");
+        assert!(
+            e.to_string().contains("noeds") || e.to_string().contains("unknown"),
+            "{e}"
+        );
     }
 }
 
