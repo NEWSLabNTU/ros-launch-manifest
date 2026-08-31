@@ -948,9 +948,7 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
             return Err(field_err(
                 ctx,
                 "miss.action",
-                &format!(
-                    "unknown action '{other}' — expected `continue`, `skip_next` or `abort`"
-                ),
+                &format!("unknown action '{other}' — expected `continue`, `skip_next` or `abort`"),
             ));
         }
     };
@@ -1618,8 +1616,15 @@ topics:
         assert_eq!(miss.consecutive, Some(1));
         assert_eq!(miss.action, Some(MissAction::SkipNext));
 
-        let ex = &d.concurrency.as_ref().expect("concurrency: parsed").exclusive;
-        assert_eq!(ex, &vec![vec!["to_boxes".to_string(), "to_masks".to_string()]]);
+        let ex = &d
+            .concurrency
+            .as_ref()
+            .expect("concurrency: parsed")
+            .exclusive;
+        assert_eq!(
+            ex,
+            &vec![vec!["to_boxes".to_string(), "to_masks".to_string()]]
+        );
 
         let qos = m.topics["/image"].qos.as_ref().expect("qos parsed");
         assert_eq!(qos.deadline.unwrap().as_millis_f64(), 33.0);
@@ -1656,7 +1661,10 @@ topics:
         let yaml = "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        \
                     output: [o]\n        miss: { action: kill_it }\n";
         let err = parse_manifest_str(yaml).unwrap_err().to_string();
-        assert!(err.contains("kill_it") && err.contains("skip_next"), "got: {err}");
+        assert!(
+            err.contains("kill_it") && err.contains("skip_next"),
+            "got: {err}"
+        );
     }
 
     /// `miss: "2 / 100"` is the same shorthand `drop:` accepts — same
@@ -1678,10 +1686,9 @@ topics:
     /// concurrently.
     #[test]
     fn absent_concurrency_differs_from_an_empty_exclusive_list() {
-        let absent = parse_manifest_str(
-            "version: 1\nnodes:\n  n:\n    paths:\n      p: { output: [o] }\n",
-        )
-        .unwrap();
+        let absent =
+            parse_manifest_str("version: 1\nnodes:\n  n:\n    paths:\n      p: { output: [o] }\n")
+                .unwrap();
         assert!(absent.nodes["n"].concurrency.is_none());
 
         let empty = parse_manifest_str(

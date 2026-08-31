@@ -283,7 +283,10 @@ fn a_path_contract_carries_jitter_and_miss_across_the_boundary() {
     };
     let yaml = serde_yaml_ng::to_string(&pc).expect("serializes");
     assert!(yaml.contains("max_jitter_ms: 5.0"), "{yaml}");
-    assert!(yaml.contains("skip_next"), "the action must cross as sched spells it: {yaml}");
+    assert!(
+        yaml.contains("skip_next"),
+        "the action must cross as sched spells it: {yaml}"
+    );
 
     let back: PathContract = serde_yaml_ng::from_str(&yaml).expect("round-trips");
     assert_eq!(back, pc);

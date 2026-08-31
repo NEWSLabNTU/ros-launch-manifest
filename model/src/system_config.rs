@@ -504,9 +504,16 @@ impl SystemConfigToml {
         }
 
         // `[host.*]` placement — nano-ros issue 0939, and the un-conflated
-        // path. When any host block exists it is the ONLY placement source;
-        // `[deploy.*]` is not consulted, so a migrating file does not have to
-        // keep both in agreement.
+        // path. Hosts win for the launch files they GOVERN, and only those.
+        //
+        // Scoped, not global, and the difference is what makes an incremental
+        // migration possible. Hosts are usually `launch`-scoped (a multi-host
+        // bringup) while the `[deploy.*]` blocks beside them are not, so a
+        // "any host disables deploy" rule silently drops placement for every
+        // OTHER launch file in the same package — measured on nano-ros's rust
+        // workspace, where `execution.deploy` vanished from every non-multihost
+        // model. For a launch file no host governs, the deploy path below runs
+        // unchanged.
         //
         // Target is deliberately `None` for every placed node. A host says
         // WHERE a node runs; what it is built as comes from the consumer's own
@@ -514,15 +521,13 @@ impl SystemConfigToml {
         // That is the same conclusion nano-ros issue 0356 forced on the
         // multi-board deploy path, reached here by construction instead of by
         // a special case.
-        if !self.host.is_empty() {
-            let in_scope: Vec<(&String, &HostBlock)> = self
-                .host
-                .iter()
-                .filter(|(_, b)| b.applies_to_launch(launch_file))
-                .collect();
-            if in_scope.is_empty() {
-                return Ok(diags);
-            }
+        let hosts_in_scope: Vec<(&String, &HostBlock)> = self
+            .host
+            .iter()
+            .filter(|(_, b)| b.applies_to_launch(launch_file))
+            .collect();
+        if !hosts_in_scope.is_empty() {
+            let in_scope = hosts_in_scope;
             let single = (in_scope.len() == 1).then(|| in_scope[0].0);
             for fqn in node_fqns {
                 let (hname, block) = if let Some(k) = single {
@@ -1380,6 +1385,41 @@ nodes = ["/talker"]
         assert_eq!(ex.deploy.len(), 1);
         let (ex2, _) = place(src, &["/talker"], Some("other.launch.xml"));
         assert!(ex2.deploy.is_empty(), "an out-of-scope host must not place");
+    }
+
+    /// The case a real migration hits, and the one an "any host wins" rule
+    /// breaks: hosts scoped to ONE launch file, `[deploy.*]` governing the
+    /// others. Measured on nano-ros's rust workspace, where the aggressive rule
+    /// emptied `execution.deploy` for every non-multihost model.
+    #[test]
+    fn a_launch_no_host_governs_still_uses_deploy() {
+        let src = r#"
+[system]
+name = "d"
+
+[deploy.native]
+kind = "self"
+
+[host.robot1]
+launch = "multihost.launch.xml"
+nodes = ["/talker"]
+"#;
+        // The multihost launch: the host places it.
+        let (ex, _) = place(src, &["/talker"], Some("multihost.launch.xml"));
+        assert_eq!(
+            ex.deploy["/talker"].extra["host_name"],
+            ExtraValue::Str("robot1".into())
+        );
+
+        // Any OTHER launch file: no host governs it, so the deploy block still
+        // places, exactly as before hosts existed.
+        let (ex2, r2) = place(src, &["/fibonacci_client"], Some("action.launch.xml"));
+        assert!(r2.is_ok(), "{r2:?}");
+        assert_eq!(
+            ex2.deploy["/fibonacci_client"].extra["deploy_name"],
+            ExtraValue::Str("native".into()),
+            "a launch file no host governs must fall back to [deploy.*]"
+        );
     }
 
     #[test]

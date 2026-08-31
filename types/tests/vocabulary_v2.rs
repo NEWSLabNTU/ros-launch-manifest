@@ -6,8 +6,7 @@
 //! effective-trigger derivation), and every validation error case.
 
 use ros_launch_manifest_types::{
-    Buffer, EffectiveTrigger, Sync, SyncPolicy, Trigger,
-    parse_manifest_str,
+    Buffer, EffectiveTrigger, Sync, SyncPolicy, Trigger, parse_manifest_str,
 };
 
 // ── Serde round-trip: every trigger form ──
@@ -596,7 +595,6 @@ nodes:
     assert_eq!(m.nodes["n"].subscribers["x"].buffer, Some(Buffer::Queue));
 }
 
-
 // ── Chains, removed (phase 68 W4) ──
 
 /// `chains:` is rejected outright rather than ignored.
@@ -641,7 +639,10 @@ chains:
 "#;
     let err = parse_manifest_str(yaml).unwrap_err().to_string();
     assert!(err.contains("semantics"), "{err}");
-    assert!(err.contains("max_age"), "must point at the fact that does state staleness: {err}");
+    assert!(
+        err.contains("max_age"),
+        "must point at the fact that does state staleness: {err}"
+    );
 }
 
 // ── Endpoint `jitter:`, removed (phase 68) ──
@@ -667,8 +668,14 @@ nodes:
 "#;
     let err = parse_manifest_str(yaml).unwrap_err().to_string();
     assert!(err.contains("removed"), "{err}");
-    assert!(err.contains("max_jitter"), "must name the replacement: {err}");
-    assert!(err.contains("route"), "must say why an endpoint is the wrong place: {err}");
+    assert!(
+        err.contains("max_jitter"),
+        "must name the replacement: {err}"
+    );
+    assert!(
+        err.contains("route"),
+        "must say why an endpoint is the wrong place: {err}"
+    );
 }
 
 /// The legacy unit-suffixed spelling is rejected too — it was an alias for the
