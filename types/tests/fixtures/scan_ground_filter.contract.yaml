@@ -28,7 +28,7 @@ nodes:
       main:
         input: input
         output: [no_ground_pointcloud]
-        max_latency_ms: 30
+        max_latency: 30ms
 
 topics:
   /sensing/lidar/concatenated/pointcloud:

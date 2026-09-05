@@ -223,9 +223,10 @@ nodes:
 /// scan_ground_filter, map_based_prediction — all pre-Vocabulary-v2,
 /// legacy `input:` style) must parse identically under the new code,
 /// with effective-trigger deriving input-triggered for every `paths:`
-/// entry that declares a legacy `input:`.
+/// entry that declares a legacy `input:`. (The files were migrated off the
+/// `_ms` spellings in phase 70; the trigger form is still the legacy one.)
 #[test]
-fn real_autoware_contracts_parse_unmodified_with_legacy_derivation() {
+fn real_autoware_contracts_parse_with_legacy_trigger_derivation() {
     type Expectation<'a> = (&'a str, &'a str, &'a [&'a str]);
     let fixtures: &[(&str, &[Expectation])] = &[
         // (file, &[(node, path_name, expected_input_endpoints)])

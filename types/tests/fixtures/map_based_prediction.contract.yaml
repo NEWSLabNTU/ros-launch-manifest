@@ -36,7 +36,7 @@ nodes:
       main:
         input: tracked_objects
         output: [predicted_objects]
-        max_latency_ms: 30          # trajectory prediction for each tracked object
+        max_latency: 30ms          # trajectory prediction for each tracked object
 
 topics:
   # /perception/object_recognition/tracking/objects — absolute, cross-scope
