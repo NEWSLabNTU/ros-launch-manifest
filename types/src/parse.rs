@@ -4,6 +4,7 @@
 //! and map forms for endpoints (e.g., `pub: [a, b]` vs `pub: {a: {min_rate_hz: 10}}`).
 
 use crate::duration::Duration;
+use crate::field_table::{self, Context};
 use crate::{span::SpanIndex, types::*};
 use std::{collections::BTreeMap, path::Path};
 use yaml_rust2::{Yaml, YamlLoader};
@@ -68,6 +69,7 @@ pub fn parse_manifest_str_with_spans(source: &str) -> Result<ParseResult, ParseE
 
 fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     reject_chains(doc, ctx)?;
+    reject_unknown_keys(doc, ctx, Context::Manifest)?;
     Ok(Manifest {
         version: yaml_u32(doc, "version").unwrap_or(1),
         args: parse_args(doc),
@@ -108,6 +110,7 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
     if yaml.is_null() || yaml.is_badvalue() {
         return Ok(NodeDecl::default());
     }
+    reject_unknown_keys(yaml, ctx, Context::Node)?;
     Ok(NodeDecl {
         if_condition: yaml_string(yaml, "if"),
         unless_condition: yaml_string(yaml, "unless"),
@@ -183,13 +186,14 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
              crossed, which no priority assignment can reduce.",
         ));
     }
+    reject_unknown_keys(yaml, ctx, Context::Endpoint)?;
     let props = EndpointProps {
         min_rate_hz: yaml_f64(yaml, "min_rate_hz"),
         max_rate_hz: yaml_f64(yaml, "max_rate_hz"),
         max_age: yaml_duration(yaml, "max_age", "max_age_ms")?,
         state: yaml_bool(yaml, "state"),
         required: yaml_bool(yaml, "required"),
-        qos: parse_qos(yaml)?,
+        qos: parse_qos(yaml, ctx)?,
         max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
         buffer: parse_buffer(yaml, ctx)?,
     };
@@ -240,6 +244,7 @@ fn parse_srv_endpoints(
         Yaml::Hash(hash) => {
             for (k, v) in hash {
                 let name = yaml_str_owned(k);
+                reject_unknown_keys(v, ctx, Context::SrvEndpoint)?;
                 let props = SrvEndpointProps {
                     max_response: if v.is_null() || v.is_badvalue() {
                         None
@@ -298,6 +303,7 @@ fn parse_topics(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, TopicDecl>, Pa
 }
 
 fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
+    reject_unknown_keys(yaml, ctx, Context::Topic)?;
     // Shorthand: just a type string
     if let Some(s) = yaml.as_str() {
         return Ok(TopicDecl {
@@ -320,7 +326,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
             .ok_or_else(|| field_err(ctx, "type", "topic must have a type"))?,
         publishers: yaml_string_list(yaml, "pub"),
         subscribers: yaml_string_list(yaml, "sub"),
-        qos: parse_qos(yaml)?,
+        qos: parse_qos(yaml, ctx)?,
         rate_hz: yaml_f64(yaml, "rate_hz"),
         max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
@@ -344,6 +350,7 @@ fn parse_external_topics(
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         let path = format_path(ctx, &format!("external_topics.{name}"));
+        reject_unknown_keys(v, &path, Context::ExternalTopic)?;
         // Accept either `side:` or `external:` as the side selector.
         // Try whichever is present; if both are present, `side:` wins.
         let side_present = !v["side"].is_badvalue();
@@ -367,7 +374,7 @@ fn parse_external_topics(
             ExternalTopicDecl {
                 side,
                 msg_type: yaml_string(v, "type"),
-                qos: parse_qos(v)?,
+                qos: parse_qos(v, &path)?,
             },
         );
     }
@@ -409,6 +416,7 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
         .ok_or_else(|| field_err(ctx, "services", "expected mapping"))?;
     for (k, v) in hash {
         let name = yaml_str_owned(k);
+        reject_unknown_keys(v, ctx, Context::Service)?;
         out.insert(
             name,
             ServiceDecl {
@@ -434,6 +442,7 @@ fn parse_actions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ActionDecl>, 
         .ok_or_else(|| field_err(ctx, "actions", "expected mapping"))?;
     for (k, v) in hash {
         let name = yaml_str_owned(k);
+        reject_unknown_keys(v, ctx, Context::Action)?;
         out.insert(
             name,
             ActionDecl {
@@ -463,6 +472,7 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
         let name = yaml_str_owned(k);
         let path = format_path(ctx, &format!("includes.{name}"));
         if let Some(manifest_path) = yaml_string(v, "manifest") {
+            reject_unknown_keys(v, &path, Context::IncludeExternal)?;
             out.insert(
                 name,
                 IncludeDecl::External {
@@ -552,6 +562,7 @@ fn parse_paths(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, PathDecl>, Pars
 }
 
 fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
+    reject_unknown_keys(yaml, ctx, Context::Path)?;
     let input = parse_string_or_list(yaml, "input");
     let trigger = parse_trigger(yaml, ctx)?;
 
@@ -652,6 +663,7 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     let key = yaml_str_owned(k);
     match key.as_str() {
         "timer" => {
+            reject_unknown_keys(v, ctx, Context::TriggerTimer)?;
             let rate_hz = yaml_f64(v, "rate_hz")
                 .ok_or_else(|| field_err(ctx, "trigger.timer", "requires 'rate_hz'"))?;
             if rate_hz <= 0.0 {
@@ -679,6 +691,7 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
     if section.is_badvalue() {
         return Ok(None);
     }
+    reject_unknown_keys(section, ctx, Context::Sync)?;
     let policy_str = yaml_string(section, "policy").ok_or_else(|| {
         field_err(
             ctx,
@@ -753,6 +766,60 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
 /// results, which made it a write-only field of exactly the kind
 /// `contract-axes.md` §2 is about. The fact that actually expresses staleness
 /// today is a subscriber's `max_age:`, which the `lifespan-age` rule reads.
+/// Reject a key the schema does not define in this context.
+///
+/// Before phase 69 an unrecognised key was silently discarded, so
+/// `max_latencyy: 5ms` deleted a budget and `rate_hzz: 100` deleted the
+/// declaration that the `derivable-rate` rule reads — silencing the one
+/// diagnostic that pointed at the mistake. Measured across the whole
+/// 42-file corpus, exactly ONE key was affected (`srv.<ep>.request`), which
+/// is why this is a hard error rather than a deprecation window.
+///
+/// Contexts whose keys are chosen by the author (`nodes:`, `topics:`,
+/// `pub:`, …) have no [`Context`] variant, so they cannot reach this
+/// function at all — the exemption is structural, not an omission.
+///
+/// A [`Status::Removed`] key is rejected here too, but only when no
+/// dedicated check has already fired: `chains:` and `jitter:` are caught
+/// earlier by handlers that explain the migration, and this is the backstop
+/// for the ones that are not (`segments:`).
+fn reject_unknown_keys(doc: &Yaml, ctx: &str, context: Context) -> Result<(), ParseError> {
+    let Some(hash) = doc.as_hash() else {
+        return Ok(());
+    };
+    for k in hash.keys() {
+        let Some(key) = k.as_str() else {
+            continue;
+        };
+        match field_table::lookup(context, key) {
+            Some(f) if f.status == field_table::Status::Removed => {
+                return Err(field_err(ctx, key, f.doc));
+            }
+            Some(_) => continue,
+            None => {
+                let detail = match field_table::nearest(context, key) {
+                    Some(near) => format!("did you mean `{near}`?"),
+                    None => format!(
+                        "accepted here: {}",
+                        field_table::suggestions(context).join(", ")
+                    ),
+                };
+                return Err(field_err(
+                    ctx,
+                    key,
+                    &format!(
+                        "unknown key in `{}` — {detail}. An unrecognised key used to be \
+                         discarded in silence, which deleted whatever it was meant to \
+                         declare",
+                        context.label()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn reject_chains(doc: &Yaml, ctx: &str) -> Result<(), ParseError> {
     if doc["chains"].is_badvalue() {
         return Ok(());
@@ -790,6 +857,7 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
         }));
     }
     // Full form: { max_count: "5 / 100", max_consecutive: 3 }
+    reject_unknown_keys(section, ctx, Context::Drop)?;
     let max_count = yaml_string(section, "max_count")
         .map(|s| {
             s.parse::<DropCount>()
@@ -809,11 +877,12 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
 /// Returns `Err` rather than `None` on a malformed duration: phase 59's whole
 /// argument is that a wrong unit must not pass quietly, and swallowing the
 /// error here to keep an `Option` return would do exactly that.
-fn parse_qos(doc: &Yaml) -> Result<Option<QosDecl>, ParseError> {
+fn parse_qos(doc: &Yaml, ctx: &str) -> Result<Option<QosDecl>, ParseError> {
     let section = &doc["qos"];
     if section.is_badvalue() {
         return Ok(None);
     }
+    reject_unknown_keys(section, ctx, Context::Qos)?;
     Ok(Some(QosDecl {
         reliability: yaml_string(section, "reliability"),
         durability: yaml_string(section, "durability"),
@@ -933,6 +1002,7 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
             action: None,
         }));
     }
+    reject_unknown_keys(section, ctx, Context::Miss)?;
     let tolerate = yaml_string(section, "tolerate")
         .map(|s| {
             s.parse::<DropCount>()
@@ -970,6 +1040,7 @@ fn parse_concurrency(doc: &Yaml, ctx: &str) -> Result<Option<ConcurrencyDecl>, P
     if section.is_badvalue() {
         return Ok(None);
     }
+    reject_unknown_keys(section, ctx, Context::Concurrency)?;
     let mut exclusive: Vec<Vec<String>> = Vec::new();
     if let Yaml::Array(groups) = &section["exclusive"] {
         for (i, group) in groups.iter().enumerate() {
@@ -1044,6 +1115,88 @@ fn format_path(ctx: &str, field: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Phase 69: the three typos that motivated the field table. Each one
+    /// used to parse cleanly and silently discard what it was meant to
+    /// declare.
+    #[test]
+    fn a_typo_is_an_error_and_names_the_key_it_meant() {
+        let cases = [
+            (
+                "nodes:\n  n:\n    paths:\n      p:\n        max_latencyy: 5ms\n",
+                "max_latency",
+            ),
+            (
+                "topics:\n  /t:\n    type: std_msgs/msg/String\n    rate_hzz: 100\n",
+                "rate_hz",
+            ),
+            ("nodes:\n  n:\n    lifecycl: true\n", "lifecycle"),
+        ];
+        for (yaml, expected) in cases {
+            let err = super::parse_manifest_str(yaml)
+                .expect_err("a typo must not parse")
+                .to_string();
+            assert!(
+                err.contains("unknown key") && err.contains(expected),
+                "expected a suggestion of `{expected}`, got: {err}"
+            );
+        }
+    }
+
+    /// A key with no near neighbour gets the accepted list instead of a
+    /// confident wrong guess.
+    #[test]
+    fn an_unrelated_key_is_rejected_without_a_misleading_suggestion() {
+        let err = super::parse_manifest_str("nodes:\n  n:\n    bogus_field: 1\n")
+            .expect_err("an unknown key must not parse")
+            .to_string();
+        assert!(err.contains("accepted here"), "got: {err}");
+        assert!(!err.contains("did you mean"), "got: {err}");
+    }
+
+    /// `segments:` was named in the `chains:` migration message but had no
+    /// check of its own, so a stray one stayed silent after phase 68 removed
+    /// it. The table is that backstop.
+    #[test]
+    fn a_removed_key_with_no_dedicated_check_is_still_rejected() {
+        let err =
+            super::parse_manifest_str("paths:\n  p:\n    output: [/b]\n    segments: [a, b]\n")
+                .expect_err("`segments:` must not parse")
+                .to_string();
+        assert!(err.contains("Removed in phase 68"), "got: {err}");
+    }
+
+    /// The dedicated migration messages must keep winning over the generic
+    /// one — they name the replacement, which the generic message cannot.
+    #[test]
+    fn a_removed_key_with_a_dedicated_check_keeps_its_own_message() {
+        let err = super::parse_manifest_str("chains:\n  c:\n    segments: []\n")
+            .expect_err("`chains:` must not parse")
+            .to_string();
+        assert!(
+            err.contains("State the same requirement as a scope path"),
+            "got: {err}"
+        );
+
+        let err =
+            super::parse_manifest_str("nodes:\n  n:\n    pub:\n      out:\n        jitter_ms: 5\n")
+                .expect_err("`jitter_ms:` must not parse")
+                .to_string();
+        assert!(err.contains("property of a ROUTE"), "got: {err}");
+    }
+
+    /// An author-chosen key must never be measured against the schema. A
+    /// node named `max_latency` is legal, and so is a topic named after
+    /// anything at all.
+    #[test]
+    fn author_chosen_keys_are_not_measured_against_the_schema() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  max_latency:\n    pub: [out]\ntopics:\n  bogus_field:\n    type: std_msgs/msg/String\n",
+        )
+        .expect("author-chosen names are not schema keys");
+        assert!(m.nodes.contains_key("max_latency"));
+        assert!(m.topics.contains_key("bogus_field"));
+    }
 
     /// Phase 59: both spellings parse to the same value, and the new one
     /// refuses a bare number.

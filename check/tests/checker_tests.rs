@@ -90,10 +90,14 @@ topics:
     type: PointCloud2
     pub: [ground/output]
     sub: [centerpoint/pointcloud]
-sub:
-  raw_data: [cropbox/input]
-pub:
-  detections: [centerpoint/objects]
+  raw_data:
+    type: PointCloud2
+    pub: []
+    sub: [cropbox/input]
+  detections:
+    type: DetectedObjects
+    pub: [centerpoint/objects]
+    sub: []
 paths:
   main:
     input: raw_data
@@ -104,6 +108,23 @@ paths:
     // Should have no errors (scope budget 60 >= 5+15+30=50)
     let errs = errors(yaml);
     assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+
+    // ...and the budget is actually WEIGHED, not vacuously satisfied. Until
+    // phase 69 this fixture declared `raw_data`/`detections` under top-level
+    // `sub:`/`pub:` blocks, which are not part of the grammar and were
+    // silently discarded — so the scope path named two topics that did not
+    // exist. Shrinking the budget below the 50 ms the three nodes declare must
+    // produce the `scope-budget` warning; if it does not, this fixture is
+    // asserting the absence of a check rather than the success of one.
+    // (`scope-budget` is a WARNING here: the per-manifest form is a
+    // conservative flat sum, and the precise topology-aware verdict comes from
+    // the cross-scope pass in the loader.)
+    let tight = yaml.replace("max_latency_ms: 60", "max_latency_ms: 40");
+    let tight_warns = warnings(&tight);
+    assert!(
+        tight_warns.iter().any(|w| w.starts_with("[scope-budget]")),
+        "a 40 ms budget over a 50 ms pipeline must warn; got {tight_warns:?}"
+    );
 }
 
 // ── Endpoint uniqueness ──

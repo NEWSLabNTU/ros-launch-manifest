@@ -35,9 +35,11 @@ nodes:
         input: input_points
         output: [ndt_pose]
         max_latency_ms: 30
-    srv:
-      trigger_node:
-        request: std_srvs/srv/Trigger
+    # The service type is declared once, on `services.trigger_ndt.type`.
+    # This endpoint used to repeat it as `request: std_srvs/srv/Trigger`, a
+    # key the parser never read — the only dead key in the whole 42-file
+    # corpus when phase 69 measured it.
+    srv: [trigger_node]
 
   ekf_localizer:
     sub:

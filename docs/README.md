@@ -11,20 +11,23 @@ What each document is, and a suggested reading order.
 2. [launch-manifest.md](launch-manifest.md) — the **specification**: the
    manifest format, worked Autoware examples, the format reference, and
    the validation-rule inventory. The normative document.
-3. [contract-theory.md](contract-theory.md) — the **theory**: why the
+3. [format-reference.md](format-reference.md) — the **exhaustive key
+   list**, generated from the field table and enforced by a test. Every key
+   the parser accepts, per context; anything absent is a parse error.
+4. [contract-theory.md](contract-theory.md) — the **theory**: why the
    composition rules are what they are (latency, drops, age, chains,
    burstiness), with the formal derivations.
 
 **Working on or with the checker?**
 
-4. [contract-verification.md](contract-verification.md) — the
+5. [contract-verification.md](contract-verification.md) — the
    **implementation**: parsing with spans, the rule registry (20
    single-manifest rules), emitters, and which checks run here vs in the
    consumer's cross-scope layer.
 
 **Working on scheduling?**
 
-5. [scheduling.md](scheduling.md) — the **sched crate**: platform files,
+6. [scheduling.md](scheduling.md) — the **sched crate**: platform files,
    the `SchedMapper` registry (`manual`, `rate_monotonic`,
    `deadline_monotonic`, `chain_aware`), the platform-agnostic ranking
    core + POSIX realizer split, validation helpers, and the legacy
@@ -32,7 +35,7 @@ What each document is, and a suggested reading order.
 
 **Archaeology / rationale?**
 
-6. [design-issues.md](design-issues.md) — the issue log: every design
+7. [design-issues.md](design-issues.md) — the issue log: every design
    question raised against the spec, with resolution and rationale.
    Read when you want to know *why* the spec says what it says.
 

@@ -5,6 +5,7 @@
 
 pub mod cond;
 pub mod duration;
+pub mod field_table;
 pub mod parse;
 pub mod span;
 pub mod subst;

@@ -1049,6 +1049,16 @@ Key features demonstrated:
 
 ## Format Reference
 
+> **The exhaustive key list is [format-reference.md](format-reference.md)**,
+> generated from `types/src/field_table.rs` and checked by a test. That file
+> is normative: a key it does not list is a parse error. This section stays as
+> the *tutorial* pass — syntax, defaults, and when to use each construct — and
+> may lag on completeness where the generated table cannot.
+>
+> The split exists because prose could not be kept complete by hand. Measured
+> on 2026-09-04, this section was missing 22 of 66 fields, six of which
+> appeared nowhere in this document at all.
+
 Use this section as a lookup reference. Each subsection shows the YAML
 syntax, field table with defaults, and when to use.
 
