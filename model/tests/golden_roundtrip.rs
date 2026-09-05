@@ -143,6 +143,11 @@ fn contracts_layer_numbers() {
         "the golden model must keep a retired field, or it stops proving \
          old models still load"
     );
+    // Same for `correlation:` on a path (phase 70).
+    assert!(
+        include_str!("golden/perception.system_model.yaml").contains("correlation:"),
+        "the golden model must keep `correlation:` on disk for the same reason"
+    );
     // R1-M5 — per-endpoint QoS
     assert_eq!(
         c.pub_endpoints["/perception/detection/detector/objects"]
@@ -168,7 +173,6 @@ fn contracts_layer_numbers() {
     );
     let e2e = &c.scope_paths["/perception/e2e"];
     assert_eq!(e2e.max_latency_ms, Some(85.0));
-    assert_eq!(e2e.correlation, Some(Correlation::Timestamp));
     assert_eq!(e2e.drop.as_ref().unwrap().max_drop_rate, Some(0.08));
     // topic channel contract
     let pc = &c.topics["/sensing/pointcloud"];

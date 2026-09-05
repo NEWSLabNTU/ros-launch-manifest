@@ -831,11 +831,13 @@ pub struct PathContract {
     pub output: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
-    /// Multi-input stamp matching.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correlation: Option<Correlation>,
-    /// Max `header.stamp` spread between correlated inputs; required when
-    /// `correlation` is `timestamp`.
+    /// Max `header.stamp` spread between a fan-in path's inputs that the
+    /// callback still treats as one set.
+    ///
+    /// `correlation` used to sit beside this (phase 70 removed it): declared,
+    /// lowered to an enum here, and branched on by nothing on either side of
+    /// the toolchain. Old models still carrying `correlation:` load — the
+    /// golden fixture keeps one on disk to prove it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tolerance_ms: Option<f64>,
     /// E2E drop budget (scope paths only).
@@ -863,14 +865,6 @@ pub struct PathContract {
     /// from different information — the seam this field exists to close.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<ros_launch_manifest_sched::MapperMiss>,
-}
-
-/// Multi-input correlation mode.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Correlation {
-    Timestamp,
-    Latest,
 }
 
 /// Per-topic channel contract.

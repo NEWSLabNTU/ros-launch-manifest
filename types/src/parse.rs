@@ -76,7 +76,6 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     Ok(Manifest {
         version: yaml_u32(doc, "version").unwrap_or(1),
         args: parse_args(doc),
-        exclude_patterns: yaml_string_list(doc, "exclude_patterns"),
         nodes: parse_nodes(doc, ctx)?,
         topics: parse_topics(doc, ctx)?,
         services: parse_services(doc, ctx)?,
@@ -593,6 +592,22 @@ fn parse_paths(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, PathDecl>, Pars
 }
 
 fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
+    // `correlation:` was removed (phase 70). Parsed, exported to the causal
+    // graph, lowered to a model enum — and branched on by NOTHING: no check,
+    // no mapper, no monitor. `sync:` is what states how a fan-in path treats
+    // its inputs, and `sync-feasibility` / `sync-budget` read that.
+    if !yaml["correlation"].is_badvalue() {
+        return Err(field_err(
+            ctx,
+            "correlation",
+            "`correlation:` was removed — nothing ever read it. A fan-in path \
+             states its policy with `sync:`, which IS checked:\n\
+             \x20 sync: { policy: approximate, max_interval: <window> }   # was `timestamp`\n\
+             \x20 (no `sync:` at all)                                       # was `latest`\n\
+             `tolerance:` stays: it is the stamp spread the callback accepts, \
+             and `sync-budget` checks it against `max_latency`.",
+        ));
+    }
     reject_unknown_keys(yaml, ctx, Context::Path)?;
     let input = parse_string_or_list(yaml, "input");
     let trigger = parse_trigger(yaml, ctx)?;
@@ -623,7 +638,6 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         input,
         output: yaml_string_list(yaml, "output"),
         max_latency: yaml_duration(yaml, "max_latency", "max_latency_ms")?,
-        correlation: yaml_string(yaml, "correlation"),
         tolerance: yaml_duration(yaml, "tolerance", "tolerance_ms")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         trigger,
@@ -1216,6 +1230,22 @@ mod tests {
         assert!(err.contains("property of a ROUTE"), "got: {err}");
     }
 
+    /// `correlation:` (phase 70) keeps a dedicated message too: the generic
+    /// check would say "removed", and only this one names `sync:`.
+    #[test]
+    fn a_removed_correlation_names_sync_as_the_replacement() {
+        let err = super::parse_manifest_str(
+            "nodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        correlation: timestamp\n",
+        )
+        .expect_err("`correlation:` must not parse")
+        .to_string();
+        assert!(err.contains("sync:"), "got: {err}");
+        let err = super::parse_manifest_str("exclude_patterns: [/rosout]\n")
+            .expect_err("`exclude_patterns:` must not parse")
+            .to_string();
+        assert!(err.contains("Removed in phase 70"), "got: {err}");
+    }
+
     /// An author-chosen key must never be measured against the schema. A
     /// node named `max_latency` is legal, and so is a topic named after
     /// anything at all.
@@ -1520,14 +1550,12 @@ nodes:
       fusion:
         input: [lidar_objects, camera_objects]
         output: [fused]
-        correlation: timestamp
         tolerance_ms: 50
         max_latency_ms: 20
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let path = &m.nodes["fusion"].paths["fusion"];
         assert_eq!(path.input, vec!["lidar_objects", "camera_objects"]);
-        assert_eq!(path.correlation.as_deref(), Some("timestamp"));
         assert_eq!(path.tolerance.map(|d| d.as_millis_f64()), Some(50.0));
     }
 

@@ -478,7 +478,6 @@ mod compat_tests {
 
 #[cfg(test)]
 mod emission_tests {
-    use super::*;
     use crate::parse_manifest_str;
 
     /// W3: a contract read in either spelling is WRITTEN in the canonical one,

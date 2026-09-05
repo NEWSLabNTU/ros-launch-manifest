@@ -175,10 +175,10 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         "Arguments this manifest requires, supplied by the launch scope.",
     ),
-    live(
+    removed(
         "exclude_patterns",
         Context::Manifest,
-        "Node-name globs this manifest deliberately does not describe.",
+        "Removed in phase 70 — it was parsed and read by nothing, so it excluded nothing. Mark an expected-absent side with `external:`.",
     ),
     live(
         "nodes",
@@ -490,12 +490,16 @@ pub const FIELDS: &[Field] = &[
         "Latency budget for this path.",
     ),
     alias("max_latency_ms", Context::Path, "max_latency"),
-    live(
+    removed(
         "correlation",
         Context::Path,
-        "How multiple inputs are correlated into one output.",
+        "Removed in phase 70 — nothing ever read it. State fan-in policy with `sync:`.",
     ),
-    live("tolerance", Context::Path, "Correlation tolerance."),
+    live(
+        "tolerance",
+        Context::Path,
+        "Max `header.stamp` spread between a fan-in path's inputs still treated as one set.",
+    ),
     alias("tolerance_ms", Context::Path, "tolerance"),
     live(
         "drop",
@@ -587,7 +591,11 @@ pub const FIELDS: &[Field] = &[
         Context::Qos,
         "QoS deadline between consecutive messages.",
     ),
-    live("lease_duration", Context::Qos, "Liveliness lease duration."),
+    live(
+        "lease_duration",
+        Context::Qos,
+        "Liveliness lease: how often a publisher must assert it is alive. Checked pub against sub by `qos-match`.",
+    ),
     // ── miss ──
     live(
         "tolerate",

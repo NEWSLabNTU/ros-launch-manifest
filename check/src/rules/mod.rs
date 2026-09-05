@@ -9,6 +9,7 @@ mod endpoint_topic;
 mod endpoint_unique;
 mod explicit_trigger;
 mod inherited_rate;
+mod jitter_range;
 mod once_durability;
 mod qos_compat;
 mod qos_match;
@@ -88,5 +89,7 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(once_durability::OnceDurabilityRule),
         Box::new(sync_feasibility::SyncFeasibilityRule),
         Box::new(queue_drain_rate::QueueDrainRateRule),
+        // Phase 70: the rules the consumer census found missing.
+        Box::new(jitter_range::JitterRangeRule),
     ]
 }

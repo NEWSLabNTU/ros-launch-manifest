@@ -33,8 +33,6 @@ pub struct Manifest {
     /// Manifest arguments — all mandatory. Values provided by scope args from record.json.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub args: BTreeMap<String, ArgDecl>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub exclude_patterns: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub nodes: BTreeMap<String, NodeDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -407,8 +405,10 @@ pub struct PathDecl {
         skip_serializing_if = "Option::is_none"
     )]
     pub max_latency: Option<crate::duration::Duration>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub correlation: Option<String>,
+    /// Maximum `header.stamp` spread between the inputs of a fan-in path
+    /// that the callback will still treat as one set. A window the
+    /// synchroniser may wait for, so `sync-budget` checks it against
+    /// `max_latency`.
     #[serde(
         default,
         alias = "tolerance_ms",

@@ -126,7 +126,6 @@ pub fn substitute_manifest(
             path.unless_condition = substitute_opt(&path.unless_condition, args)?;
             path.input = substitute_vec(&path.input, args)?;
             path.output = substitute_vec(&path.output, args)?;
-            path.correlation = substitute_opt(&path.correlation, args)?;
         }
     }
 
@@ -163,7 +162,6 @@ pub fn substitute_manifest(
         path.unless_condition = substitute_opt(&path.unless_condition, args)?;
         path.input = substitute_vec(&path.input, args)?;
         path.output = substitute_vec(&path.output, args)?;
-        path.correlation = substitute_opt(&path.correlation, args)?;
     }
 
     // Includes: external manifest path

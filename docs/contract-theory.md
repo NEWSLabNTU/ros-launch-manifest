@@ -232,21 +232,21 @@ barrier waits for the slowest branch even when both are fast.
 
 **Rate = slowest branch:** $f = \min(f_A, f_B)$
 
-**Age depends on correlation mode:**
+**Age depends on whether the inputs are synchronised (`sync:`):**
 
-- `correlation: timestamp` — the output stamp is the **oldest** input
-  stamp. Age = max of branch ages + fusion processing:
+- With `sync:` — the output stamp is the **oldest** input stamp of the
+  matched set. Age = max of branch ages + fusion processing:
 
 $$A_{\max} = \max(A_{\max}(\text{branch } A),\; A_{\max}(\text{branch } B)) + L_{\text{node}}(C)$$
 
-- `correlation: latest` — the output stamp is the **primary input's**
-  stamp (first listed input). Age follows only the primary branch:
+- Without `sync:` — the output stamp is the **triggering input's** stamp;
+  `state: true` inputs are polled. Age follows only the triggering branch:
 
 $$A_{\max} = A_{\max}(\text{primary branch}) + L_{\text{node}}(C)$$
 
-The `latest` mode reflects how most Autoware fusion nodes work: the
-primary input triggers the callback, secondary inputs are polled. The
-output inherits the primary input's provenance.
+The unsynchronised form is how most Autoware fusion nodes work: one causal
+input triggers the callback, the rest are polled state. The output inherits
+the triggering input's provenance.
 
 Drop at the barrier is **not composed statically** — the user declares
 the fusion node's observed drops directly, combining all causes
@@ -533,10 +533,9 @@ feasibility check — subscriber `max_age_ms` vs the `max_latency_ms` of
 the scope path feeding it — is possible in principle but not currently
 implemented; today `max_age_ms` is checked at runtime only.
 
-**For multi-input nodes:** the age at a subscriber depends on the
-correlation mode. With `correlation: timestamp`, age reflects the
-oldest input. With `correlation: latest`, age follows the primary
-(first listed) input only. See
+**For multi-input nodes:** the age at a subscriber depends on whether
+the inputs are synchronised. With `sync:`, age reflects the oldest input
+of the matched set. Without it, age follows the triggering input only. See
 [Parallel composition](#parallel-fork-join) for the formulas.
 
 ## Cross-Scope Chains and Sampling Cost

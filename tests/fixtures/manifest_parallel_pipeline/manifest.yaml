@@ -41,7 +41,6 @@ nodes:
       main:
         input: [lidar, camera]
         output: [out]
-        correlation: timestamp
         tolerance_ms: 50
         max_latency_ms: 20
 

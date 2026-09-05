@@ -397,7 +397,7 @@ in →  │                          ├→ fusion (20ms) → out
 
 In Autoware, object merger and radar fusion follow this pattern —
 multiple sensor streams converge at a fusion node. See
-[Multi-Input Fusion and Correlation](#multi-input-fusion-and-correlation)
+[Multi-Input Fusion](#multi-input-fusion)
 for how timestamps are handled at the fusion point.
 
 **Periodic (timer-driven)** — a timer-driven node polls the latest
@@ -754,7 +754,7 @@ produces a `qos-match` error.
 ### Timestamps and Data Flow
 
 Timestamps (`header.stamp`) are the thread that connects latency, age,
-and correlation. The manifest imposes rules on how timestamps flow
+and fan-in synchronisation. The manifest imposes rules on how timestamps flow
 through the graph.
 
 **Causal paths should preserve timestamps.** When a node has a causal
@@ -790,22 +790,18 @@ inputs contribute. EKF reads map data (`state: true`, stamp from minutes
 ago) and sensor data (causal, `stamp=T`). The output pose has `stamp=T`,
 not the map's ancient timestamp.
 
-### Multi-Input Fusion and Correlation
+### Multi-Input Fusion
 
 When a node fuses multiple inputs (the fork-join topology from
-[Dataflow Topologies](#dataflow-topologies)), the manifest must specify
-how input timestamps relate and which stamp the output inherits. This
-is declared via `correlation` on node paths.
+[Dataflow Topologies](#dataflow-topologies)), the manifest states how the
+callback treats them with `sync:` on the node path. Analysis of 9 Autoware
+fusion nodes shows two dominant patterns:
 
-Analysis of 9 Autoware fusion nodes reveals two dominant patterns:
-
-**Pattern 1: Timestamp synchronization** (used by object merger, radar
-fusion, cluster merger, image projection fusion). Multiple inputs are
-synchronized via `message_filters::ApproximateTimeSynchronizer`. The
-output inherits the **oldest** input stamp:
+**Pattern 1: Timestamp synchronization** (object merger, radar fusion,
+cluster merger, image projection fusion). Inputs are matched by stamp via
+`message_filters::ApproximateTimeSynchronizer`; one output per matched set.
 
 ```yaml
-# Object merger: lidar + radar detections synchronized by timestamp
 nodes:
   object_merger:
     sub:
@@ -815,21 +811,18 @@ nodes:
       merged: { min_rate_hz: 10 }
     paths:
       main:
-        input: [lidar_objects, radar_objects]
+        trigger: { input: [lidar_objects, radar_objects] }
         output: [merged]
-        correlation: timestamp
-        tolerance_ms: 50         # stamps must be within 50ms
-        max_latency_ms: 20
+        sync: { policy: approximate, max_interval: 50ms }
+        tolerance: 50ms          # stamp spread the callback still accepts
+        max_latency: 20ms
 ```
 
-**Pattern 2: Primary input with polled secondaries** (used by
-map-based prediction, BEVFusion, distortion corrector). The node
-triggers on one primary input and reads the latest value from secondary
-inputs. The output inherits the **primary (first listed) input's**
-stamp:
+**Pattern 2: Primary input with polled secondaries** (map-based prediction,
+BEVFusion, distortion corrector). The node triggers on one causal input and
+reads the latest value of `state: true` subscriptions; no `sync:` at all.
 
 ```yaml
-# Map-based prediction: triggers on tracked objects, polls map + signals
 nodes:
   map_based_prediction:
     sub:
@@ -840,20 +833,19 @@ nodes:
       predicted: { min_rate_hz: 10 }
     paths:
       main:
-        input: tracked             # causal trigger (only causal inputs in path)
+        trigger: { input: [tracked] }   # only causal inputs are in the path
         output: [predicted]
-        correlation: latest        # polled inputs read latest, not synchronized
-        max_latency_ms: 15
+        max_latency: 15ms
 ```
 
-**Effect on age:** with `correlation: timestamp`, the output age equals
-the **oldest** branch — the output is as stale as its stalest input.
-With `correlation: latest`, the output age follows only the **primary**
-branch — secondary inputs don't affect age tracking.
+`sync-feasibility` checks the window against the inputs' declared rates and
+`sync-budget` checks it against `max_latency`; rate derivation takes the
+**min** of the inputs with `sync:` and the **sum** without.
 
-See [Paths](#paths) for the `correlation` and `tolerance_ms` fields.
-See [contract-theory.md](contract-theory.md#parallel-fork-join) for the
-formal latency and age composition rules.
+> `correlation: timestamp | latest` used to sit beside `sync:`. Phase 70
+> removed it: it was parsed, exported and lowered into the model, and no
+> check, mapper or monitor ever branched on it. `sync:` present/absent is
+> the same distinction, and it is read.
 
 ## Worked Example
 
@@ -1067,11 +1059,11 @@ syntax, field table with defaults, and when to use.
 | Field              | Required | Description | If omitted |
 |--------------------|----------|-------------|------------|
 | `version`          | yes      | Format version (currently `1`) | Error |
-| `exclude_patterns` | no       | Topic prefixes to ignore (replaces defaults) | `/rosout`, `/parameter_events` |
 
-When `exclude_patterns` is declared, it **replaces** the defaults — only
-the listed prefixes are excluded. Use `exclude_patterns: []` to include
-all topics (including `/rosout` and `/parameter_events`).
+> `exclude_patterns` was accepted here until phase 70. It had three
+> mentions in the entire codebase — the grammar row, the struct field and
+> the parse line — so it excluded nothing. A side that is expected to be
+> absent is declared with `external:` on the topic, service or action.
 
 ### Args
 
@@ -1398,10 +1390,10 @@ paths:
 | `input`          | Trigger endpoint(s) from `sub:` | Empty = periodic (timer-driven) |
 | `output`         | Result endpoint(s) from `pub:` | Required |
 | `max_latency_ms` | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
-| `correlation`    | Multi-input stamp matching: `timestamp` or `latest` | No correlation check |
-| `tolerance_ms`   | Max `header.stamp` difference between correlated inputs | Required if `correlation: timestamp` |
+| `sync`           | Fan-in policy: `exact`, `approximate` or `timeout_any` with its window | Inputs unsynchronised; each fires the callback |
+| `tolerance`      | Max `header.stamp` spread between inputs still treated as one set | Not checked against the budget |
 
-Node paths have latency and correlation only. Age is declared on
+Node paths have latency and fan-in policy only. Age is declared on
 **subscriber endpoints** (see [Latency and Data Freshness](#latency-and-data-freshness)), not
 on paths. Drops are topic-level (transport) and scope-level (E2E).
 
@@ -1414,8 +1406,7 @@ on paths. Drops are topic-level (transport) and scope-level (E2E).
 | `max_latency_ms`  | Worst-case E2E time across the scope | Not checked; transparent |
 | `max_drop_rate`   | E2E drop rate across the scope (fraction 0-1) | Drop not checked |
 | `max_consecutive` | E2E max consecutive drops | Consecutive not checked |
-| `correlation`     | Multi-input stamp matching: `timestamp` or `latest` | No correlation check |
-| `tolerance_ms`    | Max `header.stamp` difference between correlated inputs | Required if `correlation: timestamp` |
+| `tolerance`       | Max `header.stamp` spread between inputs still treated as one set | Not checked against the budget |
 
 The checker traces the dataflow between the input and output topics,
 considering only nodes within this scope's subtree. When a parent scope

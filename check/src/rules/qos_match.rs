@@ -10,7 +10,9 @@
 //! 2. **Pub/sub compatibility (offered ≥ requested)** — for every
 //!    publisher × subscriber pair on a topic, compute effective QoS
 //!    (topic default overlaid with per-endpoint override) and apply
-//!    the DDS compatibility matrix on `reliability` and `durability`.
+//!    the DDS compatibility matrix on `reliability`, `durability`,
+//!    `liveliness` and its `lease_duration` (the last two since phase 70 —
+//!    both were parsed and dropped while the other policies were checked).
 //!    A field is checked only when both sides specify it directly or
 //!    via inheritance — unspecified fields are skipped (no implicit
 //!    ROS 2 default is assumed because real deployments use multiple
@@ -241,6 +243,49 @@ fn check_compat_pair(
             ),
         );
     }
+
+    if let (Some(pub_live), Some(sub_live)) =
+        (pub_qos.liveliness.as_deref(), sub_qos.liveliness.as_deref())
+        && !liveliness_compatible(pub_live, sub_live)
+    {
+        ctx.error(
+            rule_id,
+            &path,
+            format!(
+                "incompatible QoS on topic '{topic_name}' field 'liveliness': pub \
+                 '{pub_node}/{pub_ep}' offers '{pub_live}', sub '{sub_node}/{sub_ep}' \
+                 requests '{sub_live}'"
+            ),
+        );
+    }
+
+    // The lease is the fault-detection interval: the subscriber declares how
+    // long it will wait before it treats the publisher as dead, and the
+    // publisher declares how often it promises to assert. DDS matches only
+    // when offered <= requested; a publisher asserting less often than the
+    // subscriber's lease is exactly a publisher the subscriber will
+    // periodically declare dead.
+    if let (Some(pub_lease), Some(sub_lease)) = (pub_qos.lease_duration, sub_qos.lease_duration)
+        && pub_lease.as_millis_f64() > sub_lease.as_millis_f64()
+    {
+        ctx.error(
+            rule_id,
+            &path,
+            format!(
+                "incompatible QoS on topic '{topic_name}' field 'lease_duration': pub \
+                 '{pub_node}/{pub_ep}' asserts every {:.2}ms, sub '{sub_node}/{sub_ep}' \
+                 declares it dead after {:.2}ms",
+                pub_lease.as_millis_f64(),
+                sub_lease.as_millis_f64()
+            ),
+        );
+    }
+}
+
+/// DDS liveliness compatibility: offered must be at least as strict as
+/// requested. `manual_by_topic` ≥ `automatic`. Unknown values pass.
+fn liveliness_compatible(pub_v: &str, sub_v: &str) -> bool {
+    !matches!((pub_v, sub_v), ("automatic", "manual_by_topic"))
 }
 
 /// DDS reliability compatibility: offered must be at least as strong as
@@ -470,5 +515,48 @@ topics:
             errs.iter().any(|d| d.message.contains("depth")),
             "expected depth=0 error on endpoint qos, got: {errs:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod liveliness_tests {
+    use super::*;
+    use crate::CheckContext;
+    use ros_launch_manifest_types::parse::parse_manifest_str;
+
+    fn errors(yaml: &str) -> Vec<String> {
+        let manifest = parse_manifest_str(yaml).unwrap();
+        let graph = DataflowGraph::build(&manifest);
+        let mut ctx = CheckContext::new();
+        QosMatchRule.check(&manifest, &graph, &mut ctx);
+        ctx.diagnostics
+            .into_iter()
+            .filter(|d| d.severity == crate::Severity::Error)
+            .map(|d| d.message)
+            .collect()
+    }
+
+    /// The finding: a publisher asserting every 500ms against a subscriber
+    /// that gives up after 200ms was accepted in silence.
+    #[test]
+    fn a_lease_longer_than_the_subscriber_waits_is_an_error() {
+        let yaml = "version: 1\nnodes:\n  p:\n    pub:\n      out:\n        qos: { liveliness: manual_by_topic, lease_duration: 500ms }\n  s:\n    sub:\n      in:\n        qos: { liveliness: manual_by_topic, lease_duration: 200ms }\ntopics:\n  t:\n    type: T\n    pub: [p/out]\n    sub: [s/in]\n";
+        let errs = errors(yaml);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("lease_duration"), "{errs:?}");
+    }
+
+    #[test]
+    fn automatic_offered_against_manual_requested_is_an_error() {
+        let yaml = "version: 1\nnodes:\n  p:\n    pub:\n      out:\n        qos: { liveliness: automatic }\n  s:\n    sub:\n      in:\n        qos: { liveliness: manual_by_topic }\ntopics:\n  t:\n    type: T\n    pub: [p/out]\n    sub: [s/in]\n";
+        let errs = errors(yaml);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("liveliness"), "{errs:?}");
+    }
+
+    #[test]
+    fn a_shorter_lease_and_a_stricter_kind_are_clean() {
+        let yaml = "version: 1\nnodes:\n  p:\n    pub:\n      out:\n        qos: { liveliness: manual_by_topic, lease_duration: 100ms }\n  s:\n    sub:\n      in:\n        qos: { liveliness: automatic, lease_duration: 200ms }\ntopics:\n  t:\n    type: T\n    pub: [p/out]\n    sub: [s/in]\n";
+        assert!(errors(yaml).is_empty());
     }
 }

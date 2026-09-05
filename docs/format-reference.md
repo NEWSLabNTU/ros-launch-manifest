@@ -10,7 +10,7 @@ Every key below is accepted in the context that heads its section, and **a key t
 |---|---|---|
 | `version` |  | Manifest format version. Absent means 1. |
 | `args` |  | Arguments this manifest requires, supplied by the launch scope. |
-| `exclude_patterns` |  | Node-name globs this manifest deliberately does not describe. |
+| `exclude_patterns` | **removed** | Removed in phase 70 — it was parsed and read by nothing, so it excluded nothing. Mark an expected-absent side with `external:`. |
 | `nodes` |  | Node declarations, keyed by bare node name. |
 | `topics` |  | Topic declarations, keyed by topic name. |
 | `services` |  | Service declarations, keyed by service name. |
@@ -129,8 +129,8 @@ Every key below is accepted in the context that heads its section, and **a key t
 | `output` |  | Endpoints (node path) or topics (scope path) this path produces. |
 | `max_latency` |  | Latency budget for this path. |
 | `max_latency_ms` | deprecated — use `max_latency` | Deprecated spelling. |
-| `correlation` |  | How multiple inputs are correlated into one output. |
-| `tolerance` |  | Correlation tolerance. |
+| `correlation` | **removed** | Removed in phase 70 — nothing ever read it. State fan-in policy with `sync:`. |
+| `tolerance` |  | Max `header.stamp` spread between a fan-in path's inputs still treated as one set. |
 | `tolerance_ms` | deprecated — use `tolerance` | Deprecated spelling. |
 | `drop` |  | Permitted message loss along this path. |
 | `trigger` |  | What causes this path's output: timer | input | once | spontaneous. |
@@ -182,7 +182,7 @@ Every key below is accepted in the context that heads its section, and **a key t
 | `lifespan_ms` | deprecated — use `lifespan` | Deprecated spelling. |
 | `liveliness` |  | automatic | manual_by_topic. |
 | `deadline` |  | QoS deadline between consecutive messages. |
-| `lease_duration` |  | Liveliness lease duration. |
+| `lease_duration` |  | Liveliness lease: how often a publisher must assert it is alive. Checked pub against sub by `qos-match`. |
 
 ## `miss`
 
