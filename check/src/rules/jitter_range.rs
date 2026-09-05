@@ -7,16 +7,19 @@
 //! against sampling jitter (`jitter-feasibility`, in the resolver) and never
 //! against the path's own declared range.
 //!
-//! The check is `max_latency - min_latency > max_jitter`, with `min_latency`
-//! defaulting to 0. That default is the conservative one: it says a path
-//! that may take anywhere from 0 to `max_latency` has a spread of
-//! `max_latency`, which is the worst the declarations allow. Declaring a
-//! measured floor (`play_launch measure` produces one) only ever RELAXES
-//! the verdict, never tightens it — so a path that fails this rule with no
-//! `min_latency` fails on its upper bound alone.
+//! Three verdicts, and the distinction between the last two is the point:
 //!
-//! `min_latency > max_latency` is a contradiction and an error in its own
-//! right.
+//! - `min_latency > max_latency` — a contradiction, error.
+//! - both declared and `max_latency - min_latency > max_jitter` — the
+//!   declarations cannot all hold, error.
+//! - `max_jitter` declared, `max_latency` above it, `min_latency` ABSENT —
+//!   the bound is unverifiable from declarations, info. An absent floor is
+//!   not a floor of zero: an upper bound of 40ms says nothing about whether
+//!   the latencies cluster at 38..40ms or range over 0..40ms, and reading
+//!   absence as zero would have turned every jitter requirement on a path
+//!   with a wide budget into a hard error. That is the absent-versus-zero
+//!   confusion phase 60 removed from the chain checker, and it does not get
+//!   to come back here. `play_launch measure` produces the floor.
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
@@ -80,26 +83,32 @@ fn check_path(rule_id: &str, yaml_path: &str, what: &str, path: &PathDecl, ctx: 
         // for a budget; this rule does not repeat that.
         return;
     };
-    let floor = min.unwrap_or(0.0);
-    let spread = max - floor;
-    if spread > jitter {
-        let floor_note = if min.is_some() {
-            String::new()
-        } else {
-            " (min_latency is undeclared, so the floor is taken as 0 — declaring a \
-             measured one can only relax this)"
-                .to_string()
-        };
-        ctx.error(
+    if max <= jitter {
+        // Whatever the floor, the spread cannot exceed the ceiling.
+        return;
+    }
+    match min {
+        Some(floor) if max - floor > jitter => ctx.error(
             rule_id,
             &format!("{yaml_path}.max_jitter"),
             format!(
                 "{what} declares max_jitter ({jitter:.2}ms) but its own latency range \
-                 {floor:.2}..{max:.2}ms spans {spread:.2}ms{floor_note}. The \
-                 declarations cannot all hold: tighten max_latency, raise min_latency, \
-                 or loosen max_jitter"
+                 {floor:.2}..{max:.2}ms spans {:.2}ms. The declarations cannot all hold: \
+                 tighten max_latency, raise min_latency, or loosen max_jitter",
+                max - floor
             ),
-        );
+        ),
+        Some(_) => {}
+        None => ctx.emit(
+            rule_id,
+            crate::check::Severity::Info,
+            &format!("{yaml_path}.max_jitter"),
+            format!(
+                "{what} declares max_jitter ({jitter:.2}ms) below its max_latency \
+                 ({max:.2}ms) and no min_latency, so the spread cannot be verified from \
+                 declarations — `play_launch measure` produces the floor"
+            ),
+        ),
     }
 }
 
@@ -121,21 +130,52 @@ mod tests {
             .collect()
     }
 
-    /// With no floor declared, the spread is the whole upper bound.
-    #[test]
-    fn no_floor_means_the_spread_is_max_latency() {
-        let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      o: {}\n    paths:\n      p:\n        output: [o]\n        max_latency: 20ms\n        max_jitter: 5ms\n";
-        let errs = errors(yaml);
-        assert_eq!(errs.len(), 1, "{errs:?}");
-        assert!(errs[0].contains("0.00..20.00ms spans 20.00ms"), "{errs:?}");
-        assert!(errs[0].contains("undeclared"), "{errs:?}");
+    fn infos(yaml: &str) -> Vec<String> {
+        let manifest = parse_manifest_str(yaml).unwrap();
+        let graph = DataflowGraph::build(&manifest);
+        let mut ctx = CheckContext::new();
+        JitterRangeRule.check(&manifest, &graph, &mut ctx);
+        ctx.diagnostics
+            .into_iter()
+            .filter(|d| d.severity == crate::Severity::Info)
+            .map(|d| d.message)
+            .collect()
     }
 
-    /// Declaring a floor relaxes the verdict — and only relaxes it.
+    /// An absent floor is not a floor of zero: no error, an info that says
+    /// what would make the bound checkable.
     #[test]
-    fn a_declared_floor_can_make_the_same_path_clean() {
+    fn no_floor_is_unverifiable_not_wrong() {
+        let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      o: {}\n    paths:\n      p:\n        output: [o]\n        max_latency: 20ms\n        max_jitter: 5ms\n";
+        assert!(errors(yaml).is_empty());
+        let infos = infos(yaml);
+        assert_eq!(infos.len(), 1, "{infos:?}");
+        assert!(infos[0].contains("cannot be verified"), "{infos:?}");
+    }
+
+    /// A declared floor makes it checkable, and here it fails.
+    #[test]
+    fn a_declared_range_wider_than_the_jitter_bound_is_an_error() {
+        let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      o: {}\n    paths:\n      p:\n        output: [o]\n        max_latency: 20ms\n        min_latency: 4ms\n        max_jitter: 5ms\n";
+        let errs = errors(yaml);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("4.00..20.00ms spans 16.00ms"), "{errs:?}");
+    }
+
+    /// And a floor close enough to the ceiling passes.
+    #[test]
+    fn a_declared_range_inside_the_jitter_bound_is_clean() {
         let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      o: {}\n    paths:\n      p:\n        output: [o]\n        max_latency: 20ms\n        min_latency: 16ms\n        max_jitter: 5ms\n";
         assert!(errors(yaml).is_empty());
+        assert!(infos(yaml).is_empty());
+    }
+
+    /// A ceiling at or under the bound needs no floor at all.
+    #[test]
+    fn a_ceiling_under_the_bound_is_clean_without_a_floor() {
+        let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      o: {}\n    paths:\n      p:\n        output: [o]\n        max_latency: 5ms\n        max_jitter: 5ms\n";
+        assert!(errors(yaml).is_empty());
+        assert!(infos(yaml).is_empty());
     }
 
     #[test]
@@ -148,7 +188,7 @@ mod tests {
 
     #[test]
     fn scope_paths_are_checked_too() {
-        let yaml = "version: 1\npaths:\n  e2e:\n    input: [/a]\n    output: [/b]\n    max_latency: 80ms\n    max_jitter: 10ms\n";
+        let yaml = "version: 1\npaths:\n  e2e:\n    input: [/a]\n    output: [/b]\n    max_latency: 80ms\n    min_latency: 20ms\n    max_jitter: 10ms\n";
         let errs = errors(yaml);
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(errs[0].starts_with("scope path 'e2e'"), "{errs:?}");
