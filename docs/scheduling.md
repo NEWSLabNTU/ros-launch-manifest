@@ -34,9 +34,9 @@ joined with the launch tree:
 | Fact | Contract source |
 |------|-----------------|
 | `rate_hz` | max over topic-level `rate_hz` on published topics and the node's own `pub.<ep>.min_rate_hz` |
-| `deadline_us` | min `max_latency_ms` over the node's declared `paths` (×1000) |
+| `deadline_us` | min `max_latency` over the node's declared `paths` (×1000) |
 | `criticality` | `nodes.<name>.criticality` (`high`/`medium`/`low`, advisory string on the node) |
-| per-path facts | each path's `effective_trigger` (timer/input/once/spontaneous/unclassified), `max_latency_ms`, inputs/outputs |
+| per-path facts | each path's `effective_trigger` (timer/input/once/spontaneous/unclassified), `max_latency`, inputs/outputs |
 | chains | scope `paths:` declarations, whose route is DERIVED cross-scope into segment/boundary structure (`chains:` was removed in phase 68 W4) |
 
 This derivation is **per-consumer** (it needs a launch tree or a
@@ -233,9 +233,9 @@ Algorithm (steps 1–4 platform-agnostic, 5–6 POSIX realization):
    re-ordered rate-monotonically (shorter period first).
 4. **Non-chain remainder.** Bucket by criticality (High, Medium, Low,
    none), then order by one unified ascending time budget per path:
-   timer period (`1000/rate_hz`) for timer paths, `max_latency_ms` for
+   timer period (`1000/rate_hz`) for timer paths, `max_latency` for
    input paths. Paths with no derivable budget — once, spontaneous,
-   unclassified, or an input path with no declared `max_latency_ms` —
+   unclassified, or an input path with no declared `max_latency` —
    never rank → `DEFAULT_TIER`. Items with exactly equal
    (criticality, budget) collapse into one rank (`tie_group`).
 5. **Band compression** (POSIX realizer). Dense ranks are fitted into

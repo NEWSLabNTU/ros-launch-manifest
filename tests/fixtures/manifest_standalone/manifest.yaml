@@ -16,7 +16,7 @@ nodes:
     sub:
       odometry:
         min_rate_hz: 50
-        max_age_ms: 100
+        max_age: 100ms
 
 topics:
   # Absolute — subscribes to a topic from a different subsystem.

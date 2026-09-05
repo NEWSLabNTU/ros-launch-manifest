@@ -11,7 +11,7 @@ nodes:
       periodic:
         input: []
         output: [raw_points]
-        max_latency_ms: 1
+        max_latency: 1ms
 
 topics:
   raw_points:
@@ -42,7 +42,7 @@ includes:
           main:
             input: input
             output: [cropped]
-            max_latency_ms: 5
+            max_latency: 5ms
 
       detector:
         sub:
@@ -55,7 +55,7 @@ includes:
           main:
             input: points
             output: [objects]
-            max_latency_ms: 30
+            max_latency: 30ms
 
     topics:
       filtered_points:
@@ -68,7 +68,7 @@ includes:
       detect:
         input: input
         output: [objects]
-        max_latency_ms: 40
+        max_latency: 40ms
 
   planning:
     nodes:
@@ -87,7 +87,7 @@ includes:
           main:
             input: obstacles
             output: [trajectory]
-            max_latency_ms: 20
+            max_latency: 20ms
 
     topics:
       route_topic:
@@ -102,10 +102,10 @@ includes:
       plan:
         input: obstacles
         output: [trajectory]
-        max_latency_ms: 25
+        max_latency: 25ms
 
 paths:
   end_to_end:
     input: sensor_data
     output: [trajectory]
-    max_latency_ms: 80
+    max_latency: 80ms

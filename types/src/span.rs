@@ -287,7 +287,7 @@ mod tests {
     fn test_span_index_endpoint_qos_nested() {
         // Per-endpoint qos blocks under nodes.<n>.pub.<ep>.qos.<field>
         // and nodes.<n>.sub.<ep>.qos.<field>, plus per-sub
-        // max_transport_ms, must be addressable for diagnostic spans.
+        // max_transport, must be addressable for diagnostic spans.
         let yaml = r#"
 nodes:
   perception:
@@ -295,7 +295,7 @@ nodes:
       pointcloud:
         qos:
           reliability: reliable
-        max_transport_ms: 0
+        max_transport: 0ms
 "#;
         let idx = SpanIndex::build(yaml);
 
@@ -309,25 +309,15 @@ nodes:
             "missing endpoint qos.reliability span"
         );
         assert!(
-            idx.get("nodes.perception.sub.pointcloud.max_transport_ms")
+            idx.get("nodes.perception.sub.pointcloud.max_transport")
                 .is_some(),
-            "missing per-sub max_transport_ms span"
+            "missing per-sub max_transport span"
         );
 
         let span = idx
             .get("nodes.perception.sub.pointcloud.qos.reliability")
             .unwrap();
         assert_eq!(&yaml[span.clone()], "reliability");
-    }
-
-    #[test]
-    fn test_span_index_paths() {
-        let yaml = "nodes:\n  a:\n    paths:\n      main:\n        max_latency_ms: 50\n";
-        let idx = SpanIndex::build(yaml);
-
-        // Span keys are the document's own keys, so this follows whichever
-        // spelling the file used — not the struct field name.
-        assert!(idx.get("nodes.a.paths.main.max_latency_ms").is_some());
     }
 
     /// Phase 59: a migrated contract must index just as well, because the

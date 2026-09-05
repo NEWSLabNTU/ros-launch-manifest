@@ -33,7 +33,7 @@ nodes:
       main:
         input: input
         output: [out]
-        max_latency_ms: 50
+        max_latency: 50ms
 
   camera_detector:
     sub:
@@ -44,13 +44,13 @@ nodes:
       main:
         input: input
         output: [out]
-        max_latency_ms: 30
+        max_latency: 30ms
 
   fusion:
     sub:
       lidar:
         min_rate_hz: 10
-        max_transport_ms: 0     # intra-process from lidar_detector
+        max_transport: 0ms     # intra-process from lidar_detector
       camera:
         min_rate_hz: 10
         # Inherits topic default (10ms) — cross-network bridge
@@ -60,8 +60,8 @@ nodes:
       main:
         input: [lidar, camera]
         output: [out]
-        tolerance_ms: 50
-        max_latency_ms: 20
+        tolerance: 50ms
+        max_latency: 20ms
 
 topics:
   /sensor/raw:
@@ -74,14 +74,14 @@ topics:
     pub: [lidar_detector/out]
     sub: [fusion/lidar]
     rate_hz: 10
-    max_transport_ms: 10
+    max_transport: 10ms
 
   /perception/camera_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [camera_detector/out]
     sub: [fusion/camera]
     rate_hz: 10
-    max_transport_ms: 10
+    max_transport: 10ms
 
   /perception/fused_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
@@ -92,4 +92,4 @@ paths:
   pipeline:
     input: /sensor/raw
     output: [/perception/fused_objects]
-    max_latency_ms: 70
+    max_latency: 70ms

@@ -8,11 +8,11 @@ nodes:
       consume:
         trigger: { input: [in] }
         output: []
-        max_latency_ms: 40
+        max_latency: 40ms
       consume2:
         trigger: { input: [in2] }
         output: []
-        max_latency_ms: 10
+        max_latency: 10ms
 topics:
   /link/out:
     type: t

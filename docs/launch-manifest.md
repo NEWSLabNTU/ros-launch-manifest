@@ -422,37 +422,37 @@ Latency and age serve different concerns:
 - **Latency** constrains processing — declared on **paths**
 - **Age** constrains data freshness — declared on **subscriber endpoints**
 
-**`max_latency_ms`** — the time from when the *triggering input arrives
+**`max_latency`** — the time from when the *triggering input arrives
 at this node/scope* to when the output is published. Declared on node
 paths and scope paths.
 
 ```
 sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→ [detector: 30ms]
                   ├── 5ms ──┤        ├──── 15ms ────┤          ├── 30ms ──┤
-                  └────────────── scope max_latency_ms: 50ms ─────────────┘
+                  └────────────── scope max_latency: 50ms ─────────────┘
 ```
 
 **Measurement points:**
 
-- **Node `max_latency_ms`**: from `rcl_take` of the trigger input to
+- **Node `max_latency`**: from `rcl_take` of the trigger input to
   `rcl_publish` of the output. This is pure processing time — transport
   to the next node is NOT included.
-- **Scope `max_latency_ms`**: from the first `rcl_take` inside the
+- **Scope `max_latency`**: from the first `rcl_take` inside the
   scope to the last `rcl_publish` out of the scope. This INCLUDES
   internal transport between nodes within the scope.
 
 The scope budget is always ≥ the sum of node budgets because the scope
 includes internal transport that individual nodes don't. Transport
-latency can be declared per topic via `max_transport_ms` (default for
+latency can be declared per topic via `max_transport` (default for
 all subscribers) and overridden per subscriber via the same field on
 a `sub:` endpoint — a single ROS topic can have heterogeneous transport
 (intra-process ~0ms, SHM <1ms, network 5-10ms) so per-subscriber
 override is necessary for accurate critical-path computation. Topics
-without `max_transport_ms` (and no per-sub override) contribute 0 to
+without `max_transport` (and no per-sub override) contribute 0 to
 the budget sum — the undeclared transport is absorbed into the scope's
 residual headroom.
 
-**`max_age_ms`** — the maximum acceptable age of data when a subscriber
+**`max_age`** — the maximum acceptable age of data when a subscriber
 receives it. Declared on **subscriber endpoints**, not on paths.
 
 ```
@@ -470,24 +470,24 @@ nodes:
     sub:
       objects:
         min_rate_hz: 10
-        max_age_ms: 200          # data must be fresher than 200ms
+        max_age: 200ms          # data must be fresher than 200ms
       map:
         state: true
         required: true           # no age constraint — map data can be old
 ```
 
-**Runtime monitoring** checks `max_age_ms` on every `rcl_take` via
+**Runtime monitoring** checks `max_age` on every `rcl_take` via
 the interception layer, which already reads `header.stamp`. If
 `now - stamp > max_age_ms`, a violation is flagged.
 
 **Static checking** does not trace the full causal chain (which would
 require every node to have a budget). Instead, the checker verifies
-local consistency: if a subscriber has `max_age_ms: 200` and the
-scope path has `max_latency_ms: 50`, the upstream must deliver data
+local consistency: if a subscriber has `max_age: 200ms` and the
+scope path has `max_latency: 50ms`, the upstream must deliver data
 with age ≤ 150ms — a feasibility check, not a proof.
 
-See [Nodes](#nodes) for the `max_age_ms` field table and
-[Paths](#paths) for the `max_latency_ms` field table. See
+See [Nodes](#nodes) for the `max_age` field table and
+[Paths](#paths) for the `max_latency` field table. See
 [Verification Rules](contract-theory.md#verification-rules) for the
 full composition and checking rules.
 
@@ -495,7 +495,7 @@ full composition and checking rules.
 have subscribers with very different transport latency: an
 intra-process subscriber sees ~0ms, a same-machine SHM subscriber sees
 < 1ms, and a cross-network subscriber sees 5–10ms. To express this,
-`max_transport_ms` can be declared **on the subscriber endpoint** to
+`max_transport` can be declared **on the subscriber endpoint** to
 override the topic-level default. The checker uses the per-subscriber
 value as the edge weight from the publisher to that subscriber in
 critical-path computation:
@@ -516,17 +516,17 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     pub: [lidar/output]
     sub: [perception/input, debug_recorder/input, remote_viz/input]
-    max_transport_ms: 10                # default (worst-case fallback)
+    max_transport: 10ms                # default (worst-case fallback)
 
 nodes:
   perception:
     sub:
       input:
-        max_transport_ms: 0             # intra-process
+        max_transport: 0ms             # intra-process
   debug_recorder:
     sub:
       input:
-        max_transport_ms: 1             # same-machine SHM
+        max_transport: 1ms             # same-machine SHM
   remote_viz:
     sub:
       input: {}                         # inherits topic default → 10ms
@@ -534,7 +534,7 @@ nodes:
 
 The override is sub-side only — a publisher does not know which
 subscriber receives data over which transport, but a subscriber knows
-how it consumes. Pub-side `max_transport_ms` is not part of the format.
+how it consumes. Pub-side `max_transport` is not part of the format.
 
 ### Node and Scope Contracts
 
@@ -554,7 +554,7 @@ nodes:
       main:
         input: input
         output: [output]
-        max_latency_ms: 15              # guarantee: 15ms processing
+        max_latency: 15ms              # guarantee: 15ms processing
 ```
 
 A node contract is testable in isolation — give it input at the assumed
@@ -576,7 +576,7 @@ paths:
   perception:
     input: /sensing/pointcloud
     output: [/perception/objects]
-    max_latency_ms: 85                  # E2E budget for the whole pipeline
+    max_latency: 85ms                  # E2E budget for the whole pipeline
     max_drop_rate: 0.08
 ```
 
@@ -625,7 +625,7 @@ paths:
   perception:
     input: /sensing/pointcloud
     output: [/perception/objects]
-    max_latency_ms: 85
+    max_latency: 85ms
     max_drop_rate: 0.08        # 8% E2E (all transport hops combined)
     max_consecutive: 5
 ```
@@ -665,7 +665,7 @@ QoS can be declared at two levels:
 | `durability`  | `volatile`, `transient_local`   | `volatile` |
 | `depth`       | integer                         | `10` |
 | `history`     | `keep_last`, `keep_all`         | `keep_last` |
-| `lifespan_ms` | integer                         | unlimited |
+| `lifespan` | integer                         | unlimited |
 | `liveliness`  | `automatic`, `manual_by_topic`  | `automatic` |
 
 The `qos-compat` rule errors on invalid values like `reliability: maybe`.
@@ -716,7 +716,7 @@ skipped — the checker does not assume ROS 2 defaults, because real
 deployments use multiple QoS profiles (sensor data, services,
 parameters) with different defaults.
 
-`history`, `depth`, `lifespan_ms`, and `liveliness` are not checked by
+`history`, `depth`, `lifespan`, and `liveliness` are not checked by
 `qos-match` in v1. `liveliness`, `deadline`, and `lifespan` compatibility
 are deferred to a later version.
 
@@ -771,7 +771,7 @@ sensor (stamp=T) → cropbox (stamp=T) → detector (stamp=T) → planner
                                          age = now - T ─────────┘
 ```
 
-This is what makes `max_age_ms` meaningful. At any point in the chain,
+This is what makes `max_age` meaningful. At any point in the chain,
 age is `now - header.stamp`, and the stamp traces back to the original
 sensor reading.
 
@@ -886,7 +886,7 @@ nodes:
     pub:
       tracked: { min_rate_hz: 10 }
     paths:
-      main: { input: detected, output: [tracked], max_latency_ms: 20 }
+      main: { input: detected, output: [tracked], max_latency: 20ms }
 
 topics:
   # relative → /perception/object_recognition/tracking/objects
@@ -906,12 +906,12 @@ nodes:
     sub:
       tracked:
         min_rate_hz: 10
-        max_age_ms: 150            # tracked objects must be fresher than 150ms
+        max_age: 150ms            # tracked objects must be fresher than 150ms
       vector_map: { state: true, required: true }
     pub:
       predicted: { min_rate_hz: 10 }
     paths:
-      main: { input: tracked, output: [predicted], max_latency_ms: 15 }
+      main: { input: tracked, output: [predicted], max_latency: 15ms }
 
 topics:
   # absolute — subscribes to tracking's output topic
@@ -945,7 +945,7 @@ paths:
   main:
     input: /perception/obstacle_segmentation/pointcloud
     output: [prediction/objects]       # relative → /perception/object_recognition/prediction/objects
-    max_latency_ms: 50
+    max_latency: 50ms
     max_drop_rate: 0.05
 ```
 
@@ -991,7 +991,7 @@ nodes:
       main:
         input: trajectory
         output: [control_cmd]
-        max_latency_ms: 10
+        max_latency: 10ms
 
   validator:
     if: $(var launch_validator)  # only present when arg is "true"
@@ -1021,7 +1021,7 @@ paths:
   control:
     input: /planning/trajectory
     output: [command/control_cmd]   # relative → /control/command/control_cmd
-    max_latency_ms: 15
+    max_latency: 15ms
 ```
 
 Key features demonstrated:
@@ -1161,14 +1161,14 @@ nodes:
         required: true
     srv:
       trigger:
-        max_response_ms: 100
+        max_response: 100ms
     cli:
       operate: {}
     paths:
       main:
         input: trajectory
         output: [cmd]
-        max_latency_ms: 10
+        max_latency: 10ms
 
   lidar_driver:
     lifecycle: true              # managed node — contracts apply when Active
@@ -1192,11 +1192,11 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 |--------------------|-----------------------------------------------|------------|
 | `min_rate_hz`      | Minimum expected receive rate                 | Not checked |
 | `max_rate_hz`      | Maximum expected receive rate                 | Not checked |
-| `max_age_ms`       | Max data age at receive (`now - header.stamp`) | Not checked |
+| `max_age`       | Max data age at receive (`now - header.stamp`) | Not checked |
 | `state`            | Polled (read-latest), not causal              | `false` — causal |
 | `required`         | Must receive at least once before operational | `false` — optional |
 | `qos`              | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
-| `max_transport_ms` | Per-subscriber transport latency override (ms) — used as the edge weight from publisher to this subscriber in scope path critical-path computation | Inherits topic-level `max_transport_ms` |
+| `max_transport` | Per-subscriber transport latency override (ms) — used as the edge weight from publisher to this subscriber in scope path critical-path computation | Inherits topic-level `max_transport` |
 
 **Publisher properties:**
 
@@ -1218,7 +1218,7 @@ it against the sampling jitter the route already carries.
 
 | Field             | Meaning                        | If omitted |
 |-------------------|--------------------------------|------------|
-| `max_response_ms` | Max request-to-response time   | Not checked |
+| `max_response` | Max request-to-response time   | Not checked |
 
 ### Topics
 
@@ -1243,7 +1243,7 @@ topics:
     rate_hz: 30
     max_drop_rate: 0.01
     max_consecutive: 3
-    max_transport_ms: 5            # cross-machine hop
+    max_transport: 5ms            # cross-machine hop
     qos:
       reliability: reliable
       durability: transient_local
@@ -1263,7 +1263,7 @@ topics:
 | `rate_hz`          | no       | Negotiated channel rate | Rate hierarchy not checked |
 | `max_drop_rate`    | no       | Transport drop rate (fraction 0-1) | Drop not checked |
 | `max_consecutive`  | no       | Max consecutive transport drops | Consecutive not checked |
-| `max_transport_ms` | no       | Worst-case transport latency (ms) — default for every subscriber on this topic; overridable per `sub:` endpoint | 0 — absorbed into scope residual |
+| `max_transport` | no       | Worst-case transport latency (ms) — default for every subscriber on this topic; overridable per `sub:` endpoint | 0 — absorbed into scope residual |
 | `qos`              | no       | QoS profile | QoS not validated |
 | `if`/`unless`      | no       | Condition | Always included |
 
@@ -1368,7 +1368,7 @@ nodes:
       main:
         input: pointcloud
         output: [objects]
-        max_latency_ms: 30
+        max_latency: 30ms
 
 # Scope-level path (latency + E2E drops)
 # input/output are topic names (relative or absolute)
@@ -1378,7 +1378,7 @@ paths:
   perception:
     input: /perception/obstacle_segmentation/pointcloud
     output: [/perception/object_recognition/prediction/objects]
-    max_latency_ms: 85
+    max_latency: 85ms
     max_drop_rate: 0.08
     max_consecutive: 5
 ```
@@ -1389,7 +1389,7 @@ paths:
 |------------------|---------|------------|
 | `input`          | Trigger endpoint(s) from `sub:` | Empty = periodic (timer-driven) |
 | `output`         | Result endpoint(s) from `pub:` | Required |
-| `max_latency_ms` | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
+| `max_latency` | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
 | `sync`           | Fan-in policy: `exact`, `approximate` or `timeout_any` with its window | Inputs unsynchronised; each fires the callback |
 | `tolerance`      | Max `header.stamp` spread between inputs still treated as one set | Not checked against the budget |
 
@@ -1403,7 +1403,7 @@ on paths. Drops are topic-level (transport) and scope-level (E2E).
 |-------------------|---------|------------|
 | `input`           | Entry topic name(s) — relative or absolute | Empty = periodic |
 | `output`          | Exit topic name(s) — relative or absolute | Required |
-| `max_latency_ms`  | Worst-case E2E time across the scope | Not checked; transparent |
+| `max_latency`  | Worst-case E2E time across the scope | Not checked; transparent |
 | `max_drop_rate`   | E2E drop rate across the scope (fraction 0-1) | Drop not checked |
 | `max_consecutive` | E2E max consecutive drops | Consecutive not checked |
 | `tolerance`       | Max `header.stamp` spread between inputs still treated as one set | Not checked against the budget |
@@ -1506,7 +1506,7 @@ paths:
   forward:                                  # message-driven
     trigger: { input: [control_cmd_in] }
     output: [control_cmd_out]
-    max_latency_ms: 5
+    max_latency: 5ms
   status_tick:                              # periodic, self-clocked
     trigger: { timer: { rate_hz: 10 } }
     output: [gate_status]
@@ -1549,23 +1549,23 @@ paths:
     trigger: { input: [cloud_top, cloud_left, cloud_right] }
     sync:
       policy: approximate        # exact | approximate | timeout_any
-      max_interval_ms: 50        # match window (exact/approximate)
-      timeout_ms: 100             # timeout_any: publish partial set after this
+      max_interval: 50ms        # match window (exact/approximate)
+      timeout: 100ms             # timeout_any: publish partial set after this
     output: [cloud_fused]
-    max_latency_ms: 30
+    max_latency: 30ms
 ```
 
 | Field | Meaning | Required when |
 |-------|---------|----------------|
 | `policy` | `exact` (message_filters ExactTime), `approximate` (ApproximateTime), or `timeout_any` (collect-until-timeout, publish partial) | Always |
-| `max_interval_ms` | Match window | `policy: exact` or `policy: approximate` |
-| `timeout_ms` | Collect-until-timeout duration | `policy: timeout_any` |
+| `max_interval` | Match window | `policy: exact` or `policy: approximate` |
+| `timeout` | Collect-until-timeout duration | `policy: timeout_any` |
 
 **Parse-time validation:** `sync:` is only meaningful on a path whose
 [effective trigger](#path-triggers-trigger) is `input` with at least 2
 endpoints (explicit `trigger.input` or legacy `input:` — either
 satisfies this); otherwise a parse error. `exact`/`approximate` require
-`max_interval_ms`; `timeout_any` requires `timeout_ms`.
+`max_interval`; `timeout_any` requires `timeout`.
 
 ### Buffer discriminator (`buffer:`)
 
@@ -1658,7 +1658,7 @@ topology-aware critical path), and `rate-hierarchy`, `qos-match`,
 | `explicit-trigger` (Phase 44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation | Info |
 | `inherited-rate` (44.1/44.2) | A path has a non-`Input` explicit `trigger:` (`timer`/`once`/`spontaneous`) alongside a stale, now-ignored legacy `input:` list | Warning |
 | `once-durability` (44.1/44.2) | A `once`-triggered path's output topic is not `durability: transient_local` — late joiners lose the startup-latch message | Warning |
-| `sync-feasibility` (44.1/44.2) | `sync:` `max_interval_ms`/`timeout_ms` too narrow for the slowest declared input's inter-arrival period | Warning |
+| `sync-feasibility` (44.1/44.2) | `sync:` `max_interval`/`timeout` too narrow for the slowest declared input's inter-arrival period | Warning |
 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |
 | `scope-budget`\* (68 W4) | A scope path's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency` | Warning |
 | `scope-sampling-feasibility`\* (68 W4) | A scope path's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it | Warning |

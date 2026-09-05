@@ -31,7 +31,7 @@ nodes:
       main:
         input: pointcloud
         output: [pose]
-        max_latency_ms: 30
+        max_latency: 30ms
 
   eagleye_node:
     if: $(var pose_source) == 'eagleye'
@@ -46,7 +46,7 @@ nodes:
       main:
         input: gnss_fix
         output: [pose]
-        max_latency_ms: 15
+        max_latency: 15ms
 
   gnss_node:
     if: $(var pose_source) == 'gnss'
@@ -59,7 +59,7 @@ nodes:
       main:
         input: gnss_fix
         output: [pose]
-        max_latency_ms: 5
+        max_latency: 5ms
 
   twist_estimator:
     if: $(var use_twist)
@@ -80,7 +80,7 @@ nodes:
       main:
         input: pose_input
         output: [ekf_pose]
-        max_latency_ms: 5
+        max_latency: 5ms
 
 topics:
   localization_pose:
@@ -102,4 +102,4 @@ paths:
   localization:
     input: pointcloud
     output: [pose_output]
-    max_latency_ms: 40
+    max_latency: 40ms

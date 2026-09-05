@@ -19,7 +19,7 @@ nodes:
       main:
         input: input
         output: [sensor]
-        max_latency_ms: 40
+        max_latency: 40ms
 
   node_a:
     sub:
@@ -31,7 +31,7 @@ nodes:
       main:
         input: input
         output: [to_b]
-        max_latency_ms: 25
+        max_latency: 25ms
         drop:
           max_count: 5 / 100
           max_consecutive: 5
@@ -46,7 +46,7 @@ nodes:
       main:
         input: from_a
         output: [to_a, output]
-        max_latency_ms: 25
+        max_latency: 25ms
         drop:
           max_count: 5 / 100
           max_consecutive: 4
@@ -59,7 +59,7 @@ nodes:
       main:
         input: data
         output: []
-        max_latency_ms: 10
+        max_latency: 10ms
 
   unwired_node:
     sub: [lonely_input]
@@ -68,7 +68,7 @@ nodes:
       dangling:
         input: lonely_input
         output: [lonely_output]
-        max_latency_ms: 10
+        max_latency: 10ms
 
   # Service violation: client with no matching server
   orphan_client:
@@ -110,7 +110,7 @@ paths:
   main:
     input: raw
     output: [results]
-    max_latency_ms: 100
+    max_latency: 100ms
     drop:
       max_count: 3 / 100
       max_consecutive: 2

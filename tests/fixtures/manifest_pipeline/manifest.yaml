@@ -19,7 +19,7 @@ nodes:
       main:
         input: raw_points
         output: [cropped_points]
-        max_latency_ms: 5
+        max_latency: 5ms
 
   ground_filter:
     sub:
@@ -34,7 +34,7 @@ nodes:
       filter:
         input: input_points
         output: [no_ground, ground]
-        max_latency_ms: 15
+        max_latency: 15ms
 
   fusion:
     sub:
@@ -50,7 +50,7 @@ nodes:
       main:
         input: lidar_objects
         output: [fused_objects]
-        max_latency_ms: 10
+        max_latency: 10ms
 
   tracker:
     sub:
@@ -63,7 +63,7 @@ nodes:
       main:
         input: detected_objects
         output: [tracked_objects]
-        max_latency_ms: 20
+        max_latency: 20ms
         drop: 2 / 100
 
 topics:
@@ -116,5 +116,5 @@ paths:
   perception:
     input: /sensing/lidar/pointcloud
     output: [tracked_objects]
-    max_latency_ms: 60
+    max_latency: 60ms
     drop: 4 / 100

@@ -18,7 +18,7 @@ nodes:
       main:
         input: input
         output: [out]
-        max_latency_ms: 50
+        max_latency: 50ms
 
   camera_detector:
     sub:
@@ -29,7 +29,7 @@ nodes:
       main:
         input: input
         output: [out]
-        max_latency_ms: 30
+        max_latency: 30ms
 
   fusion:
     sub:
@@ -41,8 +41,8 @@ nodes:
       main:
         input: [lidar, camera]
         output: [out]
-        tolerance_ms: 50
-        max_latency_ms: 20
+        tolerance: 50ms
+        max_latency: 20ms
 
 topics:
   /sensor/raw:
@@ -71,4 +71,4 @@ paths:
   pipeline:
     input: /sensor/raw
     output: [/perception/fused_objects]
-    max_latency_ms: 70    # critical path = max(50, 30) + 20 = 70
+    max_latency: 70ms    # critical path = max(50, 30) + 20 = 70

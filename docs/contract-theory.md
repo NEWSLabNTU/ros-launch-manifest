@@ -34,10 +34,10 @@ Symbols used throughout this document:
 |--------|---------|
 | $C = (A, G)$ | Contract: assumption $A$ + guarantee $G$ |
 | $M$ | Component (a node or scope that satisfies a contract) |
-| $L_{\text{node}}(X)$ | Worst-case processing time of node $X$ (from `max_latency_ms`) |
-| $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (from topic's `max_transport_ms`; 0 when omitted) |
+| $L_{\text{node}}(X)$ | Worst-case processing time of node $X$ (from `max_latency`) |
+| $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (from topic's `max_transport`; 0 when omitted) |
 | $L_{\max}$, $L_{\min}$ | Worst / best case end-to-end latency of a path or scope |
-| $A_{\max}$ | Maximum data age at a subscriber (ms) — runtime checked via `max_age_ms` |
+| $A_{\max}$ | Maximum data age at a subscriber (ms) — runtime checked via `max_age` |
 | $f$ | Frequency (Hz) |
 | $P$ | Timer period (ms) |
 | $J$ | Jitter — max deviation from ideal period (ms) |
@@ -90,8 +90,8 @@ Summary:
 | Level | What it describes | Assumption | Guarantee |
 |-------|-------------------|------------|-----------|
 | **Topic** | A communication channel | Publisher produces at `rate_hz` | Channel delivers at `rate_hz` with drops ≤ `max_drop_rate` |
-| **Node** | A single computation | Inputs arrive per `min_rate_hz`, `state`, `required` | Output within `max_latency_ms` |
-| **Scope** | An entire launch file | Topic declarations consistent across tree | E2E `max_latency_ms`, `max_drop_rate` |
+| **Node** | A single computation | Inputs arrive per `min_rate_hz`, `state`, `required` | Output within `max_latency` |
+| **Scope** | An entire launch file | Topic declarations consistent across tree | E2E `max_latency`, `max_drop_rate` |
 
 These compose hierarchically: topic contracts constrain the channels,
 node contracts describe per-node timing, scope contracts abstract the
@@ -118,7 +118,7 @@ nodes:
       localization:
         input: sensor_points
         output: [ndt_pose]
-        max_latency_ms: 50
+        max_latency: 50ms
 ```
 
 **Assumption** ($A$):
@@ -155,7 +155,7 @@ A message traverses a pipeline by passing through nodes and the
 transport channels (topics) between them. At each stage, time is spent:
 
 - **Node processing** — the time a node takes to receive an input,
-  compute, and publish the output. This is the node's `max_latency_ms`.
+  compute, and publish the output. This is the node's `max_latency`.
 - **Transport** — the time for a published message to reach the next
   subscriber via DDS. On the same machine this is typically < 1ms;
   across machines it depends on the network.
@@ -166,9 +166,9 @@ is usually lower, but the bound is what the contract guarantees.
 
 We write:
 - $L_{\text{node}}(X)$ — worst-case processing time of node $X$
-  (from the node's `max_latency_ms`)
+  (from the node's `max_latency`)
 - $L_{\text{transport}}(X \to Y)$ — worst-case transport time between
-  node $X$ and node $Y$ (from the topic's `max_transport_ms`; 0 when
+  node $X$ and node $Y$ (from the topic's `max_transport`; 0 when
   omitted)
 
 ### Series (Pipeline)
@@ -194,16 +194,16 @@ arrives at A, waits for A to finish, travels to B, waits for B to
 finish, and so on. Each delay is sequential.
 
 **Transport is declared per topic.** Each topic can declare
-`max_transport_ms` — the worst-case time for a published message to
-reach the subscriber via DDS. Topics without `max_transport_ms`
+`max_transport` — the worst-case time for a published message to
+reach the subscriber via DDS. Topics without `max_transport`
 contribute 0 to the budget sum; their transport is absorbed into the
 scope's residual headroom. On the same machine, transport is typically
 < 1ms and can be omitted. For cross-machine hops (sensor ECUs, network
-bridges), declare `max_transport_ms` to make the budget explicit.
+bridges), declare `max_transport` to make the budget explicit.
 
 **Age accumulates** along the chain — each node and transport hop adds
 to the total time since the original sensor reading. Age is checked at
-runtime on subscriber endpoints (`max_age_ms`), not statically composed.
+runtime on subscriber endpoints (`max_age`), not statically composed.
 See [Data Age](#data-age).
 
 ### Parallel (Fork-Join)
@@ -274,7 +274,7 @@ Where:
 - $L_{\text{node}}(\text{periodic})$ — the periodic node's processing time
 
 Upstream processing time is **not** included — it is already accounted
-for by the upstream node's own `max_latency_ms` in series composition.
+for by the upstream node's own `max_latency` in series composition.
 The periodic node's contribution to the chain is the buffer wait plus
 its own processing.
 
@@ -342,7 +342,7 @@ with property-specific composition math but the same structural rules.
 narrower slice of the theory below. `budget-overflow` compares
 **scope-path budgets only**: a child scope's path against an ancestor
 scope's path with matching input/output endpoints — node
-`max_latency_ms` is not compared against scope budgets by any current
+`max_latency` is not compared against scope budgets by any current
 rule. For Check 2, the single-manifest checker (`check/` crate) runs a
 conservative flat sum over the manifest's declared node-path latencies
 plus declared topic transport (inline includes included, external
@@ -423,7 +423,7 @@ check_sum(scope):
 ```
 
 The sum check is a **warning** (not an error) because the sum is a lower
-bound — topics without `max_transport_ms` contribute 0. The gap between
+bound — topics without `max_transport` contribute 0. The gap between
 the sum and the scope budget is the allowance for undeclared transport,
 scheduling variance, and undeclared nodes.
 
@@ -435,13 +435,13 @@ direction — a false warning is better than a missed violation.
 ### Latency Example
 
 ```
-scope S: max_latency_ms: 100
-  ├── sub-scope P: max_latency_ms: 50    (opaque)
-  │     ├── node A: max_latency_ms: 20
-  │     ├── topic T1: max_transport_ms: 2  (A → B)
-  │     └── node B: max_latency_ms: 25
+scope S: max_latency: 100ms
+  ├── sub-scope P: max_latency: 50ms    (opaque)
+  │     ├── node A: max_latency: 20ms
+  │     ├── topic T1: max_transport: 2ms  (A → B)
+  │     └── node B: max_latency: 25ms
   ├── sub-scope Q: (no budget)            (transparent)
-  │     └── node C: max_latency_ms: 30
+  │     └── node C: max_latency: 30ms
   ├── topic T2: (no transport budget)     (P → C)
   ├── topic T3: (no transport budget)     (C → E)
   └── node E: (no budget)
@@ -512,7 +512,7 @@ This works because causal paths preserve `header.stamp` through the
 chain — each node copies the input stamp to the output (see
 [Timestamps and Data Flow](launch-manifest.md#timestamps-and-data-flow)).
 
-**`max_age_ms`** is declared on **subscriber endpoints**, not on paths.
+**`max_age`** is declared on **subscriber endpoints**, not on paths.
 It constrains data freshness at the point of consumption:
 
 ```yaml
@@ -520,7 +520,7 @@ nodes:
   planner:
     sub:
       objects:
-        max_age_ms: 200          # data must be fresher than 200ms
+        max_age: 200ms          # data must be fresher than 200ms
 ```
 
 **Runtime checking:** the interception layer reads `header.stamp` on
@@ -529,9 +529,9 @@ every `rcl_take` and compares to current time. If
 
 **Static checking** does not trace the full causal chain (which would
 require every upstream node to have a latency budget). A local
-feasibility check — subscriber `max_age_ms` vs the `max_latency_ms` of
+feasibility check — subscriber `max_age` vs the `max_latency` of
 the scope path feeding it — is possible in principle but not currently
-implemented; today `max_age_ms` is checked at runtime only.
+implemented; today `max_age` is checked at runtime only.
 
 **For multi-input nodes:** the age at a subscriber depends on whether
 the inputs are synchronised. With `sync:`, age reflects the oldest input
@@ -587,8 +587,8 @@ thresholds may be violated more often than the Bernoulli model predicts.
 
 *Implementation status:* the runtime rule engine (play_launch
 `--enforce-rules`, fed by the Phase 29 interception layer) checks
-`max_drop_rate` (as a delivery-rate ratio), `min_rate_hz`, `max_age_ms`,
-and path `max_latency_ms` against observed traffic, plus runtime QoS
+`max_drop_rate` (as a delivery-rate ratio), `min_rate_hz`, `max_age`,
+and path `max_latency` against observed traffic, plus runtime QoS
 compatibility, consistency, graph deviation, and DDS
 deadline/liveliness/message-lost events. `max_consecutive` and the
 burstiness *detection* metrics below are the designed extension — not
@@ -731,7 +731,7 @@ $$\text{mean burst} = 1 / \hat{r}$$
 ## Appendix C: Empirical Contract Derivation
 
 When writing a manifest for an existing system without documented timing
-requirements, you need initial values for `max_latency_ms`, `min_rate_hz`,
+requirements, you need initial values for `max_latency`, `min_rate_hz`,
 and `max_drop_rate`. Capture mode bootstraps these from runtime
 measurements.
 

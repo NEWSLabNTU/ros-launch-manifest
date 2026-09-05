@@ -38,7 +38,7 @@ nodes:
       main:
         input: trajectory
         output: [control_cmd]
-        max_latency_ms: 10
+        max_latency: 10ms
 
   # Conditional: control validator
   control_validator:
@@ -110,4 +110,4 @@ paths:
   control:
     input: trajectory
     output: [control_cmd]
-    max_latency_ms: 15
+    max_latency: 15ms

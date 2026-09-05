@@ -8,11 +8,11 @@ nodes:
       make:
         trigger: spontaneous
         output: [out]
-        max_latency_ms: 40
+        max_latency: 40ms
       make_slow:
         trigger: { timer: { rate_hz: 1 } }
         output: [out2]
-        max_latency_ms: 5
+        max_latency: 5ms
 topics:
   /link/out:
     type: t

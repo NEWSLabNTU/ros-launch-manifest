@@ -5,4 +5,4 @@ paths:
   pipeline:
     input: /sensor/raw
     output: [/perception/objects]
-    max_latency_ms: 200
+    max_latency: 200ms

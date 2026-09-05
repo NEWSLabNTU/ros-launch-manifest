@@ -3,7 +3,6 @@
 mod causal_dag;
 mod consistency;
 mod dangling_entity;
-mod deprecated_unit_suffix;
 mod drop_sanity;
 mod endpoint_topic;
 mod endpoint_unique;
@@ -83,7 +82,6 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(consistency::ConsistencyRule),
         Box::new(state_consistency::StateConsistencyRule),
         // Vocabulary v2 rules (Phase 44.2).
-        Box::new(deprecated_unit_suffix::DeprecatedUnitSuffixRule),
         Box::new(explicit_trigger::ExplicitTriggerRule),
         Box::new(inherited_rate::InheritedRateRule),
         Box::new(once_durability::OnceDurabilityRule),

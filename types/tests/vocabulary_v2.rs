@@ -53,7 +53,7 @@ nodes:
       forward:
         trigger: { input: [control_cmd_in] }
         output: [control_cmd_out]
-        max_latency_ms: 5
+        max_latency: 5ms
       status_tick:
         trigger: { timer: { rate_hz: 10 } }
         output: [gate_status]
@@ -116,10 +116,10 @@ nodes:
         trigger: { input: [cloud_top, cloud_left, cloud_right] }
         sync:
           policy: approximate
-          max_interval_ms: 50
-          timeout_ms: 100
+          max_interval: 50ms
+          timeout: 100ms
         output: [cloud_fused]
-        max_latency_ms: 30
+        max_latency: 30ms
 "#;
     let m = parse_manifest_str(yaml).unwrap();
     let fuse = &m.nodes["fuse"].paths["fuse"];
@@ -167,7 +167,7 @@ nodes:
       localization:
         input: sensor_points
         output: [ndt_pose]
-        max_latency_ms: 50
+        max_latency: 50ms
 "#;
     let m = parse_manifest_str(yaml).unwrap();
     let path = &m.nodes["ndt"].paths["localization"];
@@ -481,7 +481,7 @@ nodes:
     pub: [out]
     paths:
       p:
-        sync: { policy: exact, max_interval_ms: 10 }
+        sync: { policy: exact, max_interval: 10ms }
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
@@ -503,7 +503,7 @@ nodes:
     paths:
       p:
         trigger: { input: [a] }
-        sync: { policy: exact, max_interval_ms: 10 }
+        sync: { policy: exact, max_interval: 10ms }
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
@@ -524,7 +524,7 @@ nodes:
     paths:
       p:
         trigger: { timer: { rate_hz: 10 } }
-        sync: { policy: exact, max_interval_ms: 10 }
+        sync: { policy: exact, max_interval: 10ms }
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
@@ -548,7 +548,7 @@ nodes:
     paths:
       p:
         input: [a, b]
-        sync: { policy: exact, max_interval_ms: 10 }
+        sync: { policy: exact, max_interval: 10ms }
         output: [out]
 "#;
     let m = parse_manifest_str(yaml).unwrap();

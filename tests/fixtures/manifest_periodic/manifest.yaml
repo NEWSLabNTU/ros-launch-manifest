@@ -11,7 +11,7 @@ nodes:
       periodic:
         input: []
         output: [current_pose]
-        max_latency_ms: 2
+        max_latency: 2ms
 
   trajectory_planner:
     sub:
@@ -27,7 +27,7 @@ nodes:
       periodic:
         input: []
         output: [trajectory]
-        max_latency_ms: 30
+        max_latency: 30ms
 
   controller:
     sub:
@@ -42,7 +42,7 @@ nodes:
       periodic:
         input: []
         output: [control_cmd]
-        max_latency_ms: 5
+        max_latency: 5ms
 
 topics:
   current_pose:

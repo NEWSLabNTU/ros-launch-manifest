@@ -70,17 +70,17 @@ nodes:
     pub: [output]
     sub: [input]
     paths:
-      main: { input: input, output: [output], max_latency_ms: 5 }
+      main: { input: input, output: [output], max_latency: 5ms }
   ground:
     pub: [output]
     sub: [input]
     paths:
-      main: { input: input, output: [output], max_latency_ms: 15 }
+      main: { input: input, output: [output], max_latency: 15ms }
   centerpoint:
     pub: [objects]
     sub: [pointcloud]
     paths:
-      main: { input: pointcloud, output: [objects], max_latency_ms: 30 }
+      main: { input: pointcloud, output: [objects], max_latency: 30ms }
 topics:
   cropped:
     type: PointCloud2
@@ -102,7 +102,7 @@ paths:
   main:
     input: raw_data
     output: [detections]
-    max_latency_ms: 60
+    max_latency: 60ms
 "#;
     let _diags = all_diags(yaml);
     // Should have no errors (scope budget 60 >= 5+15+30=50)
@@ -119,7 +119,7 @@ paths:
     // (`scope-budget` is a WARNING here: the per-manifest form is a
     // conservative flat sum, and the precise topology-aware verdict comes from
     // the cross-scope pass in the loader.)
-    let tight = yaml.replace("max_latency_ms: 60", "max_latency_ms: 40");
+    let tight = yaml.replace("max_latency: 60ms", "max_latency: 40ms");
     let tight_warns = warnings(&tight);
     assert!(
         tight_warns.iter().any(|w| w.starts_with("[scope-budget]")),
@@ -373,12 +373,12 @@ nodes:
     sub: [input]
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency_ms: 30 }
+      main: { input: input, output: [output], max_latency: 30ms }
   b:
     sub: [input]
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency_ms: 40 }
+      main: { input: input, output: [output], max_latency: 40ms }
 topics:
   mid:
     type: String
@@ -388,7 +388,7 @@ paths:
   main:
     input: raw
     output: [out]
-    max_latency_ms: 50
+    max_latency: 50ms
 "#;
     let warns = warnings(yaml);
     assert!(
@@ -542,7 +542,7 @@ nodes:
       main:
         input: input
         output: [output]
-        max_latency_ms: 10
+        max_latency: 10ms
 "#;
     let warns = warnings(yaml);
     assert!(
@@ -564,12 +564,12 @@ nodes:
         min_rate_hz: 10
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency_ms: 5 }
+      main: { input: input, output: [output], max_latency: 5ms }
   ground:
     sub: [input]
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency_ms: 15 }
+      main: { input: input, output: [output], max_latency: 15ms }
   centerpoint:
     sub: [pointcloud]
     pub:
@@ -579,7 +579,7 @@ nodes:
       main:
         input: pointcloud
         output: [objects]
-        max_latency_ms: 30
+        max_latency: 30ms
         drop: 5 / 100
 topics:
   cropped:
@@ -596,7 +596,7 @@ paths:
   main:
     input: raw_data
     output: [detections]
-    max_latency_ms: 60
+    max_latency: 60ms
     drop: 6 / 100
 "#;
     let m = parse_manifest_str(yaml).unwrap();
@@ -690,12 +690,12 @@ nodes:
       main:
         input: []
         output: [out]
-        max_latency_ms: 200
+        max_latency: 200ms
 paths:
   main:
     input: raw
     output: [out]
-    max_latency_ms: 50
+    max_latency: 50ms
 "#;
     let parsed = parse_manifest_str_with_spans(yaml).unwrap();
     let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
@@ -1136,12 +1136,12 @@ paths:
     if: "false"
     input: raw
     output: [out]
-    max_latency_ms: 100
+    max_latency: 100ms
   active_path:
     if: "true"
     input: raw
     output: [out]
-    max_latency_ms: 50
+    max_latency: 50ms
 "#;
     let mut m = parse_manifest_str(yaml).unwrap();
     filter_manifest(&mut m);
@@ -2013,13 +2013,13 @@ nodes:
     pub: [pose]
     sub: [pointcloud]
     paths:
-      main: { input: pointcloud, output: [pose], max_latency_ms: 30 }
+      main: { input: pointcloud, output: [pose], max_latency: 30ms }
   eagleye_node:
     if: $(var mode) == 'eagleye'
     pub: [pose]
     sub: [gnss]
     paths:
-      main: { input: gnss, output: [pose], max_latency_ms: 15 }
+      main: { input: gnss, output: [pose], max_latency: 15ms }
   twist_node:
     if: $(var use_twist)
     pub: [twist]
@@ -2031,7 +2031,7 @@ nodes:
         state: true
     pub: [output]
     paths:
-      main: { input: pose_in, output: [output], max_latency_ms: 5 }
+      main: { input: pose_in, output: [output], max_latency: 5ms }
 
 topics:
   pose:
@@ -2050,7 +2050,7 @@ paths:
   main:
     input: pointcloud
     output: [localization]
-    max_latency_ms: 40
+    max_latency: 40ms
 "#;
 
     let m = parse_manifest_str(yaml).unwrap();

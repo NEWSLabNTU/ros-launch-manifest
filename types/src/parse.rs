@@ -122,7 +122,7 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
         srv: parse_srv_endpoints(yaml, "srv", ctx)?,
         cli: parse_endpoints(yaml, "cli", ctx)?,
         paths: parse_paths(yaml, ctx)?,
-        criticality: yaml_string(yaml, "criticality", ctx)?,
+        criticality: parse_criticality(yaml, ctx)?,
         concurrency: parse_concurrency(yaml, ctx)?,
     })
 }
@@ -192,11 +192,11 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     let props = EndpointProps {
         min_rate_hz: yaml_f64(yaml, "min_rate_hz", ctx)?,
         max_rate_hz: yaml_f64(yaml, "max_rate_hz", ctx)?,
-        max_age: yaml_duration(yaml, "max_age", "max_age_ms")?,
+        max_age: yaml_duration(yaml, "max_age")?,
         state: yaml_bool(yaml, "state", ctx)?,
         required: yaml_bool(yaml, "required", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
+        max_transport: yaml_duration(yaml, "max_transport")?,
         buffer: parse_buffer(yaml, ctx)?,
     };
     if props.buffer.is_some() && props.state != Some(true) {
@@ -210,6 +210,28 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
 }
 
 /// Parse the `buffer:` discriminator (Vocabulary v2, Phase 44.1 §3).
+/// `criticality` is a closed set. It used to accept any string, and the one
+/// reader (`sched_derive::parse_criticality`) answered an unknown value with a
+/// debug log and `None` — so `criticality: urgent` scheduled a node exactly as
+/// if nothing had been declared, in silence. Same defect as an unknown key or
+/// a wrong type: a declaration deleted without a word.
+fn parse_criticality(doc: &Yaml, ctx: &str) -> Result<Option<String>, ParseError> {
+    let Some(raw) = yaml_string(doc, "criticality", ctx)? else {
+        return Ok(None);
+    };
+    match raw.as_str() {
+        "high" | "medium" | "low" => Ok(Some(raw)),
+        other => Err(field_err(
+            ctx,
+            "criticality",
+            &format!(
+                "`{other}` is not a criticality — accepted: high, medium, low. An unknown \
+                 value used to be read as no declaration at all"
+            ),
+        )),
+    }
+}
+
 fn parse_buffer(doc: &Yaml, ctx: &str) -> Result<Option<Buffer>, ParseError> {
     let raw = match yaml_string(doc, "buffer", ctx)? {
         Some(s) => s,
@@ -251,7 +273,7 @@ fn parse_srv_endpoints(
                     max_response: if v.is_null() || v.is_badvalue() {
                         None
                     } else {
-                        yaml_duration(v, "max_response", "max_response_ms")?
+                        yaml_duration(v, "max_response")?
                     },
                 };
                 eps.insert(name, props);
@@ -330,7 +352,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
         rate_hz: yaml_f64(yaml, "rate_hz", ctx)?,
-        max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
+        max_transport: yaml_duration(yaml, "max_transport")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external: parse_external_side(yaml, "external", ctx)?,
     })
@@ -634,13 +656,13 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         unless_condition: yaml_string(yaml, "unless", ctx)?,
         input,
         output: yaml_string_list(yaml, "output", ctx)?,
-        max_latency: yaml_duration(yaml, "max_latency", "max_latency_ms")?,
-        tolerance: yaml_duration(yaml, "tolerance", "tolerance_ms")?,
+        max_latency: yaml_duration(yaml, "max_latency")?,
+        tolerance: yaml_duration(yaml, "tolerance")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         trigger,
         sync,
-        max_jitter: yaml_duration_new(yaml, "max_jitter")?,
-        min_latency: yaml_duration_new(yaml, "min_latency")?,
+        max_jitter: yaml_duration(yaml, "max_jitter")?,
+        min_latency: yaml_duration(yaml, "min_latency")?,
         miss: parse_miss_spec(yaml, ctx)?,
     };
 
@@ -757,8 +779,8 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
             ));
         }
     };
-    let max_interval = yaml_duration(section, "max_interval", "max_interval_ms")?;
-    let timeout = yaml_duration(section, "timeout", "timeout_ms")?;
+    let max_interval = yaml_duration(section, "max_interval")?;
+    let timeout = yaml_duration(section, "timeout")?;
     match policy {
         SyncPolicy::TimeoutAny => {
             if timeout.is_none() {
@@ -936,10 +958,10 @@ fn parse_qos(doc: &Yaml, ctx: &str) -> Result<Option<QosDecl>, ParseError> {
         durability: yaml_string(section, "durability", ctx)?,
         depth: yaml_u32(section, "depth", ctx)?,
         history: yaml_string(section, "history", ctx)?,
-        lifespan: yaml_duration(section, "lifespan", "lifespan_ms")?,
+        lifespan: yaml_duration(section, "lifespan")?,
         liveliness: yaml_string(section, "liveliness", ctx)?,
-        deadline: yaml_duration_new(section, "deadline")?,
-        lease_duration: yaml_duration_new(section, "lease_duration")?,
+        deadline: yaml_duration(section, "deadline")?,
+        lease_duration: yaml_duration(section, "lease_duration")?,
     }))
 }
 
@@ -998,44 +1020,7 @@ fn yaml_string(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String>, Parse
         other => Err(type_err(ctx, key, "a string", other)),
     }
 }
-fn yaml_duration(
-    doc: &Yaml,
-    canonical: &str,
-    legacy: &str,
-) -> Result<Option<Duration>, ParseError> {
-    use crate::duration::{LegacyUnit, from_legacy_scalar};
-
-    let no_unit = |shown: String| {
-        field_err(
-            "",
-            canonical,
-            &format!(
-                "`{canonical}: {shown}` has no unit — write `{canonical}: {shown}ms` \
-                 (or ns/us/s). The unit is required so a value cannot be 1000x wrong \
-                 and still parse"
-            ),
-        )
-    };
-
-    match &doc[canonical] {
-        Yaml::String(text) => from_legacy_scalar(Some(text), None, LegacyUnit::Millis)
-            .map_err(|e| field_err("", canonical, &e.to_string())),
-        Yaml::Integer(i) => Err(no_unit(i.to_string())),
-        Yaml::Real(r) => Err(no_unit(r.clone())),
-        // Deprecated spelling keeps its implied unit exactly, so an
-        // un-migrated contract cannot change meaning.
-        _ => from_legacy_scalar(None, yaml_f64(doc, legacy, "")?, LegacyUnit::Millis)
-            .map_err(|e| field_err("", legacy, &e.to_string())),
-    }
-}
-
-/// A duration field introduced AFTER the unit-suffix migration, so it has no
-/// deprecated `_ms` spelling to fall back to and the unit is simply required.
-///
-/// Written as its own helper rather than calling `yaml_duration(doc, k, k)`
-/// because "the legacy name is the same as the canonical name" is a confusing
-/// way to say "there is no legacy name".
-fn yaml_duration_new(doc: &Yaml, key: &str) -> Result<Option<Duration>, ParseError> {
+fn yaml_duration(doc: &Yaml, key: &str) -> Result<Option<Duration>, ParseError> {
     use crate::duration::{LegacyUnit, from_legacy_scalar};
     let no_unit = |shown: String| {
         field_err(
@@ -1396,54 +1381,54 @@ mod tests {
         assert!(m.topics.contains_key("bogus_field"));
     }
 
-    /// Phase 59: both spellings parse to the same value, and the new one
-    /// refuses a bare number.
-    ///
-    /// The migration's safety argument is that an un-migrated contract behaves
-    /// EXACTLY as before, so these must agree to the nanosecond.
+    /// A duration needs a unit, absent is `None`, and the retired `_ms`
+    /// spelling (phase 70) is a parse error that names the replacement —
+    /// not an alias, not an info-level nudge.
     #[test]
-    fn duration_field_accepts_both_spellings_and_refuses_bare_numbers() {
+    fn duration_refuses_bare_numbers_and_the_retired_suffix() {
         use yaml_rust2::YamlLoader;
         let load = |t: &str| YamlLoader::load_from_str(t).unwrap().remove(0);
 
-        let old = yaml_duration(&load("max_latency_ms: 12"), "max_latency", "max_latency_ms")
+        let v = yaml_duration(&load("max_latency: 12ms"), "max_latency")
             .unwrap()
             .unwrap();
-        let new = yaml_duration(&load("max_latency: 12ms"), "max_latency", "max_latency_ms")
-            .unwrap()
-            .unwrap();
-        assert_eq!(old, new, "both spellings must mean the same duration");
-        assert_eq!(new.as_millis_f64(), 12.0);
+        assert_eq!(v.as_millis_f64(), 12.0);
 
-        // A bare number under the NEW name is the 1000x error. This is the one
-        // path that can refuse it, because it can see which name was used —
-        // the serde adapters cannot.
-        let err = yaml_duration(&load("max_latency: 12"), "max_latency", "max_latency_ms")
+        // A bare number is the 1000x error.
+        let err = yaml_duration(&load("max_latency: 12"), "max_latency")
             .unwrap_err()
             .to_string();
         assert!(err.contains("has no unit"), "{err}");
         assert!(err.contains("max_latency: 12ms"), "{err}");
 
-        // Absent under either name is None, not an error.
+        // Absent is None, not an error.
         assert!(
-            yaml_duration(&load("other: 1"), "max_latency", "max_latency_ms")
+            yaml_duration(&load("other: 1"), "max_latency")
                 .unwrap()
                 .is_none()
         );
+
+        // The old name is gone, and the error says what to write instead.
+        let err = super::parse_manifest_str(
+            "nodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        max_latency_ms: 5\n",
+        )
+        .expect_err("`max_latency_ms:` must not parse")
+        .to_string();
+        assert!(err.contains("Removed in phase 70"), "got: {err}");
+        assert!(err.contains("max_latency: <n>ms"), "got: {err}");
     }
 
-    /// The new spelling wins when both appear: an author who wrote it meant
-    /// it, and preferring the old would make a migration a silent no-op.
+    /// `criticality` is a closed set (phase 70). `urgent` used to schedule a
+    /// node exactly as if nothing had been declared.
     #[test]
-    fn the_new_spelling_wins_over_the_deprecated_one() {
-        use yaml_rust2::YamlLoader;
-        let doc = YamlLoader::load_from_str("max_latency: 5ms\nmax_latency_ms: 99")
-            .unwrap()
-            .remove(0);
-        let v = yaml_duration(&doc, "max_latency", "max_latency_ms")
-            .unwrap()
-            .unwrap();
-        assert_eq!(v.as_millis_f64(), 5.0);
+    fn criticality_is_a_closed_set() {
+        let err = super::parse_manifest_str("nodes:\n  n:\n    criticality: urgent\n")
+            .expect_err("must not parse")
+            .to_string();
+        assert!(err.contains("accepted: high, medium, low"), "got: {err}");
+        for ok in ["high", "medium", "low"] {
+            super::parse_manifest_str(&format!("nodes:\n  n:\n    criticality: {ok}\n")).unwrap();
+        }
     }
 
     use super::*;
@@ -1497,7 +1482,7 @@ nodes:
       exe_time_ms:
     srv:
       trigger_node:
-        max_response_ms: 100
+        max_response: 100ms
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let ndt = &m.nodes["ndt"];
@@ -1562,7 +1547,7 @@ nodes:
       localization:
         input: sensor_points
         output: [ndt_pose]
-        max_latency_ms: 50
+        max_latency: 50ms
         drop:
           max_count: 10 / 100
           max_consecutive: 5
@@ -1665,7 +1650,7 @@ paths:
   main:
     input: raw_data
     output: [detections]
-    max_latency_ms: 50
+    max_latency: 50ms
 "#;
         let m = parse_manifest_str(yaml).unwrap();
 
@@ -1687,8 +1672,8 @@ nodes:
       fusion:
         input: [lidar_objects, camera_objects]
         output: [fused]
-        tolerance_ms: 50
-        max_latency_ms: 20
+        tolerance: 50ms
+        max_latency: 20ms
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let path = &m.nodes["fusion"].paths["fusion"];
@@ -1758,11 +1743,11 @@ nodes:
     sub:
       pointcloud:
         qos: { reliability: reliable }
-        max_transport_ms: 0
+        max_transport: 0ms
   remote_viz:
     sub:
       pointcloud:
-        max_transport_ms: 10
+        max_transport: 10ms
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let lidar_pub = &m.nodes["lidar"].publishers["pointcloud"];

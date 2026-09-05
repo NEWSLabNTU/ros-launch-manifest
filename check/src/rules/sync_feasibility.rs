@@ -125,7 +125,7 @@ nodes:
         trigger: { input: [a, b] }
         sync:
           policy: approximate
-          max_interval_ms: 5
+          max_interval: 5ms
         output: [out]
 topics:
   ta:
@@ -160,7 +160,7 @@ nodes:
         trigger: { input: [a, b] }
         sync:
           policy: approximate
-          max_interval_ms: 600
+          max_interval: 600ms
         output: [out]
 topics:
   ta:
@@ -193,7 +193,7 @@ nodes:
         trigger: { input: [a, b] }
         sync:
           policy: timeout_any
-          timeout_ms: 10
+          timeout: 10ms
         output: [out]
 topics:
   ta:
@@ -226,7 +226,7 @@ nodes:
         trigger: { input: [a, b] }
         sync:
           policy: approximate
-          max_interval_ms: 1
+          max_interval: 1ms
         output: [out]
 "#;
         assert!(run(yaml).is_empty());

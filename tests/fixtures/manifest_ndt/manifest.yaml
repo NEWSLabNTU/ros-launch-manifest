@@ -15,7 +15,7 @@ nodes:
       main:
         input: raw_points
         output: [downsampled]
-        max_latency_ms: 3
+        max_latency: 3ms
 
   ndt_scan_matcher:
     sub:
@@ -34,7 +34,7 @@ nodes:
       main:
         input: input_points
         output: [ndt_pose]
-        max_latency_ms: 30
+        max_latency: 30ms
     # The service type is declared once, on `services.trigger_ndt.type`.
     # This endpoint used to repeat it as `request: std_srvs/srv/Trigger`, a
     # key the parser never read — the only dead key in the whole 42-file
@@ -55,11 +55,11 @@ nodes:
       main:
         input: ndt_pose
         output: [ekf_pose]
-        max_latency_ms: 5
+        max_latency: 5ms
       imu_update:
         input: imu
         output: [ekf_pose]
-        max_latency_ms: 2
+        max_latency: 2ms
 
 topics:
   # Absolute — external inputs from sensing and map subsystems.
@@ -120,4 +120,4 @@ paths:
   localization:
     input: /sensing/lidar/pointcloud
     output: [ekf_initial_pose]
-    max_latency_ms: 50
+    max_latency: 50ms

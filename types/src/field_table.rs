@@ -124,6 +124,9 @@ pub struct Field {
     pub key: &'static str,
     pub context: Context,
     pub status: Status,
+    /// What sort of statement a live key makes — the `contract-primitives.md`
+    /// rule made mechanical. See [`Kind`].
+    pub kind: Kind,
     /// For [`Status::DeprecatedAlias`], the key that replaced it. Empty
     /// otherwise.
     pub canonical: &'static str,
@@ -131,11 +134,42 @@ pub struct Field {
     pub doc: &'static str,
 }
 
-const fn live(key: &'static str, context: Context, doc: &'static str) -> Field {
+/// What a key STATES. The rule of `contract-primitives.md`: a contract
+/// states what the code does and what it must achieve, and anything
+/// computable from those two is derived, never written. This column is that
+/// rule as data, so a test can hold it.
+///
+/// Phase 70 W2 made five of these judgments implicitly (delete or implement,
+/// per unread field) and wrote none of them down. Phase 69 deliberately left
+/// the column out until the census could fill the `consumer` half; this is
+/// the `kind` half.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Structure and plumbing: names, wiring, conditions, includes. Neither a
+    /// fact about the code nor a requirement on it.
+    Meta,
+    /// What the code DOES: a trigger, an output, a QoS profile, a floor it
+    /// was measured at. Verifiable against the running system.
+    Fact,
+    /// What the system MUST ACHIEVE: a budget, a spread, a miss policy, a
+    /// drop bound. Checked, never derived.
+    Requirement,
+    /// A fact on a publisher, a requirement on a subscriber — the one key
+    /// whose kind depends on which side of the endpoint map it sits under.
+    ByEndpoint,
+    /// Computable from the facts. A live key of this kind is a second copy of
+    /// something the graph already knows, and `scripts/derivation_census.py`
+    /// measures how often the copy agrees. There should be very few of these,
+    /// and a test pins the list.
+    Consequence,
+}
+
+const fn live(key: &'static str, context: Context, kind: Kind, doc: &'static str) -> Field {
     Field {
         key,
         context,
         status: Status::Live,
+        kind,
         canonical: "",
         doc,
     }
@@ -146,6 +180,7 @@ const fn alias(key: &'static str, context: Context, canonical: &'static str) -> 
         key,
         context,
         status: Status::DeprecatedAlias,
+        kind: Kind::Meta,
         canonical,
         doc: "Deprecated spelling.",
     }
@@ -156,6 +191,7 @@ const fn removed(key: &'static str, context: Context, doc: &'static str) -> Fiel
         key,
         context,
         status: Status::Removed,
+        kind: Kind::Meta,
         canonical: "",
         doc,
     }
@@ -168,11 +204,13 @@ pub const FIELDS: &[Field] = &[
     live(
         "version",
         Context::Manifest,
+        Kind::Meta,
         "Manifest format version. Absent means 1.",
     ),
     live(
         "args",
         Context::Manifest,
+        Kind::Meta,
         "Arguments this manifest requires, supplied by the launch scope.",
     ),
     removed(
@@ -183,36 +221,43 @@ pub const FIELDS: &[Field] = &[
     live(
         "nodes",
         Context::Manifest,
+        Kind::Meta,
         "Node declarations, keyed by bare node name.",
     ),
     live(
         "topics",
         Context::Manifest,
+        Kind::Meta,
         "Topic declarations, keyed by topic name.",
     ),
     live(
         "services",
         Context::Manifest,
+        Kind::Meta,
         "Service declarations, keyed by service name.",
     ),
     live(
         "actions",
         Context::Manifest,
+        Kind::Meta,
         "Action declarations, keyed by action name.",
     ),
     live(
         "includes",
         Context::Manifest,
+        Kind::Meta,
         "Child manifests, either a file reference or an inline manifest.",
     ),
     live(
         "paths",
         Context::Manifest,
+        Kind::Meta,
         "Scope paths: end-to-end requirements naming two topics and a budget.",
     ),
     live(
         "external_topics",
         Context::Manifest,
+        Kind::Meta,
         "Topics produced or consumed outside the loaded manifest tree.",
     ),
     removed(
@@ -224,90 +269,120 @@ pub const FIELDS: &[Field] = &[
     live(
         "if",
         Context::Node,
+        Kind::Meta,
         "Include this node only when the condition holds.",
     ),
     live(
         "unless",
         Context::Node,
+        Kind::Meta,
         "Include this node unless the condition holds.",
     ),
     live(
         "lifecycle",
         Context::Node,
+        Kind::Fact,
         "True for a ROS 2 managed node; runtime monitors skip checks until it is Active.",
     ),
     live(
         "pub",
         Context::Node,
+        Kind::Meta,
         "Publisher endpoints, keyed by endpoint name.",
     ),
     live(
         "sub",
         Context::Node,
+        Kind::Meta,
         "Subscriber endpoints, keyed by endpoint name.",
     ),
     live(
         "srv",
         Context::Node,
+        Kind::Meta,
         "Service server endpoints, keyed by endpoint name.",
     ),
     live(
         "cli",
         Context::Node,
+        Kind::Meta,
         "Service client endpoints, keyed by endpoint name.",
     ),
     live(
         "paths",
         Context::Node,
+        Kind::Meta,
         "This node's internal paths, keyed by path name.",
     ),
     live(
         "criticality",
         Context::Node,
+        Kind::Requirement,
         "Platform-agnostic scheduling criticality hint: high | medium | low.",
     ),
     live(
         "concurrency",
         Context::Node,
+        Kind::Fact,
         "Which of this node's paths may NOT run concurrently. Absent means all of them serialize.",
     ),
     // ── pub/sub/cli.<endpoint> ──
     live(
         "min_rate_hz",
         Context::Endpoint,
+        Kind::ByEndpoint,
         "Lower bound on this endpoint's rate.",
     ),
     live(
         "max_rate_hz",
         Context::Endpoint,
+        Kind::ByEndpoint,
         "Upper bound on this endpoint's rate.",
     ),
     live(
         "max_age",
         Context::Endpoint,
+        Kind::Requirement,
         "Subscriber: maximum data age at receive (now - header.stamp).",
     ),
-    alias("max_age_ms", Context::Endpoint, "max_age"),
+    removed(
+        "max_age_ms",
+        Context::Endpoint,
+        "Removed in phase 70 — write `max_age: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     live(
         "state",
         Context::Endpoint,
+        Kind::Fact,
         "Subscriber: read-latest rather than causal.",
     ),
     live(
         "required",
         Context::Endpoint,
+        Kind::Fact,
         "Subscriber: this endpoint must be connected.",
     ),
-    live("qos", Context::Endpoint, "QoS overrides for this endpoint."),
+    live(
+        "qos",
+        Context::Endpoint,
+        Kind::Fact,
+        "QoS overrides for this endpoint.",
+    ),
     live(
         "max_transport",
         Context::Endpoint,
+        Kind::Requirement,
         "Transport latency budget for this endpoint.",
     ),
-    alias("max_transport_ms", Context::Endpoint, "max_transport"),
+    removed(
+        "max_transport_ms",
+        Context::Endpoint,
+        "Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     live(
         "buffer",
         Context::Endpoint,
+        Kind::Fact,
         "Buffering discriminator for a state subscriber: latest | queue.",
     ),
     removed(
@@ -324,172 +399,220 @@ pub const FIELDS: &[Field] = &[
     live(
         "max_response",
         Context::SrvEndpoint,
+        Kind::Requirement,
         "Deadline for answering a request on this service.",
     ),
-    alias("max_response_ms", Context::SrvEndpoint, "max_response"),
+    removed(
+        "max_response_ms",
+        Context::SrvEndpoint,
+        "Removed in phase 70 — write `max_response: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     // ── topics.<name> ──
     live(
         "if",
         Context::Topic,
+        Kind::Meta,
         "Declare this topic only when the condition holds.",
     ),
     live(
         "unless",
         Context::Topic,
+        Kind::Meta,
         "Declare this topic unless the condition holds.",
     ),
-    live("type", Context::Topic, "ROS message type. Required."),
+    live(
+        "type",
+        Context::Topic,
+        Kind::Fact,
+        "ROS message type. Required.",
+    ),
     live(
         "pub",
         Context::Topic,
+        Kind::Meta,
         "Publishing endpoints, as `node/endpoint`.",
     ),
     live(
         "sub",
         Context::Topic,
+        Kind::Meta,
         "Subscribing endpoints, as `node/endpoint`.",
     ),
     live(
         "qos",
         Context::Topic,
+        Kind::Fact,
         "Topic-level QoS, overridable per endpoint.",
     ),
     live(
         "rate_hz",
         Context::Topic,
+        Kind::Consequence,
         "Publication rate. Derivable from the timers that drive it — see `derivable-rate`.",
     ),
     live(
         "max_transport",
         Context::Topic,
+        Kind::Requirement,
         "Transport latency budget for every subscriber of this topic.",
     ),
-    alias("max_transport_ms", Context::Topic, "max_transport"),
+    removed(
+        "max_transport_ms",
+        Context::Topic,
+        "Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     live(
         "drop",
         Context::Topic,
+        Kind::Requirement,
         "Permitted message loss on this topic.",
     ),
     live(
         "external",
         Context::Topic,
+        Kind::Meta,
         "Mark one side of this topic as provided by an external system.",
     ),
     // ── external_topics.<name> ──
     live(
         "side",
         Context::ExternalTopic,
+        Kind::Meta,
         "Which side is external: pub | sub | both.",
     ),
     alias("external", Context::ExternalTopic, "side"),
     live(
         "type",
         Context::ExternalTopic,
+        Kind::Fact,
         "ROS message type, when known.",
     ),
     live(
         "qos",
         Context::ExternalTopic,
+        Kind::Fact,
         "QoS the external side uses, when known.",
     ),
     // ── services.<name> ──
     live(
         "if",
         Context::Service,
+        Kind::Meta,
         "Declare this service only when the condition holds.",
     ),
     live(
         "unless",
         Context::Service,
+        Kind::Meta,
         "Declare this service unless the condition holds.",
     ),
-    live("type", Context::Service, "ROS service type."),
+    live("type", Context::Service, Kind::Fact, "ROS service type."),
     live(
         "server",
         Context::Service,
+        Kind::Meta,
         "Server endpoints, as `node/endpoint`.",
     ),
     live(
         "client",
         Context::Service,
+        Kind::Meta,
         "Client endpoints, as `node/endpoint`.",
     ),
     live(
         "external",
         Context::Service,
+        Kind::Meta,
         "Mark one side of this service as provided by an external system: server | client | both.",
     ),
     // ── actions.<name> ──
     live(
         "if",
         Context::Action,
+        Kind::Meta,
         "Declare this action only when the condition holds.",
     ),
     live(
         "unless",
         Context::Action,
+        Kind::Meta,
         "Declare this action unless the condition holds.",
     ),
-    live("type", Context::Action, "ROS action type."),
+    live("type", Context::Action, Kind::Fact, "ROS action type."),
     live(
         "server",
         Context::Action,
+        Kind::Meta,
         "Server endpoints, as `node/endpoint`.",
     ),
     live(
         "client",
         Context::Action,
+        Kind::Meta,
         "Client endpoints, as `node/endpoint`.",
     ),
     live(
         "external",
         Context::Action,
+        Kind::Meta,
         "Mark one side of this action as provided by an external system: server | client | both.",
     ),
     // ── includes.<name>, file-reference form ──
     live(
         "manifest",
         Context::IncludeExternal,
+        Kind::Meta,
         "Path to the included manifest file.",
     ),
     // ── args.<name> ──
     live(
         "type",
         Context::Arg,
+        Kind::Meta,
         "Argument type: bool, or omitted for a free string.",
     ),
     live(
         "choices",
         Context::Arg,
+        Kind::Meta,
         "Permitted values. Consulted only when `type` is absent.",
     ),
     // ── paths.<name> ──
     live(
         "if",
         Context::Path,
+        Kind::Meta,
         "Declare this path only when the condition holds.",
     ),
     live(
         "unless",
         Context::Path,
+        Kind::Meta,
         "Declare this path unless the condition holds.",
     ),
     live(
         "input",
         Context::Path,
+        Kind::Fact,
         "Legacy trigger spelling. Prefer `trigger: { input: [...] }`.",
     ),
     live(
         "output",
         Context::Path,
+        Kind::Fact,
         "Endpoints (node path) or topics (scope path) this path produces.",
     ),
     live(
         "max_latency",
         Context::Path,
+        Kind::Requirement,
         "Latency budget for this path.",
     ),
-    alias("max_latency_ms", Context::Path, "max_latency"),
+    removed(
+        "max_latency_ms",
+        Context::Path,
+        "Removed in phase 70 — write `max_latency: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     removed(
         "correlation",
         Context::Path,
@@ -498,37 +621,48 @@ pub const FIELDS: &[Field] = &[
     live(
         "tolerance",
         Context::Path,
+        Kind::Fact,
         "Max `header.stamp` spread between a fan-in path's inputs still treated as one set.",
     ),
-    alias("tolerance_ms", Context::Path, "tolerance"),
+    removed(
+        "tolerance_ms",
+        Context::Path,
+        "Removed in phase 70 — write `tolerance: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     live(
         "drop",
         Context::Path,
+        Kind::Requirement,
         "Permitted message loss along this path.",
     ),
     live(
         "trigger",
         Context::Path,
+        Kind::Fact,
         "What causes this path's output: timer | input | once | spontaneous.",
     ),
     live(
         "sync",
         Context::Path,
+        Kind::Fact,
         "Fan-in synchronization policy for an input trigger with two or more endpoints.",
     ),
     live(
         "max_jitter",
         Context::Path,
+        Kind::Requirement,
         "Permitted variation in this path's latency.",
     ),
     live(
         "min_latency",
         Context::Path,
+        Kind::Fact,
         "Best-case latency. Exists so that `max_jitter` is falsifiable.",
     ),
     live(
         "miss",
         Context::Path,
+        Kind::Requirement,
         "What a missed deadline costs and what to do about it.",
     ),
     removed(
@@ -537,85 +671,135 @@ pub const FIELDS: &[Field] = &[
         "Removed in phase 68 with `chains:` — a written route is a second copy of the graph.",
     ),
     // ── trigger ──
-    live("timer", Context::Trigger, "Periodic self-clocked callback."),
+    live(
+        "timer",
+        Context::Trigger,
+        Kind::Fact,
+        "Periodic self-clocked callback.",
+    ),
     live(
         "input",
         Context::Trigger,
+        Kind::Fact,
         "Output caused by these input endpoints or topics.",
     ),
     // ── trigger.timer ──
     live(
         "rate_hz",
         Context::TriggerTimer,
+        Kind::Fact,
         "Timer rate. Required, and must be greater than zero.",
     ),
     // ── sync ──
-    live("policy", Context::Sync, "Fan-in policy. Required."),
+    live(
+        "policy",
+        Context::Sync,
+        Kind::Fact,
+        "Fan-in policy. Required.",
+    ),
     live(
         "max_interval",
         Context::Sync,
+        Kind::Fact,
         "Widest permitted spread between matched inputs.",
     ),
-    alias("max_interval_ms", Context::Sync, "max_interval"),
+    removed(
+        "max_interval_ms",
+        Context::Sync,
+        "Removed in phase 70 — write `max_interval: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     live(
         "timeout",
         Context::Sync,
+        Kind::Fact,
         "How long to wait for the remaining inputs.",
     ),
-    alias("timeout_ms", Context::Sync, "timeout"),
+    removed(
+        "timeout_ms",
+        Context::Sync,
+        "Removed in phase 70 — write `timeout: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
     // ── drop ──
     live(
         "max_count",
         Context::Drop,
+        Kind::Requirement,
         "Permitted losses over a window, as `N / W`.",
     ),
     live(
         "max_consecutive",
         Context::Drop,
+        Kind::Requirement,
         "Permitted consecutive losses.",
     ),
     // ── qos ──
-    live("reliability", Context::Qos, "reliable | best_effort."),
-    live("durability", Context::Qos, "volatile | transient_local."),
-    live("depth", Context::Qos, "History depth."),
-    live("history", Context::Qos, "keep_last | keep_all."),
+    live(
+        "reliability",
+        Context::Qos,
+        Kind::Fact,
+        "reliable | best_effort.",
+    ),
+    live(
+        "durability",
+        Context::Qos,
+        Kind::Fact,
+        "volatile | transient_local.",
+    ),
+    live("depth", Context::Qos, Kind::Fact, "History depth."),
+    live("history", Context::Qos, Kind::Fact, "keep_last | keep_all."),
     live(
         "lifespan",
         Context::Qos,
+        Kind::Fact,
         "How long a message stays valid after publication.",
     ),
-    alias("lifespan_ms", Context::Qos, "lifespan"),
-    live("liveliness", Context::Qos, "automatic | manual_by_topic."),
+    removed(
+        "lifespan_ms",
+        Context::Qos,
+        "Removed in phase 70 — write `lifespan: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
+    live(
+        "liveliness",
+        Context::Qos,
+        Kind::Fact,
+        "automatic | manual_by_topic.",
+    ),
     live(
         "deadline",
         Context::Qos,
+        Kind::Fact,
         "QoS deadline between consecutive messages.",
     ),
     live(
         "lease_duration",
         Context::Qos,
+        Kind::Fact,
         "Liveliness lease: how often a publisher must assert it is alive. Checked pub against sub by `qos-match`.",
     ),
     // ── miss ──
     live(
         "tolerate",
         Context::Miss,
+        Kind::Requirement,
         "Permitted misses over a window, as `N / W`.",
     ),
     live(
         "consecutive",
         Context::Miss,
+        Kind::Requirement,
         "Permitted consecutive misses.",
     ),
     live(
         "action",
         Context::Miss,
+        Kind::Requirement,
         "What to do on a miss: continue | skip_next | abort.",
     ),
     // ── concurrency ──
     live(
         "exclusive",
         Context::Concurrency,
+        Kind::Fact,
         "Groups of path names that may not run at the same time.",
     ),
 ];
@@ -638,7 +822,13 @@ pub fn render_markdown() -> String {
          chosen by the author — `nodes:`, `topics:`, `services:`, `actions:`, \
          `includes:`, `paths:`, `args:`, `external_topics:`, and the endpoint \
          maps under `pub:`/`sub:`/`srv:`/`cli:` — have no section here, because \
-         no allowlist applies to them.\n\n",
+         no allowlist applies to them.\n\n\
+         The **kind** column is the rule of `contract-primitives.md` as data: a \
+         *fact* is what the code does, a *requirement* is what it must achieve, \
+         *meta* is structure, and a **consequence** is computable from the facts — \
+         a second copy the graph already knows, kept only where the graph has no \
+         answer (an external source). `scripts/derivation_census.py` counts how \
+         often each consequence agrees.\n\n",
     );
 
     let mut contexts: Vec<Context> = FIELDS.iter().map(|f| f.context).collect();
@@ -646,14 +836,25 @@ pub fn render_markdown() -> String {
 
     for context in contexts {
         out.push_str(&format!("## `{}`\n\n", context.label()));
-        out.push_str("| key | status | meaning |\n|---|---|---|\n");
+        out.push_str("| key | kind | status | meaning |\n|---|---|---|---|\n");
         for f in allowed(context) {
             let status = match f.status {
                 Status::Live => "".to_string(),
                 Status::DeprecatedAlias => format!("deprecated — use `{}`", f.canonical),
                 Status::Removed => "**removed**".to_string(),
             };
-            out.push_str(&format!("| `{}` | {} | {} |\n", f.key, status, f.doc));
+            let kind = match (f.status, f.kind) {
+                (Status::Removed | Status::DeprecatedAlias, _) => "",
+                (_, Kind::Meta) => "meta",
+                (_, Kind::Fact) => "fact",
+                (_, Kind::Requirement) => "requirement",
+                (_, Kind::ByEndpoint) => "fact (pub) / requirement (sub)",
+                (_, Kind::Consequence) => "**consequence**",
+            };
+            out.push_str(&format!(
+                "| `{}` | {} | {} | {} |\n",
+                f.key, kind, status, f.doc
+            ));
         }
         out.push('\n');
     }
@@ -720,6 +921,19 @@ fn edit_distance(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The consequences are the retirement backlog, and the list must not grow
+    /// by accident: a new live key of this kind is a second copy of something
+    /// the graph knows, and the census has to be told about it.
+    #[test]
+    fn the_only_live_consequence_is_a_topics_rate() {
+        let consequences: Vec<(Context, &str)> = FIELDS
+            .iter()
+            .filter(|f| f.status == Status::Live && f.kind == Kind::Consequence)
+            .map(|f| (f.context, f.key))
+            .collect();
+        assert_eq!(consequences, vec![(Context::Topic, "rate_hz")]);
+    }
 
     /// A key may appear once per context and no more. A duplicate row is how
     /// two spellings of the same field silently diverge.
