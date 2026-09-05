@@ -414,6 +414,11 @@ pub const FIELDS: &[Field] = &[
         Context::Service,
         "Client endpoints, as `node/endpoint`.",
     ),
+    live(
+        "external",
+        Context::Service,
+        "Mark one side of this service as provided by an external system: server | client | both.",
+    ),
     // ── actions.<name> ──
     live(
         "if",
@@ -435,6 +440,11 @@ pub const FIELDS: &[Field] = &[
         "client",
         Context::Action,
         "Client endpoints, as `node/endpoint`.",
+    ),
+    live(
+        "external",
+        Context::Action,
+        "Mark one side of this action as provided by an external system: server | client | both.",
     ),
     // ── includes.<name>, file-reference form ──
     live(

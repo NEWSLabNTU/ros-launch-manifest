@@ -3,9 +3,12 @@
 //! Parses YAML into typed [`Manifest`] AST. Handles both plain list
 //! and map forms for endpoints (e.g., `pub: [a, b]` vs `pub: {a: {min_rate_hz: 10}}`).
 
-use crate::duration::Duration;
-use crate::field_table::{self, Context};
-use crate::{span::SpanIndex, types::*};
+use crate::{
+    duration::Duration,
+    field_table::{self, Context},
+    span::SpanIndex,
+    types::*,
+};
 use std::{collections::BTreeMap, path::Path};
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -403,6 +406,32 @@ fn parse_external_side(
     }
 }
 
+/// Parse an `external:` selector on a service or action.
+///
+/// Separate from [`parse_external_side`] because the vocabulary differs:
+/// `server`/`client` here, `pub`/`sub` there. Sharing one parser would accept
+/// `external: pub` on a service, which names nothing.
+fn parse_external_endpoint_side(
+    doc: &Yaml,
+    key: &str,
+    ctx: &str,
+) -> Result<Option<ExternalEndpointSide>, ParseError> {
+    let raw = match yaml_string(doc, key) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    match raw.as_str() {
+        "server" => Ok(Some(ExternalEndpointSide::Server)),
+        "client" => Ok(Some(ExternalEndpointSide::Client)),
+        "both" => Ok(Some(ExternalEndpointSide::Both)),
+        _ => Err(field_err(
+            ctx,
+            key,
+            &format!("invalid external side '{raw}', expected 'server', 'client', or 'both'"),
+        )),
+    }
+}
+
 // ── Services & Actions ──
 
 fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>, ParseError> {
@@ -425,6 +454,7 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
                 srv_type: yaml_string(v, "type").unwrap_or_default(),
                 server: yaml_string_list(v, "server"),
                 client: yaml_string_list(v, "client"),
+                external: parse_external_endpoint_side(v, "external", ctx)?,
             },
         );
     }
@@ -451,6 +481,7 @@ fn parse_actions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ActionDecl>, 
                 action_type: yaml_string(v, "type").unwrap_or_default(),
                 server: yaml_string_list(v, "server"),
                 client: yaml_string_list(v, "client"),
+                external: parse_external_endpoint_side(v, "external", ctx)?,
             },
         );
     }

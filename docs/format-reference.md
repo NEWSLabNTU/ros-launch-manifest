@@ -93,6 +93,7 @@ Every key below is accepted in the context that heads its section, and **a key t
 | `type` |  | ROS service type. |
 | `server` |  | Server endpoints, as `node/endpoint`. |
 | `client` |  | Client endpoints, as `node/endpoint`. |
+| `external` |  | Mark one side of this service as provided by an external system: server | client | both. |
 
 ## `actions.<name>`
 
@@ -103,6 +104,7 @@ Every key below is accepted in the context that heads its section, and **a key t
 | `type` |  | ROS action type. |
 | `server` |  | Server endpoints, as `node/endpoint`. |
 | `client` |  | Client endpoints, as `node/endpoint`. |
+| `external` |  | Mark one side of this action as provided by an external system: server | client | both. |
 
 ## `includes.<name>`
 

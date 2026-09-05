@@ -4,10 +4,18 @@
 //! - Topic with 0 subscribers: warning (unused — may be an export)
 //! - Service with 0 servers: error (calls will fail)
 //! - Action with 0 servers: error (goals can't be processed)
+//!
+//! ...unless the missing side is declared EXTERNAL. A launch tree is routinely
+//! a subset of a running system, and for a service that subset is normal
+//! rather than exceptional: a client and its server are often two images. The
+//! service error has no "may be wired by a parent" escape the way the topic
+//! warnings do, so before `external:` existed on a service the only ways to
+//! write a client-only manifest were to declare a server the image does not
+//! run or to leave the service out of the contract.
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
-use ros_launch_manifest_types::Manifest;
+use ros_launch_manifest_types::{ExternalEndpointSide, Manifest};
 
 pub struct DanglingEntityRule;
 
@@ -37,7 +45,8 @@ impl ValidationRule for DanglingEntityRule {
 
         // Services
         for (name, svc) in &manifest.services {
-            if svc.server.is_empty() && !svc.client.is_empty() {
+            if svc.server.is_empty() && !svc.client.is_empty() && !server_is_external(svc.external)
+            {
                 ctx.error(
                     self.id(),
                     &format!("services.{name}"),
@@ -48,7 +57,8 @@ impl ValidationRule for DanglingEntityRule {
 
         // Actions
         for (name, act) in &manifest.actions {
-            if act.server.is_empty() && !act.client.is_empty() {
+            if act.server.is_empty() && !act.client.is_empty() && !server_is_external(act.external)
+            {
                 ctx.error(
                     self.id(),
                     &format!("actions.{name}"),
@@ -57,4 +67,17 @@ impl ValidationRule for DanglingEntityRule {
             }
         }
     }
+}
+
+/// Whether the SERVER side was declared external.
+///
+/// `Client` does not answer this question: a service whose CLIENT is external
+/// still needs a server somewhere in the tree, and marking the client external
+/// says nothing about the server. Only `Server` and `Both` excuse a missing
+/// one, which is why this is a predicate rather than `external.is_some()`.
+fn server_is_external(side: Option<ExternalEndpointSide>) -> bool {
+    matches!(
+        side,
+        Some(ExternalEndpointSide::Server | ExternalEndpointSide::Both)
+    )
 }

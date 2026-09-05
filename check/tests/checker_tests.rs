@@ -1185,6 +1185,120 @@ actions:
     );
 }
 
+/// A client-only service is legal WHEN the author says the server is
+/// somewhere else.
+///
+/// This is the whole point of the mark: a client and its server are routinely
+/// two images, and before this the error had no escape at all -- unlike the
+/// topic warnings, which `external:` has been able to silence since Issue #51.
+#[test]
+fn test_dangling_service_external_server_is_accepted() {
+    let yaml = r#"
+version: 1
+nodes:
+  add_client:
+    cli:
+      add_two_ints: {}
+services:
+  /add_two_ints:
+    type: example_interfaces/srv/AddTwoInts
+    external: server
+    client: [add_client/add_two_ints]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errs.is_empty(),
+        "a service whose server is declared external must not be dangling: {errs:?}"
+    );
+}
+
+/// Same for actions.
+#[test]
+fn test_dangling_action_external_server_is_accepted() {
+    let yaml = r#"
+version: 1
+nodes:
+  fib_client:
+    cli:
+      fibonacci: {}
+actions:
+  /fibonacci:
+    type: example_interfaces/action/Fibonacci
+    external: server
+    client: [fib_client/fibonacci]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errs.is_empty(),
+        "an action whose server is declared external must not be dangling: {errs:?}"
+    );
+}
+
+/// `external: client` must NOT excuse a missing server.
+///
+/// The negative control that makes the two tests above mean something: if the
+/// rule keyed on `external.is_some()` rather than on WHICH side, this would
+/// pass too, and the mark would silence an error it says nothing about.
+#[test]
+fn test_dangling_service_external_client_still_needs_a_server() {
+    let yaml = r#"
+version: 1
+nodes:
+  caller:
+    cli:
+      add_two_ints: {}
+services:
+  /add_two_ints:
+    type: example_interfaces/srv/AddTwoInts
+    external: client
+    client: [caller/add_two_ints]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let errs: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity" && d.severity == Severity::Error)
+        .collect();
+    assert!(
+        !errs.is_empty(),
+        "`external: client` says nothing about the server; the error must stand"
+    );
+}
+
+/// An unknown side is a parse error naming the three that are legal.
+///
+/// `pub` in particular: a topic's vocabulary on a service is the mistake an
+/// author who has just written a `topics:` block will make.
+#[test]
+fn test_service_external_rejects_the_topic_vocabulary() {
+    let yaml = r#"
+version: 1
+services:
+  /add_two_ints:
+    type: example_interfaces/srv/AddTwoInts
+    external: pub
+"#;
+    let err = parse_manifest_str(yaml).expect_err("`external: pub` is not a service side");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("server") && msg.contains("client"),
+        "the error must name the sides that ARE legal: {msg}"
+    );
+}
+
 #[test]
 fn test_dangling_cascading_from_condition_filter() {
     // After filtering a conditional node, a topic loses its only publisher.

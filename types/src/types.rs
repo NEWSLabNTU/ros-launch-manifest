@@ -223,6 +223,28 @@ pub enum ExternalSide {
     Both,
 }
 
+/// Side of a service or action that is provided/consumed by an external
+/// system.
+///
+/// The sibling of [`ExternalSide`], and a separate type rather than a reuse:
+/// a topic's sides are `pub`/`sub` and a service's are `server`/`client`, so
+/// one enum would have to accept `pub` on a service, where it means nothing.
+/// The vocabulary a contract is written in is the thing being checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExternalEndpointSide {
+    /// The server is external. The local manifest tree may declare clients
+    /// and no internal server is required -- the pattern a client-only image
+    /// has whenever its server is a separate process.
+    Server,
+    /// The client is external. Nothing in the tree calls this service; some
+    /// other system does.
+    Client,
+    /// Both sides are external -- declared here only so a type or a QoS can
+    /// be stated about a service this tree merely passes through.
+    Both,
+}
+
 /// External-topic declaration (Issue #51). Marks an FQN as
 /// expected-external from the declaring scope's subtree.
 #[derive(Debug, Clone, Serialize)]
@@ -255,6 +277,16 @@ pub struct ServiceDecl {
     pub server: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub client: Vec<String>,
+    /// Per-service external override, the counterpart of
+    /// [`TopicDecl::external`]. When set, the matching side is treated as
+    /// expected-external and `dangling-entity` skips it.
+    ///
+    /// Without this a client-only manifest could not be written at all: a
+    /// service with clients and no server is an ERROR, not a warning, so the
+    /// author's only options were to declare a server the image does not run
+    /// or to leave the service out of the contract entirely.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalEndpointSide>,
 }
 
 /// Action declaration.
@@ -270,6 +302,10 @@ pub struct ActionDecl {
     pub server: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub client: Vec<String>,
+    /// Per-action external override. Same meaning and same reason as
+    /// [`ServiceDecl::external`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalEndpointSide>,
 }
 
 /// Include declaration (external manifest or inline scope).
