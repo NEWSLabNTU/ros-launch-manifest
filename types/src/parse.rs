@@ -74,8 +74,8 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     reject_chains(doc, ctx)?;
     reject_unknown_keys(doc, ctx, Context::Manifest)?;
     Ok(Manifest {
-        version: yaml_u32(doc, "version").unwrap_or(1),
-        args: parse_args(doc),
+        version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
+        args: parse_args(doc, ctx)?,
         nodes: parse_nodes(doc, ctx)?,
         topics: parse_topics(doc, ctx)?,
         services: parse_services(doc, ctx)?,
@@ -114,15 +114,15 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
     }
     reject_unknown_keys(yaml, ctx, Context::Node)?;
     Ok(NodeDecl {
-        if_condition: yaml_string(yaml, "if"),
-        unless_condition: yaml_string(yaml, "unless"),
-        lifecycle: yaml_bool(yaml, "lifecycle"),
+        if_condition: yaml_string(yaml, "if", ctx)?,
+        unless_condition: yaml_string(yaml, "unless", ctx)?,
+        lifecycle: yaml_bool(yaml, "lifecycle", ctx)?,
         publishers: parse_endpoints(yaml, "pub", ctx)?,
         subscribers: parse_endpoints(yaml, "sub", ctx)?,
         srv: parse_srv_endpoints(yaml, "srv", ctx)?,
         cli: parse_endpoints(yaml, "cli", ctx)?,
         paths: parse_paths(yaml, ctx)?,
-        criticality: yaml_string(yaml, "criticality"),
+        criticality: yaml_string(yaml, "criticality", ctx)?,
         concurrency: parse_concurrency(yaml, ctx)?,
     })
 }
@@ -190,11 +190,11 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     }
     reject_unknown_keys(yaml, ctx, Context::Endpoint)?;
     let props = EndpointProps {
-        min_rate_hz: yaml_f64(yaml, "min_rate_hz"),
-        max_rate_hz: yaml_f64(yaml, "max_rate_hz"),
+        min_rate_hz: yaml_f64(yaml, "min_rate_hz", ctx)?,
+        max_rate_hz: yaml_f64(yaml, "max_rate_hz", ctx)?,
         max_age: yaml_duration(yaml, "max_age", "max_age_ms")?,
-        state: yaml_bool(yaml, "state"),
-        required: yaml_bool(yaml, "required"),
+        state: yaml_bool(yaml, "state", ctx)?,
+        required: yaml_bool(yaml, "required", ctx)?,
         qos: parse_qos(yaml, ctx)?,
         max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
         buffer: parse_buffer(yaml, ctx)?,
@@ -211,7 +211,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
 
 /// Parse the `buffer:` discriminator (Vocabulary v2, Phase 44.1 §3).
 fn parse_buffer(doc: &Yaml, ctx: &str) -> Result<Option<Buffer>, ParseError> {
-    let raw = match yaml_string(doc, "buffer") {
+    let raw = match yaml_string(doc, "buffer", ctx)? {
         Some(s) => s,
         None => return Ok(None),
     };
@@ -322,14 +322,14 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         });
     }
     Ok(TopicDecl {
-        if_condition: yaml_string(yaml, "if"),
-        unless_condition: yaml_string(yaml, "unless"),
-        msg_type: yaml_string(yaml, "type")
+        if_condition: yaml_string(yaml, "if", ctx)?,
+        unless_condition: yaml_string(yaml, "unless", ctx)?,
+        msg_type: yaml_string(yaml, "type", ctx)?
             .ok_or_else(|| field_err(ctx, "type", "topic must have a type"))?,
-        publishers: yaml_string_list(yaml, "pub"),
-        subscribers: yaml_string_list(yaml, "sub"),
+        publishers: yaml_string_list(yaml, "pub", ctx)?,
+        subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        rate_hz: yaml_f64(yaml, "rate_hz"),
+        rate_hz: yaml_f64(yaml, "rate_hz", ctx)?,
         max_transport: yaml_duration(yaml, "max_transport", "max_transport_ms")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external: parse_external_side(yaml, "external", ctx)?,
@@ -375,7 +375,7 @@ fn parse_external_topics(
             name,
             ExternalTopicDecl {
                 side,
-                msg_type: yaml_string(v, "type"),
+                msg_type: yaml_string(v, "type", ctx)?,
                 qos: parse_qos(v, &path)?,
             },
         );
@@ -389,7 +389,7 @@ fn parse_external_side(
     key: &str,
     ctx: &str,
 ) -> Result<Option<ExternalSide>, ParseError> {
-    let raw = match yaml_string(doc, key) {
+    let raw = match yaml_string(doc, key, ctx)? {
         Some(s) => s,
         None => return Ok(None),
     };
@@ -415,7 +415,7 @@ fn parse_external_endpoint_side(
     key: &str,
     ctx: &str,
 ) -> Result<Option<ExternalEndpointSide>, ParseError> {
-    let raw = match yaml_string(doc, key) {
+    let raw = match yaml_string(doc, key, ctx)? {
         Some(s) => s,
         None => return Ok(None),
     };
@@ -448,11 +448,11 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
         out.insert(
             name,
             ServiceDecl {
-                if_condition: yaml_string(v, "if"),
-                unless_condition: yaml_string(v, "unless"),
-                srv_type: yaml_string(v, "type").unwrap_or_default(),
-                server: yaml_string_list(v, "server"),
-                client: yaml_string_list(v, "client"),
+                if_condition: yaml_string(v, "if", ctx)?,
+                unless_condition: yaml_string(v, "unless", ctx)?,
+                srv_type: yaml_string(v, "type", ctx)?.unwrap_or_default(),
+                server: yaml_string_list(v, "server", ctx)?,
+                client: yaml_string_list(v, "client", ctx)?,
                 external: parse_external_endpoint_side(v, "external", ctx)?,
             },
         );
@@ -475,11 +475,11 @@ fn parse_actions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ActionDecl>, 
         out.insert(
             name,
             ActionDecl {
-                if_condition: yaml_string(v, "if"),
-                unless_condition: yaml_string(v, "unless"),
-                action_type: yaml_string(v, "type").unwrap_or_default(),
-                server: yaml_string_list(v, "server"),
-                client: yaml_string_list(v, "client"),
+                if_condition: yaml_string(v, "if", ctx)?,
+                unless_condition: yaml_string(v, "unless", ctx)?,
+                action_type: yaml_string(v, "type", ctx)?.unwrap_or_default(),
+                server: yaml_string_list(v, "server", ctx)?,
+                client: yaml_string_list(v, "client", ctx)?,
                 external: parse_external_endpoint_side(v, "external", ctx)?,
             },
         );
@@ -501,7 +501,7 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         let path = format_path(ctx, &format!("includes.{name}"));
-        if let Some(manifest_path) = yaml_string(v, "manifest") {
+        if let Some(manifest_path) = yaml_string(v, "manifest", ctx)? {
             reject_unknown_keys(v, &path, Context::IncludeExternal)?;
             out.insert(
                 name,
@@ -527,48 +527,45 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
 /// - Map form with null values: `args: { a:, b: }` → all free strings
 /// - Map form with type: `args: { x: { type: bool } }` → typed
 /// - Map form with choices: `args: { x: { choices: [a, b] } }` → enum
-fn parse_args(doc: &Yaml) -> BTreeMap<String, ArgDecl> {
+fn parse_args(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ArgDecl>, ParseError> {
     let mut out = BTreeMap::new();
     let section = &doc["args"];
-    if section.is_badvalue() {
-        return out;
-    }
     match section {
+        Yaml::BadValue | Yaml::Null => {}
         Yaml::Array(arr) => {
-            for item in arr {
-                out.insert(yaml_str_owned(item), ArgDecl::String);
+            for name in yaml_scalar_list(arr, "args", ctx)? {
+                out.insert(name, ArgDecl::String);
             }
         }
         Yaml::Hash(hash) => {
             for (k, v) in hash {
                 let name = yaml_str_owned(k);
-                let decl = parse_arg_decl(v);
+                let decl = parse_arg_decl(v, &format_path(ctx, &format!("args.{name}")))?;
                 out.insert(name, decl);
             }
         }
-        _ => {}
+        other => return Err(type_err(ctx, "args", "a list of names or a mapping", other)),
     }
-    out
+    Ok(out)
 }
-
-fn parse_arg_decl(yaml: &Yaml) -> ArgDecl {
+fn parse_arg_decl(yaml: &Yaml, ctx: &str) -> Result<ArgDecl, ParseError> {
     if yaml.is_null() || yaml.is_badvalue() {
-        return ArgDecl::String;
+        return Ok(ArgDecl::String);
     }
     // Check for { type: bool }
-    if let Some(type_str) = yaml_string(yaml, "type") {
+    if let Some(type_str) = yaml_string(yaml, "type", ctx)? {
         if type_str == "bool" {
-            return ArgDecl::Bool;
+            return Ok(ArgDecl::Bool);
         }
         // "string" or any other type → free string
-        return ArgDecl::String;
+        return Ok(ArgDecl::String);
     }
     // Check for { choices: [a, b, c] }
-    let choices = yaml_string_list(yaml, "choices");
+    let choices = yaml_string_list(yaml, "choices", ctx)?;
     if !choices.is_empty() {
-        return ArgDecl::Choices(choices);
+        return Ok(ArgDecl::Choices(choices));
     }
-    ArgDecl::String
+    Ok(ArgDecl::String)
 }
 
 // ── Paths ──
@@ -609,7 +606,7 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         ));
     }
     reject_unknown_keys(yaml, ctx, Context::Path)?;
-    let input = parse_string_or_list(yaml, "input");
+    let input = parse_string_or_list(yaml, "input", ctx)?;
     let trigger = parse_trigger(yaml, ctx)?;
 
     // Vocabulary v2 §1: explicit trigger.input and legacy input: may both
@@ -633,10 +630,10 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
     let sync = parse_sync(yaml, ctx)?;
 
     let path = PathDecl {
-        if_condition: yaml_string(yaml, "if"),
-        unless_condition: yaml_string(yaml, "unless"),
+        if_condition: yaml_string(yaml, "if", ctx)?,
+        unless_condition: yaml_string(yaml, "unless", ctx)?,
         input,
-        output: yaml_string_list(yaml, "output"),
+        output: yaml_string_list(yaml, "output", ctx)?,
         max_latency: yaml_duration(yaml, "max_latency", "max_latency_ms")?,
         tolerance: yaml_duration(yaml, "tolerance", "tolerance_ms")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
@@ -709,7 +706,7 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     match key.as_str() {
         "timer" => {
             reject_unknown_keys(v, ctx, Context::TriggerTimer)?;
-            let rate_hz = yaml_f64(v, "rate_hz")
+            let rate_hz = yaml_f64(v, "rate_hz", ctx)?
                 .ok_or_else(|| field_err(ctx, "trigger.timer", "requires 'rate_hz'"))?;
             if rate_hz <= 0.0 {
                 return Err(field_err(ctx, "trigger.timer.rate_hz", "must be > 0"));
@@ -717,7 +714,7 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
             Ok(Some(Trigger::Timer { rate_hz }))
         }
         "input" => {
-            let endpoints = yaml_direct_string_list(v);
+            let endpoints = yaml_direct_string_list(v, "input", ctx)?;
             Ok(Some(Trigger::Input(endpoints)))
         }
         other => Err(field_err(
@@ -736,11 +733,13 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
     if section.is_badvalue() {
         return Ok(None);
     }
+    // Nested block: diagnostics name the block, not its parent.
+    let ctx = &format_path(ctx, "sync");
     reject_unknown_keys(section, ctx, Context::Sync)?;
-    let policy_str = yaml_string(section, "policy").ok_or_else(|| {
+    let policy_str = yaml_string(section, "policy", ctx)?.ok_or_else(|| {
         field_err(
             ctx,
-            "sync.policy",
+            "policy",
             "required: 'exact', 'approximate', or 'timeout_any'",
         )
     })?;
@@ -751,7 +750,7 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
         other => {
             return Err(field_err(
                 ctx,
-                "sync.policy",
+                "policy",
                 &format!(
                     "invalid policy '{other}', expected 'exact', 'approximate', or 'timeout_any'"
                 ),
@@ -765,7 +764,7 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
             if timeout.is_none() {
                 return Err(field_err(
                     ctx,
-                    "sync.timeout",
+                    "timeout",
                     "required when policy is 'timeout_any'",
                 ));
             }
@@ -774,7 +773,7 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
             if max_interval.is_none() {
                 return Err(field_err(
                     ctx,
-                    "sync.max_interval",
+                    "max_interval",
                     "required when policy is 'exact' or 'approximate'",
                 ));
             }
@@ -893,6 +892,8 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
     if section.is_badvalue() {
         return Ok(None);
     }
+    // Nested block: diagnostics name the block, not its parent.
+    let ctx = &format_path(ctx, key);
     // Shorthand: "5 / 100"
     if let Some(s) = section.as_str() {
         let count: DropCount = s.parse().map_err(|e: String| field_err(ctx, key, &e))?;
@@ -903,13 +904,13 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
     }
     // Full form: { max_count: "5 / 100", max_consecutive: 3 }
     reject_unknown_keys(section, ctx, Context::Drop)?;
-    let max_count = yaml_string(section, "max_count")
+    let max_count = yaml_string(section, "max_count", ctx)?
         .map(|s| {
             s.parse::<DropCount>()
-                .map_err(|e| field_err(ctx, &format!("{key}.max_count"), &e.to_string()))
+                .map_err(|e| field_err(ctx, "max_count", &e.to_string()))
         })
         .transpose()?;
-    let max_consecutive = yaml_u32(section, "max_consecutive");
+    let max_consecutive = yaml_u32(section, "max_consecutive", ctx)?;
 
     Ok(Some(DropSpec {
         max_count,
@@ -927,14 +928,16 @@ fn parse_qos(doc: &Yaml, ctx: &str) -> Result<Option<QosDecl>, ParseError> {
     if section.is_badvalue() {
         return Ok(None);
     }
+    // Nested block: diagnostics name the block, not its parent.
+    let ctx = &format_path(ctx, "qos");
     reject_unknown_keys(section, ctx, Context::Qos)?;
     Ok(Some(QosDecl {
-        reliability: yaml_string(section, "reliability"),
-        durability: yaml_string(section, "durability"),
-        depth: yaml_u32(section, "depth"),
-        history: yaml_string(section, "history"),
+        reliability: yaml_string(section, "reliability", ctx)?,
+        durability: yaml_string(section, "durability", ctx)?,
+        depth: yaml_u32(section, "depth", ctx)?,
+        history: yaml_string(section, "history", ctx)?,
         lifespan: yaml_duration(section, "lifespan", "lifespan_ms")?,
-        liveliness: yaml_string(section, "liveliness"),
+        liveliness: yaml_string(section, "liveliness", ctx)?,
         deadline: yaml_duration_new(section, "deadline")?,
         lease_duration: yaml_duration_new(section, "lease_duration")?,
     }))
@@ -952,21 +955,49 @@ fn yaml_str_owned(y: &Yaml) -> String {
     }
 }
 
-fn yaml_string(doc: &Yaml, key: &str) -> Option<String> {
-    doc[key].as_str().map(|s| s.to_string())
+/// What a YAML node IS, for a message that says what was found.
+fn yaml_kind(y: &Yaml) -> &'static str {
+    match y {
+        Yaml::String(_) => "a quoted string",
+        Yaml::Integer(_) => "an integer",
+        Yaml::Real(_) => "a float",
+        Yaml::Boolean(_) => "a boolean",
+        Yaml::Array(_) => "a list",
+        Yaml::Hash(_) => "a mapping",
+        Yaml::Null => "null",
+        Yaml::Alias(_) => "an alias",
+        Yaml::BadValue => "nothing",
+    }
 }
 
-/// Read a duration field: the phase-59 spelling, or the deprecated name.
+/// A value of the wrong TYPE is an error, not `None` (phase 70).
 ///
-/// This is the entry point serde cannot provide. The contract reader is
-/// hand-rolled so it can produce source spans for checker diagnostics, and
-/// that same hand-rolling lets it do something the serde adapters cannot: see
-/// WHICH spelling was used, and therefore **reject a bare number under the new
-/// name**. That rejection is the point of phase 59, and this is the only path
-/// where it is fully enforceable.
-///
-/// The conversion itself is `duration::from_legacy_scalar`, shared with the
-/// serde adapters so the two cannot drift.
+/// Every one of these helpers used to answer "not a string" / "not a number"
+/// with `None`, so `max_count: 5` (an integer where a `"N / W"` string is
+/// expected), `rate_hz: "100"` (a quoted number), `lifecycle: "true"` and a
+/// bare-scalar `output:` all parsed as ABSENT — deleting a declaration in
+/// silence, which is exactly what phase 69's unknown-key check exists to
+/// prevent one level up. A wrong type is the same defect with a different
+/// spelling.
+fn type_err(ctx: &str, key: &str, expected: &str, found: &Yaml) -> ParseError {
+    field_err(
+        ctx,
+        key,
+        &format!(
+            "expected {expected}, got {}. A value of the wrong type used to be read as \
+             absent, which deleted the declaration in silence",
+            yaml_kind(found)
+        ),
+    )
+}
+
+fn yaml_string(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String>, ParseError> {
+    match &doc[key] {
+        Yaml::BadValue | Yaml::Null => Ok(None),
+        Yaml::String(s) => Ok(Some(s.clone())),
+        other => Err(type_err(ctx, key, "a string", other)),
+    }
+}
 fn yaml_duration(
     doc: &Yaml,
     canonical: &str,
@@ -993,7 +1024,7 @@ fn yaml_duration(
         Yaml::Real(r) => Err(no_unit(r.clone())),
         // Deprecated spelling keeps its implied unit exactly, so an
         // un-migrated contract cannot change meaning.
-        _ => from_legacy_scalar(None, yaml_f64(doc, legacy), LegacyUnit::Millis)
+        _ => from_legacy_scalar(None, yaml_f64(doc, legacy, "")?, LegacyUnit::Millis)
             .map_err(|e| field_err("", legacy, &e.to_string())),
     }
 }
@@ -1036,6 +1067,8 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
     if section.is_badvalue() {
         return Ok(None);
     }
+    // Nested block: diagnostics name the block, not its parent.
+    let ctx = &format_path(ctx, "miss");
     // Shorthand: `miss: "2 / 100"` — tolerance only, default action.
     if let Some(text) = section.as_str() {
         let count: DropCount = text
@@ -1048,13 +1081,13 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
         }));
     }
     reject_unknown_keys(section, ctx, Context::Miss)?;
-    let tolerate = yaml_string(section, "tolerate")
+    let tolerate = yaml_string(section, "tolerate", ctx)?
         .map(|s| {
             s.parse::<DropCount>()
-                .map_err(|e| field_err(ctx, "miss.tolerate", &e.to_string()))
+                .map_err(|e| field_err(ctx, "tolerate", &e.to_string()))
         })
         .transpose()?;
-    let action = match yaml_string(section, "action").as_deref() {
+    let action = match yaml_string(section, "action", ctx)?.as_deref() {
         None => None,
         Some("continue") => Some(MissAction::Continue),
         Some("skip_next") => Some(MissAction::SkipNext),
@@ -1062,14 +1095,14 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
         Some(other) => {
             return Err(field_err(
                 ctx,
-                "miss.action",
+                "action",
                 &format!("unknown action '{other}' — expected `continue`, `skip_next` or `abort`"),
             ));
         }
     };
     Ok(Some(MissSpec {
         tolerate,
-        consecutive: yaml_u32(section, "consecutive"),
+        consecutive: yaml_u32(section, "consecutive", ctx)?,
         action,
     }))
 }
@@ -1104,42 +1137,81 @@ fn parse_concurrency(doc: &Yaml, ctx: &str) -> Result<Option<ConcurrencyDecl>, P
     Ok(Some(ConcurrencyDecl { exclusive }))
 }
 
-fn yaml_f64(doc: &Yaml, key: &str) -> Option<f64> {
+fn yaml_f64(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<f64>, ParseError> {
     match &doc[key] {
-        Yaml::Real(s) => s.parse().ok(),
-        Yaml::Integer(i) => Some(*i as f64),
-        _ => None,
+        Yaml::BadValue | Yaml::Null => Ok(None),
+        Yaml::Real(r) => r
+            .parse()
+            .map(Some)
+            .map_err(|_| type_err(ctx, key, "a number", &doc[key])),
+        Yaml::Integer(i) => Ok(Some(*i as f64)),
+        Yaml::String(_) => Err(field_err(
+            ctx,
+            key,
+            "expected a number, got a quoted string — remove the quotes. A quoted \
+             number used to be read as absent, which deleted the declaration in silence",
+        )),
+        other => Err(type_err(ctx, key, "a number", other)),
     }
 }
-
-fn yaml_u32(doc: &Yaml, key: &str) -> Option<u32> {
-    doc[key].as_i64().map(|i| i as u32)
-}
-
-fn yaml_bool(doc: &Yaml, key: &str) -> Option<bool> {
-    doc[key].as_bool()
-}
-
-fn yaml_string_list(doc: &Yaml, key: &str) -> Vec<String> {
+fn yaml_u32(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<u32>, ParseError> {
     match &doc[key] {
-        Yaml::Array(arr) => arr.iter().map(yaml_str_owned).collect(),
-        _ => vec![],
+        Yaml::BadValue | Yaml::Null => Ok(None),
+        Yaml::Integer(i) if *i >= 0 && *i <= u32::MAX as i64 => Ok(Some(*i as u32)),
+        Yaml::Integer(_) => Err(field_err(ctx, key, "expected a non-negative integer")),
+        other => Err(type_err(ctx, key, "a non-negative integer", other)),
     }
 }
-
-/// Parse a field that can be a single string or a list of strings.
-fn parse_string_or_list(doc: &Yaml, key: &str) -> Vec<String> {
-    yaml_direct_string_list(&doc[key])
+fn yaml_bool(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<bool>, ParseError> {
+    match &doc[key] {
+        Yaml::BadValue | Yaml::Null => Ok(None),
+        Yaml::Boolean(b) => Ok(Some(*b)),
+        Yaml::String(_) => Err(field_err(
+            ctx,
+            key,
+            "expected a boolean, got a quoted string — write `true` or `false` without quotes",
+        )),
+        other => Err(type_err(ctx, key, "a boolean", other)),
+    }
 }
-
-/// Interpret a YAML value directly (not indexed under a key) as a single
-/// string or a list of strings. Used for nested trigger sub-values like
-/// `trigger: { input: [a, b] }`, where `v` is already the array/string.
-fn yaml_direct_string_list(y: &Yaml) -> Vec<String> {
+/// Every element must be a scalar; `yaml_str_owned` used to turn a nested
+/// mapping or list into `""` and carry on.
+fn yaml_scalar_list(arr: &[Yaml], key: &str, ctx: &str) -> Result<Vec<String>, ParseError> {
+    arr.iter()
+        .enumerate()
+        .map(|(i, y)| match y {
+            Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) | Yaml::Boolean(_) => {
+                Ok(yaml_str_owned(y))
+            }
+            other => Err(type_err(ctx, &format!("{key}[{i}]"), "a scalar", other)),
+        })
+        .collect()
+}
+fn yaml_string_list(doc: &Yaml, key: &str, ctx: &str) -> Result<Vec<String>, ParseError> {
+    match &doc[key] {
+        Yaml::BadValue | Yaml::Null => Ok(vec![]),
+        Yaml::Array(arr) => yaml_scalar_list(arr, key, ctx),
+        Yaml::String(s) => Err(field_err(
+            ctx,
+            key,
+            &format!(
+                "expected a list, got a bare scalar — write `{key}: [{s}]`. A scalar here \
+                 used to be read as an empty list, which deleted the declaration in silence"
+            ),
+        )),
+        other => Err(type_err(ctx, key, "a list", other)),
+    }
+}
+/// `input:` and `trigger.input` accept a bare scalar as a one-element list.
+fn parse_string_or_list(doc: &Yaml, key: &str, ctx: &str) -> Result<Vec<String>, ParseError> {
+    yaml_direct_string_list(&doc[key], key, ctx)
+}
+fn yaml_direct_string_list(y: &Yaml, key: &str, ctx: &str) -> Result<Vec<String>, ParseError> {
     match y {
-        Yaml::String(s) => vec![s.clone()],
-        Yaml::Array(arr) => arr.iter().map(yaml_str_owned).collect(),
-        _ => vec![],
+        Yaml::BadValue | Yaml::Null => Ok(vec![]),
+        Yaml::String(s) => Ok(vec![s.clone()]),
+        Yaml::Array(arr) => yaml_scalar_list(arr, key, ctx),
+        other => Err(type_err(ctx, key, "a list or a single name", other)),
     }
 }
 
@@ -1228,6 +1300,71 @@ mod tests {
                 .expect_err("`jitter_ms:` must not parse")
                 .to_string();
         assert!(err.contains("property of a ROUTE"), "got: {err}");
+    }
+
+    /// A value of the wrong TYPE is an error (phase 70), not an absent field.
+    /// Each of these used to parse clean with the declaration deleted.
+    #[test]
+    fn a_wrong_type_is_rejected_not_read_as_absent() {
+        let cases: &[(&str, &str)] = &[
+            // an integer where a "N / W" string is expected
+            (
+                "nodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        drop: { max_count: 5 }\n",
+                "expected a string, got an integer",
+            ),
+            // a quoted number
+            (
+                "topics:\n  t:\n    type: T\n    rate_hz: \"100\"\n",
+                "remove the quotes",
+            ),
+            // a quoted boolean
+            ("nodes:\n  n:\n    lifecycle: \"true\"\n", "without quotes"),
+            // a bare scalar where a list is expected
+            (
+                "nodes:\n  n:\n    paths:\n      p:\n        output: o\n",
+                "write `output: [o]`",
+            ),
+            // a mapping where a string is expected
+            (
+                "nodes:\n  n:\n    criticality: { level: high }\n",
+                "got a mapping",
+            ),
+            // a negative depth
+            (
+                "topics:\n  t:\n    type: T\n    qos: { depth: -1 }\n",
+                "non-negative",
+            ),
+        ];
+        for (yaml, needle) in cases {
+            let err = super::parse_manifest_str(yaml)
+                .expect_err(&format!("must not parse:\n{yaml}"))
+                .to_string();
+            assert!(err.contains(needle), "for:\n{yaml}\ngot: {err}");
+        }
+    }
+
+    /// The error names WHERE, not just what.
+    #[test]
+    fn a_type_error_carries_its_path() {
+        let err = super::parse_manifest_str(
+            "nodes:\n  filter:\n    paths:\n      clean:\n        output: [o]\n        drop: { max_count: 5 }\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("nodes.filter.paths.clean.drop.max_count"),
+            "got: {err}"
+        );
+    }
+
+    /// The one bare scalar that is still accepted: `input:` as a single name.
+    #[test]
+    fn input_still_accepts_a_single_name() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  n:\n    sub:\n      a: {}\n    pub:\n      o: {}\n    paths:\n      p:\n        input: a\n        output: [o]\n",
+        )
+        .unwrap();
+        assert_eq!(m.nodes["n"].paths["p"].input, vec!["a"]);
     }
 
     /// `correlation:` (phase 70) keeps a dedicated message too: the generic
