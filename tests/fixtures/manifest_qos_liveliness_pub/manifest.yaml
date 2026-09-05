@@ -1,0 +1,24 @@
+# Cross-scope liveliness/lease mismatch — publisher side (phase 70 W4).
+#
+# Pairs with `manifest_qos_liveliness_sub`. The publisher asserts liveliness
+# automatically, every 500ms. The subscriber in the sibling scope demands
+# manual assertion and gives up after 200ms. Both are DDS incompatibilities,
+# and both sides are declared in different files — which for a lease is the
+# normal case: the party that asserts and the party that times out are
+# rarely in one launch file.
+version: 1
+
+nodes:
+  heartbeat:
+    pub:
+      beat:
+        min_rate_hz: 2
+        qos:
+          liveliness: automatic
+          lease_duration: 500ms
+
+topics:
+  /safety/heartbeat:
+    type: std_msgs/msg/Empty
+    pub: [heartbeat/beat]
+    rate_hz: 2

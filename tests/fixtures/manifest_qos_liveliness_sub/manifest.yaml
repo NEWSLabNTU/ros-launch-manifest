@@ -1,0 +1,22 @@
+# Cross-scope liveliness/lease mismatch — subscriber side (phase 70 W4).
+#
+# Companion to `manifest_qos_liveliness_pub`. This subscriber requests
+# `manual_by_topic` liveliness and declares the publisher dead after 200ms;
+# the publisher in the sibling scope offers `automatic` and asserts only
+# every 500ms. The cross-scope qos-match check must report both.
+version: 1
+
+nodes:
+  watchdog:
+    sub:
+      beat:
+        min_rate_hz: 2
+        qos:
+          liveliness: manual_by_topic
+          lease_duration: 200ms
+
+topics:
+  /safety/heartbeat:
+    type: std_msgs/msg/Empty
+    sub: [watchdog/beat]
+    rate_hz: 2
