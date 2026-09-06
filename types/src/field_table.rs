@@ -75,6 +75,14 @@ pub enum Context {
     Miss,
     /// The map under `concurrency:`.
     Concurrency,
+    /// `hazards.<name>` (phase 71).
+    Hazard,
+    /// One `{ all_of: [...] }` guard group.
+    HazardGuard,
+    /// `on_violation` on a subscriber.
+    OnViolation,
+    /// `safe_state` on a path.
+    SafeState,
 }
 
 impl Context {
@@ -99,6 +107,10 @@ impl Context {
             Context::Qos => "qos",
             Context::Miss => "miss",
             Context::Concurrency => "concurrency",
+            Context::Hazard => "hazards.<name>",
+            Context::HazardGuard => "hazards.<name>.guards[]",
+            Context::OnViolation => "on_violation",
+            Context::SafeState => "safe_state",
         }
     }
 }
@@ -255,6 +267,12 @@ pub const FIELDS: &[Field] = &[
         "Scope paths: end-to-end requirements naming two topics and a budget.",
     ),
     live(
+        "hazards",
+        Context::Manifest,
+        Kind::Meta,
+        "Hazards: what is watched, how long the system has, and which path reaches the safe state.",
+    ),
+    live(
         "external_topics",
         Context::Manifest,
         Kind::Meta,
@@ -378,6 +396,12 @@ pub const FIELDS: &[Field] = &[
         "max_transport_ms",
         Context::Endpoint,
         "Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+    ),
+    live(
+        "on_violation",
+        Context::Endpoint,
+        Kind::Requirement,
+        "The reaction this subscriber owes when its assumption is violated.",
     ),
     live(
         "buffer",
@@ -660,6 +684,12 @@ pub const FIELDS: &[Field] = &[
         "Best-case latency. Exists so that `max_jitter` is falsifiable.",
     ),
     live(
+        "safe_state",
+        Context::Path,
+        Kind::Fact,
+        "What this path produces when it is a reaction: the endpoint it commands, and the plant's settle time.",
+    ),
+    live(
         "miss",
         Context::Path,
         Kind::Requirement,
@@ -801,6 +831,88 @@ pub const FIELDS: &[Field] = &[
         Context::Concurrency,
         Kind::Fact,
         "Groups of path names that may not run at the same time.",
+    ),
+    // ── hazards.<name> ──
+    live(
+        "severity",
+        Context::Hazard,
+        Kind::Requirement,
+        "Severity label from the HARA (`ASIL_D`, `SIL_3`, …). Consumed, never computed.",
+    ),
+    live(
+        "description",
+        Context::Hazard,
+        Kind::Meta,
+        "What the hazardous event is.",
+    ),
+    live(
+        "guards",
+        Context::Hazard,
+        Kind::Meta,
+        "Topics watched for the fault. A bare name is one guard; `{ all_of: [...] }` is a redundant set that faults only when every member does.",
+    ),
+    live(
+        "on",
+        Context::Hazard,
+        Kind::Fact,
+        "Fault class the guards report: omission | late | loss | reported.",
+    ),
+    live(
+        "ftti",
+        Context::Hazard,
+        Kind::Requirement,
+        "Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`.",
+    ),
+    live(
+        "reaction",
+        Context::Hazard,
+        Kind::Meta,
+        "The scope path whose route reaches the safe state.",
+    ),
+    // ── hazards.<name>.guards[] ──
+    live(
+        "all_of",
+        Context::HazardGuard,
+        Kind::Meta,
+        "Members of a redundant guard set.",
+    ),
+    // ── on_violation ──
+    live(
+        "on",
+        Context::OnViolation,
+        Kind::Fact,
+        "Fault classes that trigger the reaction: omission | late | loss | reported.",
+    ),
+    live(
+        "reaction",
+        Context::OnViolation,
+        Kind::Meta,
+        "A path on this node whose trigger includes the subscription.",
+    ),
+    live(
+        "within",
+        Context::OnViolation,
+        Kind::Requirement,
+        "This hop's share of the fault reaction time.",
+    ),
+    live(
+        "mechanism",
+        Context::OnViolation,
+        Kind::Fact,
+        "Where the runtime observer reads the violation: qos (default) | diagnostics | application.",
+    ),
+    // ── safe_state ──
+    live(
+        "emits",
+        Context::SafeState,
+        Kind::Fact,
+        "The endpoint this reaction commands the safe state on.",
+    ),
+    live(
+        "settle",
+        Context::SafeState,
+        Kind::Fact,
+        "How long the plant takes to reach the safe state once commanded. Measured, not authored.",
     ),
 ];
 

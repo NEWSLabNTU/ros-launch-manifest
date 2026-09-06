@@ -53,6 +53,107 @@ pub struct Manifest {
     /// tree overrides the external mark.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub external_topics: BTreeMap<String, ExternalTopicDecl>,
+    /// Hazards (phase 71): the one place a fault-tolerant time interval is
+    /// written. FDTI and FRTI are derived from the guards' detectors and the
+    /// reaction's route; the FTTI is physics and belongs to the hazard.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub hazards: BTreeMap<String, HazardDecl>,
+}
+
+/// A hazard: an outcome the system must react to in time (phase 71,
+/// `docs/design/fault-reaction-primitives.md`).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HazardDecl {
+    /// Severity label from the team's HARA (`ASIL_D`, `SIL_3`, …). Consumed,
+    /// never computed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// What is watched. Each group is one fault: a single topic, or an
+    /// `all_of` set whose fault is the loss of EVERY member (a redundant
+    /// pair). Any group faulting is the hazard.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub guards: Vec<GuardGroup>,
+    /// Which fault class the guards report. `reported` names an application
+    /// detector's output topic — the fault is whatever that node checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on: Option<FaultKind>,
+    /// The fault-tolerant time interval: fault → hazardous event, absent
+    /// reaction. The only new number; `FDTI + FRTI` must fit inside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ftti: Option<crate::duration::Duration>,
+    /// The scope path whose route reaches the safe state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+}
+
+/// One guard: a topic, or a redundant set that faults only when all of its
+/// members do.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GuardGroup {
+    pub members: Vec<String>,
+    /// `true` for `all_of:`; `false` for a single topic (the degenerate
+    /// all-of-one, spelled without the wrapper).
+    pub all_of: bool,
+}
+
+/// What a detector detects. AADL EMV2's error-type library, restricted to
+/// what the middleware can observe plus what a declared detector reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultKind {
+    /// No message at all — liveliness lease expired.
+    Omission,
+    /// A message arrived, too late — QoS deadline or `max_age` violated.
+    Late,
+    /// Consecutive losses past `drop.max_consecutive`.
+    Loss,
+    /// An application detector published on the guarded topic; the fault is
+    /// whatever it checks (covariance, plausibility, a value out of range).
+    Reported,
+}
+
+/// Where the runtime observer reads a violation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectMechanism {
+    /// The subscription's QoS event callback (`on_deadline_missed`,
+    /// `on_liveliness_changed`).
+    #[default]
+    Qos,
+    /// A `diagnostic_updater` status on `/diagnostics`.
+    Diagnostics,
+    /// The reaction path's own trigger — the node detects for itself.
+    Application,
+}
+
+/// The reaction edge (phase 71): declared on the SUBSCRIBER that detects,
+/// because that is the party that times out and reacts — AUTOSAR WdgM's
+/// "EXPIRED → configured reaction", the `cmd_vel` timeout of every mobile
+/// base.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OnViolation {
+    /// Which fault classes trigger this reaction.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub on: Vec<FaultKind>,
+    /// A path on THIS node whose trigger includes the subscription.
+    pub reaction: String,
+    /// This hop's share of the fault reaction time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<crate::duration::Duration>,
+    #[serde(default)]
+    pub mechanism: DetectMechanism,
+}
+
+/// What a reaction path produces (phase 71): the topic it commands the safe
+/// state on, and how long the plant takes to reach it — the one term of the
+/// reaction time the software cannot derive. Expected to be measured.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SafeState {
+    pub emits: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle: Option<crate::duration::Duration>,
 }
 
 /// Node declaration.
@@ -143,6 +244,10 @@ pub struct EndpointProps {
     /// `state: true`; parse-time error otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub buffer: Option<Buffer>,
+    /// The reaction this subscriber owes when its assumption is violated
+    /// (phase 71). Subscribers only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_violation: Option<OnViolation>,
 }
 
 /// Buffering discipline for a `state: true` subscriber endpoint
@@ -449,6 +554,9 @@ pub struct PathDecl {
     /// What a missed deadline costs and what to do about it (phase 67).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<MissSpec>,
+    /// What this path produces when it is a reaction (phase 71).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safe_state: Option<SafeState>,
 }
 
 impl PathDecl {

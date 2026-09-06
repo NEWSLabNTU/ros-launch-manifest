@@ -752,6 +752,81 @@ pub struct Contracts {
     /// skip the external side.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub externals: BTreeMap<String, ExternalSide>,
+    /// Hazards (phase 71), keyed by `"<scope id>/<name>"`, with guard topics
+    /// resolved to FQNs. Read by `measure` to attribute observed detection
+    /// and reaction times to the hazard they cover.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hazards: BTreeMap<String, HazardContract>,
+}
+
+/// A hazard after merge (phase 71).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HazardContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    /// Each entry is one fault: one topic, or a redundant set that faults
+    /// only when every member does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guards: Vec<GuardContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<FaultKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ftti_ms: Option<f64>,
+    /// Key into `scope_paths`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GuardContract {
+    pub members: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_of: bool,
+}
+
+/// What a detector detects (phase 71). Mirrors the contract crate's closed
+/// set; carried here so a second toolchain can read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultKind {
+    Omission,
+    Late,
+    Loss,
+    Reported,
+}
+
+/// Where the runtime observer reads a violation (phase 71).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectMechanism {
+    #[default]
+    Qos,
+    Diagnostics,
+    Application,
+}
+
+/// The reaction a subscriber owes on a violated assumption (phase 71). Read
+/// by the runtime observer to know which event to watch and which path's
+/// output marks the reaction.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OnViolationContract {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on: Vec<FaultKind>,
+    /// Key into `node_paths`.
+    pub reaction: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_ms: Option<f64>,
+    #[serde(default)]
+    pub mechanism: DetectMechanism,
+}
+
+/// What a reaction path produces (phase 71).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SafeStateContract {
+    /// Endpoint ref the safe state is commanded on.
+    pub emits: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_ms: Option<f64>,
 }
 
 impl Contracts {
@@ -763,6 +838,7 @@ impl Contracts {
             && self.scope_paths.is_empty()
             && self.topics.is_empty()
             && self.externals.is_empty()
+            && self.hazards.is_empty()
     }
 }
 
@@ -808,6 +884,9 @@ pub struct SubContract {
     /// R1-M5 — per-endpoint QoS (see [`PubContract::qos`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qos: Option<Qos>,
+    /// The reaction owed on a violated assumption (phase 71).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_violation: Option<OnViolationContract>,
 }
 
 /// Service server guarantee.
@@ -865,6 +944,9 @@ pub struct PathContract {
     /// from different information — the seam this field exists to close.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<ros_launch_manifest_sched::MapperMiss>,
+    /// What this path produces when it is a reaction (phase 71).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safe_state: Option<SafeStateContract>,
 }
 
 /// Per-topic channel contract.

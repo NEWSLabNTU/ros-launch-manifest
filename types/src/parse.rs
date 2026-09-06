@@ -83,7 +83,157 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         includes: parse_includes(doc, ctx)?,
         paths: parse_paths(doc, ctx)?,
         external_topics: parse_external_topics(doc, ctx)?,
+        hazards: parse_hazards(doc, ctx)?,
     })
+}
+
+fn parse_fault_kind(raw: &str, ctx: &str, key: &str) -> Result<FaultKind, ParseError> {
+    match raw {
+        "omission" => Ok(FaultKind::Omission),
+        "late" => Ok(FaultKind::Late),
+        "loss" => Ok(FaultKind::Loss),
+        "reported" => Ok(FaultKind::Reported),
+        other => Err(field_err(
+            ctx,
+            key,
+            &format!(
+                "`{other}` is not a fault class — accepted: omission, late, loss, reported \
+                 (AADL EMV2's error types, restricted to what a subscriber can observe)"
+            ),
+        )),
+    }
+}
+
+fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, ParseError> {
+    let mut out = BTreeMap::new();
+    let section = &doc["hazards"];
+    if section.is_badvalue() {
+        return Ok(out);
+    }
+    let hash = section
+        .as_hash()
+        .ok_or_else(|| type_err(ctx, "hazards", "a mapping", section))?;
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        let hctx = format_path(ctx, &format!("hazards.{name}"));
+        reject_unknown_keys(v, &hctx, Context::Hazard)?;
+        let mut guards = Vec::new();
+        match &v["guards"] {
+            Yaml::BadValue | Yaml::Null => {}
+            Yaml::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    match item {
+                        Yaml::String(t) => guards.push(GuardGroup {
+                            members: vec![t.clone()],
+                            all_of: false,
+                        }),
+                        Yaml::Hash(_) => {
+                            let gctx = format_path(&hctx, &format!("guards[{i}]"));
+                            reject_unknown_keys(item, &gctx, Context::HazardGuard)?;
+                            let members = yaml_string_list(item, "all_of", &gctx)?;
+                            if members.len() < 2 {
+                                return Err(field_err(
+                                    &gctx,
+                                    "all_of",
+                                    "a redundant group needs at least two members — a single \
+                                     topic is written bare",
+                                ));
+                            }
+                            guards.push(GuardGroup {
+                                members,
+                                all_of: true,
+                            });
+                        }
+                        other => {
+                            return Err(type_err(
+                                &hctx,
+                                &format!("guards[{i}]"),
+                                "a topic name or `{ all_of: [...] }`",
+                                other,
+                            ));
+                        }
+                    }
+                }
+            }
+            other => return Err(type_err(&hctx, "guards", "a list", other)),
+        }
+        let on = yaml_string(v, "on", &hctx)?
+            .map(|s| parse_fault_kind(&s, &hctx, "on"))
+            .transpose()?;
+        out.insert(
+            name,
+            HazardDecl {
+                severity: yaml_string(v, "severity", &hctx)?,
+                description: yaml_string(v, "description", &hctx)?,
+                guards,
+                on,
+                ftti: yaml_duration(v, "ftti")?,
+                reaction: yaml_string(v, "reaction", &hctx)?,
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn parse_on_violation(doc: &Yaml, ctx: &str) -> Result<Option<OnViolation>, ParseError> {
+    let section = &doc["on_violation"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let ctx = &format_path(ctx, "on_violation");
+    reject_unknown_keys(section, ctx, Context::OnViolation)?;
+    let on = parse_string_or_list(section, "on", ctx)?
+        .iter()
+        .map(|s| parse_fault_kind(s, ctx, "on"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let reaction = yaml_string(section, "reaction", ctx)?.ok_or_else(|| {
+        field_err(
+            ctx,
+            "reaction",
+            "required: the path on this node that runs when the assumption is violated",
+        )
+    })?;
+    let mechanism = match yaml_string(section, "mechanism", ctx)?.as_deref() {
+        None | Some("qos") => DetectMechanism::Qos,
+        Some("diagnostics") => DetectMechanism::Diagnostics,
+        Some("application") => DetectMechanism::Application,
+        Some(other) => {
+            return Err(field_err(
+                ctx,
+                "mechanism",
+                &format!(
+                    "`{other}` is not a detection mechanism — accepted: qos, diagnostics, \
+                     application"
+                ),
+            ));
+        }
+    };
+    Ok(Some(OnViolation {
+        on,
+        reaction,
+        within: yaml_duration(section, "within")?,
+        mechanism,
+    }))
+}
+
+fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseError> {
+    let section = &doc["safe_state"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let ctx = &format_path(ctx, "safe_state");
+    reject_unknown_keys(section, ctx, Context::SafeState)?;
+    let emits = yaml_string(section, "emits", ctx)?.ok_or_else(|| {
+        field_err(
+            ctx,
+            "emits",
+            "required: the endpoint this reaction commands the safe state on",
+        )
+    })?;
+    Ok(Some(SafeState {
+        emits,
+        settle: yaml_duration(section, "settle")?,
+    }))
 }
 
 // ── Nodes ──
@@ -198,6 +348,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         qos: parse_qos(yaml, ctx)?,
         max_transport: yaml_duration(yaml, "max_transport")?,
         buffer: parse_buffer(yaml, ctx)?,
+        on_violation: parse_on_violation(yaml, ctx)?,
     };
     if props.buffer.is_some() && props.state != Some(true) {
         return Err(field_err(
@@ -664,6 +815,7 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         max_jitter: yaml_duration(yaml, "max_jitter")?,
         min_latency: yaml_duration(yaml, "min_latency")?,
         miss: parse_miss_spec(yaml, ctx)?,
+        safe_state: parse_safe_state(yaml, ctx)?,
     };
 
     // Vocabulary v2 §2: sync only meaningful with an input trigger with
@@ -1350,6 +1502,99 @@ mod tests {
         )
         .unwrap();
         assert_eq!(m.nodes["n"].paths["p"].input, vec!["a"]);
+    }
+
+    /// Phase 71: the fault-reaction vocabulary parses, and every closed set
+    /// refuses an unknown member.
+    #[test]
+    fn hazards_on_violation_and_safe_state_parse() {
+        let yaml = r#"
+version: 1
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards:
+      - /safety/scan
+      - all_of: [/loc/ndt, /loc/gnss]
+    on: omission
+    ftti: 500ms
+    reaction: safety.stop
+nodes:
+  brake:
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+          mechanism: diagnostics
+    pub:
+      brake_cmd: {}
+    paths:
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state: { emits: brake_cmd, settle: 200ms }
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        let h = &m.hazards["drive_blind"];
+        assert_eq!(h.guards.len(), 2);
+        assert!(!h.guards[0].all_of && h.guards[0].members == vec!["/safety/scan"]);
+        assert!(h.guards[1].all_of && h.guards[1].members.len() == 2);
+        assert_eq!(h.on, Some(FaultKind::Omission));
+        assert_eq!(h.ftti.unwrap().as_millis_f64(), 500.0);
+        assert_eq!(h.reaction.as_deref(), Some("safety.stop"));
+        let ov = m.nodes["brake"].subscribers["obstacles"]
+            .on_violation
+            .as_ref()
+            .unwrap();
+        assert_eq!(ov.on, vec![FaultKind::Late, FaultKind::Omission]);
+        assert_eq!(ov.reaction, "emergency_stop");
+        assert_eq!(ov.within.unwrap().as_millis_f64(), 20.0);
+        assert_eq!(ov.mechanism, DetectMechanism::Diagnostics);
+        let ss = m.nodes["brake"].paths["emergency_stop"]
+            .safe_state
+            .as_ref()
+            .unwrap();
+        assert_eq!(ss.emits, "brake_cmd");
+        assert_eq!(ss.settle.unwrap().as_millis_f64(), 200.0);
+    }
+
+    #[test]
+    fn fault_reaction_closed_sets_refuse_unknown_members() {
+        let cases: &[(&str, &str)] = &[
+            ("hazards:\n  h:\n    on: crash\n", "not a fault class"),
+            (
+                "nodes:\n  n:\n    sub:\n      a:\n        on_violation: { on: [value], reaction: r }\n",
+                "not a fault class",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      a:\n        on_violation: { on: [late], reaction: r, mechanism: magic }\n",
+                "not a detection mechanism",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      a:\n        on_violation: { on: [late] }\n",
+                "required",
+            ),
+            (
+                "hazards:\n  h:\n    guards: [{ all_of: [/one] }]\n",
+                "at least two",
+            ),
+            ("hazards:\n  h:\n    fttii: 5ms\n", "did you mean `ftti`"),
+            (
+                "nodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        safe_state: { settle: 1ms }\n",
+                "required",
+            ),
+        ];
+        for (yaml, needle) in cases {
+            let err = super::parse_manifest_str(yaml)
+                .expect_err(&format!("must not parse:\n{yaml}"))
+                .to_string();
+            assert!(err.contains(needle), "for:\n{yaml}\ngot: {err}");
+        }
     }
 
     /// `correlation:` (phase 70) keeps a dedicated message too: the generic

@@ -164,6 +164,14 @@ pub fn substitute_manifest(
         path.output = substitute_vec(&path.output, args)?;
     }
 
+    // Hazards: guard topics and the reaction path name
+    for h in m.hazards.values_mut() {
+        for g in &mut h.guards {
+            g.members = substitute_vec(&g.members, args)?;
+        }
+        h.reaction = substitute_opt(&h.reaction, args)?;
+    }
+
     // Includes: external manifest path
     for include in m.includes.values_mut() {
         if let crate::IncludeDecl::External { manifest } = include {

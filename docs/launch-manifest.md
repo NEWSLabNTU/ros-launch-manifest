@@ -1625,6 +1625,54 @@ is now a parse error naming this replacement. A `semantics:` line can be
 dropped with it — nothing ever branched on `reaction` vs `age`, and a
 subscriber's `max_age:` is what states staleness today.
 
+## Fault detection and reaction (phase 71)
+
+A rate or age requirement says what must be true. It does not say what
+happens when it is not, how fast that must be noticed, or how long until
+the system is safe. ISO 26262 calls that number the **fault-tolerant time
+interval** (FTTI), and splits it into detection (FDTI) and reaction (FRTI).
+Detection is something the contract already declares — a liveliness lease,
+a QoS deadline, `max_age`, `min_rate_hz` — so the vocabulary here is small:
+one requirement on a hazard, one reaction edge on the subscriber that
+detects, one fact on the reaction path. FDTI and FRTI are derived.
+
+```yaml
+hazards:
+  drive_blind:
+    severity: ASIL_D                      # from the HARA; consumed, never computed
+    guards:
+      - /safety/scan                      # any guard faulting is the hazard …
+      - all_of: [/loc/ndt, /loc/gnss]     # … except a redundant set, which faults when ALL do
+    on: omission                          # omission | late | loss | reported
+    ftti: 500ms                           # physics: fault → hazardous event, absent reaction
+    reaction: safety.stop                 # the scope path whose route reaches the safe state
+
+nodes:
+  brake_controller:
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:                     # the WdgM "expired → reaction" edge
+          on: [late, omission]
+          reaction: emergency_stop        # a path on THIS node
+          within: 20ms                    # this hop's share of the reaction time
+          mechanism: qos                  # qos (default) | diagnostics | application
+    paths:
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state: { emits: brake_cmd, settle: 200ms }   # plant fact; measured
+```
+
+`on: reported` names an application detector's *output* topic as the guard
+— the fault is whatever that node checks (a covariance monitor, a
+plausibility check). The contract never inspects a value; it accounts for
+the node that does.
+
+Design of record: `docs/design/fault-reaction-primitives.md` (in the
+play_launch repository).
+
 ## Static Validation
 
 The table below lists the 20 rules registered in this crate's

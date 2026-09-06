@@ -19,6 +19,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `actions` | meta |  | Action declarations, keyed by action name. |
 | `includes` | meta |  | Child manifests, either a file reference or an inline manifest. |
 | `paths` | meta |  | Scope paths: end-to-end requirements naming two topics and a budget. |
+| `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `external_topics` | meta |  | Topics produced or consumed outside the loaded manifest tree. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
 
@@ -50,6 +51,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `qos` | fact |  | QoS overrides for this endpoint. |
 | `max_transport` | requirement |  | Transport latency budget for this endpoint. |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
+| `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
 | `jitter_ms` |  | **removed** | Removed in phase 68 — see `jitter`. |
@@ -139,6 +141,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `sync` | fact |  | Fan-in synchronization policy for an input trigger with two or more endpoints. |
 | `max_jitter` | requirement |  | Permitted variation in this path's latency. |
 | `min_latency` | fact |  | Best-case latency. Exists so that `max_jitter` is falsifiable. |
+| `safe_state` | fact |  | What this path produces when it is a reaction: the endpoint it commands, and the plant's settle time. |
 | `miss` | requirement |  | What a missed deadline costs and what to do about it. |
 | `segments` |  | **removed** | Removed in phase 68 with `chains:` — a written route is a second copy of the graph. |
 
@@ -199,4 +202,37 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `exclusive` | fact |  | Groups of path names that may not run at the same time. |
+
+## `hazards.<name>`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `severity` | requirement |  | Severity label from the HARA (`ASIL_D`, `SIL_3`, …). Consumed, never computed. |
+| `description` | meta |  | What the hazardous event is. |
+| `guards` | meta |  | Topics watched for the fault. A bare name is one guard; `{ all_of: [...] }` is a redundant set that faults only when every member does. |
+| `on` | fact |  | Fault class the guards report: omission | late | loss | reported. |
+| `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
+| `reaction` | meta |  | The scope path whose route reaches the safe state. |
+
+## `hazards.<name>.guards[]`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `all_of` | meta |  | Members of a redundant guard set. |
+
+## `on_violation`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `on` | fact |  | Fault classes that trigger the reaction: omission | late | loss | reported. |
+| `reaction` | meta |  | A path on this node whose trigger includes the subscription. |
+| `within` | requirement |  | This hop's share of the fault reaction time. |
+| `mechanism` | fact |  | Where the runtime observer reads the violation: qos (default) | diagnostics | application. |
+
+## `safe_state`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `emits` | fact |  | The endpoint this reaction commands the safe state on. |
+| `settle` | fact |  | How long the plant takes to reach the safe state once commanded. Measured, not authored. |
 
