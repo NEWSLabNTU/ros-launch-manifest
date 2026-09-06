@@ -58,6 +58,13 @@ pub struct Manifest {
     /// reaction's route; the FTTI is physics and belongs to the hazard.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub hazards: BTreeMap<String, HazardDecl>,
+    /// The severity scale `hazards.<h>.severity` is drawn from, ascending.
+    /// Declared rather than baked in, so a team working to IEC 61508 or
+    /// DO-178C names its own; absent means ISO 26262's
+    /// `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`. The first entry is "no
+    /// safety requirement" and derives no criticality.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub severity_levels: Vec<String>,
 }
 
 /// A hazard: an outcome the system must react to in time (phase 71,

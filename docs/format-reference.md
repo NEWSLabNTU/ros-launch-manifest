@@ -20,6 +20,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `includes` | meta |  | Child manifests, either a file reference or an inline manifest. |
 | `paths` | meta |  | Scope paths: end-to-end requirements naming two topics and a budget. |
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
+| `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D. |
 | `external_topics` | meta |  | Topics produced or consumed outside the loaded manifest tree. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
 
@@ -35,7 +36,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `srv` | meta |  | Service server endpoints, keyed by endpoint name. |
 | `cli` | meta |  | Service client endpoints, keyed by endpoint name. |
 | `paths` | meta |  | This node's internal paths, keyed by path name. |
-| `criticality` | requirement |  | Platform-agnostic scheduling criticality hint: high | medium | low. |
+| `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72); the label stands only where no hazard reaches the node. |
 | `concurrency` | fact |  | Which of this node's paths may NOT run concurrently. Absent means all of them serialize. |
 
 ## `pub/sub/cli.<endpoint>`

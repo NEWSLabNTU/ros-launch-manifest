@@ -273,6 +273,12 @@ pub const FIELDS: &[Field] = &[
         "Hazards: what is watched, how long the system has, and which path reaches the safe state.",
     ),
     live(
+        "severity_levels",
+        Context::Manifest,
+        Kind::Meta,
+        "The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D.",
+    ),
+    live(
         "external_topics",
         Context::Manifest,
         Kind::Meta,
@@ -335,8 +341,8 @@ pub const FIELDS: &[Field] = &[
     live(
         "criticality",
         Context::Node,
-        Kind::Requirement,
-        "Platform-agnostic scheduling criticality hint: high | medium | low.",
+        Kind::Consequence,
+        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72); the label stands only where no hazard reaches the node.",
     ),
     live(
         "concurrency",
@@ -1038,13 +1044,16 @@ mod tests {
     /// by accident: a new live key of this kind is a second copy of something
     /// the graph knows, and the census has to be told about it.
     #[test]
-    fn the_only_live_consequence_is_a_topics_rate() {
+    fn the_live_consequences_are_a_topics_rate_and_a_nodes_criticality() {
         let consequences: Vec<(Context, &str)> = FIELDS
             .iter()
             .filter(|f| f.status == Status::Live && f.kind == Kind::Consequence)
             .map(|f| (f.context, f.key))
             .collect();
-        assert_eq!(consequences, vec![(Context::Topic, "rate_hz")]);
+        assert_eq!(
+            consequences,
+            vec![(Context::Node, "criticality"), (Context::Topic, "rate_hz")]
+        );
     }
 
     /// A key may appear once per context and no more. A duplicate row is how

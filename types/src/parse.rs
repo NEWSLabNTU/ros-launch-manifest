@@ -84,6 +84,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         paths: parse_paths(doc, ctx)?,
         external_topics: parse_external_topics(doc, ctx)?,
         hazards: parse_hazards(doc, ctx)?,
+        severity_levels: yaml_string_list(doc, "severity_levels", ctx)?,
     })
 }
 
