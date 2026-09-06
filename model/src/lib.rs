@@ -993,6 +993,16 @@ pub struct Qos {
     pub lifespan_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liveliness: Option<String>,
+    /// QoS deadline between consecutive messages (phase 74). Applied to the
+    /// running node as a `qos_overrides.<topic>.<entity>.deadline` parameter
+    /// where the node opted in; the live observer reads it as a detector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_ms: Option<f64>,
+    /// Liveliness lease (phase 74). Same route as `deadline_ms`. Lowered so
+    /// the runtime observer can judge a guard's silence against the lease
+    /// the contract declared rather than the topic's cadence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_duration_ms: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
