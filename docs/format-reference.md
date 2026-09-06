@@ -20,6 +20,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `includes` | meta |  | Child manifests, either a file reference or an inline manifest. |
 | `paths` | meta |  | Scope paths: end-to-end requirements naming two topics and a budget. |
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
+| `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
+| `modes` | meta |  | Operational modes: what each requires, and the ordered ladder to fall to when it is lost. |
 | `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D. |
 | `external_topics` | meta |  | Topics produced or consumed outside the loaded manifest tree. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
@@ -214,6 +216,16 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `on` | fact |  | Fault class the guards report: omission | late | loss | reported. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
 | `reaction` | meta |  | The scope path whose route reaches the safe state. |
+
+## `modes.<name>`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `description` | meta |  | What this mode is. |
+| `requires` | fact |  | Functions (or bare topics) this mode needs; it is available while every one holds. |
+| `fallback` | requirement |  | Modes to fall to, in order, when this one is lost. The last rung is the floor and must require nothing losable. |
+| `reaction` | meta |  | The scope path that reaches this mode's safe state. |
+| `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
 
 ## `hazards.<name>.guards[]`
 

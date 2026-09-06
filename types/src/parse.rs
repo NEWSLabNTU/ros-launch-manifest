@@ -85,7 +85,146 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         external_topics: parse_external_topics(doc, ctx)?,
         hazards: parse_hazards(doc, ctx)?,
         severity_levels: yaml_string_list(doc, "severity_levels", ctx)?,
+        functions: parse_functions(doc, ctx)?,
+        modes: parse_modes(doc, ctx)?,
     })
+}
+
+/// A guard group in the two shapes phase 71 established: a bare list is
+/// any-of (losing any member is the fault), `{ all_of: [...] }` is a
+/// redundant set (lost only when every member is).
+fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, ParseError> {
+    match v {
+        Yaml::String(t) => Ok(GuardGroup {
+            members: vec![t.clone()],
+            all_of: false,
+        }),
+        Yaml::Array(_) => Ok(GuardGroup {
+            members: yaml_direct_string_list(v, key, ctx)?,
+            all_of: false,
+        }),
+        Yaml::Hash(_) => {
+            reject_unknown_keys(v, ctx, Context::HazardGuard)?;
+            let members = yaml_string_list(v, "all_of", ctx)?;
+            if members.len() < 2 {
+                return Err(field_err(
+                    ctx,
+                    "all_of",
+                    "a redundant group needs at least two members — a single topic is \
+                     written bare",
+                ));
+            }
+            Ok(GuardGroup {
+                members,
+                all_of: true,
+            })
+        }
+        other => Err(type_err(
+            ctx,
+            key,
+            "a topic name, a list of them, or `{ all_of: [...] }`",
+            other,
+        )),
+    }
+}
+
+fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, GuardGroup>, ParseError> {
+    let mut out = BTreeMap::new();
+    let section = &doc["functions"];
+    if section.is_badvalue() {
+        return Ok(out);
+    }
+    let hash = section
+        .as_hash()
+        .ok_or_else(|| type_err(ctx, "functions", "a mapping", section))?;
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        let fctx = format_path(ctx, &format!("functions.{name}"));
+        out.insert(name, parse_guard_group(v, &fctx, "functions.<name>")?);
+    }
+    Ok(out)
+}
+
+fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, ParseError> {
+    let mut out = BTreeMap::new();
+    let section = &doc["modes"];
+    if section.is_badvalue() {
+        return Ok(out);
+    }
+    let hash = section
+        .as_hash()
+        .ok_or_else(|| type_err(ctx, "modes", "a mapping", section))?;
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        let mctx = format_path(ctx, &format!("modes.{name}"));
+        reject_unknown_keys(v, &mctx, Context::Mode)?;
+        let overrides = parse_mode_overrides(v, &mctx)?;
+        out.insert(
+            name,
+            ModeDecl {
+                description: yaml_string(v, "description", &mctx)?,
+                requires: parse_string_or_list(v, "requires", &mctx)?,
+                fallback: parse_string_or_list(v, "fallback", &mctx)?,
+                reaction: yaml_string(v, "reaction", &mctx)?,
+                overrides,
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// `overrides:` is a nested mapping mirroring the contract's own shape, and
+/// it is flattened to `(dotted target, value)` pairs here — the checker
+/// resolves the target when it runs the mode. Flattening at parse time
+/// keeps the type one shape rather than a partial mirror of every
+/// declaration struct.
+fn parse_mode_overrides(doc: &Yaml, ctx: &str) -> Result<Vec<ModeOverride>, ParseError> {
+    let section = &doc["overrides"];
+    if section.is_badvalue() {
+        return Ok(Vec::new());
+    }
+    let ctx = &format_path(ctx, "overrides");
+    let mut out = Vec::new();
+    fn walk(
+        v: &Yaml,
+        prefix: &str,
+        ctx: &str,
+        out: &mut Vec<ModeOverride>,
+    ) -> Result<(), ParseError> {
+        let hash = v
+            .as_hash()
+            .ok_or_else(|| type_err(ctx, prefix, "a mapping", v))?;
+        for (k, val) in hash {
+            let key = yaml_str_owned(k);
+            let target = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            match val {
+                Yaml::Hash(_) => walk(val, &target, ctx, out)?,
+                Yaml::String(s) => out.push(ModeOverride {
+                    target,
+                    value: s.clone(),
+                }),
+                Yaml::Integer(_) | Yaml::Real(_) | Yaml::Boolean(_) => out.push(ModeOverride {
+                    target,
+                    value: yaml_str_owned(val),
+                }),
+                other => {
+                    return Err(type_err(
+                        ctx,
+                        &target,
+                        "a scalar value or a nested mapping",
+                        other,
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+    walk(section, "", ctx, &mut out)?;
+    Ok(out)
 }
 
 fn parse_fault_kind(raw: &str, ctx: &str, key: &str) -> Result<FaultKind, ParseError> {
@@ -118,42 +257,16 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
         let name = yaml_str_owned(k);
         let hctx = format_path(ctx, &format!("hazards.{name}"));
         reject_unknown_keys(v, &hctx, Context::Hazard)?;
+        // A guard is a topic, an `all_of` set, or (phase 75) the NAME of a
+        // function declared at scope level — resolved by the loader, which
+        // is the layer that knows the scope's functions.
         let mut guards = Vec::new();
         match &v["guards"] {
             Yaml::BadValue | Yaml::Null => {}
             Yaml::Array(items) => {
                 for (i, item) in items.iter().enumerate() {
-                    match item {
-                        Yaml::String(t) => guards.push(GuardGroup {
-                            members: vec![t.clone()],
-                            all_of: false,
-                        }),
-                        Yaml::Hash(_) => {
-                            let gctx = format_path(&hctx, &format!("guards[{i}]"));
-                            reject_unknown_keys(item, &gctx, Context::HazardGuard)?;
-                            let members = yaml_string_list(item, "all_of", &gctx)?;
-                            if members.len() < 2 {
-                                return Err(field_err(
-                                    &gctx,
-                                    "all_of",
-                                    "a redundant group needs at least two members — a single \
-                                     topic is written bare",
-                                ));
-                            }
-                            guards.push(GuardGroup {
-                                members,
-                                all_of: true,
-                            });
-                        }
-                        other => {
-                            return Err(type_err(
-                                &hctx,
-                                &format!("guards[{i}]"),
-                                "a topic name or `{ all_of: [...] }`",
-                                other,
-                            ));
-                        }
-                    }
+                    let gctx = format_path(&hctx, &format!("guards[{i}]"));
+                    guards.push(parse_guard_group(item, &gctx, &format!("guards[{i}]"))?);
                 }
             }
             other => return Err(type_err(&hctx, "guards", "a list", other)),
@@ -1503,6 +1616,94 @@ mod tests {
         )
         .unwrap();
         assert_eq!(m.nodes["n"].paths["p"].input, vec!["a"]);
+    }
+
+    /// Phase 75: functions, modes and per-mode overrides parse, and a
+    /// hazard may guard a function by name.
+    #[test]
+    fn functions_modes_and_overrides_parse() {
+        let yaml = r#"
+version: 1
+functions:
+  pose_estimation: { all_of: [/loc/ndt, /loc/gnss] }
+  trajectory: [/planning/trajectory]
+  scan: /sensing/scan
+modes:
+  autonomous:
+    description: full autonomy
+    requires: [pose_estimation, trajectory]
+    fallback: [comfortable_stop, emergency_stop]
+  comfortable_stop:
+    requires: [pose_estimation]
+    reaction: system.comfortable_stop
+    overrides:
+      paths:
+        lidar_to_brake: { max_latency: 100ms }
+      nodes:
+        detector:
+          sub: { scan: { min_rate_hz: 10 } }
+  emergency_stop:
+    requires: []
+    reaction: system.emergency_stop
+hazards:
+  lost_pose:
+    guards: [pose_estimation]
+    ftti: 2s
+    reaction: autonomous
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        assert!(m.functions["pose_estimation"].all_of);
+        assert_eq!(m.functions["pose_estimation"].members.len(), 2);
+        assert!(!m.functions["trajectory"].all_of);
+        assert_eq!(m.functions["scan"].members, vec!["/sensing/scan"]);
+        let auto = &m.modes["autonomous"];
+        assert_eq!(auto.requires, vec!["pose_estimation", "trajectory"]);
+        assert_eq!(auto.fallback, vec!["comfortable_stop", "emergency_stop"]);
+        let cs = &m.modes["comfortable_stop"];
+        assert_eq!(cs.reaction.as_deref(), Some("system.comfortable_stop"));
+        let targets: Vec<&str> = cs.overrides.iter().map(|o| o.target.as_str()).collect();
+        assert!(
+            targets.contains(&"paths.lidar_to_brake.max_latency"),
+            "{targets:?}"
+        );
+        assert!(
+            targets.contains(&"nodes.detector.sub.scan.min_rate_hz"),
+            "{targets:?}"
+        );
+        assert_eq!(
+            cs.overrides
+                .iter()
+                .find(|o| o.target.ends_with("max_latency"))
+                .unwrap()
+                .value,
+            "100ms"
+        );
+        // A hazard guards the function by NAME; the loader resolves it.
+        assert_eq!(
+            m.hazards["lost_pose"].guards[0].members,
+            vec!["pose_estimation"]
+        );
+    }
+
+    #[test]
+    fn mode_keys_are_closed_and_overrides_reject_a_list() {
+        for (yaml, needle) in [
+            (
+                "modes:\n  m:\n    requiress: [a]\n",
+                "did you mean `requires`?",
+            ),
+            (
+                "modes:\n  m:\n    overrides: { paths: [a] }\n",
+                "a scalar value or a nested mapping",
+            ),
+            ("functions:\n  f: { all_of: [/only] }\n", "at least two"),
+            ("modes: [a, b]\n", "expected a mapping"),
+        ] {
+            let err = super::parse_manifest_str(yaml)
+                .expect_err(&format!("must not parse:\n{yaml}"))
+                .to_string();
+            assert!(err.contains(needle), "for:\n{yaml}\ngot: {err}");
+        }
     }
 
     /// Phase 71: the fault-reaction vocabulary parses, and every closed set

@@ -757,6 +757,41 @@ pub struct Contracts {
     /// and reaction times to the hazard they cover.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hazards: BTreeMap<String, HazardContract>,
+    /// Named guard groups (phase 75), keyed `"<scope id>/<name>"` with
+    /// members resolved to topic FQNs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub functions: BTreeMap<String, GuardContract>,
+    /// Operational modes (phase 75), keyed the same way. Read by the
+    /// runtime observer to derive availability, and by a second toolchain
+    /// that schedules per mode.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub modes: BTreeMap<String, ModeContract>,
+}
+
+/// One mode after merge (phase 75).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModeContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Keys into `functions` (or bare topic FQNs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+    /// Keys into `modes`, in fallback order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback: Vec<String>,
+    /// Key into `scope_paths`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+    /// `(target, value)` pairs: a requirement named by its contract path and
+    /// the value it takes in this mode.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<ModeOverrideContract>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModeOverrideContract {
+    pub target: String,
+    pub value: String,
 }
 
 /// A hazard after merge (phase 71).
@@ -839,6 +874,8 @@ impl Contracts {
             && self.topics.is_empty()
             && self.externals.is_empty()
             && self.hazards.is_empty()
+            && self.functions.is_empty()
+            && self.modes.is_empty()
     }
 }
 

@@ -75,6 +75,8 @@ pub enum Context {
     Miss,
     /// The map under `concurrency:`.
     Concurrency,
+    /// `modes.<name>` (phase 75).
+    Mode,
     /// `hazards.<name>` (phase 71).
     Hazard,
     /// One `{ all_of: [...] }` guard group.
@@ -107,6 +109,7 @@ impl Context {
             Context::Qos => "qos",
             Context::Miss => "miss",
             Context::Concurrency => "concurrency",
+            Context::Mode => "modes.<name>",
             Context::Hazard => "hazards.<name>",
             Context::HazardGuard => "hazards.<name>.guards[]",
             Context::OnViolation => "on_violation",
@@ -271,6 +274,18 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         Kind::Meta,
         "Hazards: what is watched, how long the system has, and which path reaches the safe state.",
+    ),
+    live(
+        "functions",
+        Context::Manifest,
+        Kind::Meta,
+        "Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name.",
+    ),
+    live(
+        "modes",
+        Context::Manifest,
+        Kind::Meta,
+        "Operational modes: what each requires, and the ordered ladder to fall to when it is lost.",
     ),
     live(
         "severity_levels",
@@ -874,6 +889,37 @@ pub const FIELDS: &[Field] = &[
         Context::Hazard,
         Kind::Meta,
         "The scope path whose route reaches the safe state.",
+    ),
+    // ── modes.<name> ──
+    live(
+        "description",
+        Context::Mode,
+        Kind::Meta,
+        "What this mode is.",
+    ),
+    live(
+        "requires",
+        Context::Mode,
+        Kind::Fact,
+        "Functions (or bare topics) this mode needs; it is available while every one holds.",
+    ),
+    live(
+        "fallback",
+        Context::Mode,
+        Kind::Requirement,
+        "Modes to fall to, in order, when this one is lost. The last rung is the floor and must require nothing losable.",
+    ),
+    live(
+        "reaction",
+        Context::Mode,
+        Kind::Meta,
+        "The scope path that reaches this mode's safe state.",
+    ),
+    live(
+        "overrides",
+        Context::Mode,
+        Kind::Requirement,
+        "Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere.",
     ),
     // ── hazards.<name>.guards[] ──
     live(

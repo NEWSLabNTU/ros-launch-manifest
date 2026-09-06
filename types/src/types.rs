@@ -65,6 +65,53 @@ pub struct Manifest {
     /// safety requirement" and derives no criticality.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub severity_levels: Vec<String>,
+    /// Named guard groups (phase 75). A function is what a set of topics
+    /// together provide; a mode requires functions, and a hazard may guard
+    /// one by name instead of repeating its members.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub functions: BTreeMap<String, GuardGroup>,
+    /// Operational modes (phase 75): what each requires, and the ordered
+    /// ladder to fall to when it is lost.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub modes: BTreeMap<String, ModeDecl>,
+}
+
+/// One operational mode (phase 75, `docs/design/operational-modes.md`).
+///
+/// A mode is available while every function it `requires` holds. Losing one
+/// walks `fallback` in order and takes the first rung that is still
+/// available; the rung's `reaction` is the scope path reaching its safe
+/// state. Autoware's diagnostic graph is exactly this shape — `and`/`or`
+/// over diag units, modes over functions — and `mrm_handler` walks the
+/// ladder at runtime.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModeDecl {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Function (or bare topic) names this mode needs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+    /// Modes to fall to, in order, when this one is lost.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fallback: Vec<String>,
+    /// The scope path that reaches this mode's safe state, when it is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+    /// Requirement values that apply IN THIS MODE, pinned over the scalar
+    /// declared elsewhere (`contract-axes.md` §3.3's mitigation cashed in:
+    /// no requirement becomes a map).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<ModeOverride>,
+}
+
+/// One `modes.<m>.overrides` entry: a requirement named by its contract
+/// path, and the value it takes in this mode.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ModeOverride {
+    /// `paths.<name>.max_latency`, `nodes.<n>.sub.<e>.min_rate_hz`, …
+    pub target: String,
+    /// The value, as written. Typed at use against the target's own field.
+    pub value: String,
 }
 
 /// A hazard: an outcome the system must react to in time (phase 71,
