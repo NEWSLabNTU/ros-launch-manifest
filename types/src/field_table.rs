@@ -32,8 +32,8 @@
 ///
 /// Contexts whose keys are chosen by the *author* — `nodes:`, `topics:`,
 /// `services:`, `actions:`, `includes:`, `paths:`, `args:`,
-/// `external_topics:`, and the endpoint maps under `pub:`/`sub:`/`srv:`/
-/// `cli:` — are deliberately absent. An allowlist must never apply to them,
+/// `external_topics:`, the endpoint maps under `pub:`/`sub:`/`srv:`/
+/// `cli:`, and the parameter names under `params:` — are deliberately absent. An allowlist must never apply to them,
 /// and their absence here is the mechanism: there is no way to ask this table
 /// for the legal keys of a map whose keys are node names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -75,6 +75,10 @@ pub enum Context {
     Miss,
     /// The map under `concurrency:`.
     Concurrency,
+    /// A value under a node's `params:` map. The map's own keys are
+    /// parameter names, chosen by the author; this is the `{ type: ... }`
+    /// under each.
+    Param,
     /// `modes.<name>` (phase 75).
     Mode,
     /// `hazards.<name>` (phase 71).
@@ -109,6 +113,7 @@ impl Context {
             Context::Qos => "qos",
             Context::Miss => "miss",
             Context::Concurrency => "concurrency",
+            Context::Param => "params.<name>",
             Context::Mode => "modes.<name>",
             Context::Hazard => "hazards.<name>",
             Context::HazardGuard => "hazards.<name>.guards[]",
@@ -364,6 +369,12 @@ pub const FIELDS: &[Field] = &[
         Context::Node,
         Kind::Fact,
         "Which of this node's paths may NOT run concurrently. Absent means all of them serialize.",
+    ),
+    live(
+        "params",
+        Context::Node,
+        Kind::Fact,
+        "Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one.",
     ),
     // ── pub/sub/cli.<endpoint> ──
     live(
@@ -853,6 +864,13 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Groups of path names that may not run at the same time.",
     ),
+    // -- params.<name> --
+    live(
+        "type",
+        Context::Param,
+        Kind::Fact,
+        "ROS 2 parameter type: bool | integer | double | string | byte_array | bool_array | integer_array | double_array | string_array. Required; an unknown type is an error.",
+    ),
     // ── hazards.<name> ──
     live(
         "severity",
@@ -984,8 +1002,9 @@ pub fn render_markdown() -> String {
          Every key below is accepted in the context that heads its section, and \
          **a key that is not listed is a parse error**. Contexts whose keys are \
          chosen by the author — `nodes:`, `topics:`, `services:`, `actions:`, \
-         `includes:`, `paths:`, `args:`, `external_topics:`, and the endpoint \
-         maps under `pub:`/`sub:`/`srv:`/`cli:` — have no section here, because \
+         `includes:`, `paths:`, `args:`, `external_topics:`, the endpoint \
+         maps under `pub:`/`sub:`/`srv:`/`cli:`, and the parameter names under \
+         a node's `params:` — have no section here, because \
          no allowlist applies to them.\n\n\
          The **kind** column is the rule of `contract-primitives.md` as data: a \
          *fact* is what the code does, a *requirement* is what it must achieve, \

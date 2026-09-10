@@ -548,6 +548,19 @@ impl NodeInstance {
     }
 }
 
+/// The values ONE parameter file gives the node `fqn`, with the section
+/// matching and precedence [`NodeInstance::resolved_params`] applies.
+///
+/// Public so a consumer can attribute a value to the source that set it --
+/// the folded map `resolved_params` returns has lost that, and a message
+/// about a bad value has to say where the value came from.
+pub fn param_file_values(content: &str, fqn: &str) -> BTreeMap<String, ParamValue> {
+    let bare = fqn.rsplit('/').next().unwrap_or(fqn);
+    let mut out = BTreeMap::new();
+    merge_param_file(content, fqn, bare, &mut out);
+    out
+}
+
 /// Merge one param-file YAML's matching sections into `out`.
 ///
 /// Section precedence inside a file is by SPECIFICITY, not by textual order:
@@ -744,6 +757,18 @@ pub struct Contracts {
     /// answer.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_concurrency: BTreeMap<String, ros_launch_manifest_sched::ConcurrencyContract>,
+    /// The parameters each node declares (contract `nodes.<n>.params`),
+    /// keyed by node FQN, then by parameter name. Names and ROS 2 types
+    /// only: a capacity for a string or an array is a board fact, and the
+    /// model carries none.
+    ///
+    /// **Presence in this map is the declaration.** A node with no entry
+    /// declared nothing, and neither its launch values nor its code are
+    /// checked against a declaration -- today's behaviour. Carried so a
+    /// second toolchain can size its parameter store from what is declared
+    /// instead of from built-in worst cases.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_params: BTreeMap<String, BTreeMap<String, ParamContract>>,
     /// Per-topic channel contracts (rate, transport, drops, QoS).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<String, TopicContract>,
@@ -876,6 +901,142 @@ impl Contracts {
             && self.hazards.is_empty()
             && self.functions.is_empty()
             && self.modes.is_empty()
+            && self.node_params.is_empty()
+    }
+}
+
+/// One declared parameter after merge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamContract {
+    #[serde(rename = "type")]
+    pub ty: ParamType,
+}
+
+/// The ROS 2 parameter types. Mirrors the contract crate's closed set;
+/// carried here so a second toolchain can read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamType {
+    Bool,
+    Integer,
+    Double,
+    String,
+    ByteArray,
+    BoolArray,
+    IntegerArray,
+    DoubleArray,
+    StringArray,
+}
+
+impl ParamType {
+    /// The contract spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ParamType::Bool => "bool",
+            ParamType::Integer => "integer",
+            ParamType::Double => "double",
+            ParamType::String => "string",
+            ParamType::ByteArray => "byte_array",
+            ParamType::BoolArray => "bool_array",
+            ParamType::IntegerArray => "integer_array",
+            ParamType::DoubleArray => "double_array",
+            ParamType::StringArray => "string_array",
+        }
+    }
+
+    pub fn is_array(self) -> bool {
+        matches!(
+            self,
+            ParamType::ByteArray
+                | ParamType::BoolArray
+                | ParamType::IntegerArray
+                | ParamType::DoubleArray
+                | ParamType::StringArray
+        )
+    }
+
+    /// Does a launch value parse as this type?
+    ///
+    /// As strict as `rclcpp` is when it applies a parameter override to a
+    /// typed declaration: an integer is not a double (`5` must be written
+    /// `5.0`), and `10` is not a string. Array elements reach the model as
+    /// text ([`ParamValue::StrList`]), so each is re-read here; an inline
+    /// launch value written as a flow sequence (`"[1, 2]"`) is read the way
+    /// `launch_ros` reads it, as YAML. An empty list is every array type.
+    ///
+    /// `Err` says what was found, for a message that also names the node,
+    /// the parameter and the source.
+    pub fn check(self, value: &ParamValue) -> Result<(), String> {
+        let found = || describe_value(value);
+        let ok = match (self, value) {
+            (ParamType::Bool, ParamValue::Bool(_))
+            | (ParamType::Integer, ParamValue::Int(_))
+            | (ParamType::Double, ParamValue::Float(_))
+            | (ParamType::String, ParamValue::Str(_)) => true,
+            (ParamType::Double, ParamValue::Int(i)) => {
+                return Err(format!(
+                    "{}; a double is written with a decimal point ({i}.0)",
+                    found()
+                ));
+            }
+            (t, ParamValue::StrList(items)) if t.is_array() => {
+                items.iter().all(|e| t.accepts_element(e))
+            }
+            (t, ParamValue::Str(s)) if t.is_array() => match flow_sequence(s) {
+                Some(items) => items.iter().all(|e| t.accepts_element(e)),
+                None => false,
+            },
+            _ => false,
+        };
+        if ok { Ok(()) } else { Err(found()) }
+    }
+
+    fn accepts_element(self, e: &str) -> bool {
+        match self {
+            ParamType::ByteArray => e.parse::<u8>().is_ok(),
+            ParamType::BoolArray => e == "true" || e == "false",
+            ParamType::IntegerArray => e.parse::<i64>().is_ok(),
+            // An integer element is not a double, for the same reason a
+            // scalar is not.
+            ParamType::DoubleArray => e.parse::<i64>().is_err() && e.parse::<f64>().is_ok(),
+            ParamType::StringArray => true,
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for ParamType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+fn describe_value(v: &ParamValue) -> String {
+    match v {
+        ParamValue::Bool(b) => format!("got a bool ({b})"),
+        ParamValue::Int(i) => format!("got an integer ({i})"),
+        ParamValue::Float(f) => format!("got a double ({f:?})"),
+        ParamValue::Str(s) => format!("got a string ({s:?})"),
+        ParamValue::StrList(l) => format!("got a list ([{}])", l.join(", ")),
+    }
+}
+
+/// `"[1, 2]"` as `launch_ros` would read it; `None` when it is not one.
+fn flow_sequence(s: &str) -> Option<Vec<String>> {
+    let t = s.trim();
+    if !(t.starts_with('[') && t.ends_with(']')) {
+        return None;
+    }
+    let seq: Vec<serde_yaml_ng::Value> = serde_yaml_ng::from_str(t).ok()?;
+    seq.iter().map(yaml_scalar_text).collect()
+}
+
+fn yaml_scalar_text(e: &serde_yaml_ng::Value) -> Option<String> {
+    match e {
+        serde_yaml_ng::Value::String(s) => Some(s.clone()),
+        serde_yaml_ng::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml_ng::Value::Number(n) => Some(n.to_string()),
+        _ => None,
     }
 }
 

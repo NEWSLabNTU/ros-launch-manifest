@@ -2,7 +2,7 @@
 
 **Generated from `types/src/field_table.rs`. Do not edit by hand** — run `UPDATE_FORMAT_REFERENCE=1 cargo test -p ros-launch-manifest-types` after changing the table.
 
-Every key below is accepted in the context that heads its section, and **a key that is not listed is a parse error**. Contexts whose keys are chosen by the author — `nodes:`, `topics:`, `services:`, `actions:`, `includes:`, `paths:`, `args:`, `external_topics:`, and the endpoint maps under `pub:`/`sub:`/`srv:`/`cli:` — have no section here, because no allowlist applies to them.
+Every key below is accepted in the context that heads its section, and **a key that is not listed is a parse error**. Contexts whose keys are chosen by the author — `nodes:`, `topics:`, `services:`, `actions:`, `includes:`, `paths:`, `args:`, `external_topics:`, the endpoint maps under `pub:`/`sub:`/`srv:`/`cli:`, and the parameter names under a node's `params:` — have no section here, because no allowlist applies to them.
 
 The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is what the code does, a *requirement* is what it must achieve, *meta* is structure, and a **consequence** is computable from the facts — a second copy the graph already knows, kept only where the graph has no answer (an external source). `scripts/derivation_census.py` counts how often each consequence agrees.
 
@@ -40,6 +40,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `paths` | meta |  | This node's internal paths, keyed by path name. |
 | `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72); the label stands only where no hazard reaches the node. |
 | `concurrency` | fact |  | Which of this node's paths may NOT run concurrently. Absent means all of them serialize. |
+| `params` | fact |  | Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. |
 
 ## `pub/sub/cli.<endpoint>`
 
@@ -205,6 +206,12 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `exclusive` | fact |  | Groups of path names that may not run at the same time. |
+
+## `params.<name>`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `type` | fact |  | ROS 2 parameter type: bool | integer | double | string | byte_array | bool_array | integer_array | double_array | string_array. Required; an unknown type is an error. |
 
 ## `hazards.<name>`
 

@@ -252,6 +252,91 @@ pub struct NodeDecl {
     /// concurrency than the safe answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<ConcurrencyDecl>,
+    /// The parameters this node declares, keyed by parameter name.
+    ///
+    /// Names and ROS 2 types only. The contract describes the node, and a
+    /// capacity for a string or an array describes the board it is built
+    /// for, so size bounds are deliberately NOT here. A map of
+    /// `{ type: ... }` rather than a bare type so later fields (`read_only`,
+    /// a description) are additive.
+    ///
+    /// Empty means "not declared", not "declares nothing": a node without a
+    /// `params:` section keeps today's behaviour everywhere.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, ParamDecl>,
+}
+
+/// One `nodes.<n>.params.<name>` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParamDecl {
+    /// The ROS 2 parameter type. Required: a declaration without one says
+    /// nothing a consumer could size or check.
+    #[serde(rename = "type")]
+    pub ty: ParamType,
+}
+
+/// The ROS 2 parameter types (`rcl_interfaces/msg/ParameterType`, less
+/// `NOT_SET`). A closed set: an unknown spelling is a parse error, never a
+/// skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamType {
+    Bool,
+    Integer,
+    Double,
+    String,
+    ByteArray,
+    BoolArray,
+    IntegerArray,
+    DoubleArray,
+    StringArray,
+}
+
+impl ParamType {
+    /// Every type, in `rcl_interfaces` order.
+    pub const ALL: [ParamType; 9] = [
+        ParamType::Bool,
+        ParamType::Integer,
+        ParamType::Double,
+        ParamType::String,
+        ParamType::ByteArray,
+        ParamType::BoolArray,
+        ParamType::IntegerArray,
+        ParamType::DoubleArray,
+        ParamType::StringArray,
+    ];
+
+    /// The contract spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ParamType::Bool => "bool",
+            ParamType::Integer => "integer",
+            ParamType::Double => "double",
+            ParamType::String => "string",
+            ParamType::ByteArray => "byte_array",
+            ParamType::BoolArray => "bool_array",
+            ParamType::IntegerArray => "integer_array",
+            ParamType::DoubleArray => "double_array",
+            ParamType::StringArray => "string_array",
+        }
+    }
+}
+
+impl std::fmt::Display for ParamType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ParamType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ParamType::ALL
+            .into_iter()
+            .find(|t| t.as_str() == s)
+            .ok_or(())
+    }
 }
 
 /// Publisher/subscriber endpoint properties (all optional).

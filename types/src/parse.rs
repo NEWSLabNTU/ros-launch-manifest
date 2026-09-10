@@ -388,7 +388,88 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
         paths: parse_paths(yaml, ctx)?,
         criticality: parse_criticality(yaml, ctx)?,
         concurrency: parse_concurrency(yaml, ctx)?,
+        params: parse_params(yaml, ctx)?,
     })
+}
+
+/// `params:` -- the parameters a node declares: a map of parameter name to
+/// `{ type: <ROS 2 type> }`.
+///
+/// The names are the author's, so only the value under each is held to the
+/// grammar table ([`Context::Param`]). Every failure is an error rather than
+/// a skipped entry: a declaration that parses as absent sizes and checks
+/// nothing, in silence -- the defect phases 69 and 70 closed for every other
+/// key.
+fn parse_params(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ParamDecl>, ParseError> {
+    let mut out = BTreeMap::new();
+    let hash = match &doc["params"] {
+        Yaml::BadValue => return Ok(out),
+        Yaml::Hash(h) => h,
+        other => {
+            return Err(type_err(
+                ctx,
+                "params",
+                "a mapping of parameter name to `{ type: ... }`",
+                other,
+            ));
+        }
+    };
+    let accepted = ParamType::ALL.map(ParamType::as_str).join(", ");
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        if name.is_empty() {
+            return Err(field_err(
+                ctx,
+                "params",
+                "a parameter name must be a non-empty scalar",
+            ));
+        }
+        let key = format!("params.{name}");
+        let path = format_path(ctx, &key);
+        match v {
+            Yaml::Hash(_) => {}
+            Yaml::Null | Yaml::BadValue => {
+                return Err(field_err(
+                    &path,
+                    "type",
+                    &format!("missing -- a declared parameter needs `{{ type: <{accepted}> }}`"),
+                ));
+            }
+            Yaml::String(s) if s.parse::<ParamType>().is_ok() => {
+                return Err(field_err(
+                    ctx,
+                    &key,
+                    &format!(
+                        "expected a mapping -- write `{{ type: {s} }}`. The map form is what \
+                         leaves room for later fields"
+                    ),
+                ));
+            }
+            other => {
+                return Err(type_err(ctx, &key, "a mapping `{ type: ... }`", other));
+            }
+        }
+        reject_unknown_keys(v, &path, Context::Param)?;
+        let Some(raw) = yaml_string(v, "type", &path)? else {
+            return Err(field_err(
+                &path,
+                "type",
+                &format!("missing -- a declared parameter needs `{{ type: <{accepted}> }}`"),
+            ));
+        };
+        let ty = raw.parse::<ParamType>().map_err(|()| {
+            field_err(
+                &path,
+                "type",
+                &format!(
+                    "`{raw}` is not a ROS 2 parameter type -- accepted: {accepted}. An unknown \
+                     type is never skipped: a declaration without a type sizes and checks nothing"
+                ),
+            )
+        })?;
+        out.insert(name, ParamDecl { ty });
+    }
+    Ok(out)
 }
 
 /// Parse endpoints: either a list `[a, b]` or a map `{a: {min_rate_hz: 10}, b: null}`.
