@@ -374,7 +374,7 @@ pub const FIELDS: &[Field] = &[
         "params",
         Context::Node,
         Kind::Fact,
-        "Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one.",
+        "Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. `params: {}` means the node declares no parameters; a missing `params:` means not stated. The two stay distinct in the model: `{}` becomes an empty `contracts.node_params` entry, a missing key none.",
     ),
     // ── pub/sub/cli.<endpoint> ──
     live(

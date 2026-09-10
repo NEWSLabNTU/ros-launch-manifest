@@ -1,10 +1,19 @@
 //! `nodes.<n>.params` -- the parameters a node declares: names and ROS 2
 //! types, nothing else.
 
-use ros_launch_manifest_types::{ParamDecl, ParamType, parse_manifest_str};
+use ros_launch_manifest_types::{Manifest, ParamDecl, ParamType, parse_manifest_str};
+use std::collections::BTreeMap;
 
 fn one_param(body: &str) -> String {
     format!("nodes:\n  n:\n    params:\n      p: {body}\n")
+}
+
+/// The declarations of node `n`, asserting it stated some.
+fn declared<'a>(m: &'a Manifest, n: &str) -> &'a BTreeMap<String, ParamDecl> {
+    m.nodes[n]
+        .params
+        .as_ref()
+        .unwrap_or_else(|| panic!("node `{n}` must state `params:`"))
 }
 
 fn parse_err(yaml: &str) -> String {
@@ -18,7 +27,7 @@ fn every_ros2_parameter_type_parses() {
     for ty in ParamType::ALL {
         let m = parse_manifest_str(&one_param(&format!("{{ type: {ty} }}")))
             .unwrap_or_else(|e| panic!("`{ty}` must parse: {e}"));
-        assert_eq!(m.nodes["n"].params["p"], ParamDecl { ty }, "{ty}");
+        assert_eq!(declared(&m, "n")["p"], ParamDecl { ty }, "{ty}");
     }
     let spelled: Vec<&str> = ParamType::ALL.map(ParamType::as_str).to_vec();
     assert_eq!(
@@ -50,7 +59,7 @@ nodes:
       turning_hazard_on.emergency: { type: bool }
 "#;
     let m = parse_manifest_str(yaml).unwrap();
-    let p = &m.nodes["mrm_handler"].params;
+    let p = declared(&m, "mrm_handler");
     assert_eq!(p.len(), 4);
     assert_eq!(p["update_rate"].ty, ParamType::Integer);
     assert_eq!(
@@ -117,13 +126,13 @@ fn params_must_be_a_mapping() {
     assert!(err.contains("a mapping of parameter name"), "{err}");
 }
 
-/// A contract without `params:` parses exactly as before: an empty map, and
+/// A contract without `params:` parses exactly as before: not stated, and
 /// nothing new in what it serializes to.
 #[test]
 fn an_absent_section_changes_nothing() {
     let yaml = "nodes:\n  n:\n    pub: [out]\n    lifecycle: true\n";
     let m = parse_manifest_str(yaml).unwrap();
-    assert!(m.nodes["n"].params.is_empty());
+    assert_eq!(m.nodes["n"].params, None);
     let json = serde_json::to_value(&m).unwrap();
     assert_eq!(
         json["nodes"]["n"],
@@ -157,5 +166,69 @@ nodes:
     );
     let back = parse_manifest_str(&serde_json::to_string(&m).unwrap()).unwrap();
     assert_eq!(back.nodes["n"].params, m.nodes["n"].params);
-    assert_eq!(back.nodes["n"].params.len(), 9);
+    assert_eq!(declared(&back, "n").len(), 9);
+}
+
+/// The three states of `params:` (phase 446 F1): absent is "not stated",
+/// `{}` is "declares no parameters", and a name is a declaration. The first
+/// two used to parse to the same empty map, so a node could not say it
+/// declares nothing.
+#[test]
+fn absent_empty_and_declared_are_three_states() {
+    let yaml = r#"
+nodes:
+  silent: { pub: [out] }
+  none:
+    params: {}
+  one:
+    params:
+      rate: { type: integer }
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    assert_eq!(m.nodes["silent"].params, None);
+    assert_eq!(m.nodes["none"].params, Some(BTreeMap::new()));
+    assert_eq!(
+        m.nodes["one"].params,
+        Some(BTreeMap::from([(
+            "rate".to_string(),
+            ParamDecl {
+                ty: ParamType::Integer
+            }
+        )]))
+    );
+}
+
+/// Each state serializes as itself -- absent emits no key, `{}` emits `{}` --
+/// and parses back to the same state.
+#[test]
+fn every_state_round_trips() {
+    let yaml = r#"
+nodes:
+  silent: { pub: [out] }
+  none:
+    params: {}
+  one:
+    params:
+      rate: { type: integer }
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let json = serde_json::to_value(&m).unwrap();
+    assert!(json["nodes"]["silent"].get("params").is_none(), "{json}");
+    assert_eq!(json["nodes"]["none"]["params"], serde_json::json!({}));
+    assert_eq!(
+        json["nodes"]["one"]["params"],
+        serde_json::json!({"rate": {"type": "integer"}})
+    );
+    let back = parse_manifest_str(&serde_json::to_string(&m).unwrap()).unwrap();
+    for n in ["silent", "none", "one"] {
+        assert_eq!(back.nodes[n].params, m.nodes[n].params, "{n}");
+    }
+}
+
+/// `params: ~` is neither state: it is not a mapping, so it is refused
+/// rather than read as either "not stated" or "declares none".
+#[test]
+fn a_null_params_is_refused() {
+    let err = parse_err("nodes:\n  n:\n    params: ~\n");
+    assert!(err.contains("nodes.n.params"), "{err}");
 }

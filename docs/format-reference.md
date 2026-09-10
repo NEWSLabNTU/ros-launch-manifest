@@ -40,7 +40,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `paths` | meta |  | This node's internal paths, keyed by path name. |
 | `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72); the label stands only where no hazard reaches the node. |
 | `concurrency` | fact |  | Which of this node's paths may NOT run concurrently. Absent means all of them serialize. |
-| `params` | fact |  | Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. |
+| `params` | fact |  | Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. `params: {}` means the node declares no parameters; a missing `params:` means not stated. The two stay distinct in the model: `{}` becomes an empty `contracts.node_params` entry, a missing key none. |
 
 ## `pub/sub/cli.<endpoint>`
 

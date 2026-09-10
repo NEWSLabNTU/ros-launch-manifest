@@ -260,10 +260,18 @@ pub struct NodeDecl {
     /// `{ type: ... }` rather than a bare type so later fields (`read_only`,
     /// a description) are additive.
     ///
-    /// Empty means "not declared", not "declares nothing": a node without a
-    /// `params:` section keeps today's behaviour everywhere.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub params: BTreeMap<String, ParamDecl>,
+    /// Three states, and they stay distinct all the way to the model:
+    ///
+    /// - `None` -- no `params:` key: "not stated". The node keeps today's
+    ///   behaviour everywhere, and a consumer that needs every node's
+    ///   declarations (a store sized from them) must refuse, not guess.
+    /// - `Some(empty)` -- `params: {}`: "declares no parameters". A statement,
+    ///   so a launch value addressed to this node is undeclared.
+    /// - `Some(names)` -- the parameters it declares.
+    ///
+    /// Serialized only when `Some`, so `{}` round trips as `{}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<BTreeMap<String, ParamDecl>>,
 }
 
 /// One `nodes.<n>.params.<name>` entry.

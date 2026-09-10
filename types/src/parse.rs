@@ -400,10 +400,15 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
 /// a skipped entry: a declaration that parses as absent sizes and checks
 /// nothing, in silence -- the defect phases 69 and 70 closed for every other
 /// key.
-fn parse_params(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ParamDecl>, ParseError> {
+///
+/// `None` when the key is absent ("not stated"), `Some(empty)` for
+/// `params: {}` ("declares no parameters"). The two are different statements
+/// and a consumer that sizes a store from every node's declarations tells
+/// them apart, so they must not collapse here.
+fn parse_params(doc: &Yaml, ctx: &str) -> Result<Option<BTreeMap<String, ParamDecl>>, ParseError> {
     let mut out = BTreeMap::new();
     let hash = match &doc["params"] {
-        Yaml::BadValue => return Ok(out),
+        Yaml::BadValue => return Ok(None),
         Yaml::Hash(h) => h,
         other => {
             return Err(type_err(
@@ -469,7 +474,7 @@ fn parse_params(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ParamDecl>, Pa
         })?;
         out.insert(name, ParamDecl { ty });
     }
-    Ok(out)
+    Ok(Some(out))
 }
 
 /// Parse endpoints: either a list `[a, b]` or a map `{a: {min_rate_hz: 10}, b: null}`.

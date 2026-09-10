@@ -42,6 +42,37 @@ fn node_params_round_trip_through_yaml() {
     );
 }
 
+/// A node that declares no parameters (`params: {}`, phase 446 F1) is an
+/// empty inner map, and it survives the round trip as `/<fqn>: {}`: only the
+/// outer map is skipped when empty.
+#[test]
+fn an_empty_declaration_round_trips() {
+    let mut m = model_with_params();
+    m.contracts
+        .node_params
+        .insert("/system/silent".to_string(), BTreeMap::new());
+    let yaml = m.to_yaml_string().unwrap();
+    assert!(yaml.contains("/system/silent: {}"), "{yaml}");
+    let back = SystemModel::from_yaml_str(&yaml).unwrap();
+    assert_eq!(back, m);
+    assert_eq!(
+        back.contracts.node_params.get("/system/silent"),
+        Some(&BTreeMap::new())
+    );
+
+    let mut only_empty = SystemModel::default();
+    only_empty
+        .contracts
+        .node_params
+        .insert("/n".to_string(), BTreeMap::new());
+    assert!(
+        !only_empty.contracts.is_empty(),
+        "a model whose one declaration is empty must still serialize it"
+    );
+    let back = SystemModel::from_yaml_str(&only_empty.to_yaml_string().unwrap()).unwrap();
+    assert_eq!(back.contracts.node_params.get("/n"), Some(&BTreeMap::new()));
+}
+
 #[test]
 fn a_model_without_declarations_emits_no_key() {
     let yaml = SystemModel::default().to_yaml_string().unwrap();
