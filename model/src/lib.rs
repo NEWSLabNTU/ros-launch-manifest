@@ -410,6 +410,31 @@ pub struct NodeInstance {
     /// composable nodes carry `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_container: bool,
+
+    // -- Launch `<timer>` start delay. Additive: a model written before this
+    // key existed parses with `start_delay_secs: None`, and a consumer that
+    // ignores it spawns exactly as it did before — nano-ros is such a
+    // consumer, since (per the Phase 46.1b note above) it has no argv/
+    // process model to delay in the first place. -------------------------
+    /// Delay in seconds before this instance is spawned for the FIRST time,
+    /// from a launch `<timer period="…">` (`TimerAction`) enclosing it.
+    /// Distinct from [`Self::respawn_delay`], which is the wait before a
+    /// RE-spawn once the process has already run and exited: an instance may
+    /// carry either, both, or neither.
+    ///
+    /// Nested timers accumulate — a `<timer period="3.0">` around a
+    /// `<timer period="8.0">` gives `11.0`, matching ROS 2, where the inner
+    /// timer starts counting only when the outer one fires.
+    ///
+    /// `None` = no enclosing timer, start immediately; the undelayed case is
+    /// never written as `0.0`.
+    ///
+    /// Carried for composable nodes too, where the delayed event is the
+    /// `LoadNode` request rather than a process spawn — the producer knows a
+    /// timer enclosed one, and a consumer that cannot defer a load should say
+    /// so rather than be unable to tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// One `<remap from= to=/>` pair. Named struct (not a bare tuple) so the
@@ -1608,13 +1633,53 @@ exec: detector_node
         assert!(node.ros_args.is_empty());
         assert_eq!(node.respawn, None);
         assert_eq!(node.respawn_delay, None);
+        assert_eq!(node.start_delay_secs, None);
         assert!(node.env.is_empty());
 
         let re_emitted = serde_yaml_ng::to_string(&node).unwrap();
         assert!(!re_emitted.contains("remaps:"), "{re_emitted}");
         assert!(!re_emitted.contains("ros_args:"), "{re_emitted}");
         assert!(!re_emitted.contains("respawn:"), "{re_emitted}");
+        assert!(!re_emitted.contains("start_delay_secs:"), "{re_emitted}");
         assert!(!re_emitted.contains("env:"), "{re_emitted}");
+    }
+
+    /// The `<timer>` start delay round-trips, and is INDEPENDENT of
+    /// `respawn_delay` — the two are different waits (before the first spawn
+    /// vs. between a death and the next one), and the only reason to test
+    /// them together is that their names invite conflating them.
+    #[test]
+    fn node_instance_start_delay_roundtrips_beside_respawn_delay() {
+        let node = NodeInstance {
+            scope: "/nav".into(),
+            pkg: Some("nav2_bringup".into()),
+            exec: Some("bt_navigator".into()),
+            // an outer 3s timer around an inner 3s one, ROS-style.
+            start_delay_secs: Some(6.0),
+            respawn: Some(true),
+            respawn_delay: Some(2.5),
+            ..Default::default()
+        };
+
+        let yaml = serde_yaml_ng::to_string(&node).unwrap();
+        assert!(yaml.contains("start_delay_secs: 6.0"), "{yaml}");
+        assert!(yaml.contains("respawn_delay: 2.5"), "{yaml}");
+
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(node, reparsed);
+
+        // Either one alone is representable.
+        let delayed_only = NodeInstance {
+            start_delay_secs: Some(20.0),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&delayed_only).unwrap();
+        assert!(yaml.contains("start_delay_secs: 20.0"), "{yaml}");
+        assert!(!yaml.contains("respawn"), "{yaml}");
+        assert_eq!(
+            serde_yaml_ng::from_str::<NodeInstance>(&yaml).unwrap(),
+            delayed_only
+        );
     }
 
     /// Phase 46.3a — the six spawn-completeness gap fields (`args`,

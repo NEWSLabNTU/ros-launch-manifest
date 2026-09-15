@@ -78,6 +78,9 @@ fn structure_layer_resolved_shapes() {
     );
     assert_eq!(det.respawn, Some(true));
     assert_eq!(det.respawn_delay, Some(2.5));
+    // A `<timer>` start delay is independent of the respawn delay: this node
+    // carries both, and they mean different waits.
+    assert_eq!(det.start_delay_secs, Some(3.0));
     assert_eq!(
         det.env,
         vec![EnvVar {
@@ -117,6 +120,7 @@ fn structure_layer_resolved_shapes() {
     assert!(tracker.ros_args.is_empty());
     assert_eq!(tracker.respawn, None);
     assert_eq!(tracker.respawn_delay, None);
+    assert_eq!(tracker.start_delay_secs, None);
     assert!(tracker.env.is_empty());
     // wiring uses "<node FQN>/<endpoint>" refs
     assert_eq!(
@@ -248,6 +252,7 @@ exec: detector_node
     assert!(node.ros_args.is_empty());
     assert_eq!(node.respawn, None);
     assert_eq!(node.respawn_delay, None);
+    assert_eq!(node.start_delay_secs, None);
     assert!(node.env.is_empty());
 
     // and re-emitting it doesn't invent any of the new keys (no noise for
@@ -256,6 +261,7 @@ exec: detector_node
     assert!(!re_emitted.contains("remaps:"), "{re_emitted}");
     assert!(!re_emitted.contains("ros_args:"), "{re_emitted}");
     assert!(!re_emitted.contains("respawn:"), "{re_emitted}");
+    assert!(!re_emitted.contains("start_delay_secs:"), "{re_emitted}");
     assert!(!re_emitted.contains("env:"), "{re_emitted}");
 }
 

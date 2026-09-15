@@ -36,6 +36,7 @@ structure:
         - detector_node:=debug
       respawn: true
       respawn_delay: 2.5
+      start_delay_secs: 3.0
       env:
         - name: CUDA_VISIBLE_DEVICES
           value: '0'
