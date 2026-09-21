@@ -788,9 +788,102 @@ Cross-references: play_launch `docs/roadmap/phase-78-one-derivation-two-consumer
 (producer side and the transition gate); nano-ros
 `docs/roadmap/phase-457-consume-the-shared-derivation.md` (consumer side).
 
+### Parallel plan
+
+Four units, each a branch and a PR, so that separate sessions can take one
+each. This repository has no claim tool (nano-ros has `just claim
+phase-NNN-Wk`): the claim is the branch named below, pushed with an early
+draft PR, so a second session sees it before it starts. The `Status:` line
+under a unit is edited in the PR that lands it. Consumers: play_launch
+`docs/roadmap/phase-78-one-derivation-two-consumers.md` (W1 pins the tag R4
+cuts) and nano-ros `docs/roadmap/phase-457-consume-the-shared-derivation.md`
+(its W1 waits on play_launch's 0.12.0).
+
+| unit | depends on | owns | gate | starts now? | branch |
+|---|---|---|---|---|---|
+| R1 model fields | none | `model/src/lib.rs` (`PathContract` :1129, `SubContract` :1093, `Contracts` :749), `model/tests/golden/perception.system_model.yaml`, `model/tests/golden_roundtrip.rs` | `cargo test -p ros-launch-manifest-model`; `UPDATE_FORMAT_REFERENCE=1 cargo test -p ros-launch-manifest-types` only if `types/src/field_table.rs` is touched | yes | `phase-52-R1` |
+| R2 the `derive` crate | none to start; rebases onto R1 | new `derive/` (`derive/Cargo.toml`, `derive/src/lib.rs`), the `members` line of `Cargo.toml` | `cargo test -p ros-launch-manifest-derive`; `cargo test --workspace` | yes, on the current model | `phase-52-R2` |
+| R3 parity tests and the golden snapshot | R1 and R2 merged | `derive/tests/` (fixture model, `RankedPlan` snapshot, the tests); `sched/src/chain_aware_mapper.rs` only if the existing split-parity test's snapshot is factored out for reuse | `cargo test -p ros-launch-manifest-derive`; `cargo test -p ros-launch-manifest-sched chain_aware_rank_is_priorityless_and_split_is_parity` | no | `phase-52-R3` |
+| R4 tag v0.1.37 and the CHANGELOG | R3 merged | `CHANGELOG.md` (new), the `v0.1.37` tag | `cargo test --workspace` green on the tagged commit; play_launch phase-78 W1 pins the tag | no | `phase-52-R4` |
+
+R1 and R2 proceed in parallel: they share no file. R2 builds on the model
+as it is today, where every path has `trigger: None` and is therefore
+`Unclassified`; `mapper_input_from_model` ranks nothing on it and
+`DeriveReport.paths_without_trigger` lists every path, which is the
+documented pre-migration behaviour and a test in its own right. When R1
+merges, R2 rebases and reads the six fields. R3 waits on both, because a
+snapshot taken over a model without a trigger would pin "ranks nothing".
+R4 waits on R3, because the tag is what play_launch pins and the snapshot
+is what its W2 gate compares against.
+
+**R1 - model fields.** The additive fields listed under "Model changes"
+above: `PathContract.trigger`, `PathContract.sync`,
+`PathContract.min_latency_ms`, `SubContract.buffer`,
+`Contracts.severity_levels`, `Contracts.node_criticality`; and the
+`input` doc string at lib.rs:1130 stops saying that empty means periodic.
+The golden model gains one timer path carrying every new field so the round
+trip covers them, and a second test loads the golden model with the fields
+absent. These are SystemModel fields, not manifest keys, so the format table
+is not touched unless a key is added to the authored grammar.
+
+Claim: `phase-52-R1`. Depends on: nothing. Owns: `model/src/lib.rs`,
+`model/tests/golden/perception.system_model.yaml`,
+`model/tests/golden_roundtrip.rs`. Gate: `cargo test -p
+ros-launch-manifest-model`; `UPDATE_FORMAT_REFERENCE=1 cargo test -p
+ros-launch-manifest-types` if `types/src/field_table.rs` changes. Status:
+not started.
+
+**R2 - the `derive` crate.** `ros-launch-manifest-derive`, the fifth
+workspace member, depending on `model` and `sched`, with
+`mapper_input_from_model`, `resolve_chains`, `DeriveFacts` and
+`DeriveReport` as specified above. `resolve_chains` is the port of
+play_launch's `manifest_graph::{build_global_graph, subgraph_for_scope_path,
+critical_path}` (`src/ros-launch-resolve/resolve/src/ros/manifest_graph.rs`
+:237, :453, :662 at 0.11.0) from `ManifestIndex` onto the model's
+`structure.topics`, `node_paths`, `sub_endpoints.state`, `structure.scopes`
+and `scope_paths`. Until R1 lands, `trigger` reads as `None` and the crate
+treats every path as `Unclassified`; the rebase onto R1 is a field read, not
+a redesign.
+
+Claim: `phase-52-R2`. Depends on: nothing to start; rebases onto R1 before
+merge. Owns: `derive/Cargo.toml`, `derive/src/lib.rs`, the `members` line of
+`Cargo.toml`. Gate: `cargo test -p ros-launch-manifest-derive`; `cargo test
+--workspace`. Status: not started.
+
+**R3 - parity tests and the golden snapshot.** Parity assertion 1 above:
+a fixture model under `derive/tests/`, a `RankedPlan` snapshot, and a test
+pinning `chain_aware_rank(&mapper_input_from_model(..))` to it, the
+`derive`-side twin of `chain_aware_rank_is_priorityless_and_split_is_parity`
+(chain_aware_mapper.rs:1038; `sched` cannot depend on `derive`, so the twin
+lives in `derive`). The fixture is play_launch's `contract_derived_chain`.
+Its first checked-in copy is the 0.11.0 resolution with R1's fields filled
+by hand from the contract, because the play_launch that lowers them
+(phase-78 W1) pins the tag R4 cuts after this unit; phase-78 W1 re-emits the
+fixture and phase-78 W2's `from_dump == from_model` gate is what proves the
+hand copy right.
+
+Claim: `phase-52-R3`. Depends on: R1, R2. Owns: `derive/tests/`;
+`sched/src/chain_aware_mapper.rs` only to factor the existing snapshot out
+for reuse. Gate: `cargo test -p ros-launch-manifest-derive`; `cargo test -p
+ros-launch-manifest-sched chain_aware_rank_is_priorityless_and_split_is_parity`.
+Status: not started.
+
+**R4 - tag v0.1.37 and the CHANGELOG.** This repository has no
+`CHANGELOG.md` today and `v0.1.34`..`v0.1.36` are lightweight tags whose
+notes are their commit messages. R4 adds the file with a `v0.1.37` entry
+naming the six fields, the crate, the `trigger: None` = `Unclassified`
+rule and the `rate_monotonic` change, then tags. The tag name is what
+play_launch phase-78 W1 writes into its four `tag = "v0.1.36"` pins.
+
+Claim: `phase-52-R4`. Depends on: R3. Owns: `CHANGELOG.md`, the `v0.1.37`
+tag. Gate: `cargo test --workspace` green on the tagged commit; play_launch
+phase-78 W1 resolves the tag. Status: not started.
+
 ### Status
 
 Open (2026-09-21). Design agreed across the three repositories; no code yet.
+Units R1 and R2 are claimable now (Parallel plan above); R3 and R4 follow
+in that order.
 
 ---
 
