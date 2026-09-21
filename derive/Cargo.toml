@@ -1,0 +1,14 @@
+[package]
+name = "ros-launch-manifest-derive"
+version.workspace = true
+edition.workspace = true
+description = "The one derivation of the scheduling mapper's input from a SystemModel, shared by play_launch (Linux) and nano-ros (RTOS)"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ros-launch-manifest-model = { path = "../model" }
+ros-launch-manifest-sched = { path = "../sched" }
+
+[dev-dependencies]
+indexmap = "2"

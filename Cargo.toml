@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["types", "check", "sched", "model"]
+members = ["types", "check", "sched", "model", "derive"]
 
 [workspace.package]
 edition = "2024"
