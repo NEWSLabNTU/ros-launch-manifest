@@ -881,7 +881,10 @@ play_launch phase-78 W1 writes into its four `tag = "v0.1.36"` pins.
 
 Claim: `phase-52-R4`. Depends on: R3. Owns: `CHANGELOG.md`, the `v0.1.37`
 tag. Gate: `cargo test --workspace` green on the tagged commit; play_launch
-phase-78 W1 resolves the tag. Status: not started.
+phase-78 W1 resolves the tag. Status: landed in bfbe075 (main, 2026-09-21); tag v0.1.37 on bfbe075
+(annotated); the pre-R1 empty-rank assertion un-ignored in d7e96dd (a
+trigger-less hop is skipped, NoPathOnRoute); workspace green, snapshot
+unchanged, Cargo version stays 0.1.4. play_launch phase-78 W1 may pin the tag.
 
 ### Status
 
