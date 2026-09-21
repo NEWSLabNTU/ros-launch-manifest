@@ -867,7 +867,10 @@ Claim: `phase-52-R3`. Depends on: R1, R2. Owns: `derive/tests/`;
 `sched/src/chain_aware_mapper.rs` only to factor the existing snapshot out
 for reuse. Gate: `cargo test -p ros-launch-manifest-derive`; `cargo test -p
 ros-launch-manifest-sched chain_aware_rank_is_priorityless_and_split_is_parity`.
-Status: not started.
+Status: landed in 13c3f63 (main, 2026-09-21); derive 20+5 passed, 1 ignored
+(the pre-R1 empty-rank assertion, until a trigger-less hop is skipped), sched
+split-parity 1 passed, workspace green. Snapshot at
+derive/tests/snapshots/contract_derived_chain.ranked_plan.txt; R4 may tag.
 
 **R4 - tag v0.1.37 and the CHANGELOG.** This repository has no
 `CHANGELOG.md` today and `v0.1.34`..`v0.1.36` are lightweight tags whose
