@@ -25,8 +25,7 @@ use ros_launch_manifest_model::{
     PathContract, PubContract, SystemModel, TopicContract, TopicWiring,
 };
 use ros_launch_manifest_sched::{
-    ChainElement, EffectiveTrigger, MapWarning, MapperInput, RankedPlan, SegmentNode,
-    chain_aware_rank,
+    ChainElement, EffectiveTrigger, MapWarning, MapperInput, RankedPlan, chain_aware_rank,
 };
 
 const FIXTURE: &str = include_str!("fixtures/contract_derived_chain.system_model.yaml");
@@ -319,23 +318,18 @@ fn pre_r1_model() -> SystemModel {
 /// A model resolved before the R1 fields existed: every path Unclassified
 /// and named in `paths_without_trigger`, in node order; no rate anywhere;
 /// the label still reaching the mapper, because it is all the checker of
-/// that era had.
+/// that era had. And design issue #52's rule for its ROUTE: no chain, an
+/// empty rank, the scope path skipped for want of a path on it.
 ///
-/// What the derivation does with the ROUTE of such a model is pinned here
-/// as it is, not as the design says. Design issue #52 (and the crate's own
-/// docs) say the shared function "ranks nothing" on it. It ranks one item:
-/// a hop is attributed to a path by the OUTPUT it publishes, which needs no
+/// A hop is attributed to a path by the OUTPUT it publishes, which needs no
 /// trigger, so `filter` (whose output feeds the sink) lands on the route
-/// and `chains_from_view` links every non-timer hop as a segment member,
-/// Unclassified included. The timer and the sink drop off (nothing
-/// consumes without a trigger), leaving a one-path chain with no boundary,
-/// which the ranker accepts as feasible. The fix is one arm in
-/// `chains_from_view` (derive/src/lib.rs, R2's file): a hop whose path
-/// carries no trigger fact is no more a link than an undeclared one. Until
-/// it lands, this is the number a consumer sees on a stale model, and the
-/// ignored test below is the assertion to turn on when it does.
+/// even here; `chains_from_view` then declines to link a hop whose path
+/// carries no trigger fact, exactly as it declines an undeclared one. R3
+/// pinned the pre-fix number (one Unclassified segment, one ranked item) as
+/// an ignored twin of this test; R4 landed the arm and this is the one
+/// assertion left.
 #[test]
-fn a_pre_r1_model_names_every_path_and_ranks_one_unclassified_segment() {
+fn a_pre_r1_model_yields_no_chain_and_an_empty_rank() {
     let model = pre_r1_model();
     let (input, report) = mapper_input_from_model(&model, &DeriveFacts::default());
     assert_eq!(
@@ -360,41 +354,7 @@ fn a_pre_r1_model_names_every_path_and_ranks_one_unclassified_segment() {
         "the label, parsed, where the effective map is absent"
     );
 
-    // The route as attributed today.
-    assert_eq!(report.chains_resolved, vec![SCOPE_PATH.to_string()]);
-    assert!(report.chains_skipped.is_empty());
-    assert_eq!(input.chains.len(), 1);
-    assert_eq!(
-        input.chains[0].elements,
-        vec![ChainElement::Segment {
-            nodes_in_topo_order: vec![SegmentNode {
-                node: FILTER.to_string(),
-                path: "filter".to_string(),
-            }],
-        }],
-        "one segment over the one Unclassified path attributed by its output"
-    );
-    let plan = chain_aware_rank(&input);
-    let order: Vec<(&str, &str)> = plan
-        .items
-        .iter()
-        .map(|it| (it.node.as_str(), it.path.as_str()))
-        .collect();
-    assert_eq!(order, vec![(FILTER, "filter")]);
-    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
-    assert_ne!(render(&plan), golden(), "the snapshot is not this plan");
-}
-
-/// Design issue #52's rule for the same model: no chain, an empty rank, the
-/// scope path skipped for want of a path on its route. Ignored until the
-/// `chains_from_view` arm described above lands; then this test replaces
-/// the one above.
-#[test]
-#[ignore = "design issue #52 says a pre-R1 model ranks nothing; chains_from_view (derive/src/lib.rs, R2) links an Unclassified path as a segment member"]
-fn a_pre_r1_model_yields_no_chain_and_an_empty_rank() {
-    let model = pre_r1_model();
-    let (input, report) = mapper_input_from_model(&model, &DeriveFacts::default());
-    assert_eq!(report.paths_without_trigger.len(), 3);
+    // The route: found, then skipped for want of a classified hop.
     assert!(input.chains.is_empty(), "no trigger, no link, no chain");
     assert!(report.chains_resolved.is_empty());
     assert_eq!(
@@ -407,6 +367,7 @@ fn a_pre_r1_model_yields_no_chain_and_an_empty_rank() {
     let plan = chain_aware_rank(&input);
     assert!(plan.items.is_empty(), "ranks nothing: {:?}", plan.items);
     assert!(plan.warnings.is_empty());
+    assert_ne!(render(&plan), golden(), "the snapshot is not this plan");
 }
 
 // ---------------------------------------------------------------------------

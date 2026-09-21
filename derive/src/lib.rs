@@ -334,14 +334,25 @@ fn chains_from_view(
             let Some(node) = view.node(fqn) else {
                 continue;
             };
+            // A hop attributed to a declared path that carries no trigger
+            // fact (`Unclassified`, which is every path of a model resolved
+            // before the R1 fields existed) is no more a link than an
+            // undeclared one: it is skipped, so a pre-R1 model yields no
+            // chain and the scope path is reported as `NoPathOnRoute`.
+            let trigger = match node.paths.get(path_name) {
+                Some(path) => path.effective_trigger(),
+                None => continue,
+            };
+            if trigger == EffectiveTrigger::Unclassified {
+                continue;
+            }
             if let Some(c) = node.criticality
                 && c > criticality
             {
                 criticality = c;
             }
-            let path = node.paths.get(path_name);
-            match path.map(|p| p.effective_trigger()) {
-                Some(EffectiveTrigger::Timer { rate_hz }) if rate_hz > 0.0 => {
+            match trigger {
+                EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => {
                     elements.push(ChainElement::Boundary {
                         node: fqn.clone(),
                         path: path_name.clone(),
