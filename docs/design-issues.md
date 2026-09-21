@@ -848,7 +848,8 @@ a redesign.
 Claim: `phase-52-R2`. Depends on: nothing to start; rebases onto R1 before
 merge. Owns: `derive/Cargo.toml`, `derive/src/lib.rs`, the `members` line of
 `Cargo.toml`. Gate: `cargo test -p ros-launch-manifest-derive`; `cargo test
---workspace`. Status: not started.
+--workspace`. Status: landed in 2367972 (main, 2026-09-21); derive gate 20 passed,
+workspace green, rustfmt clean. R3 may start.
 
 **R3 - parity tests and the golden snapshot.** Parity assertion 1 above:
 a fixture model under `derive/tests/`, a `RankedPlan` snapshot, and a test
