@@ -270,11 +270,12 @@ pub struct NodeInstance {
     /// YAML, which is NOT folded into this map (kept verbatim).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, ParamValue>,
-    /// Advisory scheduling criticality (`high` | `medium` | `low`) carried
-    /// through from the manifest (RT config v2 §2.1). The resolver's
-    /// `SchedMapper` already consumed it when deriving
-    /// [`Execution::bindings`]; it rides along for runtime diagnosis
-    /// dashboards. Unrecognized values are ignored, never an error.
+    /// The criticality LABEL as authored (`nodes.<n>.criticality`, RT
+    /// config v2 section 2.1), a raw string carried for runtime diagnosis
+    /// dashboards. It is not the fact a scheduler reads: a hazard that
+    /// reaches the node may raise its criticality above the label (phase
+    /// 72), and only [`Contracts::node_criticality`] carries that result.
+    /// Unrecognized values are ignored, never an error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub criticality: Option<String>,
 
@@ -816,6 +817,27 @@ pub struct Contracts {
     /// that schedules per mode.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, ModeContract>,
+    /// The severity scale `hazards.<h>.severity` is drawn from, ascending
+    /// (design issue #52). Empty means the ISO 26262 default
+    /// `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; the first entry is "no
+    /// safety requirement" and derives no criticality. Carried so a
+    /// consumer can explain a `node_criticality` entry from the hazard
+    /// that produced it without re-reading the manifest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub severity_levels: Vec<String>,
+    /// The EFFECTIVE criticality of each node after the phase-72
+    /// derivation, keyed by node FQN (design issue #52): a hazard whose
+    /// reaction route reaches the node decides first, the authored label
+    /// (`NodeInstance::criticality`) where no hazard reaches. This is the
+    /// value the mapper ranks by; the label stays on the node for
+    /// dashboards. A node absent from this map has no criticality fact.
+    ///
+    /// Carried in `sched`'s own [`ros_launch_manifest_sched::Criticality`]
+    /// for the same reason `PathContract::miss` is: a second spelling on
+    /// either side of the boundary is how two toolchains come to rank the
+    /// same system from different facts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_criticality: BTreeMap<String, ros_launch_manifest_sched::Criticality>,
 }
 
 /// One mode after merge (phase 75).
@@ -927,6 +949,9 @@ impl Contracts {
             && self.functions.is_empty()
             && self.modes.is_empty()
             && self.node_params.is_empty()
+            && self.node_concurrency.is_empty()
+            && self.severity_levels.is_empty()
+            && self.node_criticality.is_empty()
     }
 }
 
@@ -1110,6 +1135,25 @@ pub struct SubContract {
     /// The reaction owed on a violated assumption (phase 71).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_violation: Option<OnViolationContract>,
+    /// Buffering discipline of a `state: true` endpoint (Vocabulary v2,
+    /// design issue #52): `latest` (read-latest; staleness is the failure
+    /// mode, and the default when absent) or `queue` (a bounded queue the
+    /// consuming timer callback drains; backlog is the failure mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buffer: Option<BufferContract>,
+}
+
+/// How a `state: true` subscriber holds data between takes (design issue
+/// #52). Mirrors the contract crate's closed set; carried here so a second
+/// toolchain can size the queue it allocates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BufferContract {
+    /// Read-latest: one slot, overwritten on every arrival.
+    #[default]
+    Latest,
+    /// Bounded queue, drained batch-wise by the consuming callback.
+    Queue,
 }
 
 /// Service server guarantee.
@@ -1127,12 +1171,44 @@ pub struct SrvContract {
 /// drop budgets.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PathContract {
-    /// Empty = periodic (timer-driven).
+    /// The endpoints this path consumes: the `Input` trigger's sources on a
+    /// node path, the entry topics on a scope path. Empty says NOTHING
+    /// about what fires the path: a timer, a `once` loader and an
+    /// unclassified path all have no inputs, and only [`Self::trigger`]
+    /// tells them apart. ("Empty = periodic" was the legacy convention
+    /// Vocabulary v2 retired; see design issue #52.)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<String>,
     pub output: Vec<String>,
+    /// The trigger in effect for this path, as the checker resolved it
+    /// (`PathDecl::effective_trigger()`: an explicit `trigger:` wins, a
+    /// legacy non-empty `input:` derives `Input`, anything else is
+    /// `Unclassified`). Node paths only; scope paths carry `None`.
+    ///
+    /// In `sched`'s own [`ros_launch_manifest_sched::EffectiveTrigger`],
+    /// adjacently tagged (`kind: timer`, `value: {rate_hz: 10.0}`), for the
+    /// reason [`Self::miss`] gives. The timer's rate lives HERE and nowhere
+    /// else: a consumer that recovers it from a publisher's `min_rate_hz`
+    /// is guessing (design issue #52, row 1).
+    ///
+    /// `None` on the wire is a model written before this field existed. A
+    /// consumer treats it as `Unclassified` and says so
+    /// ([`Self::effective_trigger`]); it never assumes a timer, so that a
+    /// stale model ranks nothing loudly rather than something wrongly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<ros_launch_manifest_sched::EffectiveTrigger>,
+    /// Fan-in synchronisation policy of an `Input` path with two or more
+    /// sources (Vocabulary v2; design issue #52). Absent when the path
+    /// declared none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<SyncContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
+    /// Best-case latency for this path (phase 67 `min_latency`), the lower
+    /// bound that makes `max_jitter_ms` falsifiable. Usually measured
+    /// rather than authored; carried when the contract declares it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_latency_ms: Option<f64>,
     /// Max `header.stamp` spread between a fan-in path's inputs that the
     /// callback still treats as one set.
     ///
@@ -1170,6 +1246,43 @@ pub struct PathContract {
     /// What this path produces when it is a reaction (phase 71).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe_state: Option<SafeStateContract>,
+}
+
+impl PathContract {
+    /// The trigger a consumer schedules by. A model that carries no
+    /// `trigger` (written before design issue #52) yields
+    /// [`ros_launch_manifest_sched::EffectiveTrigger::Unclassified`], never
+    /// a timer: the absence must stay visible to whoever ranks the path.
+    pub fn effective_trigger(&self) -> ros_launch_manifest_sched::EffectiveTrigger {
+        self.trigger
+            .clone()
+            .unwrap_or(ros_launch_manifest_sched::EffectiveTrigger::Unclassified)
+    }
+}
+
+/// Fan-in synchronisation on an `Input` path (Vocabulary v2; design issue
+/// #52), durations lowered to milliseconds like every other bound here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncContract {
+    pub policy: SyncPolicy,
+    /// Match window for `exact` / `approximate`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_interval_ms: Option<f64>,
+    /// Collect-until-timeout duration for `timeout_any`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<f64>,
+}
+
+/// Fan-in matching policy. Mirrors the contract crate's closed set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncPolicy {
+    /// `message_filters` ExactTime.
+    Exact,
+    /// `message_filters` ApproximateTime.
+    Approximate,
+    /// Collect until the timeout, then publish the partial set.
+    TimeoutAny,
 }
 
 /// Per-topic channel contract.

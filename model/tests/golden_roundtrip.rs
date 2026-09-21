@@ -187,6 +187,224 @@ fn contracts_layer_numbers() {
     );
 }
 
+/// Design issue #52: the model carries every fact the CHECKER resolves per
+/// entity, so that one derivation of the mapper input can read them and
+/// neither consumer re-derives them from the manifest (or, worse, from a
+/// neighbouring promise). The golden model has one timer path carrying the
+/// per-path facts, one input path carrying `sync`, one `state: true`
+/// subscriber carrying `buffer`, and the two top-level maps.
+#[test]
+fn contracts_carry_the_checker_facts_a_scheduler_reads() {
+    use ros_launch_manifest_sched::{Criticality, EffectiveTrigger};
+
+    let c = golden().contracts;
+
+    // The timer's rate is a fact of the PATH. Its output carries no
+    // `min_rate_hz` on purpose: a consumer that needed one to find the rate
+    // was reading a promise as a trigger (issue #52, row 1).
+    let ctrl = &c.node_paths["/sensing/imu_node/ctrl"];
+    assert!(ctrl.input.is_empty(), "a timer path has no inputs");
+    assert_eq!(
+        ctrl.trigger,
+        Some(EffectiveTrigger::Timer { rate_hz: 100.0 })
+    );
+    assert_eq!(ctrl.effective_trigger().period_ms(), Some(10.0));
+    assert_eq!(ctrl.max_latency_ms, Some(8.0));
+    assert_eq!(ctrl.min_latency_ms, Some(1.0));
+    assert_eq!(ctrl.max_jitter_ms, Some(2.0));
+    assert!(ctrl.sync.is_none());
+    assert!(
+        !c.pub_endpoints.contains_key("/sensing/imu_node/imu"),
+        "the fixture must not let a publisher promise stand in for the timer"
+    );
+
+    // An input path keeps its sources in `input` AND names them as the
+    // trigger's value; `sync` rides on the path they fan into.
+    let main = &c.node_paths["/perception/detection/detector/main"];
+    assert_eq!(
+        main.trigger,
+        Some(EffectiveTrigger::Input(vec![
+            "/perception/detection/detector/pointcloud".to_string()
+        ]))
+    );
+    assert_eq!(
+        main.input,
+        vec!["/perception/detection/detector/pointcloud"]
+    );
+    let sync = main.sync.as_ref().expect("the input path declares sync");
+    assert_eq!(sync.policy, SyncPolicy::Approximate);
+    assert_eq!(sync.max_interval_ms, Some(10.0));
+    assert_eq!(sync.timeout_ms, None);
+
+    // Scope paths are not triggered by anything a node schedules.
+    assert!(c.scope_paths["/perception/e2e"].trigger.is_none());
+
+    // A `state: true` subscriber says how it holds data between takes.
+    let state = &c.sub_endpoints["/perception/tracker/input"];
+    assert!(state.state);
+    assert_eq!(state.buffer, Some(BufferContract::Queue));
+    assert_eq!(
+        c.sub_endpoints["/perception/detection/detector/pointcloud"].buffer,
+        None
+    );
+
+    // The severity scale and the EFFECTIVE criticality, in sched's own
+    // spelling. The detector has no label on its NodeInstance; its entry
+    // here is what a hazard derived for it.
+    assert_eq!(
+        c.severity_levels,
+        vec!["QM", "ASIL_A", "ASIL_B", "ASIL_C", "ASIL_D"]
+    );
+    assert_eq!(c.node_criticality["/sensing/imu_node"], Criticality::High);
+    assert_eq!(
+        c.node_criticality["/perception/detection/detector"],
+        Criticality::Medium
+    );
+    assert!(
+        golden().structure.nodes["/perception/detection/detector"]
+            .criticality
+            .is_none(),
+        "the label and the effective value are different facts"
+    );
+    assert!(!c.node_criticality.contains_key("/perception/tracker"));
+}
+
+/// The golden model with every issue-#52 key deleted from the text: what a
+/// play_launch older than the fields emitted, and what nano-ros keeps
+/// reading. It must parse, every new field must come back absent, and the
+/// absent trigger must read as `Unclassified`, never as a timer.
+#[test]
+fn a_model_without_the_issue_52_fields_still_parses_and_ranks_nothing() {
+    use ros_launch_manifest_sched::EffectiveTrigger;
+
+    const NEW_KEYS: &[&str] = &[
+        "trigger:",
+        "sync:",
+        "min_latency_ms:",
+        "buffer:",
+        "severity_levels:",
+        "node_criticality:",
+    ];
+    // A line is one of the new keys when the key opens it; a substring
+    // match would catch the `/perception/trigger` service.
+    let opens_new_key = |line: &str| NEW_KEYS.iter().any(|k| line.trim_start().starts_with(k));
+    let golden_text = include_str!("golden/perception.system_model.yaml");
+    for key in NEW_KEYS {
+        assert!(
+            golden_text.lines().any(|l| l.trim_start().starts_with(key)),
+            "the golden model must carry {key}"
+        );
+    }
+
+    // Drop each new key with its indented children.
+    let mut kept = String::new();
+    let mut skip_deeper_than: Option<usize> = None;
+    for line in golden_text.lines() {
+        if line.trim().is_empty() {
+            kept.push('\n');
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if let Some(depth) = skip_deeper_than {
+            if indent > depth {
+                continue;
+            }
+            skip_deeper_than = None;
+        }
+        if opens_new_key(line) {
+            skip_deeper_than = Some(indent);
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    assert!(
+        !kept.lines().any(opens_new_key),
+        "a new key survived the strip:\n{kept}"
+    );
+
+    let old = SystemModel::from_yaml_str(&kept).expect("an older model must still parse");
+    let c = &old.contracts;
+    let ctrl = &c.node_paths["/sensing/imu_node/ctrl"];
+    assert_eq!(ctrl.trigger, None);
+    assert_eq!(
+        ctrl.effective_trigger(),
+        EffectiveTrigger::Unclassified,
+        "no inputs is not a timer: the rate is gone with the field"
+    );
+    assert_eq!(ctrl.effective_trigger().period_ms(), None);
+    assert_eq!(ctrl.min_latency_ms, None);
+    assert_eq!(
+        ctrl.max_latency_ms,
+        Some(8.0),
+        "the old fields are untouched"
+    );
+    let main = &c.node_paths["/perception/detection/detector/main"];
+    assert_eq!(main.trigger, None);
+    assert_eq!(main.effective_trigger(), EffectiveTrigger::Unclassified);
+    assert!(main.sync.is_none());
+    assert_eq!(c.sub_endpoints["/perception/tracker/input"].buffer, None);
+    assert!(c.severity_levels.is_empty());
+    assert!(c.node_criticality.is_empty());
+
+    // Re-emitting the old model invents none of the new keys.
+    let re_emitted = old.to_yaml_string().unwrap();
+    assert!(
+        !re_emitted.lines().any(opens_new_key),
+        "a new key was invented:\n{re_emitted}"
+    );
+    let again = SystemModel::from_yaml_str(&re_emitted).unwrap();
+    assert_eq!(old, again);
+}
+
+/// Every `EffectiveTrigger` variant crosses the boundary in the adjacently
+/// tagged shape the sched crate chose, and absent stays absent.
+#[test]
+fn a_path_contract_carries_each_trigger_kind_across_the_boundary() {
+    use ros_launch_manifest_sched::EffectiveTrigger;
+
+    for (trigger, spelled) in [
+        (
+            EffectiveTrigger::Timer { rate_hz: 30.0 },
+            "kind: timer\n  value:\n    rate_hz: 30.0",
+        ),
+        (
+            EffectiveTrigger::Input(vec!["a".to_string(), "b".to_string()]),
+            "kind: input\n  value:\n  - a\n  - b",
+        ),
+        (EffectiveTrigger::Once, "kind: once"),
+        (EffectiveTrigger::Spontaneous, "kind: spontaneous"),
+        (EffectiveTrigger::Unclassified, "kind: unclassified"),
+    ] {
+        let pc = PathContract {
+            output: vec!["/out".to_string()],
+            trigger: Some(trigger.clone()),
+            sync: Some(SyncContract {
+                policy: SyncPolicy::TimeoutAny,
+                max_interval_ms: None,
+                timeout_ms: Some(50.0),
+            }),
+            min_latency_ms: Some(0.5),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&pc).expect("serializes");
+        assert!(yaml.contains(spelled), "{trigger:?} spelled as:\n{yaml}");
+        assert!(yaml.contains("policy: timeout_any"), "{yaml}");
+        let back: PathContract = serde_yaml_ng::from_str(&yaml).expect("round-trips");
+        assert_eq!(back, pc);
+        assert_eq!(back.effective_trigger(), trigger);
+    }
+
+    let bare = PathContract {
+        output: vec!["/out".to_string()],
+        ..Default::default()
+    };
+    let yaml = serde_yaml_ng::to_string(&bare).unwrap();
+    assert!(!yaml.contains("trigger"), "{yaml}");
+    assert!(!yaml.contains("sync"), "{yaml}");
+    assert!(!yaml.contains("min_latency"), "{yaml}");
+}
+
 #[test]
 fn execution_layer_slices() {
     let e = golden().execution;

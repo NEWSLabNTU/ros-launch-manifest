@@ -64,6 +64,10 @@ structure:
       type: sensor_msgs/msg/PointCloud2
       sub:
         - /perception/detection/detector/pointcloud
+    /sensing/imu:
+      type: sensor_msgs/msg/Imu
+      pub:
+        - /sensing/imu_node/imu
     /perception/objects:
       type: autoware_perception_msgs/msg/DetectedObjects
       pub:
@@ -91,6 +95,7 @@ contracts:
     /perception/tracker/input:
       min_rate_hz: 9.0
       state: true
+      buffer: queue
   srv_endpoints:
     /perception/detection/detector/trigger:
       max_response_ms: 100.0
@@ -100,7 +105,26 @@ contracts:
         - /perception/detection/detector/pointcloud
       output:
         - /perception/detection/detector/objects
+      trigger:
+        kind: input
+        value:
+          - /perception/detection/detector/pointcloud
+      sync:
+        policy: approximate
+        max_interval_ms: 10.0
       max_latency_ms: 30.0
+    # The timer path (design issue #52): its rate is a fact of the path,
+    # not of the publisher it happens to feed.
+    /sensing/imu_node/ctrl:
+      output:
+        - /sensing/imu_node/imu
+      trigger:
+        kind: timer
+        value:
+          rate_hz: 100.0
+      max_latency_ms: 8.0
+      min_latency_ms: 1.0
+      max_jitter_ms: 2.0
   scope_paths:
     /perception/e2e:
       input:
@@ -124,6 +148,15 @@ contracts:
         reliability: best_effort
         durability: volatile
         depth: 5
+  severity_levels:
+    - QM
+    - ASIL_A
+    - ASIL_B
+    - ASIL_C
+    - ASIL_D
+  node_criticality:
+    /perception/detection/detector: medium
+    /sensing/imu_node: high
 
 execution:
   deploy:
