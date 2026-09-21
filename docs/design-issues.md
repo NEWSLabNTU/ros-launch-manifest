@@ -1,7 +1,7 @@
 # Design Issues
 
 Design questions for the manifest format, with proposed solutions and
-their resolutions. All issues 1–51 are now resolved.
+their resolutions. Issues 1-51 are resolved; #52 is open.
 
 ## Resolved Issues
 
@@ -616,10 +616,189 @@ warnings on a fully-migrated tree without losing the rule's safety net.
 
 ---
 
+## 52. Two Consumers, Two Derivations of the Same Mapper Input - Open
+
+### Problem
+
+The 2026-07-20 decision (`f090400`, RFC-0050 "Input model") kept the
+`chain_aware` ALGORITHM shared and made the DERIVATION of its input
+"per-consumer, sharing the `MapperInput` type". Fourteen months on, the two
+derivations disagree on most of the facts the algorithm ranks by, and the
+model they were both supposed to derive from cannot express the first of
+them. Verified 2026-09-21 against rlm `ea5cbea`, play_launch `5eaa3191`
+(0.11.0) and nano-ros `783cdfa14`:
+
+| fact | play_launch (`ros-launch-resolve/resolve/src/ros/sched_derive.rs`) | nano-ros (`nros-orchestration-ir/src/mapper_input.rs`) |
+|---|---|---|
+| effective trigger | `PathDecl::effective_trigger()` from the parsed manifest (:142) | `input.is_empty()` means Timer, rate = the FIRST output's `pub.min_rate_hz`, else 0.0 (:72-81) |
+| chains | derived from scope paths + the global graph's critical path (:251) | `chains: Vec::new()` (:155); the core degrades to the bucket fallback by construction |
+| criticality | hazard-derived first (`index.derived_criticality`, phase 72), label second (:496) | the label only (:130): the model carries `NodeInstance.criticality` as the raw string (model_builder.rs:669) |
+| `claims_concurrency` | "no merged group covers every path" (:195) | "some path is outside every set" (:140); `[[a, b], [c]]` over `{a, b, c}` differs |
+| `rate_hz` (RM mapper) | max over topic `rate_hz`, derived rate, pub `min_rate_hz` (:424) | unset |
+| `deadline_us` (DM mapper) | min over path `max_latency` and srv `max_response` (:462) | unset; `realize_rtos` re-derives from paths, without `max_response` |
+| `exec_ms` | platform `budget_us` per node, attributed only when the node has one path (:131) | `[wcet]` profile per boundary id (:92) |
+| `max_jitter_ms`, `miss` | read through | read through (nano-ros phase 434) - the one row that agrees |
+
+The first row is the seam: the resolver lowers Timer, Once, Spontaneous and
+Unclassified alike to `input: []` (model_builder.rs:954-960) and drops
+`rate_hz`, so a `once` map loader whose output happens to carry a
+`min_rate_hz` is a Timer to nano-ros, and a timer whose output carries none
+has period `None` and never ranks. `PathContract.input`'s doc (lib.rs:1130)
+still says "Empty = periodic (timer-driven)", the convention Vocabulary v2
+retired in the `types` crate. On the safety island (four timer paths, 10 and
+30 Hz) the two toolchains agree today only because every timer output also
+promises the timer's rate as `min_rate_hz` - the 14 `derivable-min-rate`
+infos the resolver prints are the reason the schedule is right, which is
+backwards.
+
+Not lowered at all: `trigger`, `sync`, `min_latency`, `buffer` (a
+`state: true` subscription's discipline), `severity_levels`. A consumer that
+wanted to rank by them, or explain a criticality, could not.
+
+Why the previous attempt does not settle this. `execution.sched` (78f637d,
+reverted by f090400) embedded the mapper's OUTPUT - resolved chains, per-path
+ranks, the mapper's identity - and that was wrong for a reason that still
+holds: ranks are realizer-specific and stale on replay, and a second
+toolchain reading them would inherit the Linux realization. That decision
+said nothing about the INPUT, and its "derivation stays per-consumer" clause
+was a scoping choice (nano-ros had no model-side derivation yet), not a
+finding. The table above is what that clause cost.
+
+### Options
+
+| Option | Effort | Description |
+|---|---|---|
+| A. Status quo plus lints | Small | Keep two derivations; add a cross-repo test that compares rankings on a fixture. Detects drift, never removes it; the model still cannot say "timer at 10 Hz". |
+| B. Lower the trigger, keep two derivations | Small | `PathContract.trigger` carries `sched::EffectiveTrigger`; nano-ros reads it. Fixes row 1; rows 2-7 stay as they are and drift again. |
+| C. One derivation in rlm, model carries the checker's facts | Medium | New crate `derive/` (`ros-launch-manifest-derive`): `mapper_input_from_model(&SystemModel, &DeriveFacts) -> (MapperInput, DeriveReport)` and `resolve_chains(&SystemModel, &DeriveFacts) -> Vec<ResolvedChain>`, consumed by both. The model gains the per-entity facts the checker resolves (effective trigger, effective criticality, sync, min_latency, buffer, severity_levels). No mapper output is embedded. |
+| D. One derivation in `ros-launch-resolve` | Medium | Same function, hosted in play_launch's tree. nano-ros already vendors that crate through its play_launch submodule (`nros-launch-resolve`), but `ros-launch-resolve` links tokio, the Python loader and the parser; `nros-orchestration-ir` is a core crate the `nros::main!` proc-macro depends on and cannot take that tree. It would also leave the route derivation on `ManifestIndex`, an object only play_launch has. |
+| E. Embed `MapperInput` in the model | Small | The 45.2 shape again, one level up. A `MapperInput` is not a serde type on purpose (mapper.rs:57), and `exec_ms` is a platform fact that differs per consumer, so the embedded copy would be wrong for one of them by construction. |
+
+### Recommendation
+
+**C.** The rule that separates it from the reverted embedding, stated once:
+
+> The model carries every fact the CHECKER resolves per entity - effective
+> trigger, effective criticality, sync, buffer, bounds. It carries nothing
+> the MAPPER resolves - no route, no rank, no tier. The derivation from the
+> first to the second is one function, in this repository, that both
+> consumers call and neither reimplements.
+
+Effective trigger and effective criticality are contract facts fixed by the
+contract alone, target-independent, and no different in kind from `miss` and
+`max_jitter_ms`, which already cross for exactly this reason (lib.rs:1148-
+1169). A route or a rank depends on the whole graph and on the realizer,
+which is why those stay out.
+
+Model changes (all additive; `SCHEMA_VERSION` stays 1, an older model parses
+with the new fields absent):
+
+- `PathContract.trigger: Option<sched::EffectiveTrigger>` - the value of
+  `PathDecl::effective_trigger()` at resolve time, in the adjacent-tagged
+  `kind`/`value` shape chain.rs:45 was already built for. `input` keeps the
+  Input trigger's endpoints and its doc string stops claiming that empty
+  means periodic. A consumer reading a model with `trigger: None` treats the
+  path as `Unclassified`, never as a timer - the error case must stay loud.
+- `PathContract.sync: Option<SyncContract { policy, max_interval_ms,
+  timeout_ms }>` and `PathContract.min_latency_ms: Option<f64>`.
+- `SubContract.buffer: Option<BufferContract>` (`latest` | `queue`).
+- `Contracts.severity_levels: Vec<String>` (empty = the ISO 26262 default)
+  and `Contracts.node_criticality: BTreeMap<String, sched::Criticality>`,
+  the EFFECTIVE criticality after the phase-72 derivation (hazards decide
+  first, the label where none reaches), keyed by node FQN. The advisory
+  string on `NodeInstance` stays for dashboards; the mapper reads the map.
+
+The `derive` crate. It depends on `model` and `sched` (the reverse is
+impossible: `model` already depends on `sched` for `MapperMiss`), which is
+why it is neither of them. `sched` stays parser-free and `model` stays a
+schema. Its contents:
+
+- `mapper_input_from_model`: one `MapperNode` per `structure.nodes` entry
+  with `paths` from `contracts.node_paths` (trigger, `max_latency_ms`,
+  `max_jitter_ms`, `miss`, inputs, outputs), `criticality` from
+  `node_criticality`, `claims_concurrency` by the merged-group rule
+  (sched_derive.rs:195, the one that models what an executor does),
+  `rate_hz` = the fastest timer trigger among the node's paths and NOTHING
+  else, `deadline_us` = min over path `max_latency_ms` and
+  `srv_endpoints.max_response_ms`, `exec_ms` from `DeriveFacts`. `legacy`
+  is left `None`; the `.toml` bridge sets it afterwards.
+- `resolve_chains`: `manifest_graph::{build_global_graph,
+  subgraph_for_scope_path, critical_path}` ported from `ManifestIndex` onto
+  the model - `structure.topics` endpoint refs, `node_paths` inputs and
+  outputs, `sub_endpoints.state` to break cycles, `structure.scopes` for the
+  subtree, `scope_paths` for the declared budget. Chain criticality is the
+  max over members, boundaries are timer paths with `period_ms = 1000 /
+  rate_hz`. Everything it needs is already in the model, which is the test
+  of whether the model is what it claims to be.
+- `DeriveFacts { path_exec_ms: BTreeMap<"<node>/<path>", f64>, node_exec_ms:
+  BTreeMap<"<node>", f64> }`: the consumer's cost facts. play_launch fills
+  `node_exec_ms` from the platform file's `budget_us`, nano-ros fills
+  `path_exec_ms` from its `[wcet]` profile; the "a node budget is attributed
+  only when the node has one path" rule moves into the crate so it is applied
+  the same way by both. No WCET is invented.
+- `DeriveReport { paths_without_trigger, chains_resolved, chains_skipped }`
+  so a consumer can say which paths a pre-migration model left unclassified
+  instead of silently ranking nothing.
+
+Authored `topics.<t>.rate_hz` and `pub.<ep>.min_rate_hz`: derive-only for the
+scheduler, promises everywhere else. No mapper reads them (this retires the
+`rate_hz` row of scheduling.md's fact table). They stay in the model because
+the runtime monitors read them - nano-ros's `PubMonitorCell` and
+`queue_depth`, play_launch `measure` - and the resolver keeps checking them
+against the timers: `rate-mismatch` and `min-rate-mismatch` stay warnings,
+`derivable-rate` and `derivable-min-rate` stay infos. A promise that agrees
+with the timer is redundant, not wrong; the scheduler simply no longer
+depends on it agreeing. The one visible change is to `rate_monotonic`: a
+node with no timer path has no rate to be monotonic about and lands on the
+default tier, where `chain_aware` already put it.
+
+Parity, asserted three times:
+
+1. `derive` owns a fixture model (play_launch's `contract_derived_chain`,
+   resolved and checked in) and a `RankedPlan` snapshot; a test pins
+   `chain_aware_rank(&mapper_input_from_model(..))` to it, next to the
+   existing rank-vs-realize split-parity test (chain_aware_mapper.rs:1038).
+2. play_launch, during its transition: `mapper_input_from_dump(dump, index)
+   == mapper_input_from_model(&build_checked_model(..))` on every contract
+   fixture, then `sched_derive.rs`'s derivation and `manifest_graph`'s route
+   copy are deleted.
+3. nano-ros: the same fixture model yields the same `RankedPlan` Debug text
+   as snapshot 1, and `realize_rtos` receives the shared `MapperInput`
+   unchanged.
+
+What each consumer keeps: play_launch keeps `realize_posix`, the apply layer,
+and `execution.tiers`/`bindings` as the applied outcome; nano-ros keeps
+`realize_rtos`, `SchedCaps`, `Degradation`, `TierSpec`, the callback-group
+gate and WCET profile selection. What nano-ros deletes: `node_paths_for`,
+`pub_rate_hz`, `parse_criticality`, and its own `claims_concurrency` -
+`mapper_input.rs` becomes a `DeriveFacts` builder and one call.
+
+Migration order, by tag: rlm ships the fields and the crate as v0.1.37;
+play_launch pins v0.1.37, lowers the new fields, lands parity test 2 and
+deletes its copy, ships as 0.12.0; nano-ros bumps both pins (rlm v0.1.37,
+play_launch v0.12.0 - its gitlink is at v0.9.0-158-g07f0461e today), replaces
+`mapper_input.rs`, lands parity test 3 and re-resolves its models, whose
+`meta.resolver.version` changes with the pin. The order matters: a model
+resolved by the old play_launch carries no `trigger`, and the shared
+function ranks nothing on it, which is a regression from today's coincidental
+agreement until the pin moves - `DeriveReport.paths_without_trigger` is what
+makes that visible.
+
+Cross-references: play_launch `docs/roadmap/phase-78-one-derivation-two-consumers.md`
+(producer side and the transition gate); nano-ros
+`docs/roadmap/phase-457-consume-the-shared-derivation.md` (consumer side).
+
+### Status
+
+Open (2026-09-21). Design agreed across the three repositories; no code yet.
+
+---
+
 ## Summary
 
-All design issues 1–51 are now resolved. The summary table below
-preserves the most recent phases.
+Design issues 1-51 are resolved; #52 (one shared derivation of the
+mapper input, 2026-09-21) is open. The summary table below preserves the
+most recent phases.
 
 **Recently resolved** (Phase 34/35):
 
