@@ -39,6 +39,20 @@ joined with the launch tree:
 | per-path facts | each path's `effective_trigger` (timer/input/once/spontaneous/unclassified), `max_latency`, inputs/outputs |
 | chains | scope `paths:` declarations, whose route is DERIVED cross-scope into segment/boundary structure (`chains:` was removed in phase 68 W4) |
 
+> **Design issue #52 (2026-09-21, open):** this per-consumer split is
+> being retired. The table above describes play_launch's `sched_derive`;
+> nano-ros's copy reconstructs the trigger from `input: []` plus the first
+> output's `min_rate_hz`, passes no chains and reads the criticality label
+> instead of the hazard-derived value, so the two rank from different facts.
+> The replacement is one `mapper_input_from_model(&SystemModel, &DeriveFacts)`
+> in a new `derive/` crate (it must sit above `model`, which already depends
+> on this crate), with the model carrying the checker's per-path facts
+> (`trigger` as `sched::EffectiveTrigger`, `sync`, `min_latency_ms`,
+> `buffer`, `severity_levels`, effective `node_criticality`). `rate_hz`
+> then comes from timer triggers only; authored topic `rate_hz` and
+> `min_rate_hz` remain runtime promises no mapper reads. See
+> [design-issues.md](design-issues.md#52-two-consumers-two-derivations-of-the-same-mapper-input---open).
+
 This derivation is **per-consumer** (it needs a launch tree or a
 SystemModel, which this crate deliberately does not depend on):
 `ros-launch-resolve` derives from the parsed launch dump + manifests
@@ -484,6 +498,11 @@ RFC-0052 §"system-model RTOS mapper".
   — never from any embedded plan. Chains are not yet declared in its
   models, so `chain_aware_rank` currently degrades to the
   criticality-bucketed rate/deadline fallback by construction.
+  Design issue #52 replaces this module with a call into the shared
+  `derive` crate (nano-ros phase-457, play_launch phase-78): the model
+  will carry the effective trigger, so the `min_rate_hz` reconstruction
+  goes, and `resolve_chains` over the model's own wiring gives nano-ros
+  the same chains play_launch ranks by.
 - **Realizer**: `realize_rtos` maps the `RankedPlan` onto per-RTOS
   capabilities (`SchedCaps`: priority count, numbering direction, EDF,
   sporadic reservation, preemption threshold, affinity) for
