@@ -830,8 +830,8 @@ Claim: `phase-52-R1`. Depends on: nothing. Owns: `model/src/lib.rs`,
 `model/tests/golden/perception.system_model.yaml`,
 `model/tests/golden_roundtrip.rs`. Gate: `cargo test -p
 ros-launch-manifest-model`; `UPDATE_FORMAT_REFERENCE=1 cargo test -p
-ros-launch-manifest-types` if `types/src/field_table.rs` changes. Status:
-not started.
+ros-launch-manifest-types` if `types/src/field_table.rs` changes. Status: landed in 9563b54 (main, 2026-09-21); model gate 38+12+7+13 passed,
+workspace green. R2 may rebase and read the six fields.
 
 **R2 - the `derive` crate.** `ros-launch-manifest-derive`, the fifth
 workspace member, depending on `model` and `sched`, with
