@@ -1,7 +1,7 @@
 # Design Issues
 
 Design questions for the manifest format, with proposed solutions and
-their resolutions. Issues 1-51 are resolved; #52 is open.
+their resolutions. Issues 1-51, #53 and #54 are resolved; #52 is open.
 
 ## Resolved Issues
 
@@ -894,9 +894,171 @@ in that order.
 
 ---
 
+## ~~53. Equal Periods, Unequal Priorities~~ - Done
+
+### Problem
+
+`rate_monotonic` gave two 30 Hz nodes priorities 40 and 30, and two 10 Hz
+nodes 20 and 10, in a band of 10-40. Nothing in the contract said one
+preempts the other: `mapper.rs`'s `build_ranked_plan` handed every RANK its
+own tier through `spread_priority(i, n, band)` with `n` the number of NODES,
+and the ranking's last tie-break was `a.name.cmp(&b.name)`. So the order
+within a tie was the alphabet, and renaming a node changed who preempts whom.
+`deadline_monotonic` had the same shape.
+
+Rate-monotonic theory assigns equal periods equal priority. Any fixed order
+among them is schedulable, so this was never a correctness bug — but a
+DIFFERENT priority is a policy statement, and here nobody made it. It also
+spent the band: four nodes at two rates took four of 31 levels where two
+would do, which matters once overrides and reservations compete for the same
+band. nano-ros consumes the same `SchedPlan`, where distinct priorities
+additionally change thread-pool grouping.
+
+The crate's own third mapper already did it the other way. `chain_aware`
+collapses items with exactly equal `(criticality, budget)` into one rank
+(`tie_group`, unconditionally — not only under band scarcity) and then
+DECIDES what a tie means: `SCHED_RR` when the host's global slice is shorter
+than the shortest period among the tied nodes, otherwise `SCHED_FIFO` with an
+`UnmitigatedPriorityTie` warning naming both numbers. One mapper treated an
+exact tie as a fact to preserve and mitigate; the other two silently ordered
+it by name.
+
+The existing tests protected the old output by omission:
+`rate_monotonic_ties_broken_by_name_asc` asserted only that `/a` came before
+`/b` in the output table, which is equally true of a name-ordered spread and
+of a collapsed tie.
+
+### Decision
+
+The three mappers agree: an exact tie is a fact to preserve.
+
+- `rank_groups` collapses consecutive nodes whose ranking key is EXACTLY
+  equal (`rate_hz`, `deadline_us`) into one rank. Equality is on the value as
+  declared — 30 and 30.000001 do not tie, and nothing is rounded into one:
+  the collapse states a fact the contract carries, and a tolerance would
+  invent one it does not.
+- `spread_priority`'s `n` is now the number of DISTINCT values, so the band
+  is spent on facts rather than on nodes.
+- A rank with more than one node is ONE tier carrying all of them as
+  `members`, in node-name order. It names itself after the shared fact
+  (`rate_hz=30`, `deadline_us=5000`), never after one member — a tier named
+  `/a` holding `/a` and `/b` would read as a tier holding only `/a`. A
+  one-node rank still names itself after its node, which is the shape every
+  consumer has seen since the mapper existed. The consumer explodes grouped
+  tiers into one tier per member before applying overrides
+  (`flatten_to_one_tier_per_node`), so a multi-member tier is transparent
+  downstream.
+- The tie is then handed to `chain_aware`'s own decision. `rr_policy_for_ties`
+  took a `&MapperInput` and read each node's period off its declared paths;
+  it now takes a `&dyn Fn(&str) -> Option<u64>` period lookup, because WHERE
+  that fact lives differs per mapper — `rate_monotonic` ranks on `rate_hz`
+  (period = `1/rate_hz`) and `deadline_monotonic` on `deadline_us` (the
+  implicit-deadline assumption), and neither populates `paths` at all. One
+  function, three callers, one answer to "what does a tie mean".
+- `rate_monotonic` and `deadline_monotonic` therefore override
+  `map_with_diagnostics` (they emit warnings now; `details` stays empty —
+  per-rank provenance for these two is not in scope here).
+
+Two consequences worth stating, because neither is forced by the issue:
+
+- A tie created by BAND COMPRESSION takes the same decision. Five distinct
+  rates in a three-level band collapse adjacent ranks — a tie the mapper
+  produces rather than derives — and judging it by a different rule would be
+  a third policy. `chain_aware` already treats it as a tie after its own
+  compression. Practical effect: on a platform file that states
+  `rr_timeslice`, a band-compressed `rate_monotonic` plan can now carry
+  `SCHED_RR` where it carried `SCHED_FIFO`; where the slice does not fit, a
+  warning appears that was previously absent. Pinned by
+  `rate_monotonic_band_compression_ties_are_ties_too`.
+- The RR decision is expressed in `sched_class` only. These two mappers have
+  never written the typed `posix` placement (`ResolvedTier::posix` stays
+  `None`, as before), and filling it here would change how the consumer reads
+  every `rate_monotonic` tier — `derive_reservations` and
+  `report_jitter_placement` both test `tier.posix` for real-time-ness — which
+  is a separate decision from this one.
+
+Absent facts stay absent: a node with no usable period makes
+`shortest_period_us` `None`, and RR is declined and reported rather than
+derived from a number nobody stated. A non-positive or non-finite `rate_hz`
+is not a period.
+
+Docs: `docs/scheduling.md` (the two mapper descriptions and the diagnostics
+list). Tests: `rate_monotonic_equal_rates_share_one_tier_and_priority`,
+`deadline_monotonic_equal_deadlines_share_one_tier_and_priority`,
+`rate_monotonic_spreads_over_distinct_rates_not_nodes`, and the three RR
+cases beside them.
+
+---
+
+## ~~54. Three In-Crate Rules Ignored the Escape Hatches the Grammar Offers~~ - Done
+
+### Problem
+
+Three asymmetries in `check/src/rules/`, each visible by reading the rule
+beside the type it consumes.
+
+1. `dangling-entity` read `svc.external` and `act.external` (through
+   `server_is_external`) and NOT `topic.external`, so a topic marked
+   `external: pub` still got "has no publishers (no data source)". The
+   consumer's cross-scope re-run of the SAME rule honoured the mark, so one
+   pass warned and the other did not, on the same file.
+2. `service-wiring` built its `served` set from services with a non-empty
+   `server:` list, so `external: server` — the exact case
+   `dangling-entity`'s own header calls normal, and which that rule exempts —
+   still warned. Two rules in one registry disagreed about whether a
+   client-only manifest is fine.
+3. `consistency` was a registered rule whose body was a comment about
+   "phase 34.5", counted in the documented registry. A reader of the registry,
+   or of a `--rule consistency` run, was told a rule ran that did nothing.
+
+(1) and (2) pushed authors toward the two workarounds `dangling-entity`'s
+header explicitly calls out as bad: declaring a server or publisher the image
+does not run, or leaving the entity out of the contract.
+
+### Decision
+
+1. The topic branch is symmetric with the service and action branches:
+   `external: pub | both` excuses a missing publisher, `sub | both` a missing
+   subscriber, and the side that is NOT named still warns — the mark answers
+   for the side it names, never `external.is_some()`. The manifest-level
+   `external_topics:` block is read as the same fact, since it is the other
+   spelling of it. That lookup normalises a leading slash and nothing else:
+   a `topics:` key may be written relative to the declaring scope, and
+   resolving that needs a namespace this crate never sees (FQN resolution is
+   the consumer's).
+2. `service-wiring` treats `external: server | both` as served, through the
+   same `server_is_external` predicate `dangling-entity` uses.
+3. `consistency` is unregistered and its file deleted; the registry holds 19
+   rules. The ID stays live — it is what the consumer's CROSS-SCOPE
+   consistency rule emits under, and `--rule consistency` filters those
+   diagnostics — so nothing that reads the id breaks. A reserved id belongs
+   in the docs, not in `default_rules()`.
+
+NOT done, deliberately: merging `service-wiring` into `dangling-entity`'s
+service branch. They do answer the same question from two ends — one walks
+`cli:` endpoints, the other walks `services:` entries — and the merge is
+worth doing, but it changes which rule id a diagnostic arrives under, which
+is a user-visible change for `--rule` filters and deserves its own change.
+
+Docs owned elsewhere still say "20 rules" and list a `chain-shape` rule that
+is no longer registered (`README.md`, `docs/contract-verification.md`
+§Rule Registry, `docs/launch-manifest.md` §rule table): those need the count
+corrected to 19 and the `consistency` row moved to the cross-scope list.
+
+Tests: `test_dangling_topic_external_pub_is_accepted`,
+`..._external_sub_is_accepted`, `..._external_both_covers_either_side`,
+`..._external_sub_still_needs_a_publisher` (the negative control),
+`..._external_topics_block_is_accepted`,
+`test_service_wiring_external_server_is_served`,
+`test_service_wiring_external_client_still_warns`,
+`test_registry_has_no_placeholder_rules`.
+
+---
+
 ## Summary
 
-Design issues 1-51 are resolved; #52 (one shared derivation of the
+Design issues 1-51, #53 (equal periods, equal priorities) and #54 (the
+checker's escape hatches) are resolved; #52 (one shared derivation of the
 mapper input, 2026-09-21) is open. The summary table below preserves the
 most recent phases.
 

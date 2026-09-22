@@ -490,9 +490,18 @@ fn chain_aware_map(
 /// slice is shorter than the shortest period among the tied nodes. Otherwise
 /// keep `Fifo` and warn, naming both numbers. An absent `rr_timeslice_us` is
 /// "unknown", never "assume the default".
-fn rr_policy_for_ties(
+///
+/// `period_us` answers "the shortest period this node runs at", because WHERE
+/// that fact lives differs per mapper: `chain_aware` reads it off the node's
+/// declared paths ([`shortest_node_budget_us`]), while `rate_monotonic` and
+/// `deadline_monotonic` rank on the node's own `rate_hz`/`deadline_us` and
+/// never populate `paths` at all. Taking the lookup as an argument is what
+/// lets all three mappers share ONE answer to "what does a tie mean" — the
+/// asymmetry this function's own doc describes was, until then, only
+/// `chain_aware`'s (see `docs/design-issues.md` #53).
+pub(crate) fn rr_policy_for_ties(
     node_priority: &BTreeMap<String, i64>,
-    input: &MapperInput,
+    period_us: &dyn Fn(&str) -> Option<u64>,
     rr_slice_us: Option<u64>,
 ) -> (BTreeSet<String>, Vec<MapWarning>) {
     let mut by_priority: BTreeMap<i64, Vec<String>> = BTreeMap::new();
@@ -508,10 +517,7 @@ fn rr_policy_for_ties(
             continue;
         }
 
-        let shortest_period_us = nodes
-            .iter()
-            .filter_map(|n| shortest_node_budget_us(input, n))
-            .min();
+        let shortest_period_us = nodes.iter().filter_map(|n| period_us(n)).min();
 
         let slice_is_useful = match (rr_slice_us, shortest_period_us) {
             (Some(slice), Some(period)) => slice < period,
@@ -536,7 +542,7 @@ fn rr_policy_for_ties(
 /// The shortest time budget any of a node's paths carries, in microseconds —
 /// a timer's period or an input path's declared latency budget. `None` when
 /// the node carries no usable timing fact at all.
-fn shortest_node_budget_us(input: &MapperInput, node: &str) -> Option<u64> {
+pub(crate) fn shortest_node_budget_us(input: &MapperInput, node: &str) -> Option<u64> {
     input
         .nodes
         .iter()
@@ -602,7 +608,11 @@ fn realize_posix(
         crate::PlatformResources::Posix(p) => p.rr_timeslice.map(|d| d.as_micros()),
         crate::PlatformResources::Raw(_) => None,
     };
-    let (rr_nodes, tie_warnings) = rr_policy_for_ties(&node_priority, input, rr_slice_us);
+    let (rr_nodes, tie_warnings) = rr_policy_for_ties(
+        &node_priority,
+        &|node| shortest_node_budget_us(input, node),
+        rr_slice_us,
+    );
     warnings.extend(tie_warnings);
 
     let mut tiers: Vec<ResolvedTier> = node_priority
@@ -884,7 +894,12 @@ mod tests {
     #[test]
     fn rr_is_derived_only_when_the_slice_is_shorter_than_the_period() {
         // 1 ms slice against a 100 ms period: rotating actually rotates.
-        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &two_tied_nodes(), Some(1_000));
+        let input = two_tied_nodes();
+        let (rr, warns) = rr_policy_for_ties(
+            &tied_priorities(),
+            &|n| shortest_node_budget_us(&input, n),
+            Some(1_000),
+        );
         assert_eq!(rr.len(), 2, "both tied nodes should get SCHED_RR");
         assert!(warns.is_empty(), "no tie left unmitigated: {warns:?}");
     }
@@ -894,7 +909,12 @@ mod tests {
         // Linux's DEFAULT slice is 100 ms and the nodes run at 10 Hz, so a
         // slice covers the whole period: SCHED_RR would behave exactly like
         // SCHED_FIFO while looking like it fixed starvation.
-        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &two_tied_nodes(), Some(100_000));
+        let input = two_tied_nodes();
+        let (rr, warns) = rr_policy_for_ties(
+            &tied_priorities(),
+            &|n| shortest_node_budget_us(&input, n),
+            Some(100_000),
+        );
         assert!(
             rr.is_empty(),
             "RR must not be derived when it changes nothing"
@@ -921,7 +941,12 @@ mod tests {
         // `rr_timeslice_us` absent means the platform file did not say. That
         // is unknown, not 100 ms, and guessing either way would be inventing
         // a number.
-        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &two_tied_nodes(), None);
+        let input = two_tied_nodes();
+        let (rr, warns) = rr_policy_for_ties(
+            &tied_priorities(),
+            &|n| shortest_node_budget_us(&input, n),
+            None,
+        );
         assert!(rr.is_empty());
         assert_eq!(warns.len(), 1);
         let MapWarning::UnmitigatedPriorityTie {
@@ -936,7 +961,9 @@ mod tests {
     #[test]
     fn distinct_priorities_are_not_ties() {
         let prios = BTreeMap::from([("/a".to_string(), 30), ("/b".to_string(), 31)]);
-        let (rr, warns) = rr_policy_for_ties(&prios, &two_tied_nodes(), Some(1_000));
+        let input = two_tied_nodes();
+        let (rr, warns) =
+            rr_policy_for_ties(&prios, &|n| shortest_node_budget_us(&input, n), Some(1_000));
         assert!(rr.is_empty(), "no tie, so nothing to time-slice");
         assert!(warns.is_empty());
     }
@@ -953,7 +980,11 @@ mod tests {
             legacy: None,
             chains: Vec::new(),
         };
-        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &input, Some(1_000));
+        let (rr, warns) = rr_policy_for_ties(
+            &tied_priorities(),
+            &|n| shortest_node_budget_us(&input, n),
+            Some(1_000),
+        );
         assert!(rr.is_empty());
         assert_eq!(warns.len(), 1);
         let MapWarning::UnmitigatedPriorityTie {
