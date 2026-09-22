@@ -1,7 +1,6 @@
 //! Validation rules for manifest checking.
 
 mod causal_dag;
-mod consistency;
 mod dangling_entity;
 mod drop_sanity;
 mod endpoint_topic;
@@ -79,7 +78,13 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(service_type::ServiceTypeRule),
         Box::new(dangling_entity::DanglingEntityRule),
         Box::new(satisfiability::SatisfiabilityRule),
-        Box::new(consistency::ConsistencyRule),
+        // NOT registered: `consistency`. The id is live — it is the CROSS-SCOPE
+        // rule the consumer (play_launch's `manifest_loader`) emits under, and
+        // `--rule consistency` filters those diagnostics. What lived here was a
+        // no-op body reserving the name for "phase 34.5", counted in the
+        // documented rule registry, so a reader of the registry or of a
+        // `--rule consistency` run was told a rule ran that did nothing. A
+        // reserved id belongs in the docs, not in `default_rules()`.
         Box::new(state_consistency::StateConsistencyRule),
         // Vocabulary v2 rules (Phase 44.2).
         Box::new(explicit_trigger::ExplicitTriggerRule),

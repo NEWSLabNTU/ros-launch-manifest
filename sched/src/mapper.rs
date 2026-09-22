@@ -17,7 +17,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    chain::{MapDiagnostics, ResolvedChain},
+    chain::{MapDiagnostics, MapWarning, ResolvedChain},
+    chain_aware_mapper::rr_policy_for_ties,
     platform::{PlatformResources, PriorityBand},
     resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError, SchedNode, resolve},
     types::SystemSched,
@@ -208,9 +209,13 @@ pub(crate) fn require_posix_band(
     Ok(band)
 }
 
-/// Priority for rank `i` (0 = highest) out of `n` ranked nodes, spread
+/// Priority for rank `i` (0 = highest) out of `n` ranked RANKS, spread
 /// linearly across `band` (rank 0 → `band.max`, rank `n-1` → `band.min`).
 /// `n <= 1` → `band.max`.
+///
+/// `n` counts DISTINCT ranks, not nodes: nodes whose ranking fact is exactly
+/// equal share one rank (see [`rank_groups`]), so four nodes at two rates take
+/// two levels of the band rather than four.
 fn spread_priority(i: usize, n: usize, band: &PriorityBand) -> i64 {
     if n <= 1 {
         return band.max;
@@ -220,24 +225,110 @@ fn spread_priority(i: usize, n: usize, band: &PriorityBand) -> i64 {
     band.max - (span * frac).round() as i64
 }
 
-/// Build a [`SchedPlan`] from nodes already ranked highest-priority-first
-/// (`ranked`), spreading priorities across `band`, plus the remaining
+/// One rank: every node whose ranking fact is EXACTLY equal, plus a label for
+/// the shared value.
+struct RankGroup<'a> {
+    /// How the tier names itself when it holds more than one node — the fact
+    /// the members share (`rate_hz=30`), never one member's name.
+    label: String,
+    /// Members, in the mapper's tie-break order (node name ascending).
+    nodes: Vec<&'a MapperNode>,
+}
+
+/// Collapse an already-sorted ranking into one [`RankGroup`] per DISTINCT
+/// value of the ranking key.
+///
+/// `key` is the exact ranking fact (a rate, a deadline); `label` names it for
+/// a tied tier. Equality is exact and on the value as declared: two nodes at
+/// 30 Hz tie, 30 Hz and 30.000001 Hz do not. Nothing is rounded into a tie —
+/// the collapse states a fact the contract already carries, and inventing a
+/// tolerance would invent one it does not.
+fn rank_groups<'a, K: PartialEq>(
+    ranked: &[&'a MapperNode],
+    key: impl Fn(&MapperNode) -> K,
+    label: impl Fn(&MapperNode) -> String,
+) -> Vec<RankGroup<'a>> {
+    let mut groups: Vec<RankGroup<'a>> = Vec::new();
+    for node in ranked {
+        let k = key(node);
+        match groups.last_mut() {
+            Some(g) if key(g.nodes[0]) == k => g.nodes.push(node),
+            _ => groups.push(RankGroup {
+                label: label(node),
+                nodes: vec![node],
+            }),
+        }
+    }
+    groups
+}
+
+/// Build a [`SchedPlan`] from ranks already ordered highest-priority-first
+/// (`groups`), spreading priorities across `band`, plus the remaining
 /// (fact-less) nodes collapsed into the synthesized default tier.
+///
+/// A rank holding more than one node is ONE tier carrying all of them: equal
+/// facts earn equal priority, and the band is spent on distinct facts rather
+/// than on the alphabet. Such a tier then takes `chain_aware`'s policy
+/// decision for a tie — `SCHED_RR` where the host's slice is short enough to
+/// actually rotate between them, otherwise `SCHED_FIFO` with an
+/// [`MapWarning::UnmitigatedPriorityTie`] naming both numbers — via the shared
+/// [`rr_policy_for_ties`]. `period_us` answers "the shortest period this node
+/// runs at" from whichever fact this mapper ranks on.
 fn build_ranked_plan(
-    ranked: &[&MapperNode],
+    groups: &[RankGroup<'_>],
     rest: &[&MapperNode],
     band: &PriorityBand,
-) -> SchedPlan {
-    let n = ranked.len();
+    facts: &PlatformFacts,
+    period_us: &dyn Fn(&MapperNode) -> Option<u64>,
+) -> (SchedPlan, Vec<MapWarning>) {
+    let n = groups.len();
     let mut tiers: Vec<ResolvedTier> = Vec::with_capacity(n + 1);
 
-    for (i, node) in ranked.iter().enumerate() {
+    let mut node_priority: BTreeMap<String, i64> = BTreeMap::new();
+    let mut period_by_name: BTreeMap<String, Option<u64>> = BTreeMap::new();
+    for (i, group) in groups.iter().enumerate() {
+        let priority = spread_priority(i, n, band);
+        for node in &group.nodes {
+            node_priority.insert(node.name.clone(), priority);
+            period_by_name.insert(node.name.clone(), period_us(node));
+        }
+    }
+
+    // The host's global `SCHED_RR` slice, in microseconds — the one number
+    // that decides whether rotating between tied nodes changes anything.
+    let rr_slice_us = match facts {
+        PlatformResources::Posix(p) => p.rr_timeslice.map(|d| d.as_micros()),
+        PlatformResources::Raw(_) => None,
+    };
+    let (rr_nodes, warnings) = rr_policy_for_ties(
+        &node_priority,
+        &|node| period_by_name.get(node).copied().flatten(),
+        rr_slice_us,
+    );
+
+    for (i, group) in groups.iter().enumerate() {
+        let priority = spread_priority(i, n, band);
+        let mut members: Vec<String> = group.nodes.iter().map(|n| n.name.clone()).collect();
+        members.sort();
+        // Every member of a rank holds the same priority, so the tie decision
+        // is the same for all of them; reading it off the first is enough.
+        let rr = members
+            .first()
+            .is_some_and(|m| rr_nodes.contains(m.as_str()));
         tiers.push(ResolvedTier {
-            name: node.name.clone(),
-            priority: spread_priority(i, n, band),
-            sched_class: Some("SCHED_FIFO".to_string()),
+            // A one-node rank keeps naming itself after the node (the shape
+            // every consumer has seen since this mapper existed). A tied rank
+            // cannot: naming it after one member would read as a tier that
+            // holds only that node, so it names the fact its members share.
+            name: if members.len() == 1 {
+                members[0].clone()
+            } else {
+                group.label.clone()
+            },
+            priority,
+            sched_class: Some(if rr { "SCHED_RR" } else { "SCHED_FIFO" }.to_string()),
             class: Some("real_time".to_string()),
-            members: vec![node.name.clone()],
+            members,
             ..Default::default()
         });
     }
@@ -254,13 +345,21 @@ fn build_ranked_plan(
 
     // Highest priority first; ties by name — same convention as `resolve()`.
     tiers.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
-    ResolvedTierTable { tiers }
+    (ResolvedTierTable { tiers }, warnings)
 }
 
 /// `rate_monotonic` — higher rate → higher priority, spread within
 /// `resources.rt_priority_band`. Deterministic: ranked by rate descending,
-/// ties broken by node name ascending. Nodes with no `rate_hz` fall into
-/// the non-RT default tier.
+/// nodes at the SAME rate collapsed into one rank (members ordered by node
+/// name ascending). Nodes with no `rate_hz` fall into the non-RT default tier.
+///
+/// Rate-monotonic theory assigns equal periods equal priority. Handing each
+/// node its own level and letting the node name decide which of two 30 Hz
+/// nodes preempts the other would make the alphabet a scheduling policy —
+/// renaming a node would change who preempts whom — and would spend four
+/// levels of the band on two facts. A tie is preserved instead, and mitigated
+/// the way [`crate::chain_aware_mapper`] already mitigates one
+/// (`docs/design-issues.md` #53).
 #[derive(Debug, Default)]
 pub struct RateMonotonicMapper;
 
@@ -270,6 +369,14 @@ impl SchedMapper for RateMonotonicMapper {
     }
 
     fn map(&self, input: &MapperInput, facts: &PlatformFacts) -> Result<SchedPlan, MapError> {
+        Ok(self.map_with_diagnostics(input, facts)?.0)
+    }
+
+    fn map_with_diagnostics(
+        &self,
+        input: &MapperInput,
+        facts: &PlatformFacts,
+    ) -> Result<(SchedPlan, MapDiagnostics), MapError> {
         let band = require_posix_band(facts, self.name())?;
 
         let mut ranked: Vec<&MapperNode> =
@@ -280,17 +387,44 @@ impl SchedMapper for RateMonotonicMapper {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.name.cmp(&b.name))
         });
+        let groups = rank_groups(
+            &ranked,
+            |n| n.rate_hz,
+            |n| format!("rate_hz={}", n.rate_hz.unwrap_or_default()),
+        );
 
         let rest: Vec<&MapperNode> = input.nodes.iter().filter(|n| n.rate_hz.is_none()).collect();
 
-        Ok(build_ranked_plan(&ranked, &rest, &band))
+        let (plan, warnings) = build_ranked_plan(&groups, &rest, &band, facts, &|n| {
+            period_from_rate(n.rate_hz)
+        });
+        Ok((
+            plan,
+            MapDiagnostics {
+                details: Vec::new(),
+                warnings,
+            },
+        ))
     }
+}
+
+/// A rate's period in microseconds. A non-positive or non-finite rate is not a
+/// period — absent, never zero, so the tie decision reports "unknown" rather
+/// than deriving `SCHED_RR` from a number nobody stated.
+fn period_from_rate(rate_hz: Option<f64>) -> Option<u64> {
+    rate_hz
+        .filter(|hz| *hz > 0.0 && hz.is_finite())
+        .map(|hz| (1_000_000.0 / hz).round() as u64)
 }
 
 /// `deadline_monotonic` — shorter deadline → higher priority, spread
 /// within `resources.rt_priority_band`. Deterministic: ranked by
-/// `deadline_us` ascending, ties broken by node name ascending. Nodes with
-/// no `deadline_us` fall into the non-RT default tier.
+/// `deadline_us` ascending, nodes with the SAME deadline collapsed into one
+/// rank (members ordered by node name ascending). Nodes with no `deadline_us`
+/// fall into the non-RT default tier.
+///
+/// Same ruling as [`RateMonotonicMapper`]: equal facts earn equal priority,
+/// and the tie is mitigated rather than broken by name.
 #[derive(Debug, Default)]
 pub struct DeadlineMonotonicMapper;
 
@@ -300,6 +434,14 @@ impl SchedMapper for DeadlineMonotonicMapper {
     }
 
     fn map(&self, input: &MapperInput, facts: &PlatformFacts) -> Result<SchedPlan, MapError> {
+        Ok(self.map_with_diagnostics(input, facts)?.0)
+    }
+
+    fn map_with_diagnostics(
+        &self,
+        input: &MapperInput,
+        facts: &PlatformFacts,
+    ) -> Result<(SchedPlan, MapDiagnostics), MapError> {
         let band = require_posix_band(facts, self.name())?;
 
         let mut ranked: Vec<&MapperNode> = input
@@ -312,6 +454,11 @@ impl SchedMapper for DeadlineMonotonicMapper {
                 .cmp(&b.deadline_us)
                 .then_with(|| a.name.cmp(&b.name))
         });
+        let groups = rank_groups(
+            &ranked,
+            |n| n.deadline_us,
+            |n| format!("deadline_us={}", n.deadline_us.unwrap_or_default()),
+        );
 
         let rest: Vec<&MapperNode> = input
             .nodes
@@ -319,7 +466,16 @@ impl SchedMapper for DeadlineMonotonicMapper {
             .filter(|n| n.deadline_us.is_none())
             .collect();
 
-        Ok(build_ranked_plan(&ranked, &rest, &band))
+        // Under the implicit-deadline assumption a node's deadline IS its
+        // period, which is the number the RR slice has to beat.
+        let (plan, warnings) = build_ranked_plan(&groups, &rest, &band, facts, &|n| n.deadline_us);
+        Ok((
+            plan,
+            MapDiagnostics {
+                details: Vec::new(),
+                warnings,
+            },
+        ))
     }
 }
 
@@ -387,6 +543,32 @@ mod tests {
         })
     }
 
+    /// Same, but with the host's global `SCHED_RR` slice stated — the number
+    /// that decides whether a tie can be mitigated.
+    fn posix_facts_rr(band: Option<(i64, i64)>, slice_us: i64) -> PlatformFacts {
+        PlatformFacts::Posix(PosixResources {
+            rt_priority_band: band.map(|(min, max)| PriorityBand { min, max }),
+            isolated_cpus: vec![],
+            rr_timeslice: Some(ros_launch_manifest_types::duration::Duration::from_micros(
+                slice_us,
+            )),
+        })
+    }
+
+    fn tie_warning(warnings: &[MapWarning]) -> (i64, Vec<String>, Option<u64>) {
+        match warnings {
+            [
+                MapWarning::UnmitigatedPriorityTie {
+                    priority,
+                    nodes,
+                    shortest_period_us,
+                    ..
+                },
+            ] => (*priority, nodes.clone(), *shortest_period_us),
+            other => panic!("expected exactly one UnmitigatedPriorityTie, got {other:?}"),
+        }
+    }
+
     #[test]
     fn with_builtins_registers_all_four() {
         let registry = MapperRegistry::with_builtins();
@@ -425,8 +607,15 @@ mod tests {
         assert_eq!(plan.tiers[2].priority, 10);
     }
 
+    /// Two nodes at the same rate are ONE rank: equal facts, equal priority.
+    ///
+    /// The old test asserted only that `/a` came before `/b` in the output
+    /// table, which is true of a name-ordered spread (40 and 30) and of a
+    /// collapsed tie alike — so the behaviour it protected was the one nobody
+    /// had chosen. What is pinned now is the choice: one tier, both members,
+    /// one priority, member order stable (`docs/design-issues.md` #53).
     #[test]
-    fn rate_monotonic_ties_broken_by_name_asc() {
+    fn rate_monotonic_equal_rates_share_one_tier_and_priority() {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", Some(50.0), None), node("/a", Some(50.0), None)],
@@ -434,9 +623,121 @@ mod tests {
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
+        let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+
+        assert_eq!(
+            plan.tiers.len(),
+            1,
+            "one rate is one rank: {:?}",
+            plan.tiers
+        );
+        let tier = &plan.tiers[0];
+        assert_eq!(
+            tier.members,
+            vec!["/a".to_string(), "/b".to_string()],
+            "both tied nodes are members, in a stable order"
+        );
+        assert_eq!(
+            tier.priority, 40,
+            "the single rank holds band.max; the band is spent on distinct rates"
+        );
+        assert_eq!(
+            tier.name, "rate_hz=50",
+            "a tied tier names the fact its members share, not one member"
+        );
+
+        // No slice stated, so the tie cannot be mitigated -- and that is
+        // REPORTED rather than papered over with a name-ordered spread.
+        assert_eq!(tier.sched_class.as_deref(), Some("SCHED_FIFO"));
+        let (priority, nodes, shortest_period_us) = tie_warning(&diags.warnings);
+        assert_eq!(priority, 40);
+        assert_eq!(nodes, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(
+            shortest_period_us,
+            Some(20_000),
+            "50 Hz is a 20 ms period, read off the mapper's own ranking fact"
+        );
+    }
+
+    /// The tie is mitigated when the host's slice is short enough to rotate
+    /// between the tied nodes -- `chain_aware`'s rule, reached through the
+    /// same function.
+    #[test]
+    fn rate_monotonic_tie_takes_sched_rr_when_the_slice_fits() {
+        let mapper = RateMonotonicMapper;
+        let input = MapperInput {
+            nodes: vec![node("/b", Some(50.0), None), node("/a", Some(50.0), None)],
+            legacy: None,
+            chains: Vec::new(),
+        };
+        // 1 ms against a 20 ms period: rotating actually rotates.
+        let facts = posix_facts_rr(Some((10, 40)), 1_000);
+        let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_RR"));
+        assert!(
+            diags.warnings.is_empty(),
+            "no tie left unmitigated: {:?}",
+            diags.warnings
+        );
+    }
+
+    /// A slice as long as the period changes nothing, so RR is declined and
+    /// the tie is reported instead -- the same refusal `chain_aware` makes.
+    #[test]
+    fn rate_monotonic_tie_keeps_fifo_when_the_slice_is_as_long_as_the_period() {
+        let mapper = RateMonotonicMapper;
+        let input = MapperInput {
+            nodes: vec![node("/b", Some(10.0), None), node("/a", Some(10.0), None)],
+            legacy: None,
+            chains: Vec::new(),
+        };
+        // Linux's default 100 ms slice against a 10 Hz (100 ms) period.
+        let facts = posix_facts_rr(Some((10, 40)), 100_000);
+        let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_FIFO"));
+        let (_, _, shortest_period_us) = tie_warning(&diags.warnings);
+        assert_eq!(shortest_period_us, Some(100_000));
+    }
+
+    /// Distinct rates still get distinct priorities, and the band is spread
+    /// over the number of RATES rather than the number of nodes.
+    #[test]
+    fn rate_monotonic_spreads_over_distinct_rates_not_nodes() {
+        let mapper = RateMonotonicMapper;
+        let input = MapperInput {
+            nodes: vec![
+                node("/fast_b", Some(30.0), None),
+                node("/slow_b", Some(10.0), None),
+                node("/fast_a", Some(30.0), None),
+                node("/slow_a", Some(10.0), None),
+            ],
+            legacy: None,
+            chains: Vec::new(),
+        };
+        let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
-        assert_eq!(plan.tiers[0].name, "/a");
-        assert_eq!(plan.tiers[1].name, "/b");
+
+        let got: Vec<(String, i64, Vec<String>)> = plan
+            .tiers
+            .iter()
+            .map(|t| (t.name.clone(), t.priority, t.members.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "rate_hz=30".to_string(),
+                    40,
+                    vec!["/fast_a".to_string(), "/fast_b".to_string()]
+                ),
+                (
+                    "rate_hz=10".to_string(),
+                    10,
+                    vec!["/slow_a".to_string(), "/slow_b".to_string()]
+                ),
+            ],
+            "two rates take two levels of the band, not four"
+        );
     }
 
     #[test]
@@ -663,8 +964,12 @@ mod tests {
         assert_eq!(default_tier.members, vec!["/bg".to_string()]);
     }
 
+    /// The deadline twin of
+    /// [`rate_monotonic_equal_rates_share_one_tier_and_priority`]: equal
+    /// deadlines are one rank, and the deadline is the period the RR slice is
+    /// judged against.
     #[test]
-    fn deadline_monotonic_ties_broken_by_name_asc() {
+    fn deadline_monotonic_equal_deadlines_share_one_tier_and_priority() {
         let mapper = DeadlineMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", None, Some(5_000)), node("/a", None, Some(5_000))],
@@ -672,9 +977,59 @@ mod tests {
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
-        let plan = mapper.map(&input, &facts).expect("maps");
-        assert_eq!(plan.tiers[0].name, "/a");
-        assert_eq!(plan.tiers[1].name, "/b");
+        let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+
+        assert_eq!(plan.tiers.len(), 1, "{:?}", plan.tiers);
+        let tier = &plan.tiers[0];
+        assert_eq!(tier.members, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(tier.priority, 40);
+        assert_eq!(tier.name, "deadline_us=5000");
+        assert_eq!(tier.sched_class.as_deref(), Some("SCHED_FIFO"));
+        let (_, _, shortest_period_us) = tie_warning(&diags.warnings);
+        assert_eq!(shortest_period_us, Some(5_000));
+    }
+
+    /// A tie created by BAND COMPRESSION is a tie too.
+    ///
+    /// Five distinct rates into a three-priority band collapse adjacent ranks,
+    /// which is the mapper producing a tie it did not derive. Judging it by a
+    /// different rule than an exact tie would be a third policy; it takes the
+    /// same one, exactly as `chain_aware` does after its own compression.
+    #[test]
+    fn rate_monotonic_band_compression_ties_are_ties_too() {
+        let mapper = RateMonotonicMapper;
+        let input = MapperInput {
+            nodes: vec![
+                node("/n100", Some(100.0), None),
+                node("/n80", Some(80.0), None),
+                node("/n60", Some(60.0), None),
+                node("/n40", Some(40.0), None),
+                node("/n20", Some(20.0), None),
+            ],
+            legacy: None,
+            chains: Vec::new(),
+        };
+        // 1 ms slice, shortest compressed-tie period 1/80 Hz = 12.5 ms.
+        let facts = posix_facts_rr(Some((10, 12)), 1_000);
+        let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+
+        let sched = |name: &str| {
+            plan.tiers
+                .iter()
+                .find(|t| t.name == name)
+                .and_then(|t| t.sched_class.clone())
+                .unwrap()
+        };
+        assert_eq!(sched("/n100"), "SCHED_FIFO", "alone at priority 12");
+        assert_eq!(sched("/n80"), "SCHED_RR");
+        assert_eq!(sched("/n60"), "SCHED_RR");
+        assert_eq!(sched("/n40"), "SCHED_RR");
+        assert_eq!(sched("/n20"), "SCHED_RR");
+        assert!(
+            diags.warnings.is_empty(),
+            "the slice fits both tie sets: {:?}",
+            diags.warnings
+        );
     }
 
     #[test]

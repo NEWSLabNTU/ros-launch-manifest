@@ -2465,3 +2465,228 @@ topics:
         "should detect dangling when use_a=false"
     );
 }
+
+// ── Issue #0037: the topic side of the same escape hatch ──
+
+/// Helper: the `dangling-entity` diagnostics a manifest produces.
+fn dangling_diags(yaml: &str) -> Vec<String> {
+    let m = parse_manifest_str(yaml).unwrap();
+    run_checks(&m)
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "dangling-entity")
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+/// A topic whose PRODUCER is external is not missing a publisher.
+///
+/// `dangling-entity` read `svc.external` and `act.external` and not
+/// `topic.external`, so the same rule answered a file two ways depending on
+/// which kind of entity carried the mark — and the consumer's cross-scope
+/// re-run of the SAME rule honoured it, so one pass warned and the other did
+/// not.
+#[test]
+fn test_dangling_topic_external_pub_is_accepted() {
+    let diags = dangling_diags(
+        r#"
+version: 1
+nodes:
+  watchdog:
+    sub:
+      status: {}
+topics:
+  /vehicle/status:
+    type: std_msgs/msg/String
+    external: pub
+    sub: [watchdog/status]
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "a topic whose publisher is declared external must not be dangling: {diags:?}"
+    );
+}
+
+/// The mirror: a topic whose CONSUMER is external is not unused output.
+#[test]
+fn test_dangling_topic_external_sub_is_accepted() {
+    let diags = dangling_diags(
+        r#"
+version: 1
+nodes:
+  reporter:
+    pub:
+      status: {}
+topics:
+  /vehicle/status:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [reporter/status]
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "a topic whose subscriber is declared external must not be dangling: {diags:?}"
+    );
+}
+
+/// `external: both` answers for either side.
+#[test]
+fn test_dangling_topic_external_both_covers_either_side() {
+    let diags = dangling_diags(
+        r#"
+version: 1
+nodes:
+  watchdog:
+    sub:
+      status: {}
+topics:
+  /vehicle/status:
+    type: std_msgs/msg/String
+    external: both
+    sub: [watchdog/status]
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "`external: both` covers pub too: {diags:?}"
+    );
+}
+
+/// The negative control that makes the three above mean something: the mark
+/// excuses the side it NAMES and no other. A rule keyed on
+/// `external.is_some()` would pass this too.
+#[test]
+fn test_dangling_topic_external_sub_still_needs_a_publisher() {
+    let diags = dangling_diags(
+        r#"
+version: 1
+nodes:
+  watchdog:
+    sub:
+      status: {}
+topics:
+  /vehicle/status:
+    type: std_msgs/msg/String
+    external: sub
+    sub: [watchdog/status]
+"#,
+    );
+    assert!(
+        diags.iter().any(|m| m.contains("no publishers")),
+        "`external: sub` says nothing about the producer; the warning must stand: {diags:?}"
+    );
+}
+
+/// The `external_topics:` block is the other spelling of the same fact, and
+/// the rule must read both — an author who writes the manifest-wide list
+/// rather than the per-topic field is making the same statement.
+#[test]
+fn test_dangling_topic_external_topics_block_is_accepted() {
+    let diags = dangling_diags(
+        r#"
+version: 1
+nodes:
+  consumer:
+    sub:
+      data: {}
+external_topics:
+  /external/in:
+    external: pub
+    type: std_msgs/msg/String
+topics:
+  /external/in:
+    type: std_msgs/msg/String
+    sub: [consumer/data]
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "an `external_topics:` entry must silence the same warning the per-topic field does: \
+         {diags:?}"
+    );
+}
+
+/// `service-wiring` asks `dangling-entity`'s question from the other end, so
+/// it must accept the same answer: a service whose server is external is
+/// served.
+#[test]
+fn test_service_wiring_external_server_is_served() {
+    let yaml = r#"
+version: 1
+nodes:
+  supervisor:
+    cli:
+      init: {}
+services:
+  /localization/initialize:
+    type: std_srvs/srv/Trigger
+    external: server
+    client: [supervisor/init]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let warns: Vec<_> = run_checks(&m)
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "service-wiring")
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(
+        warns.is_empty(),
+        "an external server is a server; `service-wiring` must not contradict \
+         `dangling-entity`: {warns:?}"
+    );
+}
+
+/// Negative control: `external: client` says nothing about the server, so the
+/// client is still unserved.
+#[test]
+fn test_service_wiring_external_client_still_warns() {
+    let yaml = r#"
+version: 1
+nodes:
+  supervisor:
+    cli:
+      init: {}
+services:
+  /localization/initialize:
+    type: std_srvs/srv/Trigger
+    external: client
+    client: [supervisor/init]
+"#;
+    let m = parse_manifest_str(yaml).unwrap();
+    let result = run_checks(&m);
+    let warns: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "service-wiring")
+        .collect();
+    assert!(
+        !warns.is_empty(),
+        "`external: client` does not serve anything; the warning must stand"
+    );
+}
+
+/// The registry holds only rules with a body.
+///
+/// `consistency` was a registered no-op reserving the name for a phase long
+/// past, counted in the documented registry — so `--rule consistency` and the
+/// rule count both claimed a check that did nothing. The id itself stays live
+/// as the CONSUMER's cross-scope rule; it is just not a rule of this crate.
+#[test]
+fn test_registry_has_no_placeholder_rules() {
+    let ids: Vec<String> = ros_launch_manifest_check::rules::default_rules()
+        .iter()
+        .map(|r| r.id().to_string())
+        .collect();
+    assert!(
+        !ids.iter().any(|id| id == "consistency"),
+        "the no-op `consistency` rule must not be registered: {ids:?}"
+    );
+    assert_eq!(ids.len(), 19, "registered rules: {ids:?}");
+    let mut sorted = ids.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), ids.len(), "rule ids must be unique: {ids:?}");
+}

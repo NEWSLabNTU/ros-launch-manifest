@@ -77,10 +77,10 @@ reservations: off            # off (default) | required — POLICY, so not under
 resources:                   # platform facts, typed per target
   rt_priority_band: { min: 10, max: 40 }
   isolated_cpus: [0]
-  rr_timeslice_us: 100000    # the host's GLOBAL SCHED_RR slice; absent = unknown
+  rr_timeslice: 100ms        # the host's GLOBAL SCHED_RR slice; absent = unknown
 overrides:                   # explicit per-node pins; beat derived values, always
   control_node: { priority: 20, core: 0 }
-  obstacle_detector: { budget_us: 8000, uclamp_max: 800 }
+  obstacle_detector: { budget: 8000us, uclamp_max: 800 }
   telemetry_logger: { sched_class: SCHED_BATCH, nice: 10 }
   planner: { cpus: [4, 5] }
 ```
@@ -95,7 +95,7 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
 - **`posix` `overrides.<node>`** (`PosixOverride`): `priority:
   Option<i64>`, `core: Option<u32>`, `cpus: Vec<u32>`, `sched_class:
   Option<String>`, `nice: Option<i32>`, `uclamp_min`/`uclamp_max:
-  Option<u32>`, `budget_us: Option<u64>`.
+  Option<u32>`, `budget: Option<Duration>`.
   Keys use the same selector vocabulary as v1 `[[assign]].nodes`: full
   FQN or bare last segment. Parsing lives here; *applying* overrides is
   the caller's job (see [Consumers](#consumers)).
@@ -110,10 +110,10 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   takes no CPU pin at all; `core` and `cpus` are mutually exclusive;
   `nice ∈ -20..=19`; `uclamp ∈ 0..=1024` with `min <= max`.
 
-  `budget_us` is the **declared execution cost** — the only legitimate
+  `budget` is the **declared execution cost** — the only legitimate
   source for a `SCHED_DEADLINE` reservation's runtime. It is not a proven
   WCET; it is a declared high-percentile observed cost used *as* an upper
-  bound. `budget_us: 0` is rejected: absent and zero are different
+  bound. `budget: 0us` is rejected: absent and zero are different
   answers, and a declared zero would silently mean "free".
 
 - **`reservations`** (`ReservationMode`, top level beside `mapper:`):
@@ -122,16 +122,18 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   choice. Opt-in because reservations are all-or-nothing within a band: a
   reserved node preempts every fixed-priority thread regardless of
   priority, so a band holding both loses the ordering the mapper
-  computed. Without the switch, adding one `budget_us` would turn that
+  computed. Without the switch, adding one `budget` would turn that
   rule into a hard error nobody asked for.
 
-- **`rr_timeslice_us`**: the host's `SCHED_RR` slice. A platform *fact*,
+- **`rr_timeslice`**: the host's `SCHED_RR` slice, written `100ms`
+  (`rr_timeslice_us: 100000` is a deprecated alias). A platform *fact*,
   which is why it sits in `resources:` — on Linux the slice is a global
   sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`, default **100 ms**),
   not a per-task value, so `TierPlatformSpec::time_slice_us` cannot
-  express it. The `chain_aware` mapper needs it to decide whether
-  `SCHED_RR` is worth deriving for a priority tie at all. Absent means
-  unknown, never "assume the default".
+  express it. Every mapper that can produce a priority tie —
+  `rate_monotonic`, `deadline_monotonic` and `chain_aware` — needs it to
+  decide whether `SCHED_RR` is worth deriving for that tie at all. Absent
+  means unknown, never "assume the default".
 - **Unknown target** (`zephyr`, `freertos`, …): `resources`/`overrides`
   parse as raw `serde_yaml_ng::Value` (`PlatformResources::Raw` /
   `PlatformOverrideEntry::Raw`) — untyped, never range-validated (e.g.
@@ -188,10 +190,11 @@ pub trait SchedMapper {
   file's parsed `resources`).
 - **`SchedPlan`** — alias for `ResolvedTierTable` (deliberately reused:
   "ordered priority/core/sched_class placement grouped by tier, with
-  member node names" is what every mapper produces). Mappers that give
-  each node its own priority emit one-member-per-tier entries (tier name
-  = node name); nodes with no usable facts collapse into `DEFAULT_TIER`
-  (priority 0, no `sched_class` — non-RT).
+  member node names" is what every mapper produces). A rank holding one
+  node emits a one-member tier named after it; a rank holding several
+  (nodes whose ranking fact is exactly equal) emits one tier carrying all
+  of them, named after the shared fact. Nodes with no usable facts
+  collapse into `DEFAULT_TIER` (priority 0, no `sched_class` — non-RT).
 - **`MapperRegistry`** — `register(Box<dyn SchedMapper>)`, `get(name)`;
   `with_builtins()` pre-registers **four** mappers: `manual`,
   `rate_monotonic`, `deadline_monotonic`, `chain_aware`. Consumers
@@ -208,15 +211,42 @@ pub trait SchedMapper {
 - **`rate_monotonic`** — higher `rate_hz` → higher priority, spread
   linearly across `resources.rt_priority_band` (rank 0 → `band.max`,
   last → `band.min`; a narrow band produces ties, never inversions).
-  Deterministic: rate descending, ties by node name. No `rate_hz` →
-  `DEFAULT_TIER`. Requires a valid posix band.
+  Deterministic: rate descending; nodes at **exactly** the same rate
+  collapse into ONE rank, with members ordered by node name. No `rate_hz`
+  → `DEFAULT_TIER`. Requires a valid posix band.
 - **`deadline_monotonic`** — same shape, ranked by `deadline_us`
-  ascending (shorter deadline → higher priority).
+  ascending (shorter deadline → higher priority); equal deadlines collapse
+  the same way.
 - **`chain_aware`** — chain-first shaping; the primary mapper for
   systems declaring end-to-end scope `paths:`. Detailed below.
 
-Both simple mappers emit `sched_class: SCHED_FIFO`, `class: real_time`
-per ranked node.
+### What the two simple mappers do with a tie
+
+Rate-monotonic theory assigns equal periods equal priority, so the band is
+spread over the number of **distinct** values, not the number of nodes: four
+nodes at two rates take two levels, not four. A rank holding more than one
+node is one tier carrying all of them as `members`, named after the fact they
+share (`rate_hz=30`, `deadline_us=5000`) rather than after any one member; a
+one-node rank still names itself after its node.
+
+Breaking the tie by node name instead would make the alphabet a scheduling
+policy — renaming a node would change who preempts whom — and would spend
+band on an ordering nothing declared. See design issue #53.
+
+The tie is then handed to the same decision `chain_aware` makes (below):
+`SCHED_RR` when `resources.rr_timeslice` is shorter than the shortest period
+among the tied nodes, otherwise `SCHED_FIFO` plus
+`MapWarning::UnmitigatedPriorityTie` naming both numbers. The period comes
+from whichever fact the mapper ranks on — `1/rate_hz`, or the deadline under
+the implicit-deadline assumption. A tie the mapper *creates* by band
+compression takes the same decision, for the same reason. Absent is not zero:
+a node with no usable period makes the slice comparison unanswerable, and RR
+is declined and reported rather than guessed.
+
+Both simple mappers emit `class: real_time` and `sched_class: SCHED_FIFO`
+(or `SCHED_RR` for a mitigated tie) per ranked node. Neither writes the typed
+`posix` placement — `ResolvedTier::posix` stays `None`, and the consumer
+reads the `sched_class`/`priority`/`core` trio for these plans.
 
 **Applying `overrides` is not part of the trait** — "override beats
 derived, always" is mapper-independent logic the caller applies after
@@ -305,8 +335,24 @@ model):
   `derived(chain_aware: non-chain criticality=Some(High) budget_ms=<b>)`
   (criticality rendered as Rust `Debug` of the `Option`),
   each suffixed `-> prio <p>` by the realizer.
-- `MapWarning::ChainInfeasible { chain, sampling_cost_ms, budget_ms }`,
-  `MapWarning::BandTooNarrow { distinct_classes, band_width, clamped }`.
+- `MapWarning`, all four variants:
+  - `ChainInfeasible { chain, sampling_cost_ms, budget_ms }` — sampling cost
+    alone consumes the chain's budget; no priority assignment fixes it.
+  - `ChainFeasibleWithoutWcet { chain, boundaries_without_wcet }` — the
+    verdict was `feasible`, but one or more timer boundaries carry no
+    `exec_ms` and were counted as ZERO. An evidence problem, not a
+    scheduling one; absent is not zero.
+  - `UnmitigatedPriorityTie { priority, nodes, rr_timeslice_us,
+    shortest_period_us }` — two or more nodes ended at the same priority and
+    `SCHED_RR` could not be derived to rotate between them. Emitted by
+    `rate_monotonic` and `deadline_monotonic` too (design issue #53), not
+    only by `chain_aware`.
+  - `BandTooNarrow { distinct_classes, band_width, clamped }` — the band
+    could not hold the classes remaining after every legal collapse; the
+    lowest were clamped into `band.min` (ties, never inversions).
+
+`rate_monotonic` and `deadline_monotonic` populate `warnings` only —
+`details` (per-rank `--explain` provenance) remains a `chain_aware` feature.
 
 ## Chain Vocabulary (`chain.rs`)
 
