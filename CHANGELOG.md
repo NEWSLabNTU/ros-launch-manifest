@@ -6,6 +6,115 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.38 - 2026-09-22
+
+Three issues filed against `ea5cbea` from the 2026-09-18 safety-island runs,
+tracked in play_launch's tracker (`docs/issues/0037`, `0038`, `0039` there —
+this repository has none of its own). The workspace Cargo version stays
+`0.1.4`: `mod consistency` was private, so the rule's removal is not an API
+change, and `rr_policy_for_ties` is `pub(crate)`.
+
+### The checker honours the escape hatches the grammar offers (#0037)
+
+Three rules ignored `external:`, each checkable by reading the rule beside the
+type it consumes:
+
+- `dangling-entity` warned on a topic with no publishers or no subscribers
+  without reading `topic.external`, while the SAME rule read `svc.external`
+  and `act.external` through `server_is_external`. The topic branch now skips
+  the no-publishers warning for `pub | both` and the no-subscribers warning for
+  `sub | both`, through a `topic_side_is_external` shaped like its service
+  twin, and also reads the manifest-level `external_topics:` block. Key
+  matching there is exact plus leading-slash normalisation: a `topics:` key may
+  be relative, and resolving that needs a scope namespace this crate never
+  sees.
+- `service-wiring` warned for a `cli:` endpoint whose service was marked
+  `external: server` — the exact case `dangling-entity`'s own header calls
+  normal and exempts. Both rules now agree, through one `has_a_server`.
+- `consistency` was a registered no-op whose body was a comment about phase
+  34.5, counted in the documented 20 rules. Removed; the registry is 19. The
+  id stays live because the real cross-scope rule is the consumer's, which
+  emits it from seven sites in `manifest_loader.rs`, and `--rule` is a free
+  string list, so `--rule consistency` still filters real diagnostics.
+
+Eight tests, including two negative controls (`external: sub` still demands a
+publisher; `external: client` still warns) and a registry test pinning 19
+rules with unique ids. Verified non-vacuous: with `check/src/rules` stashed, 6
+of the 8 fail and the 2 controls pass.
+
+### Equal periods, equal priority (#0039)
+
+`rate_monotonic` sorted by rate and broke ties by NODE NAME, giving two 30 Hz
+nodes priorities 40 and 30 — a policy statement (this node preempts that one)
+whose policy was the alphabet, so renaming a node changed who preempts whom.
+The crate's own `chain_aware` already did the opposite: an exact tie collapses
+into one rank and then takes a `SCHED_RR`-if-the-slice-fits decision, warning
+`UnmitigatedPriorityTie` where FIFO cannot be made fair. The three mappers now
+agree.
+
+`rank_groups` collapses consecutive nodes with exactly equal `rate_hz` /
+`deadline_us` into one group; the spread runs over DISTINCT values, and one
+tier per rank carries all tied nodes as sorted `members`. `chain_aware`'s
+decision is reused rather than reimplemented: `rr_policy_for_ties` now takes a
+period closure instead of `&MapperInput`, which was necessary rather than
+cosmetic — it read each node's period off `node.paths`, which the two simple
+mappers never populate, so they would have seen `None` on every tie and could
+never have derived RR.
+
+Consequences worth knowing downstream:
+
+- A multi-member tier names itself after the shared fact (`rate_hz=30`); a
+  one-member tier still names itself after the node, so nothing moves for
+  untied plans. play_launch's `flatten_to_one_tier_per_node` explodes grouped
+  tiers before applying overrides.
+- Band-compression ties take the same decision, deliberately. Five distinct
+  rates in a three-level band already produced equal priorities, silently
+  FIFO; judging a mapper-created tie by a different rule than a derived one
+  would be a third policy. On a platform file that states `rr_timeslice`, such
+  a plan can now carry `SCHED_RR` where it carried `SCHED_FIFO`, and where the
+  slice does not fit a warning appears that was previously absent.
+- `ResolvedTier::posix` stays `None` for these two mappers, so RR is expressed
+  in `sched_class` only. Filling the typed placement would be more consistent
+  with `chain_aware`, but play_launch's `derive_reservations` and
+  `report_jitter_placement` both test `tier.posix` for real-time-ness, so every
+  `rate_monotonic` tier would become reservation-eligible and stop producing
+  jitter warnings.
+
+`deadline_monotonic` had the identical test protected by the same omission
+(the issue named only `rate_monotonic`) and got the same fix.
+`derive/tests/snapshots/contract_derived_chain.ranked_plan.txt` does not move:
+it snapshots `chain_aware_rank`, which this does not touch.
+
+### The prose says what the grammar accepts, and a test keeps it that way (#0038)
+
+`docs/format-reference.md` is generated and was correct; the hand-written docs
+taught `max_drop_rate`, topic-level `max_consecutive`, `_ms`/`_us` spellings,
+the removed scope-interface blocks and the deleted chain rules — all parse
+errors or deletions at HEAD. A contract author copying the first example under
+"drops" or "timing" got a parse error whose hint named a key the doc never
+showed.
+
+`sched/tests/docs_yaml.rs` feeds every fenced yaml block in `README.md` and
+`docs/*.md` to the parser that owns it (a top-level `target:`/`mapper:` makes
+it a platform file, everything else a contract) — 40 blocks, 38 parse, 1
+marked `expect-error` (the `chains:` migration example), 1 marked `skip` (a
+shape sketch whose body is an ellipsis). Markers are HTML comments carrying a
+required reason. This is the part that keeps the prose from drifting again.
+
+Two things the test found that no issue listed:
+
+- **`if:` on an include is a parse error in both forms**, and `IncludeDecl`
+  has no field to store a condition while `filter_manifest` never filtered
+  includes — so the documented claim that "the include entry exists to carry
+  per-child conditions" was never true. The examples and the prose now say what
+  the grammar does; whether per-child include conditions SHOULD exist is a code
+  question, not a doc one.
+- **Node paths do accept `drop:`** — the schema allows it, `drop-sanity`
+  checks it, and two fixtures author it, against the doc's "node paths have
+  latency only".
+
+`cargo test --workspace`: 551 passed, 0 failed.
+
 ## v0.1.37 - 2026-09-21
 
 Design issue #52 (`docs/design-issues.md`): one derivation of the
