@@ -72,7 +72,7 @@ output.
 
 ## Rule Registry
 
-20 rules, in registration order (`check/src/rules/mod.rs`). Severity is
+19 rules, in registration order (`check/src/rules/mod.rs`). Severity is
 what the rule emits; several rules emit at more than one severity.
 
 | # | Rule | Severity | What it catches |
@@ -89,14 +89,13 @@ what the rule emits; several rules emit at more than one severity.
 | 10 | `service-type` | Error / Warning | Service without `type` (E); server/client ref not declared on its node (W) |
 | 11 | `dangling-entity` | Warning / Error | Topic with 0 pubs or 0 subs (W); service/action with 0 servers (E) — unless that side is declared `external:` |
 | 12 | `satisfiability` | Warning / Error / Info | **Z3-backed.** Node unreachable under all valid arg assignments (W); some valid arg assignment produces a dangling entity (E). Skips topics whose subscribers are all state-only. Built without the `smt` feature, a stub with the same id emits one Info saying the analysis was not run — checking less is never silent |
-| 13 | `consistency` | — | Placeholder, currently a no-op (cross-scope agreement runs in play_launch) |
-| 14 | `state-consistency` | Warning | Likely-missing `state: true` on a subscriber that is neither state-tagged nor referenced by any path trigger (two noise-gated heuristics) |
-| 15 | `explicit-trigger` | Info | Path has no explicit `trigger:` — migration lint toward the Vocabulary v2 taxonomy |
-| 16 | `inherited-rate` | Warning | Non-`input` explicit trigger combined with a stale legacy `input:` list |
-| 17 | `once-durability` | Warning | `once`-triggered path publishes to a topic whose effective durability is not `transient_local` |
-| 18 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
-| 19 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
-| 20 | `jitter-range` | Error / Info | `min_latency` above `max_latency` (E); `max_latency - min_latency > max_jitter` when both bounds are declared (E); `max_jitter` declared with no `min_latency`, so the bound cannot be checked (Info — an absent floor is unknown, not zero) |
+| 13 | `state-consistency` | Warning | Likely-missing `state: true` on a subscriber that is neither state-tagged nor referenced by any path trigger (two noise-gated heuristics) |
+| 14 | `explicit-trigger` | Info | Path has no explicit `trigger:` — migration lint toward the Vocabulary v2 taxonomy |
+| 15 | `inherited-rate` | Warning | Non-`input` explicit trigger combined with a stale legacy `input:` list |
+| 16 | `once-durability` | Warning | `once`-triggered path publishes to a topic whose effective durability is not `transient_local` |
+| 17 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
+| 18 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
+| 19 | `jitter-range` | Error / Info | `min_latency` above `max_latency` (E); `max_latency - min_latency > max_jitter` when both bounds are declared (E); `max_jitter` declared with no `min_latency`, so the bound cannot be checked (Info — an absent floor is unknown, not zero) |
 
 Shared helper: `rules/endpoint_topic.rs` resolves `node/endpoint`
 references to their declaring topic (used by `once-durability`,
@@ -145,7 +144,7 @@ invokes. Cross-scope rule ids, emitted from
 | Rule | What it checks |
 |------|----------------|
 | `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean |
-| `consistency` | Topic/QoS/rate declarations agree across the scopes that declare the same topic (the local `consistency` rule is a placeholder for exactly this reason) |
+| `consistency` | Topic/QoS/rate declarations agree across the scopes that declare the same topic (the in-crate no-op of the same id was removed in v0.1.38 — this is the only `consistency` rule) |
 | `budget-overflow` | Cross-scope path budgets: a child scope's path budget must not exceed a matched ancestor path's budget (theory doc "Check 1") |
 | `scope-budget` | Topology-aware critical path over the merged dataflow DAG, including per-sink `max_transport` overrides (the local flat-sum rule is the standalone fallback) |
 | `scope-sampling-feasibility` | The derived route's sampling cost alone already meets the budget — structurally infeasible, so no priority assignment can fix it. Emitted before `scope-budget`, so the structural verdict reads first |

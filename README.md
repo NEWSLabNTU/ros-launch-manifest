@@ -43,7 +43,7 @@ reading order. Direct links:
 | Crate    | Description                                                                  |
 |----------|------------------------------------------------------------------------------|
 | `types/` | Manifest data types, span-tracking YAML parser, substitution, condition filtering |
-| `check/` | Single-manifest static validation (20 rules incl. Z3 satisfiability), diagnostic emitters |
+| `check/` | Single-manifest static validation (19 rules incl. Z3 satisfiability), diagnostic emitters |
 | `sched/` | Portable scheduling spec: platform files, mappers, chain-aware ranking, legacy TOML bridge |
 | `model/` | SystemModel system-config types (`execution.tiers` reuses `sched::TierDef`)  |
 

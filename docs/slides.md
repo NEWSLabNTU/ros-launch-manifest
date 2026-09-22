@@ -165,7 +165,7 @@ the `type:`, and why `consistency` requires them to agree.
 
 # Verification Rules
 
-**20 single-manifest checks** + cross-scope checks in the consumer,
+**19 single-manifest checks** + cross-scope checks in the consumer,
 all at authoring time, before any code runs:
 
 | Rule | What it catches | Severity |
@@ -179,7 +179,7 @@ all at authoring time, before any code runs:
 | `dangling-entity` | Topic with 0 publishers after filtering | Warning/Error |
 
 Plus: `endpoint-unique`, `wiring`, `qos-compat`, `qos-match`,
-`service-wiring`, `service-type`, `consistency`, `state-consistency`,
+`service-wiring`, `service-type`, `state-consistency`,
 `explicit-trigger`, `inherited-rate`, `once-durability`,
 `sync-feasibility`, `queue-drain-rate`, `jitter-range`
 (\* = cross-scope, in the consumer's merge layer — with
@@ -247,7 +247,7 @@ Example: `pose_source: gnss` but no `gnss_node` declared →
 
 # Status
 
-**Checker**: 20 single-manifest rules (incl. Z3 satisfiability) +
+**Checker**: 19 single-manifest rules (incl. Z3 satisfiability) +
 cross-scope rules in the consumer (`consistency`, `budget-overflow`,
 critical-path `scope-budget`, `scope-sampling-feasibility`,
 `fault-reaction-budget`, …)
