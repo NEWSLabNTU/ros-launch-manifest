@@ -79,8 +79,9 @@ topics:
     pub: [controller/cmd]
     sub: [validator/input]
     rate_hz: 30
-    max_drop_rate: 0.01           # 1% transport loss allowed
-    max_consecutive: 3            # never 3+ drops in a row
+    drop:
+      max_count: 1 / 100          # 1% transport loss allowed
+      max_consecutive: 3          # never 3+ drops in a row
     qos:
       reliability: reliable
       durability: transient_local
@@ -96,8 +97,9 @@ code, and convention. The manifest makes it **explicit and checkable**.
 The publisher produces, transport may drop, subscriber demands:
 
 ```
-pub.min_rate_hz  >=  rate_hz  >=  rate_hz × (1 - max_drop_rate)  >=  sub.min_rate_hz
-     30                30          30 × 0.99 = 29.7                      29
+pub.min_rate_hz  >=  rate_hz  >=  rate_hz × (1 - n/w)  >=  sub.min_rate_hz
+     30                30          30 × 0.99 = 29.7           29
+                                   drop: { max_count: 1 / 100 }
 ```
 
 **supply ≥ channel ≥ effective delivery ≥ demand**
@@ -112,7 +114,7 @@ Three topics at 2% each: $0.98^3 = 0.941$ → 5.9% E2E drop rate.
 
 # Timing Contracts: Latency and Age
 
-**`max_latency_ms`** — processing time (trigger input → output publish)
+**`max_latency: 30ms`** — processing time (trigger input → output publish)
 
 ```
 sensor → [cropbox: 5ms] → [ground_filter: 15ms] → [detector: 30ms]
@@ -123,7 +125,7 @@ sensor → [cropbox: 5ms] → [ground_filter: 15ms] → [detector: 30ms]
 - **Node**: `rcl_take` → `rcl_publish` (processing only)
 - **Scope**: first take → last publish (includes internal transport)
 
-**`max_age_ms`** — data freshness from original source
+**`max_age: 200ms`** — data freshness from original source
 
 $$\text{age} = \text{now} - \text{header.stamp}$$
 
@@ -131,20 +133,30 @@ Causal paths preserve `header.stamp`. Periodic nodes reset the chain.
 
 ---
 
-# Scope Interface and Composition
+# Composition: No Scope Interface
 
-Each scope declares its boundary ports:
+Scopes compose through **ROS topic names**, not through export/import
+blocks. Each manifest declares the topics it touches; the checker merges
+declarations of the same resolved name across the tree.
 
 ```yaml
-sub:                                    # what flows IN
-  trajectory: [controller/trajectory]
-pub:                                    # what flows OUT
-  control_output: [controller/cmd]
-srv:                                    # services exposed
-  operate: [operator/operate]
+# tracking.contract.yaml — ns /perception/.../tracking
+topics:
+  objects:                              # relative → .../tracking/objects
+    type: autoware_perception_msgs/msg/TrackedObjects
+    pub: [multi_object_tracker/tracked]
 ```
 
-Parent wires children: `child_name/group_name` in topics and services.
+```yaml
+# prediction.contract.yaml — a different scope, the same topic
+topics:
+  /perception/object_recognition/tracking/objects:
+    type: autoware_perception_msgs/msg/TrackedObjects
+    sub: [map_based_prediction/tracked]
+```
+
+Each manifest stays checkable **standalone** — that is why both declare
+the `type:`, and why `consistency` requires them to agree.
 
 **Opaque scope** (has budget) → parent trusts the declared value
 **Transparent scope** (no budget) → parent looks through to children
@@ -158,18 +170,21 @@ all at authoring time, before any code runs:
 
 | Rule | What it catches | Severity |
 |------|----------------|----------|
-| `rate-hierarchy` | pub rate < topic rate < sub rate | Error |
+| `rate-hierarchy` | pub rate < topic rate < sub rate, and the upper bounds too | Error |
 | `budget-overflow`* | Child path budget > ancestor path budget (part > whole) | Error |
-| `scope-budget` | Sum of children > scope budget (cross-scope: critical path) | Warning |
-| `drop-sanity` | Values out of range; effective rate < sub demand | Error |
+| `scope-budget` | Flat sum > scope budget (cross-scope: derived critical path) | Warning |
+| `drop-sanity` | `drop:` values out of range; effective rate < sub demand | Error |
 | `causal-dag` | Feedback cycle (state: true breaks it) | Error |
 | `satisfiability` | Arg combo produces dangling entities (Z3) | Error/Warning |
 | `dangling-entity` | Topic with 0 publishers after filtering | Warning/Error |
 
 Plus: `endpoint-unique`, `wiring`, `qos-compat`, `qos-match`,
-`service-wiring`, `service-type`, `consistency`*, `state-consistency`,
-trigger/sync/queue lints, `chain-shape` / `chain-link`* /
-`chain-budget`* (\* = cross-scope, in the consumer's merge layer)
+`service-wiring`, `service-type`, `consistency`, `state-consistency`,
+`explicit-trigger`, `inherited-rate`, `once-durability`,
+`sync-feasibility`, `queue-drain-rate`, `jitter-range`
+(\* = cross-scope, in the consumer's merge layer — with
+`scope-sampling-feasibility`, `jitter-feasibility`, `lifespan-age`,
+`fault-reaction-budget`, the `derivable-*` comparisons, …)
 
 ---
 
@@ -178,12 +193,12 @@ trigger/sync/queue lints, `chain-shape` / `chain-link`* /
 You don't need contracts on every node. Start top-down:
 
 ```
-scope S: max_latency_ms: 100
-  ├── sub-scope P: max_latency_ms: 50    (opaque — black box)
-  │     ├── node A: max_latency_ms: 20
-  │     └── node B: max_latency_ms: 25
+scope S: max_latency: 100ms
+  ├── sub-scope P: max_latency: 50ms     (opaque — black box)
+  │     ├── node A: max_latency: 20ms
+  │     └── node B: max_latency: 25ms
   ├── sub-scope Q: (no budget)            (transparent — look through)
-  │     └── node C: max_latency_ms: 30
+  │     └── node C: max_latency: 30ms
   └── node E: (no budget)                 → 20ms residual
 ```
 
@@ -202,10 +217,11 @@ Fill in per-node budgets as you measure them.
 | **Parallel** | max + fusion | min | user-declared | max + fusion |
 | **Periodic** | +P+J (wait) | 1000/P | resets consecutive | resets stamp chain |
 
-Drop composition:
-- **`max_drop_rate`** on topics (transport) and scope paths (E2E)
-- **`max_consecutive`** on topics and scope paths — never N+ in a row
-- Node paths have **latency only** — drops modeled where they occur
+Drop composition — one `drop:` block, three places it may sit:
+- **`max_count: N / W`** on a topic (transport), a scope path (E2E) or
+  a node path (messages the node itself skips)
+- **`max_consecutive: K`** beside it — never K+ in a row
+- A bare `drop: 2 / 100` is shorthand for `max_count` alone
 
 ---
 
@@ -232,8 +248,9 @@ Example: `pose_source: gnss` but no `gnss_node` declared →
 # Status
 
 **Checker**: 20 single-manifest rules (incl. Z3 satisfiability) +
-9 cross-scope rules in the consumer (`consistency`, `budget-overflow`,
-critical-path `scope-budget`, `chain-link`, `chain-budget`, …)
+cross-scope rules in the consumer (`consistency`, `budget-overflow`,
+critical-path `scope-budget`, `scope-sampling-feasibility`,
+`fault-reaction-budget`, …)
 **Runtime**: rate/age/latency/drop enforcement via RCL interception
 (`--enforce-rules`)
 **Scheduling**: 4 mappers (`manual`, `rate_monotonic`,

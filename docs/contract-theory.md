@@ -41,9 +41,9 @@ Symbols used throughout this document:
 | $f$ | Frequency (Hz) |
 | $P$ | Timer period (ms) |
 | $J$ | Jitter — max deviation from ideal period (ms) |
-| $d$ | Drop rate: fraction of messages lost (from `max_drop_rate`, range 0-1) |
+| $d$ | Drop rate: fraction of messages lost, $n/w$ from `drop.max_count`, range 0-1 |
 | $\mathcal{R}$ | Delivery rate: $\mathcal{R} = 1 - d$ (fraction that survives) |
-| $K$ | Max consecutive drops (from `max_consecutive`) |
+| $K$ | Max consecutive drops (from `drop.max_consecutive`) |
 | $\ell_{\max}$ | Observed longest consecutive drop run (runtime) |
 | `budget-overflow` | Verification check: descendant budget exceeds ancestor budget (error) |
 | `scope-budget` | Verification check: sum of children exceeds scope budget (warning) |
@@ -75,7 +75,7 @@ pointcloud → [cropbox: 5ms] → [ground_filter: 15ms] → [detector: 30ms]
 
 **Topic contract** — for the channel between cropbox and ground_filter:
 - *Assumption:* cropbox publishes at ≥ 10 Hz
-- *Guarantee:* the channel delivers at 10 Hz with `max_drop_rate: 0.01`
+- *Guarantee:* the channel delivers at 10 Hz with `drop: 1 / 100`
 
 **Node contract** — for ground_filter:
 - *Assumption:* receives filtered points at ≥ 10 Hz
@@ -89,9 +89,9 @@ Summary:
 
 | Level | What it describes | Assumption | Guarantee |
 |-------|-------------------|------------|-----------|
-| **Topic** | A communication channel | Publisher produces at `rate_hz` | Channel delivers at `rate_hz` with drops ≤ `max_drop_rate` |
+| **Topic** | A communication channel | Publisher produces at `rate_hz` | Channel delivers at `rate_hz` with drops ≤ `drop.max_count` |
 | **Node** | A single computation | Inputs arrive per `min_rate_hz`, `state`, `required` | Output within `max_latency` |
-| **Scope** | An entire launch file | Topic declarations consistent across tree | E2E `max_latency`, `max_drop_rate` |
+| **Scope** | An entire launch file | Topic declarations consistent across tree | E2E `max_latency`, `drop:` |
 
 These compose hierarchically: topic contracts constrain the channels,
 node contracts describe per-node timing, scope contracts abstract the
@@ -293,12 +293,13 @@ periodic node) is checked independently.
 
 ### Drop Budgets
 
-Drops are declared as `max_drop_rate` (a fraction, 0-1) on **topics**
-(transport drops) and **scope paths** (E2E drops). By convention, node
-paths carry latency only — if a node internally drops messages, model
-the effect as a lower `pub.min_rate_hz` on its output. (The shared path
-schema does accept a `drop:` spec on node paths; it is range-validated
-like any other, but plays no role in composition.)
+Drops are declared in a `drop:` block — `max_count: N / W`, from which
+the drop rate $d = n/w$ is computed, and `max_consecutive: K`. It sits
+on **topics** (transport drops) and **scope paths** (E2E drops). The
+shared path schema accepts it on node paths too; it is range-validated
+like any other, but plays no role in composition — if a node internally
+drops messages, model the effect as a lower `pub.min_rate_hz` on its
+output.
 
 **Static checking** (`drop-sanity`) validates local consistency only:
 
@@ -310,14 +311,14 @@ like any other, but plays no role in composition.)
 $$f_{\text{topic}} \cdot (1 - d_{\text{topic}}) \geq f_{\min}(\text{sub})$$
 
 Cross-scope, two scopes declaring the same topic must agree on its drop
-budget (`consistency`). A scope-vs-topic tightness check (scope
-`max_drop_rate` must not be tighter than a topic's on its path — part >
+budget (`consistency`). A scope-vs-topic tightness check (a scope's
+`drop.max_count` must not be tighter than a topic's on its path — part >
 whole) is part of the design but not currently implemented.
 
 **Runtime monitoring** handles composition — it depends on actual
 transport conditions (burstiness, congestion) that cannot be proven
 statically. The runtime rule engine checks the observed delivery ratio
-against `max_drop_rate`; `max_consecutive` checking and burstiness
+against `drop.max_count`; `max_consecutive` checking and burstiness
 detection are designed but not yet implemented. See
 [Burstiness](#burstiness) for the detection metrics and Appendix A for
 the underlying theory.
@@ -413,8 +414,8 @@ check_sum(scope):
   if scope has no budget → skip
   declared_nodes = collect children with budgets (look through transparent scopes)
   undeclared_nodes = children without budgets
-  declared_transport = sum of max_transport_ms on topics within scope (0 when omitted)
-  undeclared_transport_count = topics without max_transport_ms
+  declared_transport = sum of max_transport on topics within scope (0 when omitted)
+  undeclared_transport_count = topics without max_transport
   total = sum(declared_nodes) + declared_transport
   if total > scope.budget → WARNING
   residual = scope.budget - total
@@ -466,14 +467,15 @@ If E later gets a budget of 25ms: 50 + 30 + 25 = 105 > 100. Warning.
 ### Drop Example
 
 Drop budgets are checked statically for local consistency (sanity) and
-at runtime for actual behavior. Drops live on **topics** (transport)
-and **scope paths** (E2E), not on node paths.
+at runtime for actual behavior. Composition is defined over **topics**
+(transport) and **scope paths** (E2E); a node path's own `drop:` is
+range-validated but composes nothing.
 
 ```
-scope S path: max_drop_rate: 0.10
-  topic T1: max_drop_rate: 0.03    (A → B transport)
-  topic T2: max_drop_rate: 0.03    (B → C transport)
-  topic T3: (no drop budget)       (C → D transport)
+scope S path: drop: { max_count: 10 / 100 }   → d = 0.10
+  topic T1:   drop: { max_count:  3 / 100 }   → d = 0.03  (A → B transport)
+  topic T2:   drop: { max_count:  3 / 100 }   → d = 0.03  (B → C transport)
+  topic T3:   (no drop budget)                            (C → D transport)
 ```
 
 **Sanity check**: T1 drop (3%) < S drop (10%). T2 (3%) < 10%. OK.
@@ -483,7 +485,7 @@ No topic has a tighter drop budget than the scope.
 `min_rate_hz: 9`: effective delivery = $10 \times (1 - 0.03) = 9.7$ Hz ≥ 9. Passes.
 
 **Runtime monitoring** observes actual E2E drop rates and checks them
-against the scope's `max_drop_rate: 0.10` and `max_consecutive` (if
+against the scope's $d_s = 0.10$ and its `max_consecutive` (if
 declared). See [Burstiness](#burstiness) and Appendix A for the theory.
 
 ### Partial Decomposition
@@ -525,7 +527,7 @@ nodes:
 
 **Runtime checking:** the interception layer reads `header.stamp` on
 every `rcl_take` and compares to current time. If
-`now - stamp > max_age_ms`, a violation is flagged.
+`now - stamp > max_age`, a violation is flagged.
 
 **Static checking** does not trace the full causal chain (which would
 require every upstream node to have a latency budget). A local
@@ -552,42 +554,45 @@ with a `reaction`/`age` semantics tag. It was removed in phase 68 W4: a
 written route is a second copy of the graph, and the `chain-link` rule
 existed only to catch the two disagreeing.
 
-A chain's segments divide into two kinds, following the periodic
+A derived route's hops divide into two kinds, following the periodic
 composition rule above:
 
-- **Causal segments** — runs of input-triggered paths. A message flows
+- **Causal hops** — runs of input-triggered paths. A message flows
   through them; their latency contributions add as in series
-  composition.
+  composition (and a fork-join contributes `max` over its branches, not
+  a sum).
 - **Boundaries** — timer-triggered paths. Each boundary $i$ contributes
   a worst-case **sampling cost** of one full period plus its own
   processing: $P_i + C_i$ (where $C_i$ is the boundary's execution
   time when declared, else 0).
 
-The chain's **controllable time** is what remains of the budget after
+The route's **controllable time** is what remains of the budget after
 sampling costs, i.e. the portion scheduling can actually influence:
 
 $$L_{\text{controllable}} = L_{\text{budget}} - \sum_{i \in \text{boundaries}} (P_i + C_i)$$
 
-If $L_{\text{controllable}} \leq 0$ the chain is **structurally
+If $L_{\text{controllable}} \leq 0$ the requirement is **structurally
 infeasible**: no priority assignment can meet the budget, because the
-sampling delays alone exceed it. The static checker reports this
-(`chain-sampling-feasibility`, alongside `chain-link` segment resolution
-and `chain-budget` sum checks — all cross-scope rules), and the
-`chain_aware` scheduling mapper excludes infeasible chains from
-priority shaping with a warning. The same chain facts drive
-priority derivation — see [scheduling.md](scheduling.md).
+sampling delays alone exceed it. The checker reports this as
+`scope-sampling-feasibility`, beside `scope-budget` (the derived route
+total against the declared `max_latency`) and `jitter-feasibility` (a
+declared `max_jitter` below the sampling jitter the route already
+carries) — all three cross-scope rules in the consumer's merge layer.
+The `chain_aware` scheduling mapper excludes an infeasible route from
+priority shaping with a warning. The same facts drive priority
+derivation — see [scheduling.md](scheduling.md).
 
 ## Burstiness
 
 The drop composition rules assume each drop is independent (Bernoulli
 model). In practice, DDS transport drops are often **bursty** — network
 congestion, scheduling jitter, or queue overflow cause drops to cluster.
-When drops are bursty, the declared `max_drop_rate` and `max_consecutive`
+When drops are bursty, the declared `max_count` and `max_consecutive`
 thresholds may be violated more often than the Bernoulli model predicts.
 
 *Implementation status:* the runtime rule engine (play_launch
 `--enforce-rules`, fed by the Phase 29 interception layer) checks
-`max_drop_rate` (as a delivery-rate ratio), `min_rate_hz`, `max_age`,
+`drop.max_count` (as a delivery-rate ratio), `min_rate_hz`, `max_age`,
 and path `max_latency` against observed traffic, plus runtime QoS
 compatibility, consistency, graph deviation, and DDS
 deadline/liveliness/message-lost events. `max_consecutive` and the
@@ -616,8 +621,8 @@ consistency.
 
 ### A.1 Delivery Rate Composition
 
-Each topic on the critical path declares `max_drop_rate: d_i`. The
-delivery rate:
+Each topic on the critical path declares a drop budget whose rate is
+$d_i = n_i/w_i$ (`drop: { max_count: n / w }`). The delivery rate:
 
 $$\mathcal{R}_i = 1 - d_i$$
 
@@ -630,15 +635,15 @@ In log form (convenient for implementation):
 
 $$\ln \mathcal{R}_{\text{chain}} = \sum_i \ln(1 - d_i)$$
 
-The scope declares `max_drop_rate: d_s`. The check:
+The scope's own `drop.max_count` gives $d_s$. The check:
 
 $$d_s \geq 1 - \mathcal{R}_{\text{chain}}$$
 
 ### A.2 Consecutive Drop: Poisson Derivation
 
 Model each message as an independent Bernoulli trial with drop
-probability $d$ (the composed drop rate for the chain, or a single
-topic's `max_drop_rate`). We want the probability of $K$ or more
+probability $d$ (the composed drop rate for the route, or a single
+topic's own $n/w$). We want the probability of $K$ or more
 consecutive drops in $W$ messages, where $W$ is a runtime monitoring
 window.
 
@@ -658,7 +663,7 @@ $$P(\text{max run} \geq K) \approx 1 - e^{-\lambda}$$
 
 ### A.3 Scope Consecutive Check
 
-The scope declares `max_consecutive: K_s`. Using a monitoring window
+The scope declares `drop.max_consecutive: K_s`. Using a monitoring window
 of $W$ messages (runtime parameter), we require the probability of
 violation to be below confidence threshold $\epsilon$ (default 0.01):
 
@@ -666,11 +671,11 @@ $$(W - K_s + 1) \cdot d^{K_s} \cdot (1-d) \leq -\ln(1 - \epsilon) \approx 0.01$$
 
 ### A.4 Example: Three-Topic Pipeline
 
-Three topics in series, each `max_drop_rate: 0.02`.
+Three topics in series, each `drop: 2 / 100` ($d = 0.02$).
 
 Chain: $\mathcal{R} = (1 - 0.02)^3 = 0.98^3 = 0.941$, $d = 0.059$.
 
-Scope declares `max_drop_rate: 0.06, max_consecutive: 3`.
+Scope declares `drop: { max_count: 6 / 100, max_consecutive: 3 }`.
 
 **Rate check:** $0.06 \geq d = 0.059$. Passes.
 
@@ -688,14 +693,14 @@ $0.002 \leq 0.01$: **Passes.**
 
 ### A.5 Example: With Periodic Reset
 
-Topics: T1 (`max_drop_rate: 0.01`, cropbox→centerpoint) and
-T2 (`max_drop_rate: 0.02`, centerpoint→tracker). Tracker is periodic
-(`max_drop_rate: 0.01` on the output topic T3).
+Topics: T1 (`drop: 1 / 100`, cropbox→centerpoint) and
+T2 (`drop: 2 / 100`, centerpoint→tracker). Tracker is periodic
+(`drop: 1 / 100` on the output topic T3).
 
 **Pre-tracker segment:** $\mathcal{R} = 0.99 \times 0.98 = 0.970$, $d = 0.030$.
 **Post-tracker segment:** periodic resets the chain. $d = 0.01$ (T3 only).
 
-Scope declares `max_consecutive: 3`, monitoring window $W = 200$.
+Scope declares `drop.max_consecutive: 3`, monitoring window $W = 200$.
 
 Pre-tracker: $198 \times 0.030^3 \times 0.970 = 0.005 \leq 0.01$. Passes.
 Post-tracker: $198 \times 0.010^3 \times 0.990 = 0.0002 \leq 0.01$. Passes.
@@ -732,7 +737,7 @@ $$\text{mean burst} = 1 / \hat{r}$$
 
 When writing a manifest for an existing system without documented timing
 requirements, you need initial values for `max_latency`, `min_rate_hz`,
-and `max_drop_rate`. Capture mode bootstraps these from runtime
+and `drop.max_count`. Capture mode bootstraps these from runtime
 measurements.
 
 *Implementation status:* capture mode is designed but not implemented —
