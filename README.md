@@ -16,13 +16,16 @@ overrides from which per-node scheduling is derived.
 Start with [docs/README.md](docs/README.md) — the index with a suggested
 reading order. Direct links:
 
+- **[Format Reference](docs/format-reference.md)** — every accepted key,
+  **generated** from `types/src/field_table.rs`. Normative: a key it does
+  not list is a parse error.
 - **[Launch Manifest Specification](docs/launch-manifest.md)** — the
-  manifest format: elements, background, worked examples, format
-  reference (including Vocabulary v2: `trigger:`, `sync:`, `buffer:`,
-  `chains:`), and validation rules.
+  manifest format: elements, background, worked examples, the tutorial
+  pass over the format (including Vocabulary v2: `trigger:`, `sync:`,
+  `buffer:`, scope `paths:`), and validation rules.
 - **[Contract Theory](docs/contract-theory.md)** — formal foundations:
-  latency/drop/age composition, chain sampling cost, burstiness,
-  empirical contract derivation.
+  latency/drop/age composition, the sampling cost a derived route pays
+  at every timer boundary, burstiness, empirical contract derivation.
 - **[Contract Verification](docs/contract-verification.md)** — the
   checker as implemented: parsing with spans, the rule registry,
   emitters, and the split between this crate and the consumer's
@@ -46,8 +49,9 @@ reading order. Direct links:
 
 Consumers: **play_launch** (via `ros-launch-resolve`) on Linux;
 **nano-ros** for RTOS targets. Cross-scope checks (`consistency`,
-`budget-overflow`, `chain-link`, critical-path `scope-budget`, …) run in
-the consumer's merge layer, not here.
+`budget-overflow`, critical-path `scope-budget`,
+`scope-sampling-feasibility`, `fault-reaction-budget`, …) run in the
+consumer's merge layer, not here.
 
 ## Quick Start
 

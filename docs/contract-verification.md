@@ -6,10 +6,11 @@ How manifest contracts are verified, as implemented by the `types/` and
 [contract-theory.md](contract-theory.md).
 
 > **Scope note.** This document describes the *per-manifest* checker that
-> lives in this repository. Cross-file checks (chain link resolution,
-> cross-scope QoS reconciliation, the topology-aware critical-path budget
-> check) run in the consumer's merge layer (`ros-launch-resolve`, invoked
-> by `play_launch check`) because they need the merged launch tree. See
+> lives in this repository. Cross-file checks (cross-scope declaration
+> agreement, cross-scope QoS reconciliation, the topology-aware
+> critical-path budget check, route derivation for a scope path) run in
+> the consumer's merge layer (`ros-launch-resolve`, invoked by
+> `play_launch check`) because they need the merged launch tree. See
 > [Division of Labor](#division-of-labor-with-the-consumer).
 
 ## Pipeline
@@ -79,23 +80,23 @@ what the rule emits; several rules emit at more than one severity.
 | 1 | `endpoint-unique` | Error | Duplicate endpoint name across a node's pub/sub/srv/cli |
 | 2 | `wiring` | Warning | Path input/output endpoint not wired by any topic |
 | 3 | `qos-compat` | Error | Invalid QoS value token (`reliability`, `durability`, `history`, `liveliness`) at topic or endpoint level |
-| 4 | `qos-match` | Error / Warning | Structural: `depth: 0` (E), `keep_all` with depth (W), `best_effort` + `transient_local` (W). DDS pub/sub compatibility on `reliability` and `durability` (E) — offered ≥ requested, checked only when both sides specify (no implicit ROS defaults) |
-| 5 | `rate-hierarchy` | Error | `pub.min_rate_hz < topic.rate_hz`; `topic.rate_hz < sub.min_rate_hz` |
-| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency_ms` < Σ node latencies + declared topic transport. Per-manifest fallback — the topology-aware critical path is play_launch's cross-scope diagnostic |
+| 4 | `qos-match` | Error / Warning | Structural: `depth: 0` (E), `keep_all` with depth (W), `best_effort` + `transient_local` (W). DDS pub/sub compatibility on `reliability`, `durability`, `liveliness` and `lease_duration` (E) — offered ≥ requested, checked only when both sides specify (no implicit ROS defaults) |
+| 5 | `rate-hierarchy` | Error | `pub.min_rate_hz < topic.rate_hz`; `topic.rate_hz < sub.min_rate_hz`; and since phase 70 the upper bounds `topic.rate_hz > pub.max_rate_hz` and `topic.rate_hz > sub.max_rate_hz` |
+| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency` < Σ node latencies + declared topic transport. Per-manifest fallback — the topology-aware critical path is play_launch's cross-scope diagnostic |
 | 7 | `causal-dag` | Error | Cycle in the causal dataflow graph (`state: true` on feedback endpoints breaks it) |
-| 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; `max_drop_rate` outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0` |
+| 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; a `drop.max_count` rate outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0`. Checked on topics, scope paths and node paths |
 | 9 | `service-wiring` | Warning | Service client with no matching server |
 | 10 | `service-type` | Error / Warning | Service without `type` (E); server/client ref not declared on its node (W) |
-| 11 | `dangling-entity` | Warning / Error | Topic with 0 pubs or 0 subs (W); service/action with 0 servers (E) |
-| 12 | `satisfiability` | Warning / Error | **Z3-backed.** Node unreachable under all valid arg assignments (W); some valid arg assignment produces a dangling entity (E). Skips topics whose subscribers are all state-only |
+| 11 | `dangling-entity` | Warning / Error | Topic with 0 pubs or 0 subs (W); service/action with 0 servers (E) — unless that side is declared `external:` |
+| 12 | `satisfiability` | Warning / Error / Info | **Z3-backed.** Node unreachable under all valid arg assignments (W); some valid arg assignment produces a dangling entity (E). Skips topics whose subscribers are all state-only. Built without the `smt` feature, a stub with the same id emits one Info saying the analysis was not run — checking less is never silent |
 | 13 | `consistency` | — | Placeholder, currently a no-op (cross-scope agreement runs in play_launch) |
 | 14 | `state-consistency` | Warning | Likely-missing `state: true` on a subscriber that is neither state-tagged nor referenced by any path trigger (two noise-gated heuristics) |
 | 15 | `explicit-trigger` | Info | Path has no explicit `trigger:` — migration lint toward the Vocabulary v2 taxonomy |
 | 16 | `inherited-rate` | Warning | Non-`input` explicit trigger combined with a stale legacy `input:` list |
 | 17 | `once-durability` | Warning | `once`-triggered path publishes to a topic whose effective durability is not `transient_local` |
-| 18 | `sync-feasibility` | Warning | `sync.max_interval_ms` / `sync.timeout_ms` shorter than the slowest declared input period |
+| 18 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
 | 19 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
-| 20 | `chain-shape` | Error | Cyclic chain (same `{scope, path}` twice); adjacent path segments with no `via:` between them |
+| 20 | `jitter-range` | Error / Info | `min_latency` above `max_latency` (E); `max_latency - min_latency > max_jitter` when both bounds are declared (E); `max_jitter` declared with no `min_latency`, so the bound cannot be checked (Info — an absent floor is unknown, not zero) |
 
 Shared helper: `rules/endpoint_topic.rs` resolves `node/endpoint`
 references to their declaring topic (used by `once-durability`,
@@ -139,17 +140,24 @@ The checker in this repo is deliberately **single-manifest**. Checks that
 need the merged launch tree run in the consumer's cross-scope layer —
 the `ros-launch-resolve` resolve crate, which `play_launch check`
 invokes. Cross-scope rule ids, emitted from
-`resolve/src/ros/manifest_loader.rs` and `chain_checks.rs`:
+`resolve/src/ros/manifest_loader.rs` and `causal_dag_global.rs`:
 
 | Rule | What it checks |
 |------|----------------|
+| `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean |
 | `consistency` | Topic/QoS/rate declarations agree across the scopes that declare the same topic (the local `consistency` rule is a placeholder for exactly this reason) |
 | `budget-overflow` | Cross-scope path budgets: a child scope's path budget must not exceed a matched ancestor path's budget (theory doc "Check 1") |
-| `scope-budget` | Topology-aware critical path over the merged dataflow DAG, including per-sink `max_transport_ms` overrides (the local flat-sum rule is the standalone fallback) |
+| `scope-budget` | Topology-aware critical path over the merged dataflow DAG, including per-sink `max_transport` overrides (the local flat-sum rule is the standalone fallback) |
+| `scope-sampling-feasibility` | The derived route's sampling cost alone already meets the budget — structurally infeasible, so no priority assignment can fix it. Emitted before `scope-budget`, so the structural verdict reads first |
+| `jitter-feasibility` | A scope path's `max_jitter` is below the sampling jitter its derived route already carries (one whole period per clock boundary crossed) |
+| `sync-budget` | A `sync:` window wider than the path's own `max_latency` — a contradiction in the declaration, not a performance problem |
+| `causal-dag-global` | Cycles in the merged graph, including edges derived from launch-file remaps |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, run after merge |
-| `chain-link` | Every chain `{scope, path}` segment resolves; `via:` topics exist, are produced by the preceding segment and consumed by the following one |
-| `chain-budget` | Chain `max_latency_ms` vs the sum of its event-segment budgets plus boundary sampling costs (each timer boundary contributes period + exec, not its declared budget) |
-| `chain-sampling-feasibility` | Chain budget minus boundary sampling cost must leave positive controllable time (mirrors the `chain_aware` mapper's feasibility rule) |
+| `derivable-rate` / `rate-mismatch`, `derivable-min-rate` / `min-rate-mismatch`, `derived-rate-hierarchy` | A declared rate against the one derived from the timers that drive it: info when they agree, warning when they do not |
+| `derivable-criticality` / `criticality-mismatch`, `severity-unknown` | A declared `criticality` against the one derived from the hazards reaching the node; a `severity:` outside the declared `severity_levels:` scale |
+| `fault-reaction-budget`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for deriving them |
+| `ladder-rung-budget`, `ladder-unterminated`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback rung judged against the ftti in its own right, a floor that requires nothing losable, and override targets that name a real contract path |
+| `lifespan-age`, `response-blocking`, `concurrency-decl`, `path-exclusion` | Declarations that contradict each other across the merged tree |
 
 Runtime monitors (rate, age, drop, burstiness) live in play_launch's
 interception layer (Phase 29), fed by `rcl_publish`/`rcl_take` events.
