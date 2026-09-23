@@ -6,6 +6,41 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.40 - 2026-09-23
+
+One behaviour fix, in `derive`: `MapperNode::scope` now carries the node's
+ROS NAMESPACE instead of the owning launch-file scope id. Issue 52 R5, the
+last seam of the shared derivation, and the reason both consumers carried a
+one-line FQN workaround. The workspace version stays `0.1.4`: no API
+changes shape, only what one field holds.
+
+`sched`'s `[[assign]] scope =` selector matches a node whose scope equals
+the selector or is a descendant of it (`scope_selector_matches`,
+`sched/src/resolve.rs`), so the field has to be the namespace:
+`/perception/lidar` for `/perception/lidar/a`. `derive` copied
+`NodeInstance::scope`, which is a different tree. The two agree only when
+every launch scope pushes exactly its own namespace segment.
+
+The failure was silent, not loud. On a model with one launch scope `/`
+holding `/perception/sensor_node` and `/control/control_node`, every node
+carried the scope `/`, so `[[assign]] scope = "/perception"` selected
+nothing and those nodes fell to the default tier. No error was raised: a
+selector is an error only when it matches no node in the SYSTEM, and `/`
+always matches.
+
+`NodeView::scope` is unchanged and still the scope id, because `graph.rs`
+tests scope-path subtree membership with it. Both meanings are real; only
+the mapper field was wrong about which one it wanted.
+
+The golden `RankedPlan` snapshot is byte-for-byte unchanged, as it must be:
+scope feeds tier binding, not the order. Three tests in
+`derive/src/tests.rs` hold the fix, one of them end to end on the
+`timer_chain` fixture.
+
+**For consumers.** play_launch and nano-ros may drop their FQN workaround
+on this tag. Keeping it is harmless, since deriving the namespace of a
+namespace is the namespace, so the two sides can migrate independently.
+
 ## v0.1.39 - 2026-09-23
 
 Documentation only, plus five stale strings in code. No grammar change, no

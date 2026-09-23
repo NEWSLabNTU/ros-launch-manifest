@@ -1093,6 +1093,12 @@ independent realizers correct on the way in was never the crate's to hand
 them wrong. R5 does it, and the consumers drop their copies on the tag that
 carries it.
 
+Status: R5 landed 2026-09-23 in `8676d1f` (main), tagged **`v0.1.40`**.
+`MapperNode::scope` is derived by `derive::node_namespace`; `NodeView::scope`
+keeps the scope id for `graph.rs`'s subtree membership. Derive 23 + 5 passed,
+workspace green, golden snapshot unchanged. Both consumers may drop the
+workaround on that tag, and keeping it is harmless.
+
 ### Status
 
 ~~Open (2026-09-21). Design agreed across the three repositories; no code yet.
