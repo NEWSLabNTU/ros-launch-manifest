@@ -140,7 +140,14 @@ fn blocks() -> Vec<Block> {
         let lines: Vec<&str> = text.lines().collect();
         let mut i = 0;
         while i < lines.len() {
-            let info = lines[i].trim_end();
+            // A fence may be INDENTED -- inside a list item, or under a
+            // numbered step. The first version of this scanner matched on
+            // `trim_end()` alone, so every indented block was invisible to it
+            // and three existed, two of them teaching a spelling the parser
+            // rejects. A guard that cannot see a class of example is worse
+            // than no guard, because it reads as coverage.
+            let indent = lines[i].len() - lines[i].trim_start().len();
+            let info = lines[i].trim();
             // Only a fence opening a yaml block; the language is the first
             // word of the info string.
             let is_yaml_fence = info
@@ -154,8 +161,17 @@ fn blocks() -> Vec<Block> {
             let start = i;
             let mut body = String::new();
             i += 1;
-            while i < lines.len() && !lines[i].trim_end().starts_with("```") {
-                body.push_str(lines[i]);
+            while i < lines.len() && !lines[i].trim_start().starts_with("```") {
+                // Dedent by the fence's own indentation. Feeding the parser
+                // the indented text would make a mapping look like the value
+                // of something, so an indented block would fail for a reason
+                // that has nothing to do with what it teaches.
+                let line = lines[i];
+                let cut = line
+                    .char_indices()
+                    .take_while(|(n, c)| *c == ' ' && *n < indent)
+                    .count();
+                body.push_str(&line[cut..]);
                 body.push('\n');
                 i += 1;
             }

@@ -153,6 +153,7 @@ graph. Scopes contain nodes, topics, services, and child scopes.
 
   topics:
     command/control_cmd:
+      type: autoware_control_msgs/msg/Control
       pub: [controller/cmd]        # node_name/endpoint_name
   ```
 

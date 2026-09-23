@@ -6,6 +6,112 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.39 - 2026-09-23
+
+Documentation only, plus five stale strings in code. No grammar change, no
+arithmetic change, no API change: the workspace version stays `0.1.4` and a
+contract that parsed at v0.1.38 parses here.
+
+v0.1.38 fixed the EXAMPLES in the hand-written docs and left the prose and the
+arithmetic unverified. This release checks both against the source, one
+document at a time.
+
+### The specification describes the language that exists
+
+`docs/launch-manifest.md`: a mechanical diff of the generated
+`docs/format-reference.md` against the prose found **six live fields the spec
+never mentioned** — `nodes.<n>.params:`, `nodes.<n>.concurrency.exclusive:`,
+the whole `functions:`/`modes:` vocabulary, `severity_levels:`, and the
+subscriber's `buffer` and `on_violation`. That gap is now zero. Retired
+spellings are collected into one fifteen-row table, each naming its
+replacement and the phase that removed it.
+
+Three field errors: every `external_topics:` example used the deprecated
+`external:` key rather than `side:`; `max_response` sat under a heading
+implying `cli:` accepts it (that spelling is a parse error) and was marked
+"Not checked" when it is read as a deadline and by `response-blocking`; and
+`version:` was documented as required when the parser defaults it to 1.
+
+### The arithmetic is stated as it computes
+
+Most of it had never been written down at all. Now documented, each citing
+its implementation: derived rates, the derived route and its cost, FDTI and
+FRTI, criticality, and the mode ladder.
+
+Two formulas were WRONG rather than missing, and both in the direction that
+reads as correct:
+
+- **Fan-in rate.** `contract-theory.md` asserted `f = min(f_A, f_B)`
+  unconditionally and `slides.md` had a table row saying the same. It is the
+  SUM of the input rates without `sync:` — one callback fires once per
+  message on EACH topic it is registered for — and the min only with it.
+  Taking the min in both cases understates a fan-in node's load by exactly
+  the factor that decides whether it fits.
+- **Sampling cost.** The theory document gave `S = Sum(P_i + C_i)` and
+  attributed the verdict to `scope-sampling-feasibility`. `sampling_cost_ms`
+  is the sum of the sampling PERIODS alone, which is what that rule judges;
+  `P_i + C_i` is the traversal cost, which is what the mapper's feasibility
+  check sums.
+
+Also corrected: `max_age` was described as runtime-only (`lifespan-age` reads
+it, and it is an FDTI mechanism); a `max_age`-versus-budget consistency check
+was documented that exists nowhere; `qos-match` was said to run per
+satisfiable arg model when it has no arg logic at all; `consistency` was said
+to merge three fields when it merges five; and the example diagnostics
+throughout the spec were invented rather than the strings the rules emit.
+
+### The scheduling document had gone stale at the crate boundary
+
+`docs/scheduling.md` still said "this derivation is per-consumer", which
+v0.1.37 made false — `derive/` is the one derivation both consumers call, and
+its fact rules are not the ones the old table listed. It also claimed `sched`
+has no `types` dependency (it does, for `Duration`), described a submodule
+that does not exist, called `ResolvedTier` a 13-field record (14), and gave
+the apply layer as `sched_setscheduler(2)` rather than `sched_setattr(2)`.
+The v0.1.38 tie rule is now taught as the general rule rather than a footnote,
+including why `ResolvedTier::posix` stays `None` for the two simple mappers.
+
+### The design log reads as history
+
+`docs/design-issues.md` keeps every entry's body and vocabulary — an entry
+explaining why `chains:` was removed must keep saying `chains:` — and gains a
+status legend and per-entry status lines. Two entries were contradicted by
+the code rather than merely dated: **#50** records a decision to drop
+`min_latency` that was REVERSED in phase 67 and never written down, and
+**#52** still said "no code yet" while R1-R4 had all landed and `derive` had
+shipped as the fifth workspace member.
+
+### The doc test could not see a class of example
+
+`sched/tests/docs_yaml.rs` matched a fence with `trim_end()` and no
+`trim_start()`, so every INDENTED fence was invisible to it — and three
+existed, two of them teaching a spelling the parser rejects. A guard that
+cannot see a class of example is worse than no guard, because it reads as
+coverage. Fixed, with bodies dedented by the fence's own indentation so an
+indented block is not judged on its leading spaces. **45 blocks parsed, 2
+expect-error, 2 skipped, 49 total** — up from 40 blocks, of which five were
+unreachable.
+
+### Five strings in code
+
+`NodeDecl.criticality`'s doc comment still said the field is "advisory, not
+schema-enforced" and that unrecognised values "are ignored, never a parse
+error" — false since phase 70 made it a closed set, and predating phase 72,
+which made the label a consequence. `scope-budget` printed the retired
+`max_transport_ms` in a diagnostic authors read. Three module docs named
+`max_interval_ms`, `timeout_ms`, `max_drop_rate` and `rr_timeslice_us` as if
+they were current field names.
+
+### Known divergence, not fixed here
+
+A subscriber's `max_transport` is legal grammar and the checker honours it
+(preferring it over the topic's, for the heterogeneous-transport case it was
+added for), but `model::SubContract` has no transport field, so `derive`
+reads the topic's value alone and the two copies of one derivation compute
+different route totals wherever a contract uses the override. Filed as
+play_launch issue #0042; fixing it needs a model field and a lowering, which
+is a release of its own.
+
 ## v0.1.38 - 2026-09-22
 
 Three issues filed against `ea5cbea` from the 2026-09-18 safety-island runs,

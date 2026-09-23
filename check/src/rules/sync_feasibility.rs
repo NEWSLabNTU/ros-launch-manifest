@@ -1,10 +1,10 @@
 //! Rule: fan-in `sync:` window vs declared input rates (Vocabulary v2,
 //! Phase 44.1 §2/§5).
 //!
-//! For an `exact`/`approximate` policy, `max_interval_ms` must be able to
+//! For an `exact`/`approximate` policy, `max_interval` must be able to
 //! span the slowest declared input's inter-arrival period — otherwise the
 //! synchronizer can never find a match window wide enough to include that
-//! input's messages. For `timeout_any`, `timeout_ms` must be at least the
+//! input's messages. For `timeout_any`, `timeout` must be at least the
 //! slowest input's period — otherwise the collect-until-timeout window
 //! always expires before the slowest input can contribute.
 //!

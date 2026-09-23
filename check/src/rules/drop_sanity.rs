@@ -1,6 +1,6 @@
 //! Rule: sanity checks on drop tolerance values.
 //!
-//! - `max_drop_rate` (derived from max_count) must be in [0, 1]
+//! - the drop rate (derived from `max_count`) must be in [0, 1]
 //! - `max_consecutive` must be > 0
 //! - effective delivery rate must satisfy subscriber min_rate_hz
 //! - scope path drop rates must be in valid range

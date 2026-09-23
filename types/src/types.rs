@@ -235,12 +235,18 @@ pub struct NodeDecl {
     pub cli: BTreeMap<String, EndpointProps>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, PathDecl>,
-    /// Mapper hint (Phase 41, RT config v2 design §2.1): platform-agnostic
-    /// scheduling criticality — `high` | `medium` | `low`. No priority
-    /// numbers; a `SchedMapper` (`play_launch`'s derive pipeline) may use
-    /// this as a tie-break or additional signal. Absent/unrecognized values
-    /// are ignored (mapper defaults the node non-RT), never a parse error —
-    /// this field is advisory, not schema-enforced.
+    /// Platform-agnostic scheduling criticality — a CLOSED set,
+    /// `high` | `medium` | `low`, rejected with a parse error otherwise
+    /// (phase 70: `urgent` used to schedule a node as if nothing had been
+    /// declared, via a debug log). No priority numbers; a `SchedMapper`
+    /// reads it as a rank.
+    ///
+    /// Since phase 72 the label is a CONSEQUENCE rather than a free
+    /// declaration: a node that feeds, detects or reacts to a hazard takes
+    /// that hazard's severity (max over hazards), and `sched_derive` reads
+    /// the derivation BEFORE any label. `derivable-criticality` (info) and
+    /// `criticality-mismatch` (warning) compare the two. The key stays live
+    /// for the underivable case — a node no hazard reaches keeps its label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub criticality: Option<String>,
     /// Which of this node's paths may NOT run concurrently (phase 67).

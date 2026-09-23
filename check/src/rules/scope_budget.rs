@@ -79,7 +79,7 @@ impl ValidationRule for ScopeBudgetRule {
                 if total > 0.0 && declared < total {
                     let suffix = if undeclared_transport_count > 0 {
                         format!(
-                            " ({undeclared_transport_count} topic(s) have no max_transport_ms; \
+                            " ({undeclared_transport_count} topic(s) have no max_transport; \
                              actual total may be larger)"
                         )
                     } else {

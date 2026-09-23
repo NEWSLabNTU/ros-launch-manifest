@@ -336,7 +336,7 @@ pub enum MapWarning {
     /// fixed starvation. Deriving it there would be a cosmetic change presented
     /// as a real one, so it is declined and reported instead.
     ///
-    /// `rr_timeslice_us: None` means the platform file did not state the
+    /// an absent `rr_timeslice` means the platform file did not state the
     /// host's slice — unknown, not "assume the default".
     UnmitigatedPriorityTie {
         priority: i64,

@@ -727,6 +727,7 @@ producer or consumer. The warnings are noise that hides real problems.
 
 - B gives a single per-manifest declaration of expected external
   producers/consumers, with optional `type:` for cross-check:
+  <!-- yaml-check: expect-error — the shape PROPOSED by this entry; it shipped as `side:`, not `pub:`/`sub:`, and the entry is kept as written -->
   ```yaml
   external_topics:
     /tf:

@@ -488,7 +488,7 @@ fn chain_aware_map(
 ///
 /// The rule is therefore conditional: derive `Rr` only when the host's actual
 /// slice is shorter than the shortest period among the tied nodes. Otherwise
-/// keep `Fifo` and warn, naming both numbers. An absent `rr_timeslice_us` is
+/// keep `Fifo` and warn, naming both numbers. An absent `rr_timeslice` is
 /// "unknown", never "assume the default".
 ///
 /// `period_us` answers "the shortest period this node runs at", because WHERE
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn an_unknown_slice_never_assumes_the_default() {
-        // `rr_timeslice_us` absent means the platform file did not say. That
+        // `rr_timeslice` absent means the platform file did not say. That
         // is unknown, not 100 ms, and guessing either way would be inventing
         // a number.
         let input = two_tied_nodes();
