@@ -6,6 +6,9 @@ What each document is, and a suggested reading order.
 
 **New to the project?**
 
+0. [introduction.md](introduction.md) — what the spec and the theory each
+   answer, and the one rule the grammar is built on (facts and requirements,
+   never consequences). Two minutes.
 1. [slides.md](slides.md) — presentation deck: the problem, the manifest
    idea, the derived consequences, hazards and the checker in ~20
    slides. Fastest orientation.

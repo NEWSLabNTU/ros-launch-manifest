@@ -15,8 +15,10 @@ overrides from which per-node scheduling is derived.
 
 ## Documentation
 
-Start with [docs/README.md](docs/README.md) — the index with a suggested
-reading order. Direct links:
+Start with [docs/introduction.md](docs/introduction.md) — two minutes on what
+the spec and the theory each answer, and the one rule the grammar is built on.
+Then [docs/README.md](docs/README.md), the index with a suggested reading
+order. Direct links:
 
 - **[Format Reference](docs/format-reference.md)** — every accepted key,
   **generated** from `types/src/field_table.rs`. Normative: a key it does
