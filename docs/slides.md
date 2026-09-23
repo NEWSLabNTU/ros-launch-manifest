@@ -33,6 +33,7 @@ to the communication graph**.
 | How to remap names | First-class topic wiring with type + QoS |
 | Which files to include | Child scopes with their own manifests |
 | *(nothing)* | Timing contracts: latency, age, drops |
+| *(nothing)* | Hazards, reactions and operational modes |
 
 One manifest per launch file. The tree of manifests mirrors the tree
 of launch file includes.
@@ -156,10 +157,97 @@ topics:
 ```
 
 Each manifest stays checkable **standalone** — that is why both declare
-the `type:`, and why `consistency` requires them to agree.
+the `type:`, and why `consistency` (a *cross-scope* rule, emitted by the
+consumer's merge layer) requires them to agree.
 
 **Opaque scope** (has budget) → parent trusts the declared value
 **Transparent scope** (no budget) → parent looks through to children
+
+---
+
+# Facts, Requirements, Consequences
+
+A contract states **what the code does** (facts) and **what it must
+achieve** (requirements). Anything computable from those is a
+**consequence** — derived, never written.
+
+```yaml
+nodes:
+  detector:
+    sub:
+      scan:
+        max_age: 120ms          # REQUIREMENT: freshness at receive
+    pub:
+      boxes: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }   # FACT: what causes the output
+        output: [boxes]
+        max_latency: 30ms       # REQUIREMENT: this path's budget
+```
+
+Derived from those: the **route** between two topics (a scope path
+names two ends and a budget — the route is the graph's answer), the
+**total** along it, a topic's **rate** (propagated from the timers that
+drive it), and a node's **criticality**.
+
+A second copy of a consequence can disagree with the graph. Where one is
+written anyway, `derivable-*` says they agree and `*-mismatch` says they
+do not.
+
+---
+
+# Criticality Is a Consequence
+
+`criticality: high | medium | low` is not a free label. It is allocated
+**inward from the hazards**, the way every safety standard does it:
+
+- a node that **feeds** a guard (its publishers, and their upstream
+  causal closure, state edges included),
+- one that **detects** one (a subscriber carrying `on_violation:`),
+- or one that **reacts** (on the walk to the safe state)
+
+takes that hazard's severity — **max** over the hazards that reach it.
+`severity_levels:` declares the scale (default: ISO 26262's
+`QM, ASIL_A..ASIL_D`).
+
+The mapper reads the derivation **before** any written label.
+`derivable-criticality` (info) and `criticality-mismatch` (warning)
+compare the two; a node no hazard reaches keeps its label — that is the
+underivable case, and the reason the key still exists.
+
+---
+
+# Faults, Reactions, Modes
+
+A rate that *must* hold and no statement of what happens when it does
+not is a performance wish. ISO 26262's number is the **fault-tolerant
+time interval**.
+
+```yaml
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    guards: [/scan]              # what is watched
+    on: omission                 # omission | late | loss | reported
+    ftti: 300ms                  # REQUIREMENT: fault -> hazardous event
+    reaction: stop_now           # the scope path reaching the safe state
+paths:                           # a SCOPE path: two ends and a budget
+  stop_now:
+    trigger: { input: [/scan] }  # `input:` alone is the v1 spelling
+    output: [/brake]
+    max_latency: 80ms
+    safe_state: { emits: brake/cmd, settle: 400ms }
+```
+
+**FDTI** (detect) and **FRTI** (react) are *derived*: the fastest
+detector among the guard's subscribers that react, plus the walk over
+reaction edges, plus the plant's settle time. `fault-reaction-budget`
+names every term of the sum.
+
+`modes:` make the reaction a **ladder** rather than one step — each rung
+is checked against the ftti in its own right, and the last rung must
+require nothing losable.
 
 ---
 
@@ -182,9 +270,10 @@ Plus: `endpoint-unique`, `wiring`, `qos-compat`, `qos-match`,
 `service-wiring`, `service-type`, `state-consistency`,
 `explicit-trigger`, `inherited-rate`, `once-durability`,
 `sync-feasibility`, `queue-drain-rate`, `jitter-range`
-(\* = cross-scope, in the consumer's merge layer — with
+(\* = cross-scope, in the consumer's merge layer — with `consistency`,
 `scope-sampling-feasibility`, `jitter-feasibility`, `lifespan-age`,
-`fault-reaction-budget`, the `derivable-*` comparisons, …)
+`fault-reaction-budget`, `reaction-*`, the mode and `ladder-*` rules,
+the `derivable-*` / `*-mismatch` comparisons, …)
 
 ---
 
@@ -205,6 +294,13 @@ scope S: max_latency: 100ms
 - P checks: 20 + 25 = 45 ≤ 50 ✓ (5ms transport headroom)
 - S checks: P(50) + C(30) = 80 ≤ 100 ✓ (20ms residual for E)
 
+Those flat sums are the **standalone** check — conservative on purpose,
+since one manifest cannot see the topology. Across the merged tree the
+consumer computes the **critical path** instead: `max` over parallel
+branches, `sum` along one. A lidar branch of 50ms beside a camera branch
+of 30ms feeding a 20ms fusion node costs `max(50, 30) + 20 = 70`, not
+the sum 100 — so the precise check accepts trees the sum would reject.
+
 Fill in per-node budgets as you measure them.
 
 ---
@@ -214,8 +310,14 @@ Fill in per-node budgets as you measure them.
 | Topology | Latency | Rate | Drop | Age |
 |----------|---------|------|------|-----|
 | **Series** | sum | preserved | multiply $\mathcal{R}$ | sum along chain |
-| **Parallel** | max + fusion | min | user-declared | max + fusion |
+| **Fan-in** | max over branches + fusion | **sum**, or **min** with `sync:` | user-declared | max + fusion |
 | **Periodic** | +P+J (wait) | 1000/P | resets consecutive | resets stamp chain |
+
+Fan-in rate is the one people get backwards: a callback registered on
+two inputs fires once per message on *each*, so the rates **add**. Only
+a synchronizer (`sync:`) emits one output per matched set, and that is
+paced by its **slowest** input. Taking the min in both cases understates
+a fan-in node's load by exactly the factor that decides whether it fits.
 
 Drop composition — one `drop:` block, three places it may sit:
 - **`max_count: N / W`** on a topic (transport), a scope path (E2E) or
@@ -247,20 +349,28 @@ Example: `pose_source: gnss` but no `gnss_node` declared →
 
 # Status
 
+**Grammar**: enumerable — `types/src/field_table.rs` is the single
+source, `docs/format-reference.md` is generated from it, and an unknown
+key is a **parse error**
 **Checker**: 19 single-manifest rules (incl. Z3 satisfiability) +
 cross-scope rules in the consumer (`consistency`, `budget-overflow`,
 critical-path `scope-budget`, `scope-sampling-feasibility`,
-`fault-reaction-budget`, …)
+`fault-reaction-budget`, the mode and `ladder-*` rules, the
+`derivable-*` comparisons, …)
 **Runtime**: rate/age/latency/drop enforcement via RCL interception
-(`--enforce-rules`)
+(`--enforce-rules`, default `warn`), plus the live fault observer —
+`hazard-detected`, `hazard-reaction`, `hazard-recovered`,
+`mode-availability`
 **Scheduling**: 4 mappers (`manual`, `rate_monotonic`,
 `deadline_monotonic`, `chain_aware`) deriving per-node RT priorities
 from these contracts
+**Derivation**: one shared `derive/` crate — both consumers build the
+mapper's input from the resolved model through the same function
 **Autoware contracts**: 76 contract files covering the full
 planning_simulator tree
 
 Open items: burstiness detection metrics, capture mode
-(contract bootstrapping from traces)
+(contract bootstrapping from traces — not implemented)
 
 ---
 

@@ -1,11 +1,47 @@
 # Design Issues
 
 Design questions for the manifest format, with proposed solutions and
-their resolutions. Issues 1-51, #53 and #54 are resolved; #52 is open.
+their resolutions.
+
+## How to read this file
+
+**This is a log of decisions, not a description of the format.** An
+entry records what was decided *at the time*, in the vocabulary of that
+time. An entry that says `chains:` was removed still says `chains:`;
+one that resolved `max_transport_ms` still says `max_transport_ms`,
+years after the `_ms` name-suffix spellings became parse errors. That is
+deliberate — rewriting an entry into today's vocabulary would destroy
+the record and make the reasoning incoherent.
+
+For what the grammar **is** today, read
+[format-reference.md](format-reference.md), which is generated from
+`types/src/field_table.rs` and cannot drift.
+
+Every entry carries one of four statuses, in its heading and — where
+the story did not end with the entry — in a `**Status (date):**` line
+directly beneath it:
+
+| Status | Meaning |
+|---|---|
+| **Done** | Decided, implemented, and still how the code behaves. |
+| **Done; superseded by …** | The decision was right then and has since been overtaken. The body is left untouched; the status line names what replaced it. |
+| **Accepted** | Decided to change nothing. |
+| **Open** | Not settled. |
+
+Status lines were last reconciled against the code on **2026-09-23**
+(19 rules in `check/src/rules/mod.rs::default_rules()`, five workspace
+members, format reference as generated).
+
+**Roll-up.** Issues 1–51, #53 and #54 are resolved — of those, #29,
+#31, #45, #48 and #50 have since been superseded, and #50 was
+*reversed* (see its status line). #52 is open on the consumer side only: the four
+units it planned for this repository all landed and shipped as
+`v0.1.37`.
 
 ## Resolved Issues
 
-Issues resolved in prior phases, preserved in git history:
+Issues resolved in prior phases, preserved in git history. **Field names
+below are as of the decision**, not as of today:
 
 - **1–6, 8–16**: Args, substitutions, conditions, service contracts,
   doc fixes, parser bugs, unified scope interface, dangling entity
@@ -49,6 +85,12 @@ No suppression mechanism is needed. See #41 for details.
 
 ## ~~18. CLI Should Support Per-Rule Filtering~~ — Done
 
+**Status (2026-09-23): holds; one flag in the example is gone.**
+`--rule <RULE_ID>` is live and repeatable. `--manifest-dir` was
+replaced by the contract CHANNELS (`--contracts <dir>`,
+`$PLAY_LAUNCH_CONTRACTS`, XDG, `/etc`, then the provider sidecar beside
+the launch file), so the example line no longer runs as written.
+
 Implemented in Phase 34.8. The `play_launch check` command now accepts
 a repeatable `--rule <RULE_ID>` flag that filters diagnostics
 (per-scope and cross-scope) by rule ID. The summary line shows the
@@ -74,6 +116,11 @@ theory.
 
 ## ~~23. Age Verification Effectively Unimplementable Statically~~ — Done
 
+**Status (2026-09-23): holds.** Only the spelling moved: the key is
+`max_age` (a duration with a unit suffix), `max_age_ms` being one of the
+nine `_ms` aliases phase 70 turned into parse errors. `lifespan-age`
+(cross-scope) is the rule that reads it.
+
 Resolved by moving `max_age_ms` from scope paths to **subscriber
 endpoints**. Age is now a data freshness constraint at the point of
 consumption (`now - header.stamp` at `rcl_take`), checked at runtime
@@ -83,7 +130,16 @@ doesn't attempt a full chain proof.
 
 ---
 
-## ~~29. `exclude_patterns` Override Behavior Undocumented~~ — Done
+## ~~29. `exclude_patterns` Override Behavior Undocumented~~ — Done; superseded
+
+**Status (2026-09-23): superseded by phase 70 — `exclude_patterns` was
+removed from the grammar.** The consumer census found it had three
+mentions in the whole codebase (the table row, the struct field, the
+parse line) and **no consuming read**: the suppression suppressed
+nothing. The key is now a parse error naming its replacement, the
+per-topic `external:` mark (and the `external_topics:` block), which
+`dangling-entity` honours on the side it names — see design issue #54
+and `docs/format-reference.md`.
 
 Documented: user declaration **replaces** defaults. `exclude_patterns: []`
 includes all topics.
@@ -92,13 +148,28 @@ includes all topics.
 
 ## ~~30. No Example Error Messages for Validation Rules~~ — Done
 
+**Status (2026-09-23): holds.** Two of the seven rules it illustrates,
+`budget-overflow` and `consistency`, are cross-scope rules emitted by
+the consumer's merge layer rather than members of this crate's 19 — the
+example diagnostics are still what a user sees, but not all from the
+same pass.
+
 Added example diagnostics block to the Static Validation section
 covering 7 rules: `endpoint-unique`, `wiring`, `rate-hierarchy`,
 `budget-overflow`, `dangling-entity`, `consistency`, `satisfiability`.
 
 ---
 
-## ~~31. `correlation: latest` Output Timestamp Unspecified~~ — Done
+## ~~31. `correlation: latest` Output Timestamp Unspecified~~ — Done; superseded
+
+**Status (2026-09-23): superseded by phase 70 — `correlation` was
+removed from the grammar.** It parsed, reached the causal graph and
+lowered to a `model::Correlation` enum that no arithmetic ever branched
+on — the same write-only shape as `semantics: age`. `timestamp` /
+`latest` is `sync:` present / absent, which three rules and the rate
+derivation do read. The primary-input-stamp ruling below still
+describes how a fan-in path's output stamp behaves; only the key that
+spelled it is gone.
 
 Specified: `correlation: latest` output stamp = **primary (first listed)
 input's stamp**. Based on analysis of 9 Autoware fusion nodes — 7 of 9
@@ -109,7 +180,15 @@ composition section + summary table).
 
 ---
 
-## ~~32. Capture Mode Buried in Theory Appendix~~ — Done
+## ~~32. Capture Mode Buried in Theory Appendix~~ — Done (doc only)
+
+**Status (2026-09-23): the doc move landed; the feature did not.**
+`--save-manifest-dir` does not exist in play_launch, so
+`launch-manifest.md`'s "Generating Manifests from a Running System"
+section documents a flag no binary accepts. `slides.md` lists capture
+mode as an open item. Either the section grows a "not implemented"
+marker or the flag gets built; `launch-manifest.md` is not owned by
+this file.
 
 Added "Generating Manifests from a Running System" section to
 launch-manifest.md with `--save-manifest-dir` usage, what it generates,
@@ -118,6 +197,13 @@ and a link to the statistical derivation in contract-theory.md Appendix C.
 ---
 
 ## ~~33. Topic Keys as ROS Topic Names~~ — Done
+
+**Status (2026-09-23): holds; the rule it proposes is named
+differently.** "New rule: `topic-consistency`" shipped as
+**`consistency`**, and it lives in the consumer's cross-scope merge,
+not in this crate's 19 — the in-crate placeholder of that id was
+removed in `v0.1.38` (see #54). The field it checks is spelled
+`max_transport` today.
 
 Resolved (spec + code). Resolves #7, #19, #20, #21, #26, #27.
 
@@ -200,7 +286,11 @@ orphan warnings.
 
 ---
 
-## ~~17. Cross-Scope Service Wiring Has No Suppression Mechanism~~ — Resolved by #41
+## ~~17. Cross-Scope Service Wiring Has No Suppression Mechanism~~ — Resolved by #41 (duplicate heading)
+
+**Status (2026-09-23): this is a second copy of the #17 entry above**,
+with the same resolution in different words. Kept rather than deleted
+because the log is append-only; read either one.
 
 Cross-scope services are now wired by ROS name matching across the
 manifest tree, same as topics. No orphan `cli:` warnings — the
@@ -226,7 +316,20 @@ critical-path check supersedes it.
 
 ---
 
-## ~~43. Scope Path Dataflow Tracing Underspecified~~ — Done
+## ~~43. Scope Path Dataflow Tracing Underspecified~~ — Done; partly superseded
+
+**Status (2026-09-23): the algorithm holds; it moved twice.** The file
+is now `src/ros-launch-resolve/resolve/src/ros/manifest_graph.rs` in
+play_launch, and #52's R2 ported `build_global_graph`,
+`subgraph_for_scope_path` and `critical_path` off `ManifestIndex` onto
+the SystemModel, in this repository, as `derive::resolve_chains`. The
+"opaque-scope optimization" noted below as future work is still not
+done. Two later corrections are recorded in play_launch rather than
+here: per-path attribution (a node-keyed `max_latency_ms` over-charges
+a multi-output node's route) and the fact that a scope path's subgraph
+starting AT the input topic leaves an upstream timer boundary outside
+the traced region — which is what `scope-sampling-feasibility` exists
+for.
 
 Resolved in Phase 35.1–35.4. The algorithm is now specified and
 implemented in `src/play_launch/src/ros/manifest_graph.rs`:
@@ -256,6 +359,13 @@ implemented in `src/play_launch/src/ros/manifest_graph.rs`:
 ---
 
 ## ~~44. `max_transport_ms` Ambiguous for Multi-Subscriber Topics~~ — Done
+
+**Status (2026-09-23): holds.** The per-subscriber override and the
+edge-weight rule are as decided; the key is now spelled
+`max_transport` on both the topic and the subscriber endpoint
+(`max_transport_ms` is a parse error since phase 70). The critical-path
+DP it describes was ported onto the SystemModel in `derive::
+resolve_chains` — see #52.
 
 Resolved (spec + code).
 
@@ -324,7 +434,19 @@ field description notes overridability.
 
 ---
 
-## ~~45. No QoS Publisher-Subscriber Compatibility Check~~ — Done
+## ~~45. No QoS Publisher-Subscriber Compatibility Check~~ — Done; partly superseded
+
+**Status (2026-09-23): holds, and its deferrals have since been taken
+up.** "v1 covers `reliability` and `durability` only; `liveliness`,
+`deadline` and `lifespan` compatibility are deferred" is no longer
+true: phase 70 W4 added `liveliness` and its `lease_duration` to
+`qos-match` (a publisher asserting less often than the subscriber's
+lease is one it will periodically declare dead), in this crate and in
+the consumer's cross-scope copy — which for a lease is the normal case,
+since publisher and subscriber usually sit in different files. Phase 74
+went further than checking: a contract's `qos.deadline` /
+`liveliness` / `lease_duration` is now APPLIED, written into the node's
+parameters as rclcpp's `qos_overrides.<topic>.<entity>.<policy>`.
 
 Resolved (spec + code).
 
@@ -418,7 +540,18 @@ Added inline include example to §Includes.
 
 ---
 
-## ~~48. `header.stamp` Propagation Stated as Rule but Is Convention~~ — Done
+## ~~48. `header.stamp` Propagation Stated as Rule but Is Convention~~ — Done; superseded in part
+
+**Status (2026-09-23): the ruling holds, its spelling does not.** "A
+periodic path is one with `input: []`" was the Vocabulary v1
+convention; Vocabulary v2 replaced it with an explicit
+`trigger: { timer: { rate_hz: N } }`, and the distinction is
+load-bearing rather than cosmetic — an empty `input:` cannot tell a
+timer from `once`, from `spontaneous`, or from a path whose trigger was
+simply never declared, and the derivations must answer `Unknown` for
+the last three instead of assuming a clock. `PathDecl::
+effective_trigger()` is the one reader. See #52, whose first table row
+is the cost of that convention leaking into the SystemModel.
 
 Softened to "should" with guidance: nodes that reset the stamp should
 be modeled as periodic paths (`input: []`).
@@ -455,14 +588,39 @@ Updated:
 
 ---
 
-## ~~50. `min_latency_ms` Poorly Motivated~~ — Done
+## ~~50. `min_latency_ms` Poorly Motivated~~ — Done; **reversed**
+
+**Status (2026-09-23): this decision was reversed, and the reversal was
+never recorded here.** `min_latency` (no `_ms` suffix) is back in the
+grammar, on both node and scope paths — phase 67 reintroduced it with a
+motivation the original removal did not have, and phase 70 gave it the
+consumer it was missing. The motivation: every other bound in the
+vocabulary is an UPPER bound, so `max_jitter` had nothing to be
+falsified against. The `jitter-range` rule (`check/src/rules/
+jitter_range.rs`, registered in `default_rules()`) now errors on
+`min_latency > max_latency`, warns when
+`max_latency - min_latency > max_jitter`, and reports an ABSENT
+`min_latency` as *unverifiable* — reading absence as zero was a defect
+caught on the `contract_w2` fixture. `play_launch measure` emits a
+measured floor as `nodes.<n>.paths.<p>.min_latency`.
 
 Removed from both node and scope path field tables. Not used in any
 rule, example, or validation.
 
 ---
 
-## ~~51. No Way to Declare External Topics / Producers~~ — Done
+## ~~51. No Way to Declare External Topics / Producers~~ — Done; extended
+
+**Status (2026-09-23): holds, and the asymmetry it left was closed by
+#54.** Until then only the CONSUMER's cross-scope re-run of
+`dangling-entity` honoured a topic's `external:` mark; the in-crate
+rule did not, so one pass warned and the other did not, on the same
+file. The in-crate rule now reads `external: pub | both` (and the
+`external_topics:` block) exactly as it reads the service and action
+marks, and answers only for the side the mark names. Layer 3 (the
+ancestor walk) is still deferred. `exclude_patterns`, discussed below
+as the tool that does not solve this, was removed outright in phase 70
+— see #29.
 
 Resolved (spec + code). Implementation: top-level `external_topics:`
 block per Option B + per-topic `external:` flag per Option A.
@@ -616,7 +774,27 @@ warnings on a fully-migrated tree without losing the rule's safety net.
 
 ---
 
-## 52. Two Consumers, Two Derivations of the Same Mapper Input - Open
+## 52. Two Consumers, Two Derivations of the Same Mapper Input — Open (consumer side)
+
+**Status (2026-09-23): this repository's four units all landed and
+shipped; the issue stays open because the CONSUMERS have not migrated.**
+The `### Status` section at the foot of this entry still says "no code
+yet" — that was true when the entry was written on 2026-09-21 and is
+contradicted by the tree today: `derive/` is the fifth workspace member
+(`Cargo.toml` `members = ["types", "check", "sched", "model",
+"derive"]`), it exports `mapper_input_from_model`, `resolve_chains`,
+`DeriveFacts` and `DeriveReport`, and `model/src/lib.rs` carries all six
+R1 fields (`PathContract::trigger`, `::sync`, `::min_latency_ms`,
+`SubContract::buffer`, `Contracts::severity_levels`,
+`::node_criticality`). R1–R4 landed 2026-09-21 as `9563b54`, `2367972`,
+`13c3f63`, `bfbe075`, tagged **`v0.1.37`**. The per-unit `Status:` lines
+in the Parallel plan below are the accurate record. What remains is
+consumer-side: play_launch phase-78 (pin, lower, delete its copy, ship
+0.12.0) and nano-ros phase-457. One seam is already known and recorded
+at the foot of R4: `MapperNode::scope` must be the NAMESPACE the manual
+mapper's `[[assign]] scope =` selector matches, while `derive` copies
+`NodeInstance::scope`, the file-scope key — patched consumer-side, owed
+by this crate.
 
 ### Problem
 
@@ -892,9 +1070,15 @@ for now, the crate should derive the namespace from the FQN.
 
 ### Status
 
-Open (2026-09-21). Design agreed across the three repositories; no code yet.
+~~Open (2026-09-21). Design agreed across the three repositories; no code yet.
 Units R1 and R2 are claimable now (Parallel plan above); R3 and R4 follow
-in that order.
+in that order.~~
+
+**Superseded 2026-09-23 by the banner at the head of this entry.** All
+four units landed on 2026-09-21 and shipped as `v0.1.37`; the issue is
+open on the consumer side only. This paragraph is kept so the sequence
+is legible — it is what the entry claimed on the day the units were
+still unclaimed.
 
 ---
 
@@ -994,7 +1178,19 @@ cases beside them.
 
 ---
 
-## ~~54. Three In-Crate Rules Ignored the Escape Hatches the Grammar Offers~~ - Done
+## ~~54. Three In-Crate Rules Ignored the Escape Hatches the Grammar Offers~~ — Done
+
+**Status (2026-09-23): holds; its doc follow-ups have landed.** The
+closing paragraph below names three documents still saying "20 rules"
+and listing a `chain-shape` rule. All three now say 19 and none lists a
+chain rule: `README.md`, `docs/contract-verification.md` §Rule Registry
+(where `consistency` has moved to the cross-scope table), and
+`docs/launch-manifest.md` §rule table. `docs/README.md` was the last
+holdout and was corrected on this date. One stale mention remains
+outside those three: `docs/scheduling.md` still calls
+`scope-sampling-feasibility` by its retired name
+`chain-sampling-feasibility`. The deliberate NOT-done — merging
+`service-wiring` into `dangling-entity` — is still not done.
 
 ### Problem
 
@@ -1061,10 +1257,23 @@ Tests: `test_dangling_topic_external_pub_is_accepted`,
 
 ## Summary
 
-Design issues 1-51, #53 (equal periods, equal priorities) and #54 (the
-checker's escape hatches) are resolved; #52 (one shared derivation of the
-mapper input, 2026-09-21) is open. The summary table below preserves the
-most recent phases.
+Design issues 1–51, #53 (equal periods, equal priorities) and #54 (the
+checker's escape hatches) are resolved. #52 (one shared derivation of
+the mapper input) is open **on the consumer side only** — its four
+units in this repository landed on 2026-09-21 and shipped as `v0.1.37`.
+
+Four resolved entries have since been overtaken, and their status lines
+say so:
+
+| # | Was | Now |
+|---|---|---|
+| 29 | `exclude_patterns` semantics documented | The key was removed (phase 70); `external:` replaces it |
+| 31 | `correlation: latest` stamp specified | The key was removed (phase 70); `sync:` states the policy |
+| 45 | `qos-match` v1: reliability + durability | `liveliness` and `lease_duration` added (phase 70); QoS also APPLIED (phase 74) |
+| 48 | A periodic path is `input: []` | Vocabulary v2's explicit `trigger: { timer: … }`; an empty `input:` no longer means a clock |
+| 50 | `min_latency_ms` removed as unmotivated | **Reversed** — `min_latency` is back, and `jitter-range` reads it |
+
+The summary table below preserves the most recent phases.
 
 **Recently resolved** (Phase 34/35):
 
