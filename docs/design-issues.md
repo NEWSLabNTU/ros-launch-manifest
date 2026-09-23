@@ -791,11 +791,30 @@ R1 fields (`PathContract::trigger`, `::sync`, `::min_latency_ms`,
 `13c3f63`, `bfbe075`, tagged **`v0.1.37`**. The per-unit `Status:` lines
 in the Parallel plan below are the accurate record. What remains is
 consumer-side: play_launch phase-78 (pin, lower, delete its copy, ship
-0.12.0) and nano-ros phase-457. One seam is already known and recorded
-at the foot of R4: `MapperNode::scope` must be the NAMESPACE the manual
-mapper's `[[assign]] scope =` selector matches, while `derive` copies
-`NodeInstance::scope`, the file-scope key — patched consumer-side, owed
-by this crate.
+0.12.0) and nano-ros phase-457.
+
+**R5 landed 2026-09-23.** The one seam recorded at the foot of R4 is
+closed in this crate: `MapperNode::scope` is now the node's NAMESPACE,
+derived from its FQN by `derive::node_namespace`, which is what `sched`'s
+`[[assign]] scope =` selector matches (`scope_selector_matches`,
+`sched/src/resolve.rs`). It used to copy `NodeInstance::scope`, the
+owning LAUNCH-FILE scope id. The two trees coincide only when every
+scope pushes exactly its own namespace segment, and the `timer_chain`
+fixture is a case where they do not: one launch scope `/` holding
+`/perception/sensor_node` and `/control/control_node`, so every node
+carried the scope `/` and an `[[assign]] scope = "/perception"` rule
+selected NOTHING while raising no error, because an unmatched selector
+is only an error when it matches no node in the system and `/` always
+matches. `NodeView::scope` deliberately keeps the scope id: `graph.rs`
+tests subtree membership with it against `structure.scopes`' parent
+links, so both meanings are real and only this field was wrong about
+which one it wanted. Held by three tests in `derive/src/tests.rs`
+(`mapper_node_scope_is_the_namespace_not_the_scope_id`,
+`derived_scope_binds_under_the_selector_rule`,
+`a_node_below_its_launch_scope_carries_its_own_namespace`); the golden
+`RankedPlan` snapshot is unchanged, as it must be, since scope feeds
+tier binding and not the order. Both consumers may now drop their
+FQN workaround.
 
 ### Problem
 

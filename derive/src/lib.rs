@@ -235,13 +235,37 @@ fn mapper_node(node: &NodeView, facts: &DeriveFacts, report: &mut DeriveReport) 
 
     MapperNode {
         name: node.fqn.clone(),
-        scope: node.scope.clone(),
+        scope: node_namespace(&node.fqn),
         rate_hz,
         deadline_us: min_ms.map(|ms| (ms * 1000.0).round() as u64),
         criticality: node.criticality,
         path_budget_ms: min_ms,
         paths,
         claims_concurrency: claims_concurrency(node),
+    }
+}
+
+/// The ROS NAMESPACE of a node, which is what `MapperNode::scope` means.
+///
+/// R5 of issue 52. `sched`'s `[[assign]] scope =` selector matches a node
+/// whose scope equals the selector or is a descendant of it
+/// (`sched/src/resolve.rs`, `scope_selector_matches`), so the field has to
+/// carry the node's namespace: `/perception/lidar` for
+/// `/perception/lidar/a`. This crate used to copy `NodeInstance::scope`,
+/// which is the owning LAUNCH-FILE scope id -- a different tree that only
+/// coincides with the namespace when every scope pushes exactly its own
+/// namespace segment. Both consumers patched it back to the namespace on
+/// their own side; the patch is owed here.
+///
+/// `NodeView::scope` keeps the scope id, because `graph.rs` tests subtree
+/// membership with it against `structure.scopes`' parent links. The two
+/// meanings are both real; only this field was wrong about which it wants.
+///
+/// A node at the root (`/a`) has namespace `/`.
+fn node_namespace(fqn: &str) -> String {
+    match fqn.rsplit_once('/') {
+        Some(("", _)) | None => "/".to_string(),
+        Some((ns, _)) => ns.to_string(),
     }
 }
 

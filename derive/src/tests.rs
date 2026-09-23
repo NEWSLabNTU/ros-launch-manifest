@@ -1246,3 +1246,84 @@ fn the_derivation_survives_the_model_round_trip() {
     // The model types used by the builders above are all reachable.
     let _ = (Contracts::default(), Structure::default());
 }
+
+/// R5 of issue 52: `MapperNode::scope` is the node's NAMESPACE, which is
+/// what `sched`'s `[[assign]] scope =` selector matches, and not the
+/// owning launch-file scope id the model happens to key nodes by.
+#[test]
+fn mapper_node_scope_is_the_namespace_not_the_scope_id() {
+    assert_eq!(node_namespace("/perception/lidar/a"), "/perception/lidar");
+    assert_eq!(node_namespace("/control/c"), "/control");
+    // A node at the root has the root namespace, not an empty string: an
+    // empty scope would match no selector, and `norm_scope("")` is not `/`.
+    assert_eq!(node_namespace("/a"), "/");
+    // Defensive: a name that carries no separator at all.
+    assert_eq!(node_namespace("a"), "/");
+}
+
+/// The namespace this crate derives is the one `sched` would bind against.
+/// Stated as the selector rule itself so the two cannot drift apart:
+/// a selector matches when it equals the namespace or is an ancestor of it.
+#[test]
+fn derived_scope_binds_under_the_selector_rule() {
+    let ns = node_namespace("/perception/lidar/deep/b");
+    assert_eq!(ns, "/perception/lidar/deep");
+    let matches = |sel: &str| ns == sel || ns.starts_with(&format!("{}/", sel));
+    assert!(matches("/perception/lidar/deep"));
+    assert!(matches("/perception/lidar"));
+    assert!(matches("/perception"));
+    // A false prefix is not an ancestor.
+    assert!(!matches("/perception/lid"));
+}
+
+/// R5 end to end, on a fixture where the two trees genuinely disagree:
+/// `timer_chain` declares one launch scope, `/`, and puts nodes at
+/// `/perception/...` and `/control/...` inside it. Copying the scope id
+/// gave every node the scope `/`, so a platform file's
+/// `[[assign]] scope = "/perception"` selected NOTHING and the nodes fell
+/// to the default tier -- silently, because an unmatched selector is only
+/// an error when it matches no node in the SYSTEM, and `/` always does.
+#[test]
+fn a_node_below_its_launch_scope_carries_its_own_namespace() {
+    let (input, _) = mapper_input_from_model(&timer_chain(), &DeriveFacts::default());
+
+    let scope_of = |name: &str| {
+        input
+            .nodes
+            .iter()
+            .find(|n| n.name == name)
+            .unwrap_or_else(|| panic!("{name} missing from the derived input"))
+            .scope
+            .clone()
+    };
+
+    assert_eq!(scope_of("/perception/sensor_node"), "/perception");
+    assert_eq!(scope_of("/perception/filter_component"), "/perception");
+    assert_eq!(scope_of("/control/control_node"), "/control");
+
+    // The model's own scope id is untouched: it is a different tree, and
+    // `graph.rs` still tests subtree membership with it.
+    assert_eq!(
+        timer_chain().structure.nodes["/perception/sensor_node"].scope,
+        "/"
+    );
+
+    // The point of the fix: a `/perception` selector now binds the two
+    // perception nodes and leaves the control node alone.
+    // Sorted: the derived order is the ranking's business, not this test's.
+    let under = |sel: &str| {
+        let mut v = input
+            .nodes
+            .iter()
+            .filter(|n| n.scope == sel || n.scope.starts_with(&format!("{sel}/")))
+            .map(|n| n.name.as_str())
+            .collect::<Vec<_>>();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(
+        under("/perception"),
+        vec!["/perception/filter_component", "/perception/sensor_node"]
+    );
+    assert_eq!(under("/control"), vec!["/control/control_node"]);
+}
