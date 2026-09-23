@@ -10,7 +10,12 @@ How manifest contracts are verified, as implemented by the `types/` and
 > agreement, cross-scope QoS reconciliation, the topology-aware
 > critical-path budget check, route derivation for a scope path) run in
 > the consumer's merge layer (`ros-launch-resolve`, invoked by
-> `play_launch check`) because they need the merged launch tree. See
+> `play_launch check`) because they need the merged launch tree. So does
+> everything that DERIVES a consequence and grades a declaration against
+> it — topic and endpoint rates, node criticality, the FDTI/FRTI
+> arithmetic — for the same reason: the graph those walk spans files. The
+> arithmetic itself is stated in
+> [contract-theory.md](contract-theory.md#derived-quantities). See
 > [Division of Labor](#division-of-labor-with-the-consumer).
 
 ## Pipeline
@@ -72,8 +77,18 @@ output.
 
 ## Rule Registry
 
-19 rules, in registration order (`check/src/rules/mod.rs`). Severity is
-what the rule emits; several rules emit at more than one severity.
+19 rules, in registration order (`check/src/rules/mod.rs::default_rules`).
+Severity is what the rule emits; several rules emit at more than one
+severity.
+
+The registry is exactly these 19. **`consistency` is deliberately not one
+of them**: the id is live, but it belongs to the cross-scope rule the
+consumer emits ([below](#division-of-labor-with-the-consumer)), and
+`--rule consistency` filters those diagnostics. What used to sit here was a
+no-op body reserving the name, counted in this registry — so a reader of
+the table, or of a `--rule consistency` run, was told a rule ran that did
+nothing. It was removed in v0.1.38; a reserved id belongs in the docs, not
+in `default_rules()`.
 
 | # | Rule | Severity | What it catches |
 |---|------|----------|-----------------|
@@ -82,7 +97,7 @@ what the rule emits; several rules emit at more than one severity.
 | 3 | `qos-compat` | Error | Invalid QoS value token (`reliability`, `durability`, `history`, `liveliness`) at topic or endpoint level |
 | 4 | `qos-match` | Error / Warning | Structural: `depth: 0` (E), `keep_all` with depth (W), `best_effort` + `transient_local` (W). DDS pub/sub compatibility on `reliability`, `durability`, `liveliness` and `lease_duration` (E) — offered ≥ requested, checked only when both sides specify (no implicit ROS defaults) |
 | 5 | `rate-hierarchy` | Error | `pub.min_rate_hz < topic.rate_hz`; `topic.rate_hz < sub.min_rate_hz`; and since phase 70 the upper bounds `topic.rate_hz > pub.max_rate_hz` and `topic.rate_hz > sub.max_rate_hz` |
-| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency` < Σ node latencies + declared topic transport. Per-manifest fallback — the topology-aware critical path is play_launch's cross-scope diagnostic |
+| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency` < Σ node latencies + declared topic `max_transport`, each node contributing the **max** over its declared paths. Per-manifest fallback — the topology-aware critical path is the consumer's cross-scope diagnostic, which deletes this warning for every scope path it resolves a route for |
 | 7 | `causal-dag` | Error | Cycle in the causal dataflow graph (`state: true` on feedback endpoints breaks it) |
 | 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; a `drop.max_count` rate outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0`. Checked on topics, scope paths and node paths |
 | 9 | `service-wiring` | Warning | Service client with no matching server |
@@ -95,7 +110,7 @@ what the rule emits; several rules emit at more than one severity.
 | 16 | `once-durability` | Warning | `once`-triggered path publishes to a topic whose effective durability is not `transient_local` |
 | 17 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
 | 18 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
-| 19 | `jitter-range` | Error / Info | `min_latency` above `max_latency` (E); `max_latency - min_latency > max_jitter` when both bounds are declared (E); `max_jitter` declared with no `min_latency`, so the bound cannot be checked (Info — an absent floor is unknown, not zero) |
+| 19 | `jitter-range` | Error / Info | `min_latency` above `max_latency` (E); `max_latency - min_latency > max_jitter` when both bounds are declared (E); `max_jitter` declared with no `min_latency`, so the bound cannot be checked (Info — an absent floor is unknown, not zero). A `max_latency` at or below `max_jitter` is clean without a floor: whatever it is, the spread cannot exceed the ceiling |
 
 Shared helper: `rules/endpoint_topic.rs` resolves `node/endpoint`
 references to their declaring topic (used by `once-durability`,
@@ -153,13 +168,30 @@ invokes. Cross-scope rule ids, emitted from
 | `causal-dag-global` | Cycles in the merged graph, including edges derived from launch-file remaps |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, run after merge |
 | `derivable-rate` / `rate-mismatch`, `derivable-min-rate` / `min-rate-mismatch`, `derived-rate-hierarchy` | A declared rate against the one derived from the timers that drive it: info when they agree, warning when they do not |
+| `sync-feasibility` | The local rule's twin on DERIVED rates, run only where an input's rate is derived but not declared. Deleting a `rate_hz` the `derivable-rate` info calls redundant must not silence the window check that reads it |
+| `graph-from-remaps` | How many topics and endpoints the graph took from the launch file's own remaps rather than from a contract, and how many remaps were too ambiguous to give a direction (counted, never guessed) |
 | `derivable-criticality` / `criticality-mismatch`, `severity-unknown` | A declared `criticality` against the one derived from the hazards reaching the node; a `severity:` outside the declared `severity_levels:` scale |
 | `fault-reaction-budget`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for deriving them |
 | `ladder-rung-budget`, `ladder-unterminated`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback rung judged against the ftti in its own right, a floor that requires nothing losable, and override targets that name a real contract path |
 | `lifespan-age`, `response-blocking`, `concurrency-decl`, `path-exclusion` | Declarations that contradict each other across the merged tree |
 
-Runtime monitors (rate, age, drop, burstiness) live in play_launch's
-interception layer (Phase 29), fed by `rcl_publish`/`rcl_take` events.
+Two properties of that layer are worth stating, because neither follows
+from the table. **Most rules have nothing to say without a declared
+requirement, but some do**: `causal-dag-global` and `graph-from-remaps`
+run even when the tree carries no manifest at all, because a cycle is a
+defect whether or not anyone wrote a budget. And a mode with `overrides:`
+makes the requirement checks **run again**: the pass clones the index,
+applies the overrides to the declaration and to the resolved copies the
+checks read, re-runs them and diffs against the default, reporting only
+what that mode introduces under `mode:<rule>`.
+
+Runtime monitors live in play_launch's interception layer (Phase 29), fed
+by `rcl_publish`/`rcl_take` and the DDS QoS events: `drop-rate-runtime`,
+`rate-hierarchy-runtime`, `max-age-runtime`, `max-latency-runtime`,
+`qos-match-runtime`, `consistency-runtime`, `graph-deviation-runtime`,
+`deadline-runtime`, `liveliness-runtime`, and — since phase 73 — the
+hazard rules `hazard-detected`, `hazard-reaction`, `hazard-recovered` and
+`mode-availability`.
 
 Invocation:
 

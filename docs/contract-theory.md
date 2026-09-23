@@ -40,11 +40,15 @@ Symbols used throughout this document:
 | $A_{\max}$ | Maximum data age at a subscriber (ms) — runtime checked via `max_age` |
 | $f$ | Frequency (Hz) |
 | $P$ | Timer period (ms) |
-| $J$ | Jitter — max deviation from ideal period (ms) |
+| $J$ | Timer jitter — max deviation from the ideal period (ms) |
+| $S$ | Sampling cost of a route: one full period per timer boundary it crosses |
 | $d$ | Drop rate: fraction of messages lost, $n/w$ from `drop.max_count`, range 0-1 |
 | $\mathcal{R}$ | Delivery rate: $\mathcal{R} = 1 - d$ (fraction that survives) |
 | $K$ | Max consecutive drops (from `drop.max_consecutive`) |
 | $\ell_{\max}$ | Observed longest consecutive drop run (runtime) |
+| $T_{\text{FTTI}}$ | Fault-tolerant time interval — fault to hazardous event, absent any reaction (declared, `hazards.<h>.ftti`) |
+| $T_{\text{FDTI}}$ | Fault-detection time interval — derived from the guards' detectors |
+| $T_{\text{FRTI}}$ | Fault-reaction time interval — derived from the reaction route plus the plant's settle |
 | `budget-overflow` | Verification check: descendant budget exceeds ancestor budget (error) |
 | `scope-budget` | Verification check: sum of children exceeds scope budget (warning) |
 
@@ -106,8 +110,11 @@ in detail — both the YAML declaration and its formal interpretation:
 nodes:
   ndt_scan_matcher:
     sub:
-      sensor_points:
+      input_points:
         min_rate_hz: 10
+      initial_pose:
+        state: true
+        required: true
       map:
         state: true
         required: true
@@ -115,19 +122,26 @@ nodes:
       ndt_pose:
         min_rate_hz: 10
     paths:
-      localization:
-        input: sensor_points
+      main:
+        trigger:
+          input: [input_points]
         output: [ndt_pose]
-        max_latency: 50ms
+        max_latency: 30ms
 ```
 
+(From `tests/fixtures/manifest_ndt/manifest.yaml`. `trigger:` is the
+canonical spelling of the causal fact; the bare `input:` list it replaced
+still parses, and `explicit-trigger` emits an info wherever a path has no
+explicit trigger.)
+
 **Assumption** ($A$):
-- `sensor_points` arrives at $f \geq 10$ Hz (causal trigger)
-- `map` has been received at least once (`required`) and is polled (`state`)
+- `input_points` arrives at $f \geq 10$ Hz (the causal trigger)
+- `map` and `initial_pose` have each been received at least once
+  (`required`) and are polled rather than reacted to (`state`)
 
 **Guarantee** ($G$):
 - `ndt_pose` published at $f \geq 10$ Hz
-- $L_{\max} \leq 50$ ms (trigger to output)
+- $L_{\max} \leq 30$ ms (trigger to output)
 
 (Drops are declared on the topics that carry `ndt_pose`, not on the
 node path — see [Drop Budgets](#drop-budgets).)
@@ -225,12 +239,25 @@ $$L_{\max} = \max(L_{\max}(\text{branch } A),\; L_{\max}(\text{branch } B)) + L_
 where $L_{\max}(\text{branch } A)$ is the end-to-end latency of branch A
 — which may itself be a series pipeline of multiple nodes.
 
-Example: $\max(50, 30) + 20 = 70$ ms.
+Example: $\max(50, 30) + 20 = 70$ ms — `tests/fixtures/manifest_parallel_pipeline/`,
+where the flat sum a topology-unaware check takes would be 100. The
+route derivation is fork-join correct by construction: `critical_path`
+(`derive/src/graph.rs`) is a forward DP over the path-level graph that
+sums along a branch and takes the **max** at a join, and a test pins this
+example at 70.
 
 Note: the best-case latency $L_{\min}$ also uses $\max$ — the fusion
 barrier waits for the slowest branch even when both are fast.
 
-**Rate = slowest branch:** $f = \min(f_A, f_B)$
+**Rate depends on `sync:`, and the two cases differ by more than a
+detail.** With `sync:` the fusion node emits one output per matched set, so
+it is paced by its slowest input: $f = \min(f_A, f_B)$. Without `sync:` the
+callback fires once per message on *each* topic it is registered for, so the
+output rate is the **sum**: $f = f_A + f_B$. Taking the min in both cases is
+the natural-looking mistake, and it understates a fan-in node's load by
+exactly the factor that decides whether it fits. This is the rule
+`derive_topic_rates` applies (`resolve/src/ros/manifest_graph.rs`) — see
+[Derived Quantities](#derived-quantities).
 
 **Age depends on whether the inputs are synchronised (`sync:`):**
 
@@ -311,7 +338,9 @@ output.
 $$f_{\text{topic}} \cdot (1 - d_{\text{topic}}) \geq f_{\min}(\text{sub})$$
 
 Cross-scope, two scopes declaring the same topic must agree on its drop
-budget (`consistency`). A scope-vs-topic tightness check (a scope's
+budget — the `consistency` rule, which runs in the consumer's merge layer
+(`resolve/src/ros/manifest_loader.rs`), not in this crate's registry. A
+scope-vs-topic tightness check (a scope's
 `drop.max_count` must not be tighter than a topic's on its path — part >
 whole) is part of the design but not currently implemented.
 
@@ -328,8 +357,8 @@ the underlying theory.
 | Topology | Latency | Rate | Age | Drop |
 |----------|---------|------|-----|------|
 | **Series** | sum of nodes + transport | preserved | sum along chain | runtime monitoring |
-| **Parallel (`timestamp`)** | max(branches) + fusion | min of branches | max(branches) + fusion | runtime monitoring |
-| **Parallel (`latest`)** | primary branch + fusion | primary branch | primary branch + fusion | runtime monitoring |
+| **Parallel, with `sync:`** | max(branches) + fusion | $\min$ of branches | max(branches) + fusion | runtime monitoring |
+| **Parallel, without `sync:`** | max(branches) + fusion | **sum** of branches | triggering branch + fusion | runtime monitoring |
 | **Periodic** | $P$ + $J$ + node | $1000/P$ (independent) | resets stamp chain | runtime monitoring |
 
 ## Verification Rules
@@ -344,13 +373,17 @@ narrower slice of the theory below. `budget-overflow` compares
 **scope-path budgets only**: a child scope's path against an ancestor
 scope's path with matching input/output endpoints — node
 `max_latency` is not compared against scope budgets by any current
-rule. For Check 2, the single-manifest checker (`check/` crate) runs a
-conservative flat sum over the manifest's declared node-path latencies
-plus declared topic transport (inline includes included, external
-includes skipped); the consumer's cross-scope layer
-(`ros-launch-resolve`) replaces it with a topology-aware critical path
-over the merged tree. The residual INFO reporting described below is
-design, not yet emitted. See
+rule. For Check 2, the single-manifest checker
+(`check/src/rules/scope_budget.rs`) runs a conservative flat sum: every
+node contributes the **maximum** over its declared paths, plus declared
+topic `max_transport` (inline includes included, external includes
+skipped). The consumer's cross-scope layer
+(`resolve/src/ros/manifest_loader.rs`) computes a topology-aware critical
+path over the merged tree and then **deletes** the per-manifest warning
+for every scope path a route was found for, so one path never carries two
+different totals; a path with no traceable route keeps the flat sum,
+which is then the only estimate there is. The residual INFO reporting
+described below is design, not yet emitted. See
 [contract-verification.md](contract-verification.md) for the full rule
 inventory and where each rule runs.
 
@@ -533,7 +566,12 @@ every `rcl_take` and compares to current time. If
 require every upstream node to have a latency budget). A local
 feasibility check — subscriber `max_age` vs the `max_latency` of
 the scope path feeding it — is possible in principle but not currently
-implemented; today `max_age` is checked at runtime only.
+implemented. Two other rules do read the declaration: `lifespan-age`
+(cross-scope) rejects a `max_age` longer than the topic's `qos.lifespan`,
+since DDS has already discarded a sample that old and no runtime behaviour
+can satisfy both; and `max_age` is one of the mechanisms
+[FDTI](#fdti--detection) counts when a subscriber declares an
+`on_violation` for a `late` fault.
 
 **For multi-input nodes:** the age at a subscriber depends on whether
 the inputs are synchronised. With `sync:`, age reflects the oldest input
@@ -561,26 +599,290 @@ composition rule above:
   through them; their latency contributions add as in series
   composition (and a fork-join contributes `max` over its branches, not
   a sum).
-- **Boundaries** — timer-triggered paths. Each boundary $i$ contributes
-  a worst-case **sampling cost** of one full period plus its own
-  processing: $P_i + C_i$ (where $C_i$ is the boundary's execution
-  time when declared, else 0).
+- **Boundaries** — timer-triggered paths. A message arriving at an
+  arbitrary point in the period waits up to a whole period for the
+  callback that forwards it, so traversing boundary $i$ costs
+  $P_i + C_i$: one full period plus the boundary's own processing
+  (`traversal_latency_ms`, `derive/src/view.rs`).
 
-The route's **controllable time** is what remains of the budget after
-sampling costs, i.e. the portion scheduling can actually influence:
+**Of that, only the period is beyond scheduling's reach**, and the
+route's **sampling cost** is therefore the period term alone:
 
-$$L_{\text{controllable}} = L_{\text{budget}} - \sum_{i \in \text{boundaries}} (P_i + C_i)$$
+$$S = \sum_{i \in \text{boundaries}} P_i \qquad P_i = 1000 / \texttt{rate\_hz}_i$$
 
-If $L_{\text{controllable}} \leq 0$ the requirement is **structurally
-infeasible**: no priority assignment can meet the budget, because the
-sampling delays alone exceed it. The checker reports this as
-`scope-sampling-feasibility`, beside `scope-budget` (the derived route
-total against the declared `max_latency`) and `jitter-feasibility` (a
-declared `max_jitter` below the sampling jitter the route already
-carries) — all three cross-scope rules in the consumer's merge layer.
-The `chain_aware` scheduling mapper excludes an infeasible route from
-priority shaping with a warning. The same facts drive priority
-derivation — see [scheduling.md](scheduling.md).
+summed over the boundaries of the *winning* route, not of the subgraph
+(`sampling_cost_ms` in `derive/src/view.rs`, accumulated along the
+back-walk from the sink in `derive/src/graph.rs`, and ported in
+`resolve/src/ros/manifest_graph.rs`; a test pins it as one period per
+boundary). Two cross-scope rules read $S$, and both state something no
+priority assignment can fix:
+
+- **`scope-sampling-feasibility`** — $S \geq L_{\text{budget}}$. The
+  route spends its whole budget waiting for clocks before any callback
+  runs. This is a different and worse claim than a total over budget, so
+  it is emitted **before** `scope-budget`: the budget warning necessarily
+  fires too, and on its own it invites an author to optimise callbacks
+  that are not the problem.
+- **`jitter-feasibility`** — $S > \texttt{max\_jitter}$. A clock crossing
+  contributes its whole period to end-to-end *variation* as well, whatever
+  the callback costs: a message arriving just after a tick waits a full
+  period, one arriving just before waits none. This is the half of the
+  jitter requirement that needs no best-case fact, unlike `jitter-range`
+  (below), which needs a declared `min_latency`.
+
+`scope-budget` compares the route's full total — causal hops, declared
+transport, and $\sum (P_i + C_i)$ at the boundaries — against the declared
+`max_latency`, and names the
+sampling term separately in its message, because that is the part of the
+overrun the author cannot schedule away.
+
+The scheduling mapper applies the same distinction one level up, on the
+chain it derives from the scope path: `chain_feasibility`
+(`sched/src/chain_aware_mapper.rs`) sums $P_i + C_i$ over the chain's
+boundaries and calls the chain infeasible when
+
+$$L_{\text{controllable}} = L_{\text{budget}} - \sum_{i \in \text{boundaries}} (P_i + C_i) \leq 0$$
+
+excluding it from priority shaping with a `ChainInfeasible` warning; its
+members keep their local-fact priorities. An absent $C_i$ is counted as
+zero — there is nothing better to count — but the absence is *recorded*
+and reported as `ChainFeasibleWithoutWcet`, because a verdict that cannot
+tell absent from zero claims headroom nobody measured. The same facts
+drive priority derivation — see [scheduling.md](scheduling.md).
+
+## Derived Quantities
+
+A contract states **facts** (what the code does) and **requirements** (what
+it must achieve). Anything computable from those two is a **consequence**,
+and a consequence written by hand is a second copy of something the tool
+already knows — two copies that can disagree.
+[format-reference.md](format-reference.md) carries the classification per
+field in its `kind` column; this section is the arithmetic behind the
+consequences.
+
+### Rate Propagation
+
+A topic's publication rate is derived by propagating from the timer paths
+that ultimately drive it (`derive_topic_rates`,
+`resolve/src/ros/manifest_graph.rs`):
+
+- **Timer path** → its own `trigger.timer.rate_hz`. This is the only
+  source; nothing else creates messages.
+- **Input-triggered, no `sync:`** → the **sum** of its inputs' rates. A
+  subscription callback fires once per message on *each* topic it is
+  registered for, so a path triggered by two 10 Hz topics runs 20 times a
+  second.
+- **Input-triggered, with `sync:`** → the **min**. A synchronizer emits one
+  output per matched set, so it is paced by its slowest input.
+- **Several paths producing one endpoint, or several nodes publishing one
+  topic** → the sum, for the same reason: they publish independently.
+
+$$f_{\text{out}} = \begin{cases}
+\texttt{rate\_hz} & \text{timer} \\
+\min_i f_i & \text{input, with \texttt{sync:}} \\
+\sum_i f_i & \text{input, without \texttt{sync:}}
+\end{cases}$$
+
+Taking the min in both input cases is the natural-looking mistake, and it
+understates a fan-in node's load by exactly the factor that decides whether
+it fits.
+
+A `once` or `spontaneous` trigger, an unclassified path, an externally
+driven publisher and a feedback cycle each yield **`Unknown` with a
+reason**, never 0 — and any unknown contributor makes the whole sum unknown,
+because a partial sum would be a lower bound presented as a rate. A topic
+whose rate is `Unknown` gets no verdict and its declared value stands: a
+contract is then the only place that number can come from.
+
+Where the rate *is* derivable, the declaration is graded against it:
+
+| Verdict | Severity | Condition |
+|---------|----------|-----------|
+| `derivable-rate` | Info | declared `topics.<t>.rate_hz` equals the derived rate — a deletable copy |
+| `rate-mismatch` | Warning | they disagree (relative tolerance $10^{-6}$, since a derived rate is a quotient and an authored one a round number) |
+| `derivable-min-rate` | Info | a publisher's `min_rate_hz` equals the derived rate, attributed only where the topic has exactly **one** publisher (with several the derived rate is their sum, and dividing it back out would present a bound as a rate) |
+| `min-rate-mismatch` | Warning | a publisher's `min_rate_hz` **exceeds** the derived rate — it guarantees more than the timers driving it can produce. A promise *below* the derived rate is a loose but true bound and gets nothing |
+| `derived-rate-hierarchy` | Warning | a subscriber's `min_rate_hz` exceeds the derived rate. The subscriber side is a requirement, not a copy, so it is never "derivable" — but deleting the declared topic rate would otherwise leave it unchecked |
+
+### Rate Hierarchy
+
+The declared form is checked in **both** directions
+(`check/src/rules/rate_hierarchy.rs`, all errors):
+
+$$\texttt{pub.min\_rate\_hz} \;\geq\; \texttt{topic.rate\_hz} \;\geq\; \max_{\text{sub}} \texttt{sub.min\_rate\_hz}$$
+
+$$\texttt{pub.max\_rate\_hz} \;\geq\; \texttt{topic.rate\_hz} \qquad \texttt{topic.rate\_hz} \;\leq\; \min_{\text{sub}} \texttt{sub.max\_rate\_hz}$$
+
+The upper bounds matter for queue overrun, which is the failure the lower
+bounds cannot see: a topic faster than a subscriber declares it can drain
+backs up regardless of scheduling.
+
+### Jitter
+
+`max_jitter` is a requirement on the **spread** of a path's latency, and
+`min_latency` exists so that it can be falsifiable — every other bound in
+the vocabulary is an upper one. Endpoint-level `jitter` was removed in
+phase 68: what destabilises a controller is how much the end-to-end latency
+varies, which one publisher's spread does not determine.
+
+`jitter-range` (`check/src/rules/jitter_range.rs`) has three verdicts:
+
+- `min_latency > max_latency` — a contradiction, error.
+- both declared and $L_{\max} - L_{\min} > \texttt{max\_jitter}$ — the
+  declarations cannot all hold, error.
+- `max_jitter` declared, `max_latency` above it, `min_latency` **absent** —
+  the bound is unverifiable from declarations, **info**. An absent floor is
+  not a floor of zero: an upper bound of 40ms says nothing about whether the
+  latencies cluster at 38..40ms or range over 0..40ms. `play_launch measure`
+  produces the floor.
+
+A `max_latency` at or below `max_jitter` needs no floor at all — whatever
+it is, the spread cannot exceed the ceiling — and is clean. The sampling
+half of the same requirement is `jitter-feasibility`, above, which needs no
+best-case fact.
+
+### Criticality
+
+Criticality is a consequence of the declared hazards, not a property of a
+component: severity is allocated *inward* from an outcome, the way every
+safety standard does it (`derive_criticality_from_hazards`,
+`resolve/src/ros/manifest_loader.rs`). A node takes a hazard's severity when
+it
+
+- **feeds** it — publishes a guard topic, or lies in the upstream causal
+  closure of one. State edges are included: a stale map produces a hazardous
+  plan as surely as a stale scan does;
+- **detects** it — subscribes to a guard and declares an `on_violation`;
+- **reacts** to it — lies on the reaction walk to the safe state.
+
+Over several hazards the node takes the **max**, never a sum.
+
+`severity_levels:` declares the scale, ascending, defaulting to ISO 26262's
+`[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; its first entry derives no
+criticality. A `hazards.<h>.severity` outside the scale is
+`severity-unknown`, not a silent `None`. The scale folds into the mapper's
+three buckets by rank: entry 0 is no requirement, and the rest split evenly
+with the top third to `High` — on the default scale ASIL_A → low,
+ASIL_B → medium, ASIL_C and ASIL_D → high.
+
+The label a node may still carry is graded against the derivation:
+`derivable-criticality` (info) when they agree — the label is redundant —
+and `criticality-mismatch` (warning) when they do not, the derivation
+winning for scheduling. A node no hazard reaches derives nothing and its
+label stands: that is the underivable case, and it is why `criticality`
+remains in the vocabulary as a consequence rather than being deleted.
+
+## Fault Detection and Reaction
+
+A rate floor says a rate must hold. It does not say what happens when it
+does not, or how fast that must be noticed — and ISO 26262 requires both.
+The vocabulary adds exactly one requirement, one reaction edge and one
+fact, and derives the rest:
+
+- **`hazards.<h>`** — `guards:` (topics watched; a bare name is one guard,
+  `{ all_of: [...] }` a redundant set), `on:` (the fault class:
+  `omission | late | loss | reported`), **`ftti:`** (the requirement), and
+  `reaction:` naming the scope path — or, since phase 75, the mode — that
+  reaches the safe state.
+- **`sub.<e>.on_violation`** — `{ on, reaction, within, mechanism }` on the
+  subscriber that detects. This is the `cmd_vel` timeout of every mobile
+  base, written down.
+- **`paths.<p>.safe_state`** — `{ emits, settle }`: what the reaction
+  commands, and how long the plant takes to get there. Measured, not
+  authored.
+
+The budget is the interval declared on the hazard:
+
+$$T_{\text{FDTI}} + T_{\text{FRTI}} \;\leq\; T_{\text{FTTI}}$$
+
+emitted as `fault-reaction-budget` — an error when it fails, an info naming
+the slack when it holds, and in both cases naming every term.
+
+### FDTI — detection
+
+Per guard group, the detection interval is the **fastest detector among the
+subscribers that REACT**: a subscriber that notices and does nothing has
+not detected anything the system can use, so one without an `on_violation`
+is not counted. A subscriber detects when any of its mechanisms fires, so
+its own interval is the **min** over them
+(`detector_interval_ms`, `resolve/src/ros/manifest_loader.rs`):
+
+| Fault class | Mechanism read |
+|-------------|----------------|
+| `omission` | `qos.lease_duration` |
+| `late` | `qos.deadline`, `sub.max_age` |
+| `loss` | `drop.max_consecutive` × the topic's period |
+| `reported` | the guard **is** a detector's output: its period + the publishing path's `max_latency` |
+
+**A rate floor is not a detector.** `min_rate_hz` is a requirement;
+nothing fires when a period passes unless a QoS deadline or an application
+watchdog is declared. Counting the period here made a 50 Hz floor "detect"
+a dead lidar in 20ms while the real lease was 100ms. A guard with no
+reacting detector is `hazard-unguarded` (error) — nothing would ever
+notice.
+
+Within an `all_of` group the fault is the loss of *every* member, so the
+group is detected when the **last** one is noticed gone — the slowest
+member. Across groups the **worst** group governs, because the budget must
+hold for whichever one faults.
+
+### FRTI — reaction
+
+The reaction time is a walk over **reaction edges**, not the critical path
+(`walk_reaction`, same file). The distinction is arithmetic, not
+presentation: the guard's publisher is the thing that failed, so a critical
+path through the normal graph charges a clock boundary that will never tick
+again and the nominal callbacks rather than the reactions.
+
+The walk starts at the guard, where only a subscriber with an
+`on_violation` moves — the nominal path there is waiting for a message that
+will not come. From the first reaction onward it follows `on_violation`
+where one is declared and otherwise the ordinary input-triggered paths,
+because a reaction is a real message and downstream nodes forward it the
+way they forward anything. A fork-join takes the **longest branch**. The
+walk ends at a path whose `safe_state.emits` publishes onto the hazard's
+reaction sink, and
+
+$$T_{\text{FRTI}} = \sum_{\text{hops on the longest branch}} \texttt{max\_latency} \;+\; \texttt{safe\_state.settle}$$
+
+Missing evidence is reported rather than assumed: no route and no declared
+budget gives `reaction-unbudgeted` (warning, "the FTTI check runs on
+INCOMPLETE EVIDENCE"), a reaction nothing would run gives
+`reaction-unreachable` (error), and a reaction sink no subscriber guards
+gives `reaction-unguarded` (warning) — a stalled reaction would otherwise
+go unnoticed. `reaction-within` checks a subscriber's declared `within`
+against its own reaction path's `max_latency`.
+
+### Operational Modes
+
+A hazard's `reaction:` may name a **mode**, and then the fallback ladder is
+the reaction. The single-path form above is the one-rung case, unchanged.
+
+`functions.<f>` names a guard group; `modes.<m>` carries `requires` (the
+functions it needs), `fallback` (the ordered ladder), `reaction` and
+`overrides`. Three rules:
+
+- **`ladder-rung-budget`** (error) — each rung is judged against the FTTI
+  **in its own right**: $T_{\text{FDTI}} + \text{route} + \text{settle}$ for
+  that rung's own reaction path. A graded reaction is a promise, not merely
+  a step on the way to the floor. The **last** rung is what
+  `fault-reaction-budget` measures, because it is the floor the system is
+  guaranteed to reach.
+- **`ladder-unterminated`** (error) — a mode with no `fallback:` reaches no
+  safe state, and **a last rung that requires anything this hazard's own
+  guards remove is not a floor**: losing the guard takes the whole ladder
+  with it.
+- **`mode-requires-unguarded`** (warning) — a mode requires a function no
+  subscriber watches, so its loss would never be observed.
+
+`modes.<m>.overrides` pins a requirement value for one mode by naming its
+contract path, so every requirement keeps one value where it is declared
+and no scalar becomes a map. An override naming nothing is
+`override-target-missing`; targets are read section-from-front and
+field-from-back, because scope-path names contain dots. The checker then
+**re-runs** the requirement checks once per mode whose overrides differ and
+diffs against the default run, reporting only what that mode introduces,
+tagged `mode:<rule>`.
 
 ## Burstiness
 
@@ -592,12 +894,16 @@ thresholds may be violated more often than the Bernoulli model predicts.
 
 *Implementation status:* the runtime rule engine (play_launch
 `--enforce-rules`, fed by the Phase 29 interception layer) checks
-`drop.max_count` (as a delivery-rate ratio), `min_rate_hz`, `max_age`,
-and path `max_latency` against observed traffic, plus runtime QoS
-compatibility, consistency, graph deviation, and DDS
-deadline/liveliness/message-lost events. `max_consecutive` and the
-burstiness *detection* metrics below are the designed extension — not
-yet implemented — for diagnosing why drop thresholds trip:
+`drop.max_count` as a delivery-rate ratio (`drop-rate-runtime`), plus
+`rate-hierarchy-runtime`, `max-age-runtime`, `max-latency-runtime`,
+`qos-match-runtime`, `consistency-runtime`, `graph-deviation-runtime` and
+the DDS `deadline-runtime` / `liveliness-runtime` events. Since phase 73
+it also carries the hazard vocabulary — `hazard-detected`,
+`hazard-reaction`, `hazard-recovered` and `mode-availability` — so the
+FTTI arithmetic above is checked live as well as statically.
+`max_consecutive` and the burstiness *detection* metrics below are the
+designed extension — not yet implemented — for diagnosing why drop
+thresholds trip:
 
 - **Lag-1 autocorrelation** ($\rho_1$) — measures whether a drop
   predicts the next drop. $\rho_1 \approx 0$: independent. $\rho_1 > 0.05$
@@ -740,11 +1046,22 @@ requirements, you need initial values for `max_latency`, `min_rate_hz`,
 and `drop.max_count`. Capture mode bootstraps these from runtime
 measurements.
 
-*Implementation status:* capture mode is designed but not implemented —
-there is currently no CLI flag for it. The interception layer already
-records the required per-topic traces (`frontier_summary.json`,
-`stats_summary.json`); the derivation below is the planned tooling on
-top of them.
+*Implementation status:* capture mode as described below — deriving
+`max_latency`, `min_rate_hz` and `drop.max_count` from observed traces —
+is designed but not implemented; there is no CLI flag for it. What exists
+is `play_launch measure <run-dir> --model <m.yaml>`, which turns a
+recorded run into a pasteable fragment on stdout (never written back): a
+platform-file `budget_us` per node, taken as the observed **maximum**
+thread-CPU cost rather than a percentile (under CBS an overrun is
+throttled to the next replenishment, so a p99 budget converts the slowest
+1% of invocations into a full-period stall), and, as comments under a
+header saying they belong in the *contract*, the measured
+`nodes.<n>.paths.<p>.min_latency` floors that make `max_jitter`
+falsifiable. Paths it cannot measure are printed with the reason —
+timer-triggered, unstamped, not exercised — because omitting them would
+read as "costs nothing". The interception layer records the per-topic
+traces the rest of this appendix would need (`frontier_summary.json`,
+`stats_summary.json`, `events.jsonl`).
 
 Capture mode derives contracts from observed traces:
 
