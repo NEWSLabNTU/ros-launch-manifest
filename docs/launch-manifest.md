@@ -28,7 +28,9 @@ model says "manifest". They are one artifact, not two.
 - **[Background](#background)** — design principles, dataflow patterns, contracts, timing, and timestamps.
 - **[Worked Example](#worked-example)** — a complete multi-scope perception pipeline.
 - **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
-- **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, scope `paths:` (Phase 44.1).
+- **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, scope `paths:` and the derived route.
+- **[Fault detection and reaction](#fault-detection-and-reaction)** — `hazards:`, `on_violation:`, `safe_state:`, and the FTTI arithmetic.
+- **[Operational modes](#operational-modes)** — `functions:`, `modes:`, the fallback ladder and per-mode `overrides:`.
 - **[Static Validation](#static-validation)** — checker rules and example diagnostics.
 
 ## From Launch Files to Manifests
@@ -165,9 +167,9 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   [Timestamps and Data Flow](#timestamps-and-data-flow).
 
   The same topic can appear in multiple manifests across the scope tree.
-  Contract fields (`type:`, `rate_hz:`, topic-level `qos:`) must agree
-  across all declarations; `pub:` and `sub:` endpoint lists are merged
-  by the checker. Per-endpoint `qos:` overrides live on a node and are
+  Contract fields — `type:`, `rate_hz:`, `max_transport:`, the topic-level
+  `qos:` block and `drop:` — must agree across all declarations; `pub:`
+  and `sub:` endpoint lists are merged by the checker. Per-endpoint `qos:` overrides live on a node and are
   local to its declaring scope. Each scope only references its own nodes
   in endpoint lists.
 
@@ -202,8 +204,9 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   If the topic still has publishers, it survives with a warning. If it
   loses both sides, it's silently removed.
 
-- **Paths.** Named causal relations (input → output) with timing
-  constraints: max latency, drop tolerance. Declared on nodes
+- **Paths.** Named causal relations (trigger → output) with timing
+  constraints: `max_latency`, `min_latency`, `max_jitter`, `drop:`,
+  `miss:`, and `safe_state:` when the path is a hazard reaction. Declared on nodes
   (node-level paths, input/output are endpoint names) and scopes
   (scope-level paths, input/output are topic names). No launch file
   equivalent — this is the contract layer that manifests add.
@@ -228,16 +231,20 @@ intentional: if you launch `control.launch.xml` alone (without
 localization), the checker still knows the expected message type and
 can validate the manifest independently.
 
-The **consistency rule** is the mechanism that makes this work:
+The **`consistency` rule** is the mechanism that makes this work. It is a
+cross-scope rule and runs only in the consumer's merge layer
+(`resolve/src/ros/manifest_loader.rs`); there is no per-manifest half.
 
 - When checking a single manifest, all declarations are local — no
   conflicts possible.
 - When checking a manifest tree (multiple scopes), the checker merges
-  declarations for the same resolved topic name. `type:` must agree.
-  `rate_hz:` and the topic-level `qos:` block must agree when declared
-  in multiple scopes. `pub:` and `sub:` lists are merged. Per-endpoint
-  `qos:` overrides are not merged — they apply to the endpoint they
-  decorate.
+  declarations for the same resolved topic name. Five fields must agree
+  where two scopes both declare them — `type:`, `rate_hz:`,
+  `max_transport:`, the topic-level `qos:` block and `drop:` (same `N / W`
+  and same `max_consecutive`) — and each is an error when they do not.
+  Where only one scope declares a field, the merged topic takes it.
+  `pub:` and `sub:` lists are merged. Per-endpoint `qos:` overrides are
+  not merged — they apply to the endpoint they decorate.
 
 This is the opposite of a centralized model where a parent manifest
 "owns" topic declarations. A centralized model would break standalone
@@ -417,6 +424,69 @@ periodically with delay compensation.
 See [contract-theory.md](contract-theory.md#composition) for the formal
 composition rules (latency, rate, age, drop) for each topology.
 
+### Derived Rates
+
+A topic's publication rate is a **consequence**, not a declaration. The
+facts are already in the manifest — a timer path publishes at its own
+rate, an input-triggered path publishes at the rate its inputs arrive — so
+`topics.<t>.rate_hz` written by hand is a second copy of something the
+graph computes. The derivation is
+`resolve/src/ros/manifest_graph.rs::derive_topic_rates`, memoised over the
+merged topic index.
+
+Per path:
+
+| Trigger | Derived rate |
+|---------|--------------|
+| `timer: { rate_hz: R }` | **R**. This is the only source; nothing else creates messages. |
+| `input: [...]`, **no** `sync:` | the **SUM** of its inputs' rates |
+| `input: [...]`, **with** `sync:` | the **MIN** of its inputs' rates |
+| `once` | `Unknown` — it fires exactly once |
+| `spontaneous` | `Unknown` — the contract says nothing about when |
+| unclassified (no trigger, no `input:`) | `Unknown` — a path with no declared trigger |
+
+The fan-in case is the one worth stating twice. A subscription callback
+fires once per message on *each* topic it is registered for, so a path
+triggered by two 10 Hz topics runs **20 times a second**. Taking the min
+in both cases is the natural-looking mistake, and it understates a fan-in
+node's load by exactly the factor that decides whether it fits. A
+synchroniser is the other case: it emits one output per matched set, so it
+is paced by its slowest input — which is what `sync:` present *is*.
+
+Per topic: the rates of every path producing it **add**, across endpoints
+and across publishing nodes alike, because they publish independently.
+
+`Unknown` is a first-class answer carrying a **reason**, never zero and
+never an error. A topic with no declared publisher, a publisher endpoint
+no declared path produces, or a cycle in the dataflow graph each yield
+`Unknown` with that reason, and **any unknown contributor makes the whole
+sum unknown** — a partial sum would be a lower bound presented as a rate.
+Reporting 0 Hz would be a claim; omitting the topic silently would read as
+"nothing to say".
+
+**What reads the derivation:**
+
+- `derivable-rate` (info) / `rate-mismatch` (warning) — a declared
+  `topics.<t>.rate_hz` against the derived one. The info says the
+  declaration is a deletable copy.
+- `derivable-min-rate` (info) / `min-rate-mismatch` (warning) — the same
+  for a publisher's `min_rate_hz`, which is the topic rate one hop
+  earlier. Attributed **only where the topic has exactly one publisher**:
+  with several the derived rate is their sum, and dividing it back out
+  would present a bound as a rate. A promise *below* the derived rate gets
+  nothing — it is a true but loose lower bound.
+- `derived-rate-hierarchy` (warning) — a subscriber asking for more than
+  the graph delivers. This is the form that survives deleting the declared
+  `rate_hz`, which `rate-hierarchy` alone reads.
+- `sync-feasibility` runs a second time on derived rates
+  (`manifest_loader.rs::check_sync_feasibility_on_derived_rates`), only
+  where an input's rate is derived but not declared, so deleting the
+  declared copy cannot silence a real warning.
+
+Measured on `rt_workspace`: deleting all three `rate_hz` **and** all five
+`min_rate_hz` left the derived schedule byte-identical — eight of that
+file's nine copies of `100` were consequences of its one timer.
+
 ### Latency and Data Freshness
 
 Latency and age serve different concerns:
@@ -443,8 +513,15 @@ sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→
   scope to the last `rcl_publish` out of the scope. This INCLUDES
   internal transport between nodes within the scope.
 
-The scope budget is always ≥ the sum of node budgets because the scope
-includes internal transport that individual nodes don't. Transport
+A scope budget covers internal transport that individual node budgets do
+not — but it is **not** required to exceed their sum, and the two checks
+that read it differ on exactly this point. The per-manifest
+`scope-budget` rule compares the budget against the flat sum Σ node
+latencies + declared transport, which is conservative and wrong for
+parallel branches; the consumer's topology-aware check compares it
+against the critical path, where two branches contribute `max`, not their
+sum. Where a route can be traced the second supersedes the first (see
+[The derived route](#the-derived-route-and-what-it-costs)). Transport
 latency can be declared per topic via `max_transport` (default for
 all subscribers) and overridden per subscriber via the same field on
 a `sub:` endpoint — a single ROS topic can have heterogeneous transport
@@ -482,11 +559,17 @@ nodes:
 the interception layer, which already reads `header.stamp`. If
 `now - stamp > max_age`, a violation is flagged.
 
-**Static checking** does not trace the full causal chain (which would
-require every node to have a budget). Instead, the checker verifies
-local consistency: if a subscriber has `max_age: 200ms` and the
-scope path has `max_latency: 50ms`, the upstream must deliver data
-with age ≤ 150ms — a feasibility check, not a proof.
+**Static checking** does not compare a subscriber's `max_age` against any
+route total: an end-to-end age depends on when the stamp was set, which
+the graph does not know for a route that crosses a timer. `max_age` is
+read statically in exactly two places, both local. `lifespan-age` compares
+it against the topic's QoS `lifespan` — a message discarded by the
+middleware before the subscriber's age bound expires makes that bound
+unmeetable. And the fault-reaction derivation reads it as a **late**
+detector: `max_age` is one of the intervals within which a subscriber
+would notice its assumption violated (see
+[Fault detection and reaction](#fault-detection-and-reaction)).
+Everything else about age is runtime.
 
 See [Nodes](#nodes) for the `max_age` field table and
 [Paths](#paths) for the `max_latency` field table. See
@@ -588,9 +671,15 @@ scope's subtree.
 
 **Partial decomposition** connects the two levels: start with the scope
 budget (top-down), fill in node budgets as you measure them (bottom-up).
-The checker reports the **residual** — how much of the scope budget
-remains after subtracting declared node budgets. This tells you how
-much headroom covers undeclared nodes and transport.
+A node with no `max_latency` contributes nothing to either the flat sum
+or the critical path, so an undeclared node is *transparent* rather than
+free — the headroom it consumes is real and simply unaccounted. The
+**residual** (how much of the scope budget remains after subtracting the
+declared node budgets) is specified in
+[contract-theory.md](contract-theory.md#partial-decomposition) but is
+**not emitted today**; the only verdicts a checker gives on a scope path
+are `scope-budget`, `scope-sampling-feasibility` and
+`jitter-feasibility`.
 
 See [contract-theory.md](contract-theory.md#what-is-a-contract) for
 the formal contract definitions and
@@ -704,9 +793,9 @@ topic default in full. Overrides are silent — they are an intentional
 DDS-level pattern (e.g., a reliable logger and a best-effort visualizer
 on the same sensor topic).
 
-Topic-level QoS is still subject to the `consistency` rule: when the
-same topic is declared in multiple scopes, the topic-level `qos:` blocks
-must agree. Endpoint-level overrides live on a node and are local to the
+Topic-level QoS is subject to the cross-scope `consistency` rule: when
+the same topic is declared in multiple scopes, the topic-level `qos:`
+blocks must agree. Endpoint-level overrides live on a node and are local to the
 declaring scope — they do not participate in cross-scope merge.
 
 **Pub/sub compatibility (`qos-match` rule):**
@@ -751,10 +840,12 @@ parameters) with different defaults.
 makes the age requirement unmeetable); `deadline` is derived onto the
 running node by the resolver rather than compared between endpoints.
 
-When arg conditions gate publishers or subscribers, `qos-match` runs per
-satisfiable arg model (sharing infrastructure with `satisfiability`):
-errors are emitted only for (pub, sub) pairs that coexist in some valid
-configuration.
+Arg conditions are handled by **filtering, not by enumeration**:
+`if:`/`unless:` are evaluated and the removed endpoints are gone from the
+manifest before any rule runs, so `qos-match` only ever sees a (pub, sub)
+pair that exists in the configuration being checked. Whether some *other*
+arg assignment would produce a broken graph is the `satisfiability`
+rule's question, and it is the only rule that enumerates arg models.
 
 **Example:**
 
@@ -869,9 +960,11 @@ nodes:
         max_latency: 15ms
 ```
 
-`sync-feasibility` checks the window against the inputs' declared rates and
-`sync-budget` checks it against `max_latency`; rate derivation takes the
-**min** of the inputs with `sync:` and the **sum** without.
+`sync-feasibility` checks the window against the inputs' rates — declared
+or derived — and `sync-budget` checks it against `max_latency`. The
+presence of `sync:` is also what decides fan-in rate derivation: the
+**min** of the inputs with it, the **sum** without (see
+[Derived Rates](#derived-rates)).
 
 > `correlation: timestamp | latest` used to sit beside `sync:`. Phase 70
 > removed it: it was parsed, exported and lowered into the model, and no
@@ -1087,9 +1180,25 @@ syntax, field table with defaults, and when to use.
 
 ### Metadata
 
-| Field              | Required | Description | If omitted |
-|--------------------|----------|-------------|------------|
-| `version`          | yes      | Format version (currently `1`) | Error |
+| Field     | Required | Description | If omitted |
+|-----------|----------|-------------|------------|
+| `version` | no       | Format version (currently `1`) | `1` — `parse.rs` reads `yaml_u32("version").unwrap_or(1)` |
+
+Every other manifest-level key opens one of the sections below. The
+complete top-level vocabulary, and nothing else, is:
+
+| Key | Section |
+|-----|---------|
+| `args` | [Args](#args) |
+| `nodes` | [Nodes](#nodes) |
+| `topics` | [Topics](#topics) |
+| `services`, `actions` | [Services and Actions](#services-and-actions) |
+| `includes` | [Includes](#includes) |
+| `paths` | [Paths](#paths) — scope paths |
+| `external_topics` | [External Topics](#external-topics) |
+| `hazards` | [Fault detection and reaction](#fault-detection-and-reaction) |
+| `severity_levels` | [Severity scale](#severity-scale) |
+| `functions`, `modes` | [Operational modes](#operational-modes) |
 
 > `exclude_patterns` was accepted here until phase 70. It had three
 > mentions in the entire codebase — the grammar row, the struct field and
@@ -1225,7 +1334,7 @@ scheduled a node exactly as if nothing had been declared. Where a hazard
 does reach the node, the consumer compares the label against the
 derivation: `derivable-criticality` (info) when they agree,
 `criticality-mismatch` (warning) when they do not. See
-[Fault detection and reaction](#fault-detection-and-reaction-phase-71)
+[Fault detection and reaction](#fault-detection-and-reaction)
 for `hazards:`, and the `severity_levels:` scale they draw from.
 
 **Subscriber properties:**
@@ -1238,15 +1347,25 @@ for `hazards:`, and the `severity_levels:` scale they draw from.
 | `state`            | Polled (read-latest), not causal              | `false` — causal |
 | `required`         | Must receive at least once before operational | `false` — optional |
 | `qos`              | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
-| `max_transport` | Per-subscriber transport latency override (ms) — used as the edge weight from publisher to this subscriber in scope path critical-path computation | Inherits topic-level `max_transport` |
+| `max_transport` | Per-subscriber transport latency override (a duration) — used as the edge weight from publisher to this subscriber in critical-path computation | Inherits topic-level `max_transport` |
+| `buffer`           | Buffering discipline for a `state: true` subscriber: `latest` \| `queue` | `latest`; a parse error without `state: true` |
+| `on_violation`     | The reaction this subscriber owes when its assumption is violated (see [Fault detection and reaction](#fault-detection-and-reaction)) | This subscriber detects nothing |
 
 **Publisher properties:**
 
 | Field         | Meaning                                   | If omitted |
 |---------------|-------------------------------------------|------------|
-| `min_rate_hz` | Minimum publish rate                      | Not checked |
-| `max_rate_hz` | Maximum publish rate                      | Not checked |
+| `min_rate_hz` | Minimum publish rate — a **fact** on a publisher, and derivable (`derivable-min-rate`) | Not checked |
+| `max_rate_hz` | Maximum publish rate — checked by `rate-hierarchy` since phase 70 | Not checked |
 | `qos`         | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
+
+`pub:`, `sub:` and `cli:` share **one** grammar
+(`pub/sub/cli.<endpoint>` in
+[format-reference.md](format-reference.md)), so the split above is by
+meaning, not by what parses. The same key is a *fact* on a publisher and a
+*requirement* on a subscriber: `min_rate_hz` on a `pub:` is what the node
+promises to produce, on a `sub:` it is what the node needs to receive, and
+`rate-hierarchy` reads the two ends against the channel between them.
 
 **`jitter:` on an endpoint was removed** (phase 68). It was declared, copied
 into the model, and read by nothing — its own row in this table said *"Not
@@ -1256,11 +1375,93 @@ varies, and a single publisher's spread does not determine that. Declare
 `max_jitter:` on the path or scope path you mean; `jitter-feasibility` checks
 it against the sampling jitter the route already carries.
 
-**Service/client properties:**
+**Service-server properties (`srv:`):**
 
-| Field             | Meaning                        | If omitted |
-|-------------------|--------------------------------|------------|
-| `max_response` | Max request-to-response time   | Not checked |
+| Field          | Meaning                      | If omitted |
+|----------------|------------------------------|------------|
+| `max_response` | Deadline for answering a request on this service | The node's deadline is taken from its paths alone |
+
+`max_response` is the **only** key `srv.<endpoint>` accepts; anything else
+is a parse error. It is a deadline, so it is read like one: the derivation
+takes a node's `deadline_us` as the **min over its paths' `max_latency` and
+its services' `max_response`** (`derive/src/view.rs`,
+`derive/src/lib.rs`), which is why a node declaring nothing but
+`srv: { lookup: { max_response: 5ms } }` is still schedulable. The
+cross-scope `response-blocking` rule reads the same number against the
+node's own callback declarations.
+
+A **client** endpoint (`cli:`) is an ordinary endpoint and takes the
+`pub/sub/cli.<endpoint>` keys, not `max_response` — a client does not
+promise a response time, it consumes one.
+
+**Declared parameters (`params:`)** — the parameters the node declares,
+by name and ROS 2 type, and nothing else. A string's capacity or an
+array's bound is a board fact, not a contract one:
+
+```yaml
+nodes:
+  mrm_handler:
+    params:
+      update_rate: { type: integer }
+      timeout_operation_mode_availability: { type: double }
+      use_emergency_holding: { type: bool }
+      turning_hazard_on.emergency: { type: bool }
+```
+
+`type:` is required under each name and the set is closed — `bool`,
+`integer`, `double`, `string`, `byte_array`, `bool_array`,
+`integer_array`, `double_array`, `string_array`
+(`rcl_interfaces/msg/ParameterType` less `NOT_SET`). An unknown spelling
+is a parse error, not a skipped entry.
+
+`params: {}` and a missing `params:` are **different statements**:
+the first says the node declares no parameters, the second says the
+contract does not state. The distinction survives into the model as an
+empty `contracts.node_params` entry versus no entry at all, so a consumer
+sizing a parameter store from the declarations can tell them apart.
+
+**Path exclusion (`concurrency:`)** — which of a node's paths may **not**
+run at the same time:
+
+```yaml
+nodes:
+  detector:
+    sub: { image: { min_rate_hz: 30 } }
+    pub: { boxes: {}, masks: {} }
+    concurrency:
+      exclusive:
+        - [to_boxes, to_masks]
+    paths:
+      to_boxes:
+        trigger: { input: [image] }
+        output: [boxes]
+        max_latency: 20ms
+      to_masks:
+        trigger: { input: [image] }
+        output: [masks]
+        max_latency: 35ms
+```
+
+`exclusive:` is a list of groups of path names. Groups sharing a member
+are merged transitively, so `[[a, b], [b, c]]` is the one group
+`{a, b, c}`: exclusion is not transitive by intent, but a shared member
+makes all three serialise in any realization that maps a group to one
+thread. A maximal mutually exclusive set **is** a callback group, which is
+why the group is derived from the relation rather than written.
+
+The default is the load-bearing part. An **absent** `concurrency:` means
+every path of the node is in one group — which is what both realizations
+already do (`rclcpp`'s implicit per-node callback group is
+`MutuallyExclusive`, and nano-ros's `default_cbg_type` is the same), so an
+author writes nothing unless claiming *more* concurrency than the safe
+answer. An explicit `exclusive: []` is therefore **not** the same as
+omitting the section: it says every path may run concurrently. The two
+stay distinct through parsing (`types/src/parse.rs::parse_concurrency`)
+and into the model, and the derivation reads the difference —
+`claims_concurrency` is true unless one merged group covers every declared
+path (`derive/src/lib.rs`). Summing a route's latencies is sound only
+under the serialising default; the cross-scope `concurrency-decl` and
+`path-exclusion` rules report declarations that contradict each other.
 
 ### Topics
 
@@ -1270,8 +1471,9 @@ keys are **ROS topic names** — relative or absolute. See
 and guidance on when to use each.
 
 The same topic can appear in multiple manifests across the scope tree.
-Contract fields (`type:`, `rate_hz:`, topic-level `qos:`) must agree;
-endpoint lists (`pub:`, `sub:`) are merged by the checker. Per-endpoint
+Contract fields (`type:`, `rate_hz:`, `max_transport:`, topic-level
+`qos:`, `drop:`) must agree; endpoint lists (`pub:`, `sub:`) are merged by
+the checker. Per-endpoint
 `qos:` overrides on a node's `pub:`/`sub:` entries are local to the
 declaring scope and not subject to cross-scope agreement.
 
@@ -1303,7 +1505,7 @@ topics:
 | `type`             | yes      | ROS message type (`pkg/msg/Name`) | Error |
 | `pub`              | no       | Publisher endpoint refs (`node/endpoint`) | Empty list |
 | `sub`              | no       | Subscriber endpoint refs | Empty list |
-| `rate_hz`          | no       | Negotiated channel rate. A **consequence** — derivable from the timers that drive it (`derivable-rate`) | Rate hierarchy not checked |
+| `rate_hz`          | no       | Negotiated channel rate. A **consequence** — derivable from the timers that drive it (see [Derived Rates](#derived-rates)) | Rate hierarchy not checked against a declared rate; `derived-rate-hierarchy` still checks the derived one |
 | `drop`             | no       | Permitted transport loss: `{ max_count: N / W, max_consecutive: K }`, or the bare `N / W` shorthand | Drop not checked |
 | `max_transport`    | no       | Worst-case transport latency (a duration) — default for every subscriber on this topic; overridable per `sub:` endpoint | 0 — absorbed into scope residual |
 | `qos`              | no       | QoS profile | QoS not validated |
@@ -1311,8 +1513,8 @@ topics:
 | `if`/`unless`      | no       | Condition | Always included |
 
 `type` is required in every topic declaration so each manifest is
-self-contained for standalone checking. The `consistency` rule validates
-that all declarations of the same resolved topic agree.
+self-contained for standalone checking. The cross-scope `consistency`
+rule validates that all declarations of the same resolved topic agree.
 
 **Rate hierarchy with drops:**
 
@@ -1492,21 +1694,34 @@ at the top of the launch tree where the boundary is known:
 ```yaml
 external_topics:
   /tf:
-    external: pub                  # external producer (we may sub)
+    side: pub                      # external producer (we may sub)
     type: tf2_msgs/msg/TFMessage
   /vehicle/engage:
-    external: pub
+    side: pub
     type: autoware_vehicle_msgs/msg/Engage
   /visualization:
-    external: sub                  # external consumer (we pub)
+    side: sub                      # external consumer (we pub)
   /passthrough/relay:
-    external: both                 # passthrough we don't model
+    side: both                     # passthrough we don't model
     type: std_msgs/msg/String
     qos: { reliability: best_effort }
 ```
 
-**2. Per-topic `external:` flag** — inline override on an existing
-topic decl, useful for one-off cases inside a leaf manifest:
+An entry takes exactly three keys: `side:` (required), `type:` and `qos:`.
+`type:` is cross-checked against any internal `topics:` declaration of the
+same FQN by `consistency`; `qos:` is the profile the external side uses,
+and participates in `qos-match` like any other endpoint's.
+
+> The side selector is also spelled `external:`, which is what
+> `external_topics:` accepted first and what the field table marks
+> **deprecated**. Both parse, `side:` wins when both are present
+> (`types/src/parse.rs::parse_external_topics`), and `side:` is the
+> spelling to write. Inside a `topics:` entry the key is `external:` and
+> always was — the two blocks do not share a name for the same idea, which
+> is the whole reason `side:` exists.
+
+**2. Per-topic `external:` flag** — inline on a `topics:` entry, useful
+for one-off cases inside a leaf manifest:
 
 ```yaml
 topics:
@@ -1670,18 +1885,61 @@ paths:
 | `output` | The topic(s) the requirement ends at. |
 | `max_latency` | End-to-end budget the derived route must fit within. |
 
-The route is computed as the critical path of the subgraph between
-those ends, so a fork-join topology contributes `max` over branches
-rather than a sum, and a `timer`-triggered hop contributes one whole
-period of **sampling cost** on top of its own execution budget.
+#### The derived route, and what it costs
 
-**Rule severities** (see [Static Validation](#static-validation)):
-`scope-budget` (derived route total > declared `max_latency`) and
-`scope-sampling-feasibility` (sampling cost alone ≥ the budget —
-structurally infeasible, no priority assignment can fix it) are
-**warnings**, checked cross-scope in `play_launch`. `jitter-feasibility`
-fires when a declared `max_jitter` is below the sampling jitter the
-route already carries.
+The route is the **critical path** of the subgraph between those ends,
+computed by forward dynamic programming over a topological order
+(`resolve/src/ros/manifest_graph.rs::critical_path`; the subgraph is
+`subgraph_for_scope_path`, restricted to the scope's own subtree via
+`subtree_scope_ids`).
+
+The arithmetic, one rule per topology:
+
+- **Series** — latencies **sum** along a branch.
+- **Fork-join** — a node with several incoming edges waits for the
+  slowest, so the join takes the **max over predecessors**, not the sum.
+  `max(50, 30) + 20 = 70`, not 100; there is a test pinning exactly that
+  (see [Dataflow Topologies](#dataflow-topologies)).
+- **Transport** — each edge carries a weight, the per-sink
+  `sub.max_transport ?? topic.max_transport ?? 0`, added on arrival.
+- **State edges** — a `state: true` subscription does not propagate
+  latency, so it is not on any route.
+- **Timer hops** — a `timer`-triggered hop costs `1000 / rate_hz` of
+  **sampling cost** *plus* its own `max_latency`: a message arriving just
+  after a tick waits a whole period. That is `traversal_latency_ms`; the
+  period alone is `sampling_cost_ms`, and it is summed over the winning
+  route only, not over the whole subgraph.
+
+**Granularity is per PATH, not per node.** A route through a node is
+charged the latency of the path that actually produced the traversed
+topic, so a second, unrelated output of the same node no longer inflates
+it. Where a hop matches no declared path, the node-wide maximum still
+applies — never less conservative than charging by node.
+
+**Rule severities** (see [Static Validation](#static-validation)), all
+warnings, all cross-scope:
+
+- **`scope-sampling-feasibility`** — `sampling_cost >= max_latency`. This
+  is a different and worse claim than a total over budget: it is the time
+  the route spends *waiting for clocks* rather than running, so no
+  priority assignment can reduce it. The only fixes are a faster boundary
+  rate or a looser budget. It is emitted **before** `scope-budget`, so the
+  structural verdict reads first — the budget warning necessarily fires
+  too, and on its own it invites an author to go optimise callbacks that
+  are not the problem.
+- **`scope-budget`** — `critical_path > max_latency`. The message names
+  the route and, when there is one, splits the total into
+  `event-segment + sampling_cost`, because the second half is the part the
+  author cannot reduce. Computing a route here also **supersedes** the
+  per-manifest flat-sum `scope-budget` for that scope path: the local
+  warning is retracted from the tally, and kept only where no route could
+  be traced and the flat sum is the sole estimate available.
+- **`jitter-feasibility`** — `sampling_cost > max_jitter`, strictly. A
+  clock crossing contributes its *whole* period to end-to-end jitter
+  whatever the callback costs, so sampling jitter alone can exceed a
+  declared bound. This is the half of the jitter requirement that needs no
+  best-case fact; the other half needs `min_latency` and is
+  `jitter-range`.
 
 **`chains:`/`segments:` were removed** (phase 68 W4). A written route
 was a second copy of the graph, and the `chain-link` rule existed
@@ -1704,15 +1962,27 @@ chains:
     max_latency: 150ms
 ```
 
-Every other retired spelling behaves the same way: `max_latency_ms`,
-`max_age_ms`, `max_transport_ms`, `tolerance_ms`, `timeout_ms`,
-`max_interval_ms`, `lifespan_ms`, `max_response_ms` and
-`jitter`/`jitter_ms` are all parse errors naming the typed duration or
-the replacement field, not silently ignored keys. The complete list with
-its replacement text is in
-[format-reference.md](format-reference.md), marked **removed**.
+Every other retired spelling behaves the same way — a parse error naming
+the typed duration or the replacement field, never a silently ignored
+key. That is the whole list, and there is no sixteenth:
 
-## Fault detection and reaction (phase 71)
+| Removed | Write instead |
+|---------|---------------|
+| `chains:`, `segments:` | a scope path: two ends and a budget, route derived (phase 68) |
+| `jitter`, `jitter_ms` on an endpoint | `max_jitter` on a path or scope path (phase 68) |
+| `correlation` | `sync:`, present or absent (phase 70) |
+| `exclude_patterns` | `external:` on the topic, service or action (phase 70) |
+| `max_latency_ms`, `max_age_ms`, `max_transport_ms`, `max_response_ms`, `tolerance_ms`, `timeout_ms`, `max_interval_ms`, `lifespan_ms` | the same key with a typed duration: `<n>ns \| us \| ms \| s` (phase 70) |
+
+`semantics:` was deleted with `chains:` rather than migrated: nothing ever
+branched on `reaction` versus `age`, so the two produced identical
+results, and a subscriber's `max_age:` is what states staleness today.
+
+The generated [format-reference.md](format-reference.md) marks every one
+of these **removed** and carries its replacement text; the unit in a NAME
+is what let a value be 1000× wrong and still parse.
+
+## Fault detection and reaction
 
 A rate or age requirement says what must be true. It does not say what
 happens when it is not, how fast that must be noticed, or how long until
@@ -1757,8 +2027,233 @@ nodes:
 plausibility check). The contract never inspects a value; it accounts for
 the node that does.
 
+### The arithmetic
+
+`FDTI + FRTI <= ftti`. Everything in that inequality but `ftti` is
+derived, in `resolve/src/ros/manifest_loader.rs::check_fault_reaction`.
+
+**FDTI — detection.** A subscriber's detection interval is the **min**
+over the mechanisms it declares, because it notices when *any* of them
+fires (`detector_interval_ms`), and a guard topic's interval is the
+**min** over its subscribers — the fastest detector wins:
+
+| `on:` class | Mechanism read |
+|-------------|----------------|
+| `omission` | the effective QoS `lease_duration` |
+| `late` | the effective QoS `deadline`, and the subscriber's `max_age` |
+| `loss` | `drop.max_consecutive × period` on the guard topic |
+
+Only subscribers that **react** count — a subscriber with no
+`on_violation` is a bystander, and a guard none of whose subscribers
+declares one is `hazard-unguarded` (error): nothing would ever notice.
+(A guard naming a topic no manifest in the tree declares is the same
+error.)
+
+`on: reported` is the one class computed from the *publisher* side: the
+guard topic **is** a detector node's output, so detection is that node's
+publish period plus its own path `max_latency`, minimised over the
+publishers. The period is the guard topic's rate — **derived first**, the
+declared `rate_hz` only as a fallback — so the same number is used here
+that [Derived Rates](#derived-rates) computes.
+
+> **A rate floor is not a detector.** `min_rate_hz` is a requirement;
+> nothing fires when a period merely passes unless a QoS deadline or an
+> application watchdog is declared. Counting the period as a detection
+> interval made a 50 Hz floor "detect" a dead lidar in 20ms while the real
+> lease was 100ms.
+
+Across a guard **group**: a bare topic is one member; an `all_of:` set
+faults only when every member does, so it is detected when the **last**
+one is noticed gone — the **max** over members. Across a hazard's several
+guard groups, FDTI is again the **max**, because the hazard must cover
+its slowest fault. Three levels, three operators: min over a subscriber's
+mechanisms, min over a member's reacting subscribers, max over members
+and over groups.
+
+**FRTI — reaction.** `walk_reaction` follows the route that actually
+runs, which is *not* the critical path of the nominal graph: the guard's
+publisher is the thing that failed, so a nominal route would charge a
+clock boundary that will never tick again and callbacks that will never
+fire. The walk is:
+
+1. At the guard topic, only a subscriber with an `on_violation` moves,
+   and it moves along the path that `on_violation.reaction` names.
+2. From there onward it follows an `on_violation` where one is declared
+   and otherwise the ordinary **input-triggered** paths — a reaction is a
+   real message, and downstream nodes forward it the way they forward
+   anything.
+3. It ends at a path that publishes onto one of the reaction scope path's
+   output topics; a `safe_state` whose `emits` lands there contributes its
+   `settle`, and a path that merely publishes there ends the walk with no
+   settle.
+4. Fork-join takes the **longest branch**. The walk is depth-bounded (16)
+   rather than cycle-detected: a reaction that re-triggers itself is a
+   declaration error worth a wrong number, not a hang.
+
+`FRTI = route + settle`. Both halves can be missing, and each absence is
+reported rather than assumed:
+
+| Rule | Severity | When |
+|------|----------|------|
+| `fault-reaction-budget` | Error / Info | `FDTI + FRTI > ftti` (error, naming every term); otherwise an info stating the slack |
+| `reaction-unreachable` | Error | An `on_violation.reaction` naming no path on its own node, or one whose trigger does not include the subscription (the violation would never start it); a hazard `reaction:` naming no scope path in its scope; or no chain of `on_violation` reactions leading from the guards to that path's output — the declared `max_latency` is then used as the route |
+| `reaction-unbudgeted` | Warning | No route **and** no declared `max_latency`, or a route that reaches the sink with no `safe_state` settle — the check runs on INCOMPLETE EVIDENCE |
+| `reaction-unguarded` | Warning | No subscriber of the reaction's output declares an `on_violation` — a stalled reaction would go unnoticed |
+| `reaction-within` | Error | An `on_violation.within` smaller than the reaction path's own `max_latency` |
+| `hazard-unguarded` | Error | A guard no reacting subscriber detects |
+
+`on_violation.within` is one hop's declared share of the reaction time; it
+does not enter the FRTI sum, which is derived from the route.
+
 Design of record: `docs/design/fault-reaction-primitives.md` (in the
 play_launch repository).
+
+### Severity scale
+
+`severity_levels:` declares the scale `hazards.<h>.severity` draws from,
+ascending. Absent, it is ISO 26262's
+`[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; a team working to IEC 61508 or
+DO-178C names its own. The **first entry is "no safety requirement"** and
+derives no criticality. A `severity:` outside the declared scale is
+`severity-unknown` — an explicit diagnostic rather than the silent `None`
+the parser used to produce.
+
+<!-- yaml-check: skip — a fragment showing one manifest-level key -->
+
+```yaml
+severity_levels: [QM, SIL_1, SIL_2, SIL_3, SIL_4]
+```
+
+### Criticality is derived
+
+`nodes.<n>.criticality` is a **consequence**, not a hint. A bare
+`high | medium | low` label is an ordering with no meaning attached to
+it; every safety standard allocates severity *inward from an outcome*,
+and since phase 71 the outcomes are declared. The derivation is
+`manifest_loader.rs::derive_criticality_from_hazards`.
+
+A hazard reaches a node three ways:
+
+- **feeds** — a publisher of a guard topic is an element whose fault *is*
+  the hazard, and the severity propagates **upstream** from it along every
+  causal edge, transitively, **state edges included**: a stale map
+  produces a hazardous plan as surely as a stale scan does.
+- **detects** — a subscriber of a guard topic that declares an
+  `on_violation`.
+- **reacts** — every node on the reaction walk to the safe state.
+
+A node takes the **max** over the hazards that reach it, ranked by
+position in `severity_levels:` — never a sum. `sched_derive` reads the
+derivation before any label.
+
+Where a hazard reaches the node, the label is compared against it:
+`derivable-criticality` (info — the label is a deletable second copy) when
+they agree, `criticality-mismatch` (warning — the derivation wins for
+scheduling, and one of the two is wrong) when they do not. Where **no**
+hazard reaches the node the label stands: that is the underivable case,
+the same absence of information the rate derivation reports as `Unknown`,
+and it is why the key stays live.
+
+The label's own grammar is closed — `high`, `medium`, `low`, and nothing
+else. It used to accept any string, and its one reader answered an unknown
+value with a debug log and `None`, so `criticality: urgent` scheduled a
+node exactly as if nothing had been declared.
+
+## Operational modes
+
+A hazard's `reaction:` may name a **mode** instead of a scope path, and
+then the fallback ladder *is* the reaction. Phase 71's single-path form is
+the one-rung case, byte-identical.
+
+- `functions.<f>` names a **guard group**: what a set of topics together
+  provides. The three shapes are a bare topic, a list (any member lost is
+  the fault) and `{ all_of: [...] }` (lost only when every member is,
+  which needs at least two members).
+- `modes.<m>` carries `requires:` (the functions, or bare topics, the mode
+  needs — it is available while every one holds), `fallback:` (the ordered
+  ladder to fall down when it is lost), `reaction:` (the scope path
+  reaching this mode's safe state), `overrides:` and `description:`.
+
+```yaml
+version: 1
+functions:
+  pose_estimation: { all_of: [/loc/ndt, /loc/gnss] }
+  trajectory: [/planning/trajectory]
+  scan: /sensing/scan
+modes:
+  autonomous:
+    description: full autonomy
+    requires: [pose_estimation, trajectory]
+    fallback: [comfortable_stop, emergency_stop]
+  comfortable_stop:
+    requires: [pose_estimation]
+    reaction: system.comfortable_stop
+    overrides:
+      paths:
+        lidar_to_brake: { max_latency: 100ms }
+      nodes:
+        detector:
+          sub: { scan: { min_rate_hz: 10 } }
+  emergency_stop:
+    requires: []
+    reaction: system.emergency_stop
+hazards:
+  lost_pose:
+    guards: [pose_estimation]
+    ftti: 2s
+    reaction: autonomous
+```
+
+**Each rung is judged in its own right.** A graded reaction is a promise,
+not merely a step toward the floor, so `ladder-rung-budget` (error) checks
+every rung but the last with the same arithmetic the terminal one gets:
+`FDTI + rung route + settle <= ftti`. The last rung is what
+`fault-reaction-budget` measures, because it is the floor the system is
+guaranteed to reach. Autoware's real four-mode ladder proves
+`comfortable_stop` cannot cover a 2 s interval (500 + 4000 = 4500 ms) that
+the emergency floor beneath it can.
+
+**A ladder must terminate.** `ladder-unterminated` (error) fires two ways:
+a mode named as a reaction with no `fallback:` at all, and — the one worth
+stating — a **last rung that requires something the hazard's own guards
+can take away**. That is not a floor: losing the guard takes the whole
+ladder with it. A rung naming a mode that does not exist, or a rung with
+no `reaction:` path of its own, is `reaction-unreachable`.
+
+**A mode that cannot fall is not a mode.** `mode-requires-unguarded`
+(error) fires when a mode requires a function no subscriber of which
+declares an `on_violation`: nothing would notice it was lost, so the mode
+can never be declared unavailable and the ladder below it can never be
+taken.
+
+### Per-mode requirement values (`overrides:`)
+
+`overrides:` is a nested mapping mirroring the contract's own shape,
+flattened at parse time to dotted `(target, value)` pairs —
+`paths.lidar_to_brake.max_latency`,
+`nodes.detector.sub.scan.min_rate_hz`. This is how a requirement takes a
+different value in a degraded mode **without any scalar becoming a map**,
+so no reader changes: every requirement keeps one value where it is
+declared, and a mode pins another by naming its contract path.
+
+An override naming no requirement that exists is `override-target-missing`
+(error) — with nothing to pin over, it would be silently ignored. Such an
+entry is also **not applied**, or one override would get two answers:
+rejected by the rule and honoured by the arithmetic.
+
+The checker then **runs per mode**. For each mode whose `overrides:`
+change something, it clones the merged index, applies them to both the
+declaration and the resolved copies the checks read, re-runs the
+requirement checks (critical path, sync budget, rate hierarchy,
+lifespan/age, fault reaction) and **diffs against the default**. Only what
+the mode introduces is reported, under `mode:<rule>` — a
+`mode:scope-budget`, say, with the message prefixed `in mode '<m>':`.
+A degraded mode's `max_latency: 200ms` is a different contract, and the
+arithmetic that clears the default one says nothing about it.
+
+> Target paths are read **section-from-front, field-from-back**, because a
+> scope-path name may itself contain dots (`safety.stop`). Splitting
+> positionally fired `override-target-missing` on a correct contract.
 
 ## Static Validation
 
@@ -1797,24 +2292,37 @@ across manifest files. The ones that bear on this document:
 
 | Rule | What it catches | Severity |
 |------|-----------------|----------|
-| `consistency` | Same resolved topic/service has conflicting `type:`, `rate_hz:` or topic-level `qos:` across scopes | Error |
+| `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean | Error |
+| `consistency` | Same resolved topic/service has conflicting `type:`, `rate_hz:`, `max_transport:`, topic-level `qos:` or `drop:` across scopes; or an `external_topics:` `type:` contradicting the internal `topics:` one | Error |
 | `budget-overflow` | Descendant path budget exceeds a matched ancestor path budget (part > whole) | Error |
-| `scope-budget` | A scope path's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency` | Warning |
-| `scope-sampling-feasibility` | A scope path's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it | Warning |
+| `scope-budget` | A scope path's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency`; supersedes the per-manifest flat sum where a route was traced | Warning |
+| `scope-sampling-feasibility` | A scope path's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it. Emitted before `scope-budget` | Warning |
 | `jitter-feasibility` | A scope path's declared `max_jitter` is below the sampling jitter its route already carries — one whole period per clock boundary crossed | Warning |
 | `sync-budget` | A `sync:` window wider than the path's own `max_latency` — the synchroniser may wait that long before the callback starts | Warning |
+| `causal-dag-global` | Cycles in the merged graph, including edges derived from launch-file remaps | Error |
 | `lifespan-age` | A topic's `lifespan` is shorter than a subscriber's `max_age` — the age requirement cannot be met | Warning |
+| `response-blocking`, `concurrency-decl`, `path-exclusion` | A service `max_response` promised beside a callback that would block it, and `concurrency:` declarations that contradict each other across the merged tree | Warning |
 | `derivable-rate`, `rate-mismatch` | A declared `topics.<t>.rate_hz` agrees with (info) or contradicts (warning) the rate derived from the timers that drive it | Info/Warning |
-| `derivable-min-rate`, `min-rate-mismatch` | The same comparison for a publisher's `min_rate_hz` | Info/Warning |
-| `derivable-criticality`, `criticality-mismatch` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node | Info/Warning |
-| `fault-reaction-budget`, `reaction-*`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning |
-| `ladder-rung-budget`, `ladder-unterminated`, `mode-requires-unguarded` | Operational modes: each fallback rung against the ftti in its own right, and a floor that requires nothing losable | Error |
+| `derivable-min-rate`, `min-rate-mismatch`, `derived-rate-hierarchy` | The same comparison for a publisher's `min_rate_hz`, and a subscriber asking for more than the derived rate delivers | Info/Warning |
+| `derivable-criticality`, `criticality-mismatch`, `severity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; a `severity:` outside the declared `severity_levels:` scale | Info/Warning/Error |
+| `fault-reaction-budget`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
+| `ladder-rung-budget`, `ladder-unterminated`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback rung against the ftti in its own right, a floor that requires nothing losable, and override targets that name a real contract path | Error |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, re-run after merge | Error/Warning |
 
-`consistency` exists on both sides: the in-crate rule is a **no-op
-placeholder**, and the real cross-scope agreement check runs in the
-consumer. So does `scope-budget` — in-crate it is a conservative flat
-sum, in the consumer a topology-aware critical path.
+A mode with `overrides:` re-runs the requirement checks on the modified
+contract and reports only what that mode introduces, under a `mode:`
+prefix — `mode:scope-budget`, `mode:fault-reaction-budget`, and so on. See
+[Per-mode requirement values](#per-mode-requirement-values-overrides).
+
+`consistency` has only one implementation. A no-op body of the same id
+used to sit in `default_rules()`, reserving the name and being counted in
+the registry, so a reader of the registry — or of a `--rule consistency`
+run — was told a rule ran that did nothing; it was removed in v0.1.38 and
+the id now belongs entirely to the consumer's merge layer.
+`scope-budget` genuinely does exist on both sides: in-crate a
+conservative flat sum, in the consumer a topology-aware critical path
+that **supersedes** it — where a route is computed, the local warning for
+that scope path is retracted from the tally.
 
 **Drop checking** is split between static and runtime:
 - **Static (`drop-sanity`)**: validates values are in range and that
@@ -1833,57 +2341,79 @@ structurally broken manifest. A passing manifest is **variant-complete**.
 
 **Consistency**: when checking a manifest tree, the checker merges all
 declarations for the same resolved topic or service name. `type:` must
-match across all scopes. `rate_hz:` and the topic-level `qos:` block
-must agree when declared in multiple scopes. Endpoint lists
-(`pub:`/`sub:`, `server:`/`client:`) are merged. Endpoint-level `qos:`
-overrides live on a node and are local to the declaring scope — they
-do not need to agree across scopes.
+match across all scopes, as must `rate_hz:`, `max_transport:`, the
+topic-level `qos:` block and `drop:` wherever two scopes both declare
+them. Endpoint lists (`pub:`/`sub:`, `server:`/`client:`) are merged.
+Endpoint-level `qos:` overrides live on a node and are local to the
+declaring scope — they do not need to agree across scopes.
 
 **Dangling entities**: after condition filtering and cross-scope merge,
 topics with 0 publishers across the entire manifest tree (warning —
 may be published by an external system), services/actions with 0 servers
 (error), and empty entities (silently removed) are flagged.
 
-**Example diagnostics:**
+**Example diagnostics**, in the wording the rules actually emit:
 
 ```
-error[endpoint-unique]: duplicate endpoint name 'cmd' in node 'controller'
-  --> control.yaml:5:9
+error[endpoint-unique]: duplicate endpoint name 'cmd' across pub/sub/srv/cli
+  --> control.contract.yaml:5:9                      nodes.controller
 
-warning[wiring]: path 'main' endpoint 'controller/cmd' not connected by any topic
-  --> control.yaml:12:9
+warning[wiring]: path input 'trajectory' is not wired by any topic
+  (expected 'controller/trajectory' in a topic's sub list)
+  --> control.contract.yaml:12:9         nodes.controller.paths.main
 
-error[rate-hierarchy]: topic 'command/control_cmd' rate_hz (30) > publisher
-  'controller/cmd' min_rate_hz (10) — publisher too slow for channel rate
-  --> control.yaml:20:5
+error[rate-hierarchy]: publisher 'controller/cmd' min_rate_hz (10) < topic
+  rate_hz (30)
+  --> control.contract.yaml:20:5         topics.command/control_cmd
 
-error[budget-overflow]: node 'detector' max_latency (60ms) exceeds ancestor
-  scope 'perception' max_latency (50ms)
-  --> perception.yaml:8:5, tracking.yaml:14:9
-
-warning[dangling-entity]: topic '/sensor/imu' has 0 publishers across the
-  manifest tree — may be published by an external system
-  --> control.yaml:25:5
-
-error[consistency]: topic '/localization/kinematic_state' type mismatch:
-  'nav_msgs/msg/Odometry' in localization.yaml vs
-  'geometry_msgs/msg/PoseStamped' in control.yaml
-  --> localization.yaml:10:5, control.yaml:18:5
-
-error[drop-sanity]: topic '/perception/pointcloud' effective delivery rate
-  (9.5 Hz = 10 Hz × (1 - 0.05)) below subscriber 'tracker/input'
-  min_rate_hz (10)
-  --> perception.yaml:15:5
+error[drop-sanity]: effective delivery rate (9.50 Hz = 10 Hz * 0.9500
+  delivery) < subscriber 'tracker/input' min_rate_hz (10)
+  --> perception.contract.yaml:15:5      topics./perception/pointcloud
 
 error[qos-match]: incompatible QoS on topic '/sensor/pointcloud' field
   'reliability': pub 'lidar_driver/output' offers 'best_effort', sub
   'perception/input' requests 'reliable'
-  --> sensors.yaml:8:5, perception.yaml:14:9
 
-warning[satisfiability]: when pose_source='gnss', topic 'ndt_pose' has
-  0 publishers — ndt_node is conditional on pose_source='ndt'
-  --> localization.yaml:30:5
+error[qos-match]: incompatible QoS on topic '/safety/scan' field
+  'lease_duration': pub 'lidar/scan' asserts every 200.00ms, sub
+  'brake/obstacles' declares it dead after 100.00ms
+
+warning[dangling-entity]: topic '/sensor/imu' has no publishers (no data source)
+
+error[satisfiability]: topic 'ndt_pose' has 0 publishers when pose_source=gnss
 ```
+
+And from the consumer's merge layer, where the route is known:
+
+```
+warning[scope-sampling-feasibility]: scope path 'perception' (scope 3) is
+  structurally infeasible: sampling cost alone (100.00ms, one period per
+  clock boundary crossed: ekf → tracker) meets or exceeds the declared
+  max_latency (85ms). No priority assignment can reduce this — raise the
+  boundary's rate or the budget
+
+warning[scope-budget]: scope path 'perception' (scope 3) max_latency_ms (85)
+  is less than critical path: cropbox → ground_filter → detector = 125.00ms
+  (25.00ms event-segment + 100.00ms sampling_cost)
+
+error[budget-overflow]: scope path 'detect' (scope 7) max_latency_ms (60)
+  exceeds ancestor path 'perception' (scope 3) max_latency_ms (50) — child
+  budget cannot exceed parent budget on the same (input, output) topics
+
+error[consistency]: topic '/localization/kinematic_state' type mismatch:
+  'nav_msgs/msg/Odometry' (existing) vs 'geometry_msgs/msg/PoseStamped' in
+  scope 4 (tier4_control_launch/control.launch.xml)
+
+info[fault-reaction-budget]: hazard 'drive_blind': detection 100.00ms
+  (/safety/scan -> brake/obstacles detects within 100.00ms) + reaction
+  205.00ms (reaction route brake/emergency_stop = 5.00ms + settle 200.00ms)
+  = 305.00ms fits the fault-tolerant time interval 500.00ms with 195.00ms
+  of slack
+```
+
+`fault-reaction-budget` is an **error** when the sum exceeds the interval
+and an **info** when it fits; the fitting case is shown because it is the
+one that states the whole derivation in a single line.
 
 ## References
 
