@@ -1064,10 +1064,15 @@ phase-78 W1 resolves the tag. Status: landed in bfbe075 (main, 2026-09-21); tag 
 (annotated); the pre-R1 empty-rank assertion un-ignored in d7e96dd (a
 trigger-less hop is skipped, NoPathOnRoute); workspace green, snapshot
 unchanged, Cargo version stays 0.1.4. play_launch phase-78 W1 may pin the tag.
-Seam found by play_launch phase-78 W2 (07be64dd): `MapperNode::scope` is the
-namespace the manual mapper's `[[assign]] scope =` selector matches, while
-`derive` copies `NodeInstance::scope`, the file-scope key; fixed consumer-side
-for now, the crate should derive the namespace from the FQN.
+Seam found by play_launch phase-78 W2 (07be64dd) and confirmed by nano-ros
+phase-457 W2 (PR #1218) against v0.1.37: `MapperNode::scope` is the namespace
+the manual mapper's `[[assign]] scope =` selector matches, while `derive`
+copies `NodeInstance::scope`, the file-scope key (`derive/src/view.rs:212`).
+Both consumers now carry the same one-line workaround, deriving the namespace
+from the FQN, which is the argument for fixing it here instead: a fact two
+independent realizers correct on the way in was never the crate's to hand
+them wrong. R5 does it, and the consumers drop their copies on the tag that
+carries it.
 
 ### Status
 
