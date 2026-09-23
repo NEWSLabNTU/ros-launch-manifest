@@ -326,6 +326,8 @@ by hand. When `input.chains` is empty the mapper degrades gracefully to the
 fallback, which is how a system with no scope paths (and nano-ros today)
 runs it. Implementation: `sched/src/chain_aware_mapper.rs`.
 
+![From contract facts to two schedulers: the agnostic core and the two realizers](img/mapper-pipeline.png)
+
 Algorithm (steps 1–4 platform-agnostic, 5–6 POSIX realization):
 
 1. **Feasibility** (`chain_feasibility`). Per chain: `sampling_cost_ms = Σ
@@ -454,6 +456,17 @@ model):
 `details` (per-rank `--explain` provenance) remains a `chain_aware` feature.
 
 ## Chain Vocabulary (`chain.rs`)
+
+![Chain anatomy: segments, boundaries, and what the route leaves out](img/chain-anatomy.png)
+
+The two element kinds are the whole of why a route is not just a list of
+nodes. A **segment** is a run of input-triggered paths: a message crosses it
+run-to-completion, and where it lands in the order is a scheduling decision.
+A **boundary** is a timer-triggered path: the message waits for a clock, and
+no priority assignment shortens that wait. Everything else in the graph --
+a second input into a boundary, a consumer off the route, a `state: true`
+read -- is still scheduled, but from its own local facts rather than from
+the chain's budget.
 
 A deliberate minimal mirror of the `types` crate's Vocabulary v2, so that
 `sched` stays a pure algorithm crate: it never reads a contract, never
@@ -713,6 +726,25 @@ RFC-0052 §"system-model RTOS mapper".
   and preemption-threshold are modeled in `SchedCaps` with runtime
   support landed, but the realizer does not emit them yet (later
   waves). `RankItem.fine_group` doubles as its executor grouping.
+
+  **What an RTOS realizer decides, per dimension.** The order is the
+  crate's; what enforces it is the target's. Each dimension resolves to a
+  kernel primitive where the target has one and to the executor where it
+  does not, and the third outcome, a recorded degradation, is a fact
+  about the image rather than a silent substitution:
+
+  | dimension | native, where the kernel has it | backfilled by the executor |
+  |---|---|---|
+  | urgency, preemption | task priority (Zephyr, FreeRTOS, ThreadX), `SCHED_FIFO` (POSIX) | nothing above the kernel can preempt |
+  | deadline | Zephyr `k_thread_deadline_set` (EDF among equal priorities) | a per-callback monitor, then the declared `miss` action |
+  | budget | NuttX `SCHED_SPORADIC` | a sporadic gate: no further dispatch until the next replenishment |
+  | release window | none | a time-triggered frame around the callback |
+  | starvation | none | a scheduled gap once a tier has run too long without blocking |
+
+  The executor column is why `MapperMiss::is_enforceable_on_linux()` is not
+  the same question on an RTOS: `SkipNext` and `Abort` are obligations a
+  cooperative executor between callbacks *can* discharge, where CBS on Linux
+  can only continue.
 - **Authoring**: nano-ros authors its own `system.toml` (its bringup
   config: `[tiers.*]`, `[[node_overrides]]`, lifecycle, bridges — a
   superset role, ingested via the model's system-config layer, reusing

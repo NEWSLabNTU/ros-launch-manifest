@@ -650,6 +650,14 @@ and reported as `ChainFeasibleWithoutWcet`, because a verdict that cannot
 tell absent from zero claims headroom nobody measured. The same facts
 drive priority derivation — see [scheduling.md](scheduling.md).
 
+![Sampling cost, slack, and the order the remaining budget is spent in](img/chain-feasibility.png)
+
+The figure is one route against two declared budgets. At 200 ms the two
+boundaries spend 133.3 ms before any callback runs and the ranking has
+66.7 ms to shape; at 120 ms they have spent the budget already, which is
+the claim `scope-sampling-feasibility` and `ChainInfeasible` each make at
+their own layer.
+
 ## Derived Quantities
 
 A contract states **facts** (what the code does) and **requirements** (what
