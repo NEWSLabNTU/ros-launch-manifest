@@ -43,7 +43,7 @@ impl ValidationRule for ScopeBudgetRule {
 
         // Include child scope latencies
         for (scope_name, include) in &manifest.includes {
-            if let ros_launch_manifest_types::IncludeDecl::Inline(inner) = include {
+            if let Some(inner) = include.inline() {
                 let max_lat = inner
                     .paths
                     .values()

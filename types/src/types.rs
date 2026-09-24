@@ -565,8 +565,64 @@ pub struct ActionDecl {
 }
 
 /// Include declaration (external manifest or inline scope).
+///
+/// Carries its own condition, like every other declaration in this grammar
+/// (issue #0043): a launch file puts `if=` on the `<group>` an inline include
+/// comes from and on the `<include>` an external one comes from, so the
+/// contract has to be able to say the same thing. [`crate::filter_manifest`]
+/// drops a whole include whose condition is false, and the refs pointing into
+/// it, the way it drops a node.
+///
+/// The two spellings differ only in where the author writes the condition,
+/// which follows from where the grammar puts the rest of the entry: the
+/// external form is a fixed-key mapping, so `if:` sits beside `manifest:`;
+/// the inline form IS a nested manifest, so `if:` sits at that manifest's
+/// root. A root condition on a *standalone* manifest is refused by the parser
+/// — there is no include entry there for it to belong to.
 #[derive(Debug, Clone, Serialize)]
-pub enum IncludeDecl {
+pub struct IncludeDecl {
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    pub if_condition: Option<String>,
+    #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
+    pub unless_condition: Option<String>,
+    #[serde(flatten)]
+    pub kind: IncludeKind,
+}
+
+impl IncludeDecl {
+    /// An include with no condition on it.
+    pub fn new(kind: IncludeKind) -> Self {
+        Self {
+            if_condition: None,
+            unless_condition: None,
+            kind,
+        }
+    }
+
+    /// The inline manifest, if this is the inline form.
+    pub fn inline(&self) -> Option<&Manifest> {
+        match &self.kind {
+            IncludeKind::Inline(inner) => Some(inner),
+            IncludeKind::External { .. } => None,
+        }
+    }
+
+    /// The referenced file, if this is the external form.
+    pub fn external(&self) -> Option<&str> {
+        match &self.kind {
+            IncludeKind::External { manifest } => Some(manifest),
+            IncludeKind::Inline(_) => None,
+        }
+    }
+}
+
+/// Which of the two include forms an [`IncludeDecl`] is.
+///
+/// Serialized untagged, and flattened into the entry by [`IncludeDecl`], so
+/// the serialized shape is the shape the parser reads back.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum IncludeKind {
     /// External: loaded from separate manifest file.
     External { manifest: String },
     /// Inline: embedded manifest (from <group> block).

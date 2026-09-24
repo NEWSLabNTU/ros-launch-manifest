@@ -45,12 +45,27 @@ pub fn should_include(if_cond: Option<&str>, unless_cond: Option<&str>) -> bool 
 pub fn filter_manifest(manifest: &mut crate::Manifest) {
     // Collect conditional node names BEFORE filtering — used by cleanup
     // to infer which refs are optional (their node had a condition).
-    let conditional_nodes: std::collections::HashSet<String> = manifest
+    //
+    // An include is collected into the same set (issue #0043). A topic names
+    // a child scope's group as `include_name/group_name`, which is the same
+    // `owner/member` shape a node endpoint ref has, so a ref into an include
+    // that a condition removed has to be dropped for exactly the reason a ref
+    // into a removed node is — and a ref into an UNCONDITIONAL missing one
+    // has to survive for exactly the reason that one does, or the cleanup
+    // starts hiding typos.
+    let mut conditional_nodes: std::collections::HashSet<String> = manifest
         .nodes
         .iter()
         .filter(|(_, node)| node.if_condition.is_some() || node.unless_condition.is_some())
         .map(|(name, _)| name.clone())
         .collect();
+    conditional_nodes.extend(
+        manifest
+            .includes
+            .iter()
+            .filter(|(_, inc)| inc.if_condition.is_some() || inc.unless_condition.is_some())
+            .map(|(name, _)| name.clone()),
+    );
 
     manifest.nodes.retain(|_, node| {
         should_include(
@@ -75,6 +90,9 @@ pub fn filter_manifest(manifest: &mut crate::Manifest) {
             path.if_condition.as_deref(),
             path.unless_condition.as_deref(),
         )
+    });
+    manifest.includes.retain(|_, inc| {
+        should_include(inc.if_condition.as_deref(), inc.unless_condition.as_deref())
     });
 
     // Filter node-level paths too
@@ -112,6 +130,26 @@ pub fn filter_manifest(manifest: &mut crate::Manifest) {
         path.if_condition = None;
         path.unless_condition = None;
     }
+    for inc in manifest.includes.values_mut() {
+        inc.if_condition = None;
+        inc.unless_condition = None;
+    }
+
+    // Recurse into the inline includes that survived. An inline include is a
+    // nested scope -- `<group>` in the launch file -- so a condition on a node
+    // INSIDE one is as real as a condition on the group, and evaluating the
+    // outer while ignoring the inner would be a contract that mirrors only the
+    // top level of the launch tree. Before conditional includes existed this
+    // was invisible: an inner conditional node simply survived with its
+    // condition still set, which is also the one place a surviving entity kept
+    // one. Recursion happens AFTER the outer retain, so a dropped include is
+    // never walked, and each nested manifest gets its own ref cleanup against
+    // its own node set.
+    for inc in manifest.includes.values_mut() {
+        if let crate::types::IncludeKind::Inline(inner) = &mut inc.kind {
+            filter_manifest(inner);
+        }
+    }
 
     // Clean up dangling endpoint references
     cleanup_dangling_refs(manifest, &conditional_nodes);
@@ -123,8 +161,15 @@ fn cleanup_dangling_refs(
     manifest: &mut crate::Manifest,
     conditional_nodes: &std::collections::HashSet<String>,
 ) {
-    let node_names: std::collections::HashSet<&str> =
-        manifest.nodes.keys().map(|s| s.as_str()).collect();
+    // Owners a `owner/member` ref can name: the manifest's nodes, and the
+    // child scopes its `includes:` bring in (`check/src/graph.rs` wires a
+    // topic to a scope vertex through exactly that spelling).
+    let node_names: std::collections::HashSet<&str> = manifest
+        .nodes
+        .keys()
+        .chain(manifest.includes.keys())
+        .map(|s| s.as_str())
+        .collect();
 
     for topic in manifest.topics.values_mut() {
         cleanup_ref_list(&mut topic.publishers, &node_names, conditional_nodes);
@@ -581,5 +626,172 @@ topics:
         assert!(!m.topics.contains_key("gone_topic"));
         // half_topic: pub empty but sub also empty → removed
         assert!(!m.topics.contains_key("half_topic"));
+    }
+
+    // ── Conditional includes (issue #0043) ──
+
+    #[test]
+    fn test_conditions_inside_an_inline_include_are_evaluated() {
+        // An inline include is a nested scope — `<group>` in the launch file —
+        // so a condition on a node INSIDE one is as real as a condition on the
+        // group itself. Before the recursion this node survived with its
+        // condition still set, which made it the one surviving entity in a
+        // filtered manifest that kept one.
+        let yaml = r#"
+version: 1
+includes:
+  sensors:
+    if: "true"
+    nodes:
+      lidar_driver:
+        if: "false"
+        pub:
+          scan: {}
+      camera_driver:
+        if: "true"
+        pub:
+          image: {}
+"#;
+        let mut m = crate::parse::parse_manifest_str(yaml).unwrap();
+        crate::cond::filter_manifest(&mut m);
+
+        let inner = m.includes["sensors"].inline().expect("inline include");
+        assert!(
+            !inner.nodes.contains_key("lidar_driver"),
+            "a false node inside an inline include must be dropped, got {:?}",
+            inner.nodes.keys().collect::<Vec<_>>()
+        );
+        assert!(inner.nodes.contains_key("camera_driver"));
+        assert!(
+            inner.nodes["camera_driver"].if_condition.is_none(),
+            "a surviving nested node must have its condition cleared, like every other survivor"
+        );
+    }
+
+    #[test]
+    fn test_conditional_include_dropped_and_refs_cleaned() {
+        // Both spellings of a false condition, and a topic wired into each.
+        let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+    sub: [feedback]
+includes:
+  perception:
+    manifest: perception.yaml
+    if: "false"
+  planning:
+    unless: "true"
+    nodes:
+      planner:
+        pub: [route]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output]
+    sub:
+      - perception/points_in
+  feedback:
+    type: std_msgs/msg/String
+    pub: [planning/route_out]
+    sub: [always_node/feedback]
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        assert_eq!(m.includes.len(), 2);
+
+        filter_manifest(&mut m);
+
+        assert!(m.includes.is_empty(), "both includes are false");
+        // The ref into the dropped external include is gone; the topic keeps
+        // its publisher, so it survives with no subscriber.
+        assert!(
+            m.topics["data"].subscribers.is_empty(),
+            "ref into a dropped include should be cleaned up: {:?}",
+            m.topics["data"].subscribers
+        );
+        // The ref into the dropped inline include is gone, but the topic keeps
+        // its other side, so it survives with no publisher.
+        assert!(m.topics["feedback"].publishers.is_empty());
+        assert_eq!(
+            m.topics["feedback"].subscribers,
+            vec!["always_node/feedback".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_true_include_survives_with_condition_cleared() {
+        let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+includes:
+  perception:
+    manifest: perception.yaml
+    if: "true"
+  planning:
+    unless: "false"
+    nodes:
+      planner:
+        pub: [route]
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output]
+    sub:
+      - perception/points_in
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+
+        assert_eq!(m.includes.len(), 2);
+        for (name, inc) in &m.includes {
+            assert!(
+                inc.if_condition.is_none() && inc.unless_condition.is_none(),
+                "condition on surviving include {name} should be cleared"
+            );
+        }
+        assert_eq!(
+            m.includes["perception"].external(),
+            Some("perception.yaml"),
+            "the external form keeps its target"
+        );
+        assert!(m.includes["planning"].inline().is_some());
+        // Ref into a surviving include is kept.
+        assert_eq!(
+            m.topics["data"].subscribers,
+            vec!["perception/points_in".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_unconditional_missing_include_ref_kept() {
+        // The negative control: without it, the cleanup above would be
+        // indistinguishable from one that silently swallows typos.
+        let yaml = r#"
+version: 1
+nodes:
+  always_node:
+    pub: [output]
+includes:
+  perception:
+    manifest: perception.yaml
+topics:
+  data:
+    type: std_msgs/msg/String
+    pub: [always_node/output]
+    sub:
+      - percption/points_in
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+
+        assert_eq!(m.includes.len(), 1, "unconditional include survives");
+        assert_eq!(
+            m.topics["data"].subscribers,
+            vec!["percption/points_in".to_string()],
+            "a ref to no known owner is kept for the checker to error on"
+        );
     }
 }

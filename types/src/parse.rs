@@ -73,6 +73,24 @@ pub fn parse_manifest_str_with_spans(source: &str) -> Result<ParseResult, ParseE
 fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     reject_chains(doc, ctx)?;
     reject_unknown_keys(doc, ctx, Context::Manifest)?;
+    // `if:`/`unless:` at a manifest root are the INLINE include's condition
+    // (issue #0043), and an inline include is the only manifest that has one:
+    // a standalone file is not pulled in by anything, so a condition there
+    // selects nothing. Phase 69 established that a key which cannot act is an
+    // error, not something to discard quietly.
+    if ctx.is_empty() {
+        for key in ["if", "unless"] {
+            if !doc[key].is_badvalue() {
+                return Err(field_err(
+                    ctx,
+                    key,
+                    "a condition at a manifest root belongs to the `includes:` entry that \
+                     pulls the file in — write it there (`includes.<name>.{manifest: …, \
+                     if: …}`). At the root of a standalone manifest it would select nothing",
+                ));
+            }
+        }
+    }
     Ok(Manifest {
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
         args: parse_args(doc, ctx)?,
@@ -874,19 +892,30 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         let path = format_path(ctx, &format!("includes.{name}"));
-        if let Some(manifest_path) = yaml_string(v, "manifest", ctx)? {
+        // Both forms carry `if:`/`unless:` (issue #0043). They sit in
+        // different places only because the two forms have different shapes:
+        // the external form is a fixed-key mapping, so the condition is one
+        // of its keys; the inline form IS a nested manifest, so the condition
+        // is at that manifest's root.
+        let if_condition = yaml_string(v, "if", &path)?;
+        let unless_condition = yaml_string(v, "unless", &path)?;
+        let kind = if let Some(manifest_path) = yaml_string(v, "manifest", ctx)? {
             reject_unknown_keys(v, &path, Context::IncludeExternal)?;
-            out.insert(
-                name,
-                IncludeDecl::External {
-                    manifest: manifest_path,
-                },
-            );
+            IncludeKind::External {
+                manifest: manifest_path,
+            }
         } else {
             // Inline scope
-            let inner = parse_manifest_yaml(v, &path)?;
-            out.insert(name, IncludeDecl::Inline(Box::new(inner)));
-        }
+            IncludeKind::Inline(Box::new(parse_manifest_yaml(v, &path)?))
+        };
+        out.insert(
+            name,
+            IncludeDecl {
+                if_condition,
+                unless_condition,
+                kind,
+            },
+        );
     }
     Ok(out)
 }
@@ -2157,21 +2186,66 @@ includes:
         let m = parse_manifest_str(yaml).unwrap();
         assert_eq!(m.includes.len(), 2);
 
-        match &m.includes["lidar"] {
-            IncludeDecl::External { manifest } => {
-                assert_eq!(
-                    manifest,
-                    "tier4_perception_launch/lidar_perception.launch.yaml"
-                );
-            }
-            _ => panic!("expected External"),
-        }
+        assert_eq!(
+            m.includes["lidar"].external(),
+            Some("tier4_perception_launch/lidar_perception.launch.yaml")
+        );
+        assert!(
+            m.includes["safety"]
+                .inline()
+                .expect("expected Inline")
+                .nodes
+                .contains_key("emergency_stop")
+        );
+    }
 
-        match &m.includes["safety"] {
-            IncludeDecl::Inline(inner) => {
-                assert!(inner.nodes.contains_key("emergency_stop"));
-            }
-            _ => panic!("expected Inline"),
+    #[test]
+    fn test_includes_carry_conditions() {
+        // Issue #0043: both spellings. The external form is a fixed-key
+        // mapping, so the condition is a key beside `manifest:`; the inline
+        // form IS a nested manifest, so the condition is at its root.
+        let yaml = r#"
+version: 1
+includes:
+  lidar:
+    manifest: perception/lidar.launch.yaml
+    if: use_lidar
+  safety:
+    unless: "false"
+    nodes:
+      emergency_stop:
+        pub: [stop_cmd]
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+        assert_eq!(m.includes.len(), 2);
+
+        let lidar = &m.includes["lidar"];
+        assert_eq!(lidar.if_condition.as_deref(), Some("use_lidar"));
+        assert_eq!(lidar.unless_condition, None);
+        assert_eq!(lidar.external(), Some("perception/lidar.launch.yaml"));
+
+        let safety = &m.includes["safety"];
+        assert_eq!(safety.if_condition, None);
+        assert_eq!(safety.unless_condition.as_deref(), Some("false"));
+        assert!(
+            safety
+                .inline()
+                .expect("expected Inline")
+                .nodes
+                .contains_key("emergency_stop")
+        );
+    }
+
+    #[test]
+    fn test_root_condition_on_standalone_manifest_refused() {
+        // A condition at the root of a file nobody includes selects nothing.
+        for key in ["if", "unless"] {
+            let yaml = format!("version: 1\n{key}: use_lidar\nnodes:\n  a:\n    pub: [out]\n");
+            let err = parse_manifest_str(&yaml).unwrap_err().to_string();
+            assert!(
+                err.contains("belongs to the `includes:` entry"),
+                "{key}: unexpected message: {err}"
+            );
         }
     }
 

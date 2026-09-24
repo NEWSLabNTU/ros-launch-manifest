@@ -1588,13 +1588,6 @@ per launch file through the overlay/provider channels (see
 [Directory Structure](#directory-structure)). The include entry exists
 to name the scope for budget checks.
 
-`manifest:` is the **only** key the file-reference form accepts. An
-`if:` / `unless:` on an include is a parse error, in both forms — the
-condition that decides whether a child scope exists lives in the launch
-file, and the launch tree is what produces the scope table the checker
-walks. Condition a *node*, a *topic* or an entity inside the child
-manifest instead.
-
 Inline includes (for `<group>` blocks) embed the manifest structure
 directly instead of referencing a file. The value is then a whole
 manifest, and takes manifest-level keys only:
@@ -1610,6 +1603,49 @@ includes:
         type: sensor_msgs/msg/PointCloud2
         pub: [lidar_driver/pointcloud]
 ```
+
+#### Conditions on an include
+
+An include carries `if:` / `unless:` like every other declaration here.
+The contract mirrors the launch file's structure: a `<group>` or an
+`<include>` with an `if=` on it produces a child scope only on one
+branch, and the contract has to be able to say so.
+
+The two forms differ only in *where* the condition is written, and that
+follows from the shape each form already has. The file-reference form is
+a fixed-key mapping, so the condition sits beside `manifest:`:
+
+```yaml
+includes:
+  tracking:
+    manifest: tier4_perception_launch/tracking.contract.yaml
+    if: use_tracking
+```
+
+The inline form **is** a nested manifest, so the condition sits at that
+manifest's root, beside `nodes:` and `topics:`:
+
+```yaml
+includes:
+  sensor_group:
+    unless: use_sim_time
+    nodes:
+      lidar_driver:
+        pub: [pointcloud]
+```
+
+`if:` / `unless:` at the root of a *standalone* manifest is a parse
+error naming the include entry the condition belongs on. Such a file is
+not pulled in by anything, so a condition there would select nothing,
+and phase 69 established that a key which cannot act is an error rather
+than something discarded quietly.
+
+A false condition removes the whole include, and the refs pointing into
+it — a topic names a child scope's group as `scope_name/group_name`,
+and those refs are dropped the way refs into a filtered-out conditional
+*node* are. A ref into an include that is **unconditional** and missing
+is kept, so the checker still errors on it: that is the difference
+between resolving a condition and swallowing a typo.
 
 ### Paths
 

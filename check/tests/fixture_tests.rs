@@ -328,34 +328,27 @@ fn fixture_multi_scope_parses() {
 #[test]
 fn fixture_multi_scope_inline_structure() {
     let m = parse_manifest(&fixture_path("manifest_multi_scope")).unwrap();
-    match &m.includes["perception"] {
-        ros_launch_manifest_types::IncludeDecl::Inline(inner) => {
-            assert_eq!(inner.nodes.len(), 2, "cropbox + detector");
-            assert!(inner.topics.contains_key("filtered_points"));
-            assert!(!inner.paths.is_empty());
-        }
-        ros_launch_manifest_types::IncludeDecl::External { .. } => {
-            panic!("perception should be inline, not external");
-        }
-    }
-    match &m.includes["planning"] {
-        ros_launch_manifest_types::IncludeDecl::Inline(inner) => {
-            assert_eq!(inner.nodes.len(), 1, "planner");
-            assert!(
-                inner.nodes["planner"].subscribers["route"]
-                    .state
-                    .unwrap_or(false)
-            );
-            assert!(
-                inner.nodes["planner"].subscribers["route"]
-                    .required
-                    .unwrap_or(false)
-            );
-        }
-        ros_launch_manifest_types::IncludeDecl::External { .. } => {
-            panic!("planning should be inline, not external");
-        }
-    }
+    let inner = m.includes["perception"]
+        .inline()
+        .expect("perception should be inline, not external");
+    assert_eq!(inner.nodes.len(), 2, "cropbox + detector");
+    assert!(inner.topics.contains_key("filtered_points"));
+    assert!(!inner.paths.is_empty());
+
+    let inner = m.includes["planning"]
+        .inline()
+        .expect("planning should be inline, not external");
+    assert_eq!(inner.nodes.len(), 1, "planner");
+    assert!(
+        inner.nodes["planner"].subscribers["route"]
+            .state
+            .unwrap_or(false)
+    );
+    assert!(
+        inner.nodes["planner"].subscribers["route"]
+            .required
+            .unwrap_or(false)
+    );
 }
 
 #[test]
