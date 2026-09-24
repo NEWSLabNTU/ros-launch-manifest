@@ -309,6 +309,18 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         "Removed in phase 68 — state the requirement as a scope path and let the route be derived.",
     ),
+    live(
+        "if",
+        Context::Manifest,
+        Kind::Meta,
+        "Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest.",
+    ),
+    live(
+        "unless",
+        Context::Manifest,
+        Kind::Meta,
+        "Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest.",
+    ),
     // ── nodes.<name> ──
     live(
         "if",
@@ -619,6 +631,18 @@ pub const FIELDS: &[Field] = &[
         Context::IncludeExternal,
         Kind::Meta,
         "Path to the included manifest file.",
+    ),
+    live(
+        "if",
+        Context::IncludeExternal,
+        Kind::Meta,
+        "Include this child manifest only when the condition holds.",
+    ),
+    live(
+        "unless",
+        Context::IncludeExternal,
+        Kind::Meta,
+        "Include this child manifest unless the condition holds.",
     ),
     // ── args.<name> ──
     live(

@@ -185,7 +185,7 @@ pub fn substitute_manifest(
 
     // Includes: external manifest path
     for include in m.includes.values_mut() {
-        if let crate::IncludeDecl::External { manifest } = include {
+        if let crate::IncludeKind::External { manifest } = &mut include.kind {
             *manifest = substitute_str(manifest, args)?;
         }
     }
