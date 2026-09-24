@@ -7,6 +7,14 @@
 //! model is in this file, so a consumer asking "which field decides X" has
 //! one place to look.
 //!
+//! One exception, and it is deliberate: [`TopicView`] is `pub`, holds four
+//! declared facts and no model reference, and carries
+//! [`TopicView::transport_ms`] -- the per-edge transport precedence. A
+//! consumer whose graph is built before any model exists (play_launch's
+//! resolver, from a `ManifestIndex`) builds the view itself and calls that
+//! method, so the rule has one implementation rather than one per consumer
+//! (play_launch issue #0052).
+//!
 //! Key shapes, from the model's own docs: node paths are keyed
 //! `"<node FQN>/<path name>"`, scope paths `"<scope id>/<path name>"`, and
 //! endpoint refs are `"<node FQN>/<endpoint>"`. A path name and an endpoint
@@ -138,8 +146,16 @@ impl NodeView {
 }
 
 /// A topic's wiring plus the one channel fact the route needs.
+///
+/// PUBLIC on purpose, and built from either end of the pipeline. The
+/// derivation here reads it off a `SystemModel` ([`ModelView::from_model`]);
+/// play_launch's resolver builds one from its `ManifestIndex`, which exists
+/// long before any model does. Both then call [`TopicView::transport_ms`],
+/// which is why that precedence is written once (play_launch issue #0052).
+/// Nothing in this type needs a model — it is four declared facts — so the
+/// input shape that kept the resolver out is not one this type has.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct TopicView {
+pub struct TopicView {
     /// Publisher endpoint refs.
     pub publishers: Vec<String>,
     /// Subscriber endpoint refs.
@@ -157,11 +173,20 @@ impl TopicView {
     /// The transport charged for the edge that ENDS at `sub_ep`: the
     /// subscriber's own value if it declared one, else the topic's.
     ///
-    /// The precedence is the resolver's (`manifest_graph.rs`, issue #44)
-    /// and the reason is placement: a subscriber in the publisher's process
-    /// pays a pointer handoff where one across the network pays the
-    /// network, on the same topic (play_launch issue #0042, design issue
-    /// #55).
+    /// THE one copy of this precedence (issue #44, play_launch #0042 and
+    /// #0052). The reason it is per subscriber is placement: a subscriber
+    /// in the publisher's process pays a pointer handoff where one across
+    /// the network pays the network, on the same topic (design issue #55).
+    ///
+    /// `sub_ep` is an endpoint REF, `"<node FQN>/<endpoint>"` — the same
+    /// spelling `subscribers` and the keys of `sub_max_transport_ms` use.
+    /// A caller that splits refs into `(node, endpoint)` pairs must keep
+    /// the ref to ask here, or every lookup misses and every edge silently
+    /// falls back to the topic default.
+    ///
+    /// The gate is play_launch's `tests/tests/endpoint_transport.rs`: one
+    /// contract, both consumers, a FORK so the override decides which
+    /// branch is the critical path rather than only shifting a total.
     pub fn transport_ms(&self, sub_ep: &str) -> Option<f64> {
         self.sub_max_transport_ms
             .get(sub_ep)
