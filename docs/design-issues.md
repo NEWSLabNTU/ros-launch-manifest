@@ -1286,6 +1286,158 @@ Tests: `test_dangling_topic_external_pub_is_accepted`,
 
 ---
 
+## 55. Transport Is a Consequence of Placement, and Only Sometimes a Guarantee — Decided, staged
+
+**Status (2026-09-24):** decided; step 1 is play_launch issue #0042, steps 2
+and 3 are not started.
+
+### The defect that started it
+
+`max_transport` is declarable in two places — on a topic, and on a subscriber
+endpoint as an override — and there are **three readers with two different
+models**:
+
+| Reader | Source | Shape |
+|---|---|---|
+| `check/src/rules/scope_budget.rs:59` | topic only | flat sum over the scope's topics, undeclared counted as 0 |
+| `resolve/.../manifest_graph.rs:337` | subscriber first, topic fallback | per edge |
+| `derive/src/graph.rs:90` | topic only | per edge |
+
+`model::SubContract` has no transport field, so the endpoint override never
+reaches the model and the shared `derive` crate cannot see it. Two copies of
+one derivation therefore compute different route totals on any contract that
+uses the override, silently — the hole left in phase 78's "one derivation, two
+consumers".
+
+### The ruling
+
+> The ability to ensure the guarantee depends on the practical construction.
+> A pub/sub on the same host can be managed; a topic connecting two machines
+> cannot.
+
+That settles what the number IS, which the grammar had left ambiguous.
+Transport latency is mostly a **consequence of placement**, and placement is a
+fact the launch file already states:
+
+- **Same process** (one container, `use_intra_process_comms`): a pointer
+  handoff. The bound is structural.
+- **Same host, different process**: an RMW hop. Managed — play_launch places
+  the processes, sets their priorities, their cgroups and their container
+  membership, so a bound here is something the toolchain can be held to.
+- **Different hosts**: the network. **Not managed by anything in this
+  toolchain.** A number written here is an ASSUMPTION about the environment,
+  not a promise the system makes.
+
+An author writing `max_transport: 0.5ms` on an endpoint today is usually
+guessing at the consequence of a deployment decision made elsewhere — which is
+the second-copy problem this vocabulary spent phases 67 and 68 removing,
+appearing in a place nobody noticed because it looks like a requirement.
+
+The unmanaged case has a precedent in the vocabulary: `external:` marks an
+endpoint whose other side is outside the launch tree, and phase 71 established
+that an assumption which can be violated needs a declared reaction. A
+cross-host transport bound is the same kind of claim.
+
+### The staging
+
+1. **Carry the declaration** (play_launch #0042). `model::SubContract` gains
+   the field, `model_builder` lowers it beside `buffer`, `derive/src/view.rs`
+   builds the per-edge value with the resolver's precedence, and the
+   precedence is then DELETED from `manifest_graph.rs` so one copy remains.
+   This is the bug fix and it is independent of the rest. Gate: a fixture
+   declaring endpoint-level `max_transport` on a two-subscriber topic, with
+   both consumers asserted to produce the same total. No such fixture exists
+   today, which is why nothing caught it.
+
+2. **Derive the class.** Each edge is classified `intra_process |
+   intra_host | inter_host` from facts the model already carries (a
+   composable's `container`, `use_intra_process_comms`, the deploy host).
+   The per-class figure is a PLATFORM fact and belongs in the platform file
+   beside `rr_timeslice` — one number per class per board, rather than one per
+   edge per contract. A declared `max_transport` then means what it should:
+   a requirement on a link, not an estimate of one, checkable against the
+   class figure the way `derivable-rate` checks a declared rate against the
+   derived one.
+
+3. **Falsify by measurement.** `InterceptionEvent` already carries the topic,
+   the header stamp and `monotonic_ns` at both the publish and the take hook,
+   so the delta for one message IS the transport. One caveat must travel with
+   it: `CLOCK_MONOTONIC` is comparable across processes on a host and NOT
+   across hosts, so the inter-host class — the one that cannot be managed — is
+   also the one that cannot be measured this way. It needs clock sync or it
+   stays an assumption, which is consistent with what it is.
+
+### What the checker should say once the class exists
+
+- a scope path whose budget depends on an `inter_host` edge is relying on an
+  assumption; if nothing declares a reaction for its violation, that is the
+  same hole phase 71 named for rates, and should be reported at the same
+  severity;
+- a declared value that disagrees with its class figure is a
+  `transport-mismatch`, and agreement is a `derivable-transport` info —
+  mirroring the existing pair, so the second copy can eventually be deleted
+  the way `rate_hz` copies were.
+
+### Not decided
+
+Whether `scope-budget`'s flat sum (a third model: topic-only, undeclared = 0)
+converges on the same source. It should, or the standalone check and the
+merged one keep disagreeing by construction — but that is a separate change
+with its own migration.
+
+## 56. An Include Carries a Condition, Because the Contract Mirrors the Launch File — Decided
+
+**Status (2026-09-24):** decided; implementation in progress.
+
+### The question
+
+`includes:` was the one structural element in this grammar with no `if:` /
+`unless:`. Nodes, topics, services, actions, scope paths and node paths all
+carry them and are all filtered by `cond.rs::filter_manifest`; an include
+could not be conditional in either spelling, and `IncludeDecl` had no field to
+hold one — while the specification claimed that carrying per-child conditions
+was what the include entry was FOR (play_launch issue #0043).
+
+The measurement argued for retiring it rather than fixing it: `includes:` is
+used by exactly one fixture in this repository and by **zero** real contracts;
+external includes are never loaded by the checker; and the consumer does not
+read the block at all, composing scopes through its own scope table instead.
+
+### The ruling
+
+> Our contract should reflect the launch file structure. If the launch file has
+> a condition on any X, the contract should have one too.
+
+Which overrides the usage argument, and on better grounds. The contract's
+shape is not chosen for its own convenience — it mirrors the launch tree, so
+that a reader can hold one beside the other. `IncludeDecl::Inline`'s own doc
+comment says it comes "from `<group>` block", and a `<group>` is precisely
+what a launch author writes `if=` on. An include that cannot be conditional
+does not describe launch files as they are written.
+
+Low usage is then a statement about adoption, not about whether the feature
+belongs — and a feature that cannot express the common case is one reason
+adoption stays low.
+
+### Consequences
+
+- Conditions on both spellings: on the external entry beside `manifest:`, and
+  at the root of an inline nested manifest.
+- `filter_manifest` drops a whole include whose condition is false, and the
+  existing `cleanup_dangling_refs` pass treats the name of a dropped
+  CONDITIONAL include the way it already treats a dropped conditional node —
+  refs into it are removed silently, while refs into an unconditional missing
+  one are kept for the checker to error on.
+- A root `if:` on a standalone manifest is refused, naming the include entry
+  as where a condition belongs. A condition on a file nobody includes is
+  meaningless, and silently ignoring it is the failure mode phase 69 removed.
+
+### Still true, and still worth saying in the spec
+
+External includes are not loaded by the checker
+(`scope_budget.rs:56`), so a condition on one selects an entry the checker
+cannot look inside either way.
+
 ## Summary
 
 Design issues 1–51, #53 (equal periods, equal priorities) and #54 (the

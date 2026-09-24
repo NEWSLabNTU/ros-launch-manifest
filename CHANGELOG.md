@@ -6,6 +6,81 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.41 - 2026-09-24
+
+An include can carry a condition, and the conditions inside one are evaluated.
+**Workspace Cargo version `0.1.4` -> `0.1.5`**: `IncludeDecl` changes shape,
+which is an API break for anything that matches on it.
+
+### Why
+
+`includes:` was the ONE structural element in this grammar with no `if:` /
+`unless:`. Nodes, topics, services, actions, scope paths and node paths all
+carry them and are all filtered by `cond.rs::filter_manifest`. The
+specification claimed carrying per-child conditions was what an include entry
+was FOR, and neither spelling parsed.
+
+The usage measurement argued for retiring the block instead: one fixture in
+this repository uses it, no real contract does, external includes are never
+loaded by the checker, and the consumer composes scopes through its own scope
+table without reading `includes:` at all. The project owner ruled the other
+way, on better grounds:
+
+> Our contract should reflect the launch file structure. If the launch file has
+> a condition on any X, the contract should have one too.
+
+`IncludeDecl::Inline`'s own doc comment says it comes "from `<group>` block",
+and a `<group>` is exactly what a launch author writes `if=` on. Low usage is
+then a statement about adoption rather than about whether the feature belongs.
+Recorded as design issue #56.
+
+### The shape
+
+`IncludeDecl` becomes a struct carrying `if_condition` / `unless_condition`
+plus an `IncludeKind` (`External { manifest }` / `Inline(Box<Manifest>)`),
+which is where every other declaration keeps its conditions. Two accessors
+(`.inline()`, `.external()`) removed the `match` at all four call sites, so
+the change outside `types/` is three lines.
+
+The serde representation is `untagged` + `flatten` on purpose: the old
+externally-tagged enum serialized as `{"External":{"manifest":...}}`, which
+the parser could not read back. A serialized include is now the YAML the
+parser accepts.
+
+### The spellings
+
+- External: `if:` / `unless:` beside `manifest:`.
+- Inline: at the nested manifest's root, beside `nodes:` / `topics:`.
+- A root condition on a STANDALONE manifest is refused, naming the include
+  entry as where it belongs -- at a root nobody includes it would select
+  nothing, and silently ignoring it is the failure mode phase 69 removed.
+
+### The filtering, including the part that is easy to get wrong
+
+`filter_manifest` retains includes on their condition and clears it on
+survivors, like every other entity. For refs into a scope
+(`include_name/group_name`), the existing mechanism is reused rather than
+duplicated: conditional include names join the `conditional_nodes` set, and
+SURVIVING include names join the owner set. Both halves are load-bearing --
+adding only the first silently drops every ref into an include that survived
+its own `if: "true"`.
+
+**Conditions inside an inline include are now evaluated too.** The filter
+walked the outer include and never recursed, so a node declaring
+`if: "false"` inside a surviving group stayed, with its condition still set --
+making it the one surviving entity in a filtered manifest that kept one. That
+gap predates this release and was invisible while the container itself could
+not be filtered. Recursion runs after the outer retain, so a dropped include
+is never walked.
+
+### Tests
+
+Six added, `cargo test --workspace` **554 -> 560**, 0 failed. Each new
+behaviour was checked by removing the code that implements it and watching the
+test fail with the symptom the issue described; the ref-cleanup control
+(a ref into an UNCONDITIONAL missing include is kept, so the cleanup cannot
+swallow a typo) passes before and after, as a control should.
+
 ## v0.1.40 - 2026-09-23
 
 One behaviour fix, in `derive`: `MapperNode::scope` now carries the node's
