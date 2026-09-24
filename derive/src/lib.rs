@@ -13,6 +13,13 @@
 //! - [`resolve_chains`] derives one `ResolvedChain` per scope path from the
 //!   dataflow route through the model (the port of play_launch's
 //!   `manifest_graph`, see [`graph`]).
+//! - [`TopicView`] is the one exception to "this crate reads a model":
+//!   it is four declared facts about a topic and carries
+//!   [`TopicView::transport_ms`], the per-edge transport precedence
+//!   (subscriber's own value, else the topic's). play_launch's resolver
+//!   builds one from its `ManifestIndex` — which exists before any model
+//!   does — so that rule is written once rather than once per consumer
+//!   (play_launch issue #0052).
 //! - [`DeriveFacts`] carries the one thing the model does not: each
 //!   consumer's execution-cost facts (a platform file's `budget_us`, a
 //!   `[wcet]` profile). The attribution rule is in here so both apply it
@@ -53,8 +60,8 @@ use ros_launch_manifest_sched::{
     MapperPath, ResolvedChain, SegmentNode,
 };
 
-pub use view::parse_criticality_label;
 use view::{ModelView, NodeView};
+pub use view::{TopicView, parse_criticality_label};
 
 /// The consumer's execution-cost facts, the one input the model does not
 /// carry because it differs per platform. play_launch fills `node_exec_ms`
