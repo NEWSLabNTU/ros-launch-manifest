@@ -1141,6 +1141,26 @@ pub struct SubContract {
     /// consuming timer callback drains; backlog is the failure mode).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub buffer: Option<BufferContract>,
+    /// Worst-case transport into THIS subscriber, overriding
+    /// [`TopicContract::max_transport_ms`] for the edges that end here
+    /// (play_launch issue #0042, design issue #55).
+    ///
+    /// One ROS topic does not have one transport cost: the same message
+    /// reaching a subscriber in the publisher's own process is a pointer
+    /// handoff, reaching another process on the host is an RMW hop, and
+    /// reaching another machine is the network. Placement decides which,
+    /// and placement is per subscriber, so the override belongs here and
+    /// the topic value is the default for subscribers that do not state
+    /// one.
+    ///
+    /// Design issue #55 records what the number MEANS in each case, and
+    /// the three cases do not agree: the first two are managed by the
+    /// toolchain — it places the processes and sets their priorities,
+    /// cgroups and container membership — so a bound there is a promise it
+    /// can be held to, while a cross-host bound is an assumption about an
+    /// environment nothing here manages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_transport_ms: Option<f64>,
 }
 
 /// How a `state: true` subscriber holds data between takes (design issue

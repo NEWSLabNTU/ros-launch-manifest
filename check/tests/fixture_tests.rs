@@ -937,6 +937,70 @@ fn fixture_qos_match_canonical_vector_map_clean() {
     );
 }
 
+// ── manifest_endpoint_transport: per-subscriber transport override ──
+
+/// The declaration side of play_launch issue #0042: one topic, two
+/// subscribers, one of them stating its own `max_transport`. The derivation
+/// asserts what the two values do to a route
+/// (`derive::tests::a_subscriber_transport_beats_the_topic_on_its_own_edge`);
+/// this asserts the grammar carries them, which is where the value starts.
+#[test]
+fn fixture_endpoint_transport_declares_both_values() {
+    let m = parse_manifest(&fixture_path("manifest_endpoint_transport")).unwrap();
+    let topic = &m.topics["/perception/objects"];
+    assert_eq!(
+        topic.max_transport.map(|d| d.as_millis_f64()),
+        Some(10.0),
+        "the topic's default"
+    );
+    assert_eq!(
+        m.nodes["collocated"].subscribers["objects"]
+            .max_transport
+            .map(|d| d.as_millis_f64()),
+        Some(0.0),
+        "the collocated subscriber's own"
+    );
+    assert_eq!(
+        m.nodes["remote"].subscribers["objects"].max_transport, None,
+        "the remote subscriber declares none and inherits"
+    );
+}
+
+/// No ERRORS on the fixture. It does carry `scope-budget` warnings, and
+/// that is the third reader design issue #55 left undecided: the
+/// per-manifest rule is a flat sum over every node and every topic in the
+/// scope, with no route and no notion of an endpoint override, so it
+/// reports 45ms against both budgets (10 + 20 + 5 nodes + 10 topic
+/// transport) where the routes are 30 and 25. Deliberately pinned: when
+/// that rule converges on the shared derivation, this assertion is the one
+/// that says so.
+#[test]
+fn fixture_endpoint_transport_has_no_errors_and_the_flat_sum_is_pessimistic() {
+    let m = parse_manifest(&fixture_path("manifest_endpoint_transport")).unwrap();
+    let result = run_checks(&m);
+    assert!(
+        !result.has_errors(),
+        "no errors: {:?}",
+        result.errors().map(|d| d.to_string()).collect::<Vec<_>>()
+    );
+    let budget: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "scope-budget")
+        .collect();
+    assert_eq!(
+        budget.len(),
+        2,
+        "the flat sum overruns both scope paths: {budget:?}"
+    );
+    assert!(
+        budget.iter().all(|d| d.severity == Severity::Warning
+            && d.message.contains("45")
+            && d.message.contains("declared topic transport (10)")),
+        "the flat sum reads the topic only: {budget:?}"
+    );
+}
+
 // ── Cross-fixture: parse all fixtures via parse_manifest_str round-trip ──
 
 #[test]
@@ -956,6 +1020,7 @@ fn all_fixtures_round_trip() {
         "manifest_standalone",
         "manifest_qos_match",
         "manifest_parallel_pipeline",
+        "manifest_endpoint_transport",
     ];
     for name in fixtures {
         let path = fixture_path(name);

@@ -269,6 +269,55 @@ fn contracts_carry_the_checker_facts_a_scheduler_reads() {
     assert!(!c.node_criticality.contains_key("/perception/tracker"));
 }
 
+/// play_launch issue #0042: a subscriber carries its own transport, so the
+/// shared derivation can charge the edge that ends there what the contract
+/// says rather than what the topic says. Additive on the wire, the way
+/// `buffer` was: the golden model declares none, and it must stay absent
+/// from the text rather than appear as a zero — an absent transport is
+/// unknown, and 0 is a claim about placement nobody made.
+#[test]
+fn a_subscriber_carries_its_own_transport_and_an_older_model_carries_none() {
+    const SUB: &str = "/perception/detection/detector/pointcloud";
+    const TOPIC: &str = "/sensing/pointcloud";
+
+    // The golden model is one written before the field existed.
+    let model = golden();
+    assert_eq!(model.contracts.sub_endpoints[SUB].max_transport_ms, None);
+    assert_eq!(
+        model
+            .to_yaml_string()
+            .unwrap()
+            .matches("max_transport_ms")
+            .count(),
+        1,
+        "the topic's, and nothing invented for the subscriber"
+    );
+
+    // One that was not: the two values are different fields and both survive.
+    let mut with = model.clone();
+    with.contracts
+        .sub_endpoints
+        .get_mut(SUB)
+        .unwrap()
+        .max_transport_ms = Some(0.5);
+    let yaml = with.to_yaml_string().unwrap();
+    assert!(
+        yaml.contains("max_transport_ms: 0.5"),
+        "the subscriber's own value reaches the wire"
+    );
+    let back = SystemModel::from_yaml_str(&yaml).expect("re-emitted YAML must parse");
+    assert_eq!(back, with);
+    assert_eq!(
+        back.contracts.sub_endpoints[SUB].max_transport_ms,
+        Some(0.5)
+    );
+    assert_eq!(
+        back.contracts.topics[TOPIC].max_transport_ms,
+        Some(5.0),
+        "the topic default is untouched by the override"
+    );
+}
+
 /// The golden model with every issue-#52 key deleted from the text: what a
 /// play_launch older than the fields emitted, and what nano-ros keeps
 /// reading. It must parse, every new field must come back absent, and the

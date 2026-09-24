@@ -35,7 +35,7 @@ Symbols used throughout this document:
 | $C = (A, G)$ | Contract: assumption $A$ + guarantee $G$ |
 | $M$ | Component (a node or scope that satisfies a contract) |
 | $L_{\text{node}}(X)$ | Worst-case processing time of node $X$ (from `max_latency`) |
-| $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (from topic's `max_transport`; 0 when omitted) |
+| $L_{\text{transport}}(X \to Y)$ | Worst-case transport time between nodes $X$ and $Y$ (the receiving subscriber's `max_transport`, else the topic's; 0 when neither is declared) |
 | $L_{\max}$, $L_{\min}$ | Worst / best case end-to-end latency of a path or scope |
 | $A_{\max}$ | Maximum data age at a subscriber (ms) — runtime checked via `max_age` |
 | $f$ | Frequency (Hz) |
@@ -182,8 +182,8 @@ We write:
 - $L_{\text{node}}(X)$ — worst-case processing time of node $X$
   (from the node's `max_latency`)
 - $L_{\text{transport}}(X \to Y)$ — worst-case transport time between
-  node $X$ and node $Y$ (from the topic's `max_transport`; 0 when
-  omitted)
+  node $X$ and node $Y$ (the receiving subscriber's `max_transport`, else
+  the topic's; 0 when neither is declared)
 
 ### Series (Pipeline)
 
@@ -207,13 +207,17 @@ $$5 + 0 + 15 + 0 + 30 = 50 \text{ ms}$$
 arrives at A, waits for A to finish, travels to B, waits for B to
 finish, and so on. Each delay is sequential.
 
-**Transport is declared per topic.** Each topic can declare
-`max_transport` — the worst-case time for a published message to
-reach the subscriber via DDS. Topics without `max_transport`
-contribute 0 to the budget sum; their transport is absorbed into the
-scope's residual headroom. On the same machine, transport is typically
-< 1ms and can be omitted. For cross-machine hops (sensor ECUs, network
-bridges), declare `max_transport` to make the budget explicit.
+**Transport is declared per topic, and per subscriber where the topic's
+value does not hold.** Each topic can declare `max_transport` — the
+worst-case time for a published message to reach the subscriber via DDS —
+and a subscriber can declare its own, which wins on the edges that end
+there (see [Latency and Data Freshness](launch-manifest.md#latency-and-data-freshness);
+the same topic is a pointer handoff to one subscriber and the network to
+another). Hops with neither contribute 0 to the budget sum; their
+transport is absorbed into the scope's residual headroom. On the same
+machine, transport is typically < 1ms and can be omitted. For
+cross-machine hops (sensor ECUs, network bridges), declare
+`max_transport` to make the budget explicit.
 
 **Age accumulates** along the chain — each node and transport hop adds
 to the total time since the original sensor reading. Age is checked at

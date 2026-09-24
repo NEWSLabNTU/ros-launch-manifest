@@ -1,0 +1,104 @@
+# One topic, two subscribers, one transport each (play_launch issue #0042,
+# design issue #55).
+#
+# `max_transport` is declarable on a topic AND on a subscriber endpoint, and
+# the endpoint wins where it is declared. The reason is placement: the same
+# ROS topic reaching a subscriber in the publisher's own process is a pointer
+# handoff, and reaching one on another machine is the network. One number per
+# topic cannot say both.
+#
+# Topology — producer fans out to two consumers over ONE topic:
+#
+#                             /perception/objects   (topic default 10ms)
+#                            ╱                    ╲
+#   /sensor/raw → producer (10ms)                  ├→ collocated (20ms) → /perception/fast
+#                            ╲   [0ms override]   ╱
+#                             ╲  [10ms default]  ─┴→ remote (5ms) → /perception/slow
+#
+# Two scope paths, one per branch, so each value is asserted on its own:
+#
+#   collocated_route:  10 + 0  + 20 = 30ms   (the endpoint override)
+#   remote_route:      10 + 10 +  5 = 25ms   (the topic default)
+#
+# Both numbers move if the precedence is wrong, and they move in opposite
+# directions, which is what makes the pair a test rather than a coincidence:
+#
+#   override ignored (topic value for both):  collocated 40ms, remote 25ms
+#   override applied to every subscriber:     collocated 30ms, remote 15ms
+#
+# Each scope path's budget is its correct total exactly, so a fixture that
+# fits is the only one that is right.
+version: 1
+
+nodes:
+  producer:
+    sub:
+      input: { min_rate_hz: 10 }
+    pub:
+      objects: { min_rate_hz: 10 }
+    paths:
+      main:
+        trigger: { input: [input] }
+        output: [objects]
+        max_latency: 10ms
+
+  # Loaded into the producer's container: an intra-process handoff, and a
+  # bound the toolchain can be held to because it places both.
+  collocated:
+    sub:
+      objects:
+        min_rate_hz: 10
+        max_transport: 0ms
+    pub:
+      out: { min_rate_hz: 10 }
+    paths:
+      main:
+        trigger: { input: [objects] }
+        output: [out]
+        max_latency: 20ms
+
+  # On another machine, so it inherits the topic's 10ms — which, per design
+  # issue #55, is an assumption about the network rather than a promise.
+  remote:
+    sub:
+      objects: { min_rate_hz: 10 }
+    pub:
+      out: { min_rate_hz: 10 }
+    paths:
+      main:
+        trigger: { input: [objects] }
+        output: [out]
+        max_latency: 5ms
+
+topics:
+  /sensor/raw:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [producer/input]
+    rate_hz: 10
+
+  /perception/objects:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [producer/objects]
+    sub: [collocated/objects, remote/objects]
+    rate_hz: 10
+    max_transport: 10ms
+
+  /perception/fast:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [collocated/out]
+    rate_hz: 10
+
+  /perception/slow:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [remote/out]
+    rate_hz: 10
+
+paths:
+  collocated_route:
+    input: /sensor/raw
+    output: [/perception/fast]
+    max_latency: 30ms    # 10 + 0 (the endpoint override) + 20
+  remote_route:
+    input: /sensor/raw
+    output: [/perception/slow]
+    max_latency: 25ms    # 10 + 10 (the topic default) + 5
