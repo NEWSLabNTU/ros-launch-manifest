@@ -6,6 +6,40 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.44 - 2026-09-25
+
+`TopicView` is public, so the transport precedence is derived in one place.
+Additive — the workspace Cargo version stays `0.1.6`, and nothing that
+compiled against v0.1.43 stops compiling.
+
+### Why
+
+The rule "a subscriber's `max_transport` first, the topic's as fallback" was
+moved here in v0.1.42 (play_launch issue #0042) and play_launch's resolver
+went on computing it too, because `TopicView` was `pub(crate)` and the crate
+re-exported only `parse_criticality_label`. Two copies of one rule, agreeing
+by discipline and a test rather than by construction — play_launch issue
+#0052.
+
+### What changed
+
+`TopicView` and its fields are `pub`, re-exported at the crate root. That is
+the whole change, and the second obstacle the issue recorded dissolved on
+inspection: the view is four declared facts and holds no model reference, so
+it was `ModelView::from_model` that needed a `SystemModel`, not `TopicView`.
+A consumer holding only a `ManifestIndex` — which is what the resolver has at
+load time, before any model exists — can build one.
+
+The alternative shape (a two-argument `transport_ms(sub, topic)` helper) was
+rejected: it makes the rule single while leaving the view private, so design
+issue #55's step 2, a per-edge transport class derived from placement, would
+have to be plumbed as a second argument list rather than as a field on the
+shared type — and it would leave the consumer assembling the inputs itself,
+which is where the precedence was hiding to begin with.
+
+play_launch deletes its copy at the same pin bump. `cargo test --workspace`:
+**566 passed, 0 failed.**
+
 ## v0.1.43 - 2026-09-25
 
 A hazard's `on:` is a set of fault classes. **Workspace Cargo version
