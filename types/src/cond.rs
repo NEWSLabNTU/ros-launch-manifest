@@ -135,6 +135,22 @@ pub fn filter_manifest(manifest: &mut crate::Manifest) {
         inc.unless_condition = None;
     }
 
+    // Recurse into the inline includes that survived. An inline include is a
+    // nested scope -- `<group>` in the launch file -- so a condition on a node
+    // INSIDE one is as real as a condition on the group, and evaluating the
+    // outer while ignoring the inner would be a contract that mirrors only the
+    // top level of the launch tree. Before conditional includes existed this
+    // was invisible: an inner conditional node simply survived with its
+    // condition still set, which is also the one place a surviving entity kept
+    // one. Recursion happens AFTER the outer retain, so a dropped include is
+    // never walked, and each nested manifest gets its own ref cleanup against
+    // its own node set.
+    for inc in manifest.includes.values_mut() {
+        if let crate::types::IncludeKind::Inline(inner) = &mut inc.kind {
+            filter_manifest(inner);
+        }
+    }
+
     // Clean up dangling endpoint references
     cleanup_dangling_refs(manifest, &conditional_nodes);
 }
@@ -613,6 +629,44 @@ topics:
     }
 
     // ── Conditional includes (issue #0043) ──
+
+    #[test]
+    fn test_conditions_inside_an_inline_include_are_evaluated() {
+        // An inline include is a nested scope — `<group>` in the launch file —
+        // so a condition on a node INSIDE one is as real as a condition on the
+        // group itself. Before the recursion this node survived with its
+        // condition still set, which made it the one surviving entity in a
+        // filtered manifest that kept one.
+        let yaml = r#"
+version: 1
+includes:
+  sensors:
+    if: "true"
+    nodes:
+      lidar_driver:
+        if: "false"
+        pub:
+          scan: {}
+      camera_driver:
+        if: "true"
+        pub:
+          image: {}
+"#;
+        let mut m = crate::parse::parse_manifest_str(yaml).unwrap();
+        crate::cond::filter_manifest(&mut m);
+
+        let inner = m.includes["sensors"].inline().expect("inline include");
+        assert!(
+            !inner.nodes.contains_key("lidar_driver"),
+            "a false node inside an inline include must be dropped, got {:?}",
+            inner.nodes.keys().collect::<Vec<_>>()
+        );
+        assert!(inner.nodes.contains_key("camera_driver"));
+        assert!(
+            inner.nodes["camera_driver"].if_condition.is_none(),
+            "a surviving nested node must have its condition cleared, like every other survivor"
+        );
+    }
 
     #[test]
     fn test_conditional_include_dropped_and_refs_cleaned() {
