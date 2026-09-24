@@ -134,6 +134,30 @@ impl Model {
         self
     }
 
+    /// `topics.<t>.max_transport`: the hop cost every subscriber pays
+    /// unless it states its own.
+    fn topic_transport(mut self, fqn: &str, ms: f64) -> Self {
+        self.0
+            .contracts
+            .topics
+            .entry(s(fqn))
+            .or_default()
+            .max_transport_ms = Some(ms);
+        self
+    }
+
+    /// `sub.<ep>.max_transport`: this subscriber's own hop cost, which
+    /// beats the topic's on the edges that end here.
+    fn sub_transport(mut self, ep_ref: &str, ms: f64) -> Self {
+        self.0
+            .contracts
+            .sub_endpoints
+            .entry(s(ep_ref))
+            .or_default()
+            .max_transport_ms = Some(ms);
+        self
+    }
+
     fn state_sub(mut self, ep_ref: &str) -> Self {
         self.0.contracts.sub_endpoints.insert(
             s(ep_ref),
@@ -1031,6 +1055,97 @@ fn a_fork_join_route_is_the_slowest_branch() {
     let route = graph::critical_path(&sg).expect("fork-join has a route");
     assert_eq!(route.total_ms, 70.0);
     assert_eq!(route.sampling_cost_ms, 0.0);
+}
+
+/// `manifest_endpoint_transport`: one topic, two subscribers, one
+/// transport each. The topic's `max_transport` is the default and a
+/// subscriber's own beats it on the edges that END at that subscriber
+/// (play_launch issue #0042, design issue #55) — the resolver's precedence,
+/// which the model could not carry until `SubContract` gained the field.
+///
+/// Two scope paths, one per branch, because one route total cannot fail in
+/// both directions: ignoring the override moves the collocated branch and
+/// leaves the remote one, applying it everywhere does the opposite.
+#[test]
+fn a_subscriber_transport_beats_the_topic_on_its_own_edge() {
+    let model = Model::new(&[("/p", None)])
+        .node("/p/producer", "/p", None)
+        .node("/p/collocated", "/p", None)
+        .node("/p/remote", "/p", None)
+        .input("/p/producer", "main", &["input"], &["objects"], Some(10.0))
+        .input("/p/collocated", "main", &["objects"], &["out"], Some(20.0))
+        .input("/p/remote", "main", &["objects"], &["out"], Some(5.0))
+        .topic("/sensor/raw", &[], &["/p/producer/input"])
+        .topic(
+            "/p/objects",
+            &["/p/producer/objects"],
+            &["/p/collocated/objects", "/p/remote/objects"],
+        )
+        .topic("/p/fast", &["/p/collocated/out"], &[])
+        .topic("/p/slow", &["/p/remote/out"], &[])
+        .topic_transport("/p/objects", 10.0)
+        .sub_transport("/p/collocated/objects", 0.0)
+        .scope_path(
+            "/p",
+            "collocated_route",
+            &["/sensor/raw"],
+            &["/p/fast"],
+            Some(30.0),
+        )
+        .scope_path(
+            "/p",
+            "remote_route",
+            &["/sensor/raw"],
+            &["/p/slow"],
+            Some(25.0),
+        )
+        .done();
+
+    // The resolution itself, before any route is walked.
+    let view = view::ModelView::from_model(&model);
+    let objects = &view.topics["/p/objects"];
+    assert_eq!(
+        objects.transport_ms("/p/collocated/objects"),
+        Some(0.0),
+        "the subscriber's own"
+    );
+    assert_eq!(
+        objects.transport_ms("/p/remote/objects"),
+        Some(10.0),
+        "the topic's, for the subscriber that declared none"
+    );
+    assert_eq!(
+        objects.sub_max_transport_ms.len(),
+        1,
+        "only the overriding endpoint is carried"
+    );
+    assert_eq!(
+        view.topics["/p/fast"].transport_ms("/p/collocated/out"),
+        None,
+        "an undeclared hop stays absent, and is charged 0"
+    );
+
+    // And the totals it moves. 0 and 10 are both on the same topic.
+    let graph = graph::build_global_graph(&view);
+    let total = |sink: &str| {
+        let sg = graph::subgraph_for_scope_path(
+            &graph,
+            graph::subtree_scopes(&view, "/p"),
+            &[s("/sensor/raw")],
+            &[s(sink)],
+        );
+        graph::critical_path(&sg).expect("a route").total_ms
+    };
+    assert_eq!(
+        total("/p/fast"),
+        30.0,
+        "10 + 0 (the override) + 20; reading the topic would give 40"
+    );
+    assert_eq!(
+        total("/p/slow"),
+        25.0,
+        "10 + 10 (the default) + 5; leaking the override would give 15"
+    );
 }
 
 /// `manifest_multi_scope`: a scope path sees only its subtree. The

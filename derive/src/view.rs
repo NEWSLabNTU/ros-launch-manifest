@@ -144,8 +144,30 @@ pub(crate) struct TopicView {
     pub publishers: Vec<String>,
     /// Subscriber endpoint refs.
     pub subscribers: Vec<String>,
-    /// Worst-case transport for this hop; an undeclared hop contributes 0.
+    /// Worst-case transport for this hop, for every subscriber that does
+    /// not state its own; an undeclared hop contributes 0.
     pub max_transport_ms: Option<f64>,
+    /// Subscriber endpoint ref -> the transport that subscriber declared
+    /// for itself. Normally empty: it holds only the endpoints that
+    /// override, so the common edge costs one miss in a tiny map.
+    pub sub_max_transport_ms: BTreeMap<String, f64>,
+}
+
+impl TopicView {
+    /// The transport charged for the edge that ENDS at `sub_ep`: the
+    /// subscriber's own value if it declared one, else the topic's.
+    ///
+    /// The precedence is the resolver's (`manifest_graph.rs`, issue #44)
+    /// and the reason is placement: a subscriber in the publisher's process
+    /// pays a pointer handoff where one across the network pays the
+    /// network, on the same topic (play_launch issue #0042, design issue
+    /// #55).
+    pub fn transport_ms(&self, sub_ep: &str) -> Option<f64> {
+        self.sub_max_transport_ms
+            .get(sub_ep)
+            .copied()
+            .or(self.max_transport_ms)
+    }
 }
 
 /// One `contracts.scope_paths` entry: the requirement a chain is derived for.
@@ -232,6 +254,18 @@ impl ModelView {
                             .topics
                             .get(fqn)
                             .and_then(|t| t.max_transport_ms),
+                        sub_max_transport_ms: wiring
+                            .subscribers
+                            .iter()
+                            .filter_map(|ep| {
+                                let ms = model
+                                    .contracts
+                                    .sub_endpoints
+                                    .get(ep)
+                                    .and_then(|sc| sc.max_transport_ms)?;
+                                Some((ep.clone(), ms))
+                            })
+                            .collect(),
                     },
                 )
             })

@@ -9,6 +9,9 @@
 //! two ends. The arithmetic is unchanged -- series hops sum, a fork-join
 //! takes the slowest branch, a timer path costs one period plus its exec --
 //! so the scope-path form and the chain form of one system keep agreeing.
+//! The WEIGHTS are per edge rather than per topic: a subscriber may state
+//! its own transport, and the topic's value is the default for those that
+//! do not (play_launch issue #0042, design issue #55).
 //!
 //! Everything here is keyed by `BTreeMap`/`BTreeSet`, so a given model
 //! yields one route, in one order, on every run.
@@ -29,6 +32,8 @@ pub(crate) struct Edge {
     pub pub_ep: String,
     /// Subscriber endpoint ref on `to`.
     pub sub_ep: String,
+    /// Transport for THIS edge: [`TopicView::transport_ms`] of `sub_ep`,
+    /// which is the subscriber's declared value or the topic's default.
     pub max_transport_ms: Option<f64>,
     /// The subscriber is `state: true`: polled, not causal. A state edge
     /// carries no latency and never closes a cycle.
@@ -87,7 +92,7 @@ pub(crate) fn build_global_graph(view: &ModelView) -> Graph<'_> {
                     topic: topic_fqn.clone(),
                     pub_ep: pub_ep.to_string(),
                     sub_ep: sub_ep.to_string(),
-                    max_transport_ms: topic.max_transport_ms,
+                    max_transport_ms: topic.transport_ms(sub_ep),
                     is_state: view.state_subs.contains(*sub_ep),
                 });
             }
