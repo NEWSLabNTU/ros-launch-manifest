@@ -6,6 +6,71 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.42 - 2026-09-24
+
+A subscriber's `max_transport` reaches the model, so the shared derivation can
+see it. Additive: the workspace Cargo version stays `0.1.5` and a model
+written before this parses with the field absent.
+
+### Why
+
+`max_transport` is legal grammar on a topic AND on a subscriber endpoint, and
+this repository's own documentation specified the precedence — `docs/launch-
+manifest.md` §"Heterogeneous transport on a single topic" gives
+`sub.max_transport ?? topic.max_transport ?? 0`. The play_launch checker
+implemented exactly that. `model::SubContract` had no transport field, so the
+endpoint value never reached the model, and `derive` — which reads the model —
+used the topic's for every edge.
+
+Two copies of one derivation therefore computed different route totals
+wherever a contract used the override, with no diagnostic. That is the hole
+left in phase 78's "one derivation, two consumers", and `derive` was
+contradicting this repository's documentation, not only the consumer.
+
+### What changed
+
+`model::SubContract` gains `max_transport_ms`, treated exactly like `buffer`
+(serde-defaulted, skipped when absent). `TopicView` keeps the topic default
+and gains a per-subscriber map plus `transport_ms(sub_ep)` — override else
+topic — populated only for refs that declare one, so it is normally empty.
+`graph.rs` reads it per edge. The graph algebra is unchanged; only the weights
+are now per edge, and the header comment says so.
+
+`check/src/rules/scope_budget.rs` is deliberately NOT changed. It is a flat
+sum over a scope's nodes and topics with no publisher-subscriber pairing, so
+there is no edge for an endpoint value to attach to; honouring the override
+there means giving the rule a graph, which design issue #55 lists under "not
+decided". The new check test pins what it says TODAY, so a later convergence
+appears as a failing assertion rather than as silence.
+
+### The fixture, and why the old one did not help
+
+`tests/fixtures/manifest_endpoint_transport/`: one topic with two subscribers,
+one declaring `max_transport: 0ms` and one declaring none, with a scope path
+per branch — because a single route total cannot fail in both directions at
+once. Collocated route `10 + 0 + 20 = 30ms` (40 if the override is ignored);
+remote route `10 + 10 + 5 = 25ms` (15 if the override leaks to every
+subscriber).
+
+A fixture declaring endpoint-level `max_transport` already existed
+(`manifest_mixed_transport`, whose header documents its own 70-vs-80ms
+consequence) — and **nothing referenced it**: no `.rs`, no `.md`, no `.toml`.
+Parsing was covered; no consumer that could see the divergence ever ran it.
+The new fixture is wired into two crates' tests for that reason.
+
+Non-vacuity, both directions: reverting the edge weight to the topic's value
+fails the route assertion (`left: 40.0, right: 30.0`), and making the lookup
+key-blind fails the other way (`left: Some(0.0), right: Some(10.0)` for the
+subscriber that declared none).
+
+`cargo test --workspace` 560 -> **564 passed, 0 failed**.
+
+### Docs
+
+`docs/contract-theory.md` defined transport as coming "from the topic's
+`max_transport`" in its symbol table and its series section. Corrected to the
+per-edge rule the grammar and the checker already had.
+
 ## v0.1.41 - 2026-09-24
 
 An include can carry a condition, and the conditions inside one are evaluated.
