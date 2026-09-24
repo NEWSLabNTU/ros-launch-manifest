@@ -129,10 +129,15 @@ pub struct HazardDecl {
     /// pair). Any group faulting is the hazard.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub guards: Vec<GuardGroup>,
-    /// Which fault class the guards report. `reported` names an application
-    /// detector's output topic — the fault is whatever that node checks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub on: Option<FaultKind>,
+    /// Which fault classes the guards report, as a set: `on: omission` and
+    /// `on: [omission, late]` both parse (phase 82). EMPTY means the key was
+    /// omitted, which a consumer reads as "every class" -- the strictest
+    /// reading, so declaring less never buys slack. An explicit `on: []` is
+    /// a parse error, so empty is never ambiguous. Order is as written,
+    /// duplicates dropped. `reported` names an application detector's
+    /// output topic -- the fault is whatever that node checks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub on: Vec<FaultKind>,
     /// The fault-tolerant time interval: fault → hazardous event, absent
     /// reaction. The only new number; `FDTI + FRTI` must fit inside it.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -875,8 +875,17 @@ pub struct HazardContract {
     /// only when every member does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guards: Vec<GuardContract>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on: Option<FaultKind>,
+    /// The fault classes the guards report, as a set (phase 82). Empty
+    /// means the contract omitted `on:`, read as every class. On the wire a
+    /// set of one is a bare scalar -- exactly what a model written before
+    /// v0.1.43 carried -- and a larger set is a list; both read back.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "fault_kinds::serialize",
+        deserialize_with = "fault_kinds::deserialize"
+    )]
+    pub on: Vec<FaultKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ftti_ms: Option<f64>,
     /// Key into `scope_paths`.
@@ -900,6 +909,35 @@ pub enum FaultKind {
     Late,
     Loss,
     Reported,
+}
+
+/// `HazardContract.on` on the wire: one kind as a scalar (the pre-v0.1.43
+/// shape, so an older reader still reads every single-kind model), several
+/// as a list.
+mod fault_kinds {
+    use super::FaultKind;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(kinds: &[FaultKind], s: S) -> Result<S::Ok, S::Error> {
+        match kinds {
+            [one] => one.serialize(s),
+            many => many.serialize(s),
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(FaultKind),
+        Many(Vec<FaultKind>),
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<FaultKind>, D::Error> {
+        Ok(match OneOrMany::deserialize(d)? {
+            OneOrMany::One(k) => vec![k],
+            OneOrMany::Many(v) => v,
+        })
+    }
 }
 
 /// Where the runtime observer reads a violation (phase 71).
@@ -1652,6 +1690,33 @@ mod tests {
             std::path::Path::new(&input_path_string(&elsewhere, Some(&bringup))).is_absolute(),
             "an input outside the base stays absolute"
         );
+    }
+
+    /// Phase 82: a hazard's `on` is a set, but a set of one stays a bare
+    /// scalar on the wire so a model a pre-v0.1.43 reader consumes is
+    /// byte-identical; a scalar and a list both read back, and an omitted
+    /// key is the empty set.
+    #[test]
+    fn hazard_on_is_a_scalar_when_single_and_reads_either_shape() {
+        let one = HazardContract {
+            on: vec![FaultKind::Omission],
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&one).unwrap();
+        assert!(y.contains("on: omission\n"), "{y}");
+        assert_eq!(serde_yaml_ng::from_str::<HazardContract>(&y).unwrap(), one);
+
+        let two = HazardContract {
+            on: vec![FaultKind::Omission, FaultKind::Late],
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&two).unwrap();
+        assert!(y.contains("- omission") && y.contains("- late"), "{y}");
+        assert_eq!(serde_yaml_ng::from_str::<HazardContract>(&y).unwrap(), two);
+
+        let none: HazardContract = serde_yaml_ng::from_str("ftti_ms: 5.0\n").unwrap();
+        assert!(none.on.is_empty());
+        assert!(!serde_yaml_ng::to_string(&none).unwrap().contains("on:"));
     }
 
     #[test]

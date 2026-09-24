@@ -6,6 +6,61 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.43 - 2026-09-25
+
+A hazard's `on:` is a set of fault classes. **Workspace Cargo version
+`0.1.5` -> `0.1.6`**: `HazardDecl.on` and `model::HazardContract.on` change
+from `Option<FaultKind>` to `Vec<FaultKind>`, an API break for anything that
+reads them.
+
+### Why
+
+`hazards.<h>.on` took exactly one class while `on_violation.on` took a list.
+A guard watched by a liveliness lease AND an age limit had to drop one of
+them from the claim, and the only way to name both was to omit the key. The
+consumer (play_launch, phase 82) read an omitted key as "any class" and took
+the minimum over every mechanism, so on the Autoware Reference Design WG's L4
+design an omitted `on:` read detection 20 ms where `on: omission` read 30 ms:
+saying less about the fault bought 10 ms of slack. play_launch issue #0046.
+
+The consumer's rule is now that the detection interval must cover every
+class the hazard claims (the max over the classes of the min over each
+class's mechanisms). Under that rule an omitted key is the strictest reading,
+and a list is a strictly more informative declaration than an omission
+rather than an unspellable one. This release is the grammar half.
+
+### What changed
+
+- `types`: `on: omission` and `on: [omission, late]` both parse; a scalar is
+  the set of one, a list keeps its written order with duplicates dropped, and
+  an omitted key is the empty set. Each member meets the same closed-set
+  refusal as before (`on: crash` and `on: [omission, crash]` are both "not a
+  fault class"). `on: []` is a parse error, "state at least one fault class
+  or omit the key", because an empty set would read as omitted, which is the
+  opposite of what an empty list looks like it says.
+- `model`: `HazardContract.on` is a `Vec<FaultKind>`. On the wire a set of
+  one is a bare scalar -- exactly the shape a pre-v0.1.43 model carried -- and
+  a larger set is a list; both read back. A single-class model is therefore
+  byte-identical to what this repository wrote before, and a reader built
+  against v0.1.42 still reads it. Only a model that actually carries two or
+  more classes needs a v0.1.43 reader.
+- `derive`, `check`, `sched` do not read the field; unchanged.
+- Field table, `docs/format-reference.md` (regenerated), and the FDTI
+  section of `docs/launch-manifest.md`, which now states the per-class max,
+  the omitted-key reading, and when `max_age` counts toward an omission
+  (only under `on_violation.mechanism: diagnostics | application`, where the
+  node evaluates the age on its own clock; the rule is the consumer's,
+  documented here beside the grammar it reads).
+
+### Tests
+
+`types`: `hazard_on_is_a_set_of_fault_classes` (scalar, list, duplicates,
+omitted), and three new refusals in
+`fault_reaction_closed_sets_refuse_unknown_members` (a bad member inside a
+list, `on: []`, a mapping). `model`:
+`hazard_on_is_a_scalar_when_single_and_reads_either_shape`. `cargo test --workspace
+--all-features` 564 -> **566 passed, 0 failed**.
+
 ## v0.1.42 - 2026-09-24
 
 A subscriber's `max_transport` reaches the model, so the shared derivation can

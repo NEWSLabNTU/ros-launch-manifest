@@ -918,7 +918,7 @@ pub const FIELDS: &[Field] = &[
         "on",
         Context::Hazard,
         Kind::Fact,
-        "Fault class the guards report: omission | late | loss | reported.",
+        "Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error.",
     ),
     live(
         "ftti",

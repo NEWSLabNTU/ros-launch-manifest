@@ -289,9 +289,24 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
             }
             other => return Err(type_err(&hctx, "guards", "a list", other)),
         }
-        let on = yaml_string(v, "on", &hctx)?
-            .map(|s| parse_fault_kind(&s, &hctx, "on"))
-            .transpose()?;
+        // Phase 82: a set. A scalar is the set of one; `on: []` is refused
+        // because an empty set would read as "omitted" (= every class),
+        // the opposite of what an empty list looks like it says.
+        if matches!(&v["on"], Yaml::Array(a) if a.is_empty()) {
+            return Err(field_err(
+                &hctx,
+                "on",
+                "an empty set of fault classes; state at least one fault class or omit the key \
+                 (omitted means every class)",
+            ));
+        }
+        let mut on: Vec<FaultKind> = Vec::new();
+        for raw in parse_string_or_list(v, "on", &hctx)? {
+            let kind = parse_fault_kind(&raw, &hctx, "on")?;
+            if !on.contains(&kind) {
+                on.push(kind);
+            }
+        }
         out.insert(
             name,
             HazardDecl {
@@ -1861,7 +1876,7 @@ nodes:
         assert_eq!(h.guards.len(), 2);
         assert!(!h.guards[0].all_of && h.guards[0].members == vec!["/safety/scan"]);
         assert!(h.guards[1].all_of && h.guards[1].members.len() == 2);
-        assert_eq!(h.on, Some(FaultKind::Omission));
+        assert_eq!(h.on, vec![FaultKind::Omission]);
         assert_eq!(h.ftti.unwrap().as_millis_f64(), 500.0);
         assert_eq!(h.reaction.as_deref(), Some("safety.stop"));
         let ov = m.nodes["brake"].subscribers["obstacles"]
@@ -1880,10 +1895,47 @@ nodes:
         assert_eq!(ss.settle.unwrap().as_millis_f64(), 200.0);
     }
 
+    /// Phase 82: `hazards.<h>.on` is a set. A scalar is the set of one, a
+    /// list is the set as written (duplicates dropped), and an omitted key
+    /// is the empty set -- which consumers read as every class.
+    #[test]
+    fn hazard_on_is_a_set_of_fault_classes() {
+        let on = |yaml: &str| {
+            super::parse_manifest_str(yaml).unwrap().hazards["h"]
+                .on
+                .clone()
+        };
+        assert_eq!(
+            on("hazards:\n  h:\n    on: omission\n"),
+            vec![FaultKind::Omission]
+        );
+        assert_eq!(
+            on("hazards:\n  h:\n    on: [omission, late]\n"),
+            vec![FaultKind::Omission, FaultKind::Late]
+        );
+        assert_eq!(
+            on("hazards:\n  h:\n    on: [late, late, reported]\n"),
+            vec![FaultKind::Late, FaultKind::Reported]
+        );
+        assert!(on("hazards:\n  h:\n    ftti: 5ms\n").is_empty());
+    }
+
     #[test]
     fn fault_reaction_closed_sets_refuse_unknown_members() {
         let cases: &[(&str, &str)] = &[
             ("hazards:\n  h:\n    on: crash\n", "not a fault class"),
+            (
+                "hazards:\n  h:\n    on: [omission, crash]\n",
+                "not a fault class",
+            ),
+            (
+                "hazards:\n  h:\n    on: []\n",
+                "state at least one fault class or omit the key",
+            ),
+            (
+                "hazards:\n  h:\n    on: { late: 1 }\n",
+                "a list or a single name",
+            ),
             (
                 "nodes:\n  n:\n    sub:\n      a:\n        on_violation: { on: [value], reaction: r }\n",
                 "not a fault class",

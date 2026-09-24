@@ -792,8 +792,9 @@ The vocabulary adds exactly one requirement, one reaction edge and one
 fact, and derives the rest:
 
 - **`hazards.<h>`** — `guards:` (topics watched; a bare name is one guard,
-  `{ all_of: [...] }` a redundant set), `on:` (the fault class:
-  `omission | late | loss | reported`), **`ftti:`** (the requirement), and
+  `{ all_of: [...] }` a redundant set), `on:` (the fault classes, one or a
+  list: `omission | late | loss | reported`; omitted means every class the
+  detectors observe), **`ftti:`** (the requirement), and
   `reaction:` naming the scope path — or, since phase 75, the mode — that
   reaches the safe state.
 - **`sub.<e>.on_violation`** — `{ on, reaction, within, mechanism }` on the

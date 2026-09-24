@@ -224,7 +224,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `severity` | requirement |  | Severity label from the HARA (`ASIL_D`, `SIL_3`, …). Consumed, never computed. |
 | `description` | meta |  | What the hazardous event is. |
 | `guards` | meta |  | Topics watched for the fault. A bare name is one guard; `{ all_of: [...] }` is a redundant set that faults only when every member does. |
-| `on` | fact |  | Fault class the guards report: omission | late | loss | reported. |
+| `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
 | `reaction` | meta |  | The scope path whose route reaches the safe state. |
 

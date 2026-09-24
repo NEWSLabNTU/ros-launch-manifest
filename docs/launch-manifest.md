@@ -2037,7 +2037,7 @@ hazards:
     guards:
       - /safety/scan                      # any guard faulting is the hazard …
       - all_of: [/loc/ndt, /loc/gnss]     # … except a redundant set, which faults when ALL do
-    on: omission                          # omission | late | loss | reported
+    on: omission                          # omission | late | loss | reported, or a list of them
     ftti: 500ms                           # physics: fault → hazardous event, absent reaction
     reaction: safety.stop                 # the scope path whose route reaches the safe state
 
@@ -2069,16 +2069,33 @@ the node that does.
 `FDTI + FRTI <= ftti`. Everything in that inequality but `ftti` is
 derived, in `resolve/src/ros/manifest_loader.rs::check_fault_reaction`.
 
-**FDTI — detection.** A subscriber's detection interval is the **min**
-over the mechanisms it declares, because it notices when *any* of them
-fires (`detector_interval_ms`), and a guard topic's interval is the
-**min** over its subscribers — the fastest detector wins:
+**FDTI — detection.** For one fault class, a subscriber's detection
+interval is the **min** over the mechanisms it declares that count for that
+class, because it notices when *any* of them fires (`detector_interval_ms`),
+and a guard topic's interval is the **min** over its subscribers — the
+fastest detector wins:
 
 | `on:` class | Mechanism read |
 |-------------|----------------|
-| `omission` | the effective QoS `lease_duration` |
+| `omission` | the effective QoS `lease_duration`; the subscriber's `max_age` only under `on_violation.mechanism: diagnostics` or `application` |
 | `late` | the effective QoS `deadline`, and the subscriber's `max_age` |
 | `loss` | `drop.max_consecutive × period` on the guard topic |
+
+`hazards.<h>.on` is a **set** (since v0.1.43): `on: omission` and
+`on: [omission, late]` both parse, and `on: []` is an error. The interval
+must cover every class the hazard claims, so it is the **max** over the
+claimed classes of the per-class interval, and a claimed class that no
+mechanism counts for is `hazard-unguarded` for that class. An omitted `on:`
+claims every class the guard's detectors can observe (omission, late,
+loss; never `reported`, which only the author can know) and takes the max
+over those some detector covers -- so saying less about a fault never buys
+slack.
+
+> **An age limit detects an omission only where something evaluates it.**
+> Under `mechanism: qos`, the default, only DDS liveliness and deadline
+> events fire; an age checked on arrival never fires while nothing
+> arrives. Under `diagnostics` or `application` the node evaluates the age
+> of its newest sample on its own clock, and that notices silence too.
 
 Only subscribers that **react** count — a subscriber with no
 `on_violation` is a bystander, and a guard none of whose subscribers
@@ -2103,9 +2120,9 @@ Across a guard **group**: a bare topic is one member; an `all_of:` set
 faults only when every member does, so it is detected when the **last**
 one is noticed gone — the **max** over members. Across a hazard's several
 guard groups, FDTI is again the **max**, because the hazard must cover
-its slowest fault. Three levels, three operators: min over a subscriber's
-mechanisms, min over a member's reacting subscribers, max over members
-and over groups.
+its slowest fault. Four levels: min over a subscriber's mechanisms for
+one class, min over a member's reacting subscribers, max over the claimed
+classes, max over members and over groups.
 
 **FRTI — reaction.** `walk_reaction` follows the route that actually
 runs, which is *not* the critical path of the nominal graph: the guard's
