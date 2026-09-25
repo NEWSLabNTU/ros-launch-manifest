@@ -33,7 +33,7 @@ Status lines were last reconciled against the code on **2026-09-23**
 members, format reference as generated).
 
 **Roll-up.** Issues 1–51, #53 and #54 are resolved — of those, #29,
-#31, #45, #48 and #50 have since been superseded, and #50 was
+#31, #32, #45, #48 and #50 have since been superseded, and #50 was
 *reversed* (see its status line). #52 is open on the consumer side only: the four
 units it planned for this repository all landed and shipped as
 `v0.1.37`.
@@ -180,7 +180,24 @@ composition section + summary table).
 
 ---
 
-## ~~32. Capture Mode Buried in Theory Appendix~~ — Done (doc only)
+## ~~32. Capture Mode Buried in Theory Appendix~~ — Done; superseded by the capture script
+
+**Status (2026-09-25): the section this entry added no longer exists,
+and the flag it named never will.** "Generating Manifests from a
+Running System" was removed from `launch-manifest.md` (`2fcb4d5`), and
+`--save-manifest-dir` with it: no binary ever accepted it, and it is
+not going to be built under that name. What exists instead is split
+along the line Appendix C of
+[contract-theory.md](contract-theory.md) now draws — `play_launch
+measure` turns a recorded run into cost figures, and
+`scripts/capture_manifest.py` (in the `play_launch` repo) writes a
+run's STRUCTURE out as a contract: `nodes:`, their endpoints, and
+`topics:` with types and wiring. Neither emits a requirement. Every
+measured number is emitted as a comment, because a run observes facts
+and a contract states requirements — so the capture is a starting
+point a human promotes, not a generated contract. `play_launch` issue
+`0044` carries the verification; the preceding status line, written
+while the section was believed to be still present, is superseded.
 
 **Status (2026-09-23): the doc move landed; the feature did not.**
 `--save-manifest-dir` does not exist in play_launch, so
