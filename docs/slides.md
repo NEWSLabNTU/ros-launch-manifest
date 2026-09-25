@@ -369,8 +369,14 @@ mapper's input from the resolved model through the same function
 **Autoware contracts**: 76 contract files covering the full
 planning_simulator tree
 
-Open items: burstiness detection metrics, capture mode
-(contract bootstrapping from traces — not implemented)
+**Capture**: shipped in part — `scripts/capture_manifest.py` writes a
+run's **structure** (`nodes:`, endpoints, `topics:` with types and
+wiring) and `play_launch measure` its **costs**; requirements are
+deliberately never captured, since a run observes facts and a contract
+states requirements. Measured numbers are emitted as comments for a
+human to promote (`contract-theory.md` Appendix C)
+
+Open items: burstiness detection metrics
 
 ---
 

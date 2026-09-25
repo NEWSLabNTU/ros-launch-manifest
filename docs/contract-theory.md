@@ -816,16 +816,35 @@ the slack when it holds, and in both cases naming every term.
 Per guard group, the detection interval is the **fastest detector among the
 subscribers that REACT**: a subscriber that notices and does nothing has
 not detected anything the system can use, so one without an `on_violation`
-is not counted. A subscriber detects when any of its mechanisms fires, so
-its own interval is the **min** over them
+is not counted. Detection is **class-aware**: a mechanism counts only for
+the fault classes it can actually observe, and within one class a
+subscriber detects when any of its counting mechanisms fires, so its
+interval for that class is the **min** over them
 (`detector_interval_ms`, `resolve/src/ros/manifest_loader.rs`):
 
 | Fault class | Mechanism read |
 |-------------|----------------|
-| `omission` | `qos.lease_duration` |
-| `late` | `qos.deadline`, `sub.max_age` |
+| `omission` | the effective `qos.lease_duration` (subscriber over topic); and `sub.max_age`, but **only** under `on_violation.mechanism: diagnostics \| application` |
+| `late` | the effective `qos.deadline`, `sub.max_age` |
 | `loss` | `drop.max_consecutive` × the topic's period |
 | `reported` | the guard **is** a detector's output: its period + the publishing path's `max_latency` |
+
+`max_age` is gated on the mechanism because under `qos`, the default, only
+middleware events fire, and an age limit evaluated on arrival never fires
+while nothing arrives; `diagnostics` and `application` mean the node reads
+the age of its newest sample on its own clock, which does notice silence
+(`max_age_evaluated`, same file).
+
+**Across classes the direction reverses: it is the MAX.** A hazard's
+interval must cover whichever fault occurs, so a hazard claiming several
+classes is timed by the **slowest** class it claims
+(`interval_over_kinds`). Omitting `on:` therefore buys no slack — the
+omitted form claims `omission`, `late` and `loss`, and is timed by the
+slowest of those some detector covers. With an explicit `on:`, a named
+class that no detector counts for is `hazard-unguarded`; with `on:`
+omitted, a class none covers is simply not claimed, and only an empty set
+is unguarded. `reported` is never implied: it says the guard IS a
+detector's output, which only the author can know.
 
 **A rate floor is not a detector.** `min_rate_hz` is a requirement;
 nothing fires when a period passes unless a QoS deadline or an application
@@ -1052,45 +1071,71 @@ than the model predicts.
 $$\hat{r} = 1 - P(\text{drop} \mid \text{previous drop})$$
 $$\text{mean burst} = 1 / \hat{r}$$
 
-## Appendix C: Empirical Contract Derivation
+## Appendix C: Capture, and the Line It Does Not Cross
 
-When writing a manifest for an existing system without documented timing
-requirements, you need initial values for `max_latency`, `min_rate_hz`,
-and `drop.max_count`. Capture mode bootstraps these from runtime
-measurements.
+When writing a manifest for an existing system with no documented timing
+requirements, the blank file is the obstacle. A run can remove most of it —
+but only the half of it that is a *fact*.
 
-*Implementation status:* capture mode as described below — deriving
-`max_latency`, `min_rate_hz` and `drop.max_count` from observed traces —
-is designed but not implemented; there is no CLI flag for it. What exists
-is `play_launch measure <run-dir> --model <m.yaml>`, which turns a
-recorded run into a pasteable fragment on stdout (never written back): a
-platform-file `budget_us` per node, taken as the observed **maximum**
-thread-CPU cost rather than a percentile (under CBS an overrun is
-throttled to the next replenishment, so a p99 budget converts the slowest
-1% of invocations into a full-period stall), and, as comments under a
-header saying they belong in the *contract*, the measured
-`nodes.<n>.paths.<p>.min_latency` floors that make `max_jitter`
-falsifiable. Paths it cannot measure are printed with the reason —
-timer-triggered, unstamped, not exercised — because omitting them would
-read as "costs nothing". The interception layer records the per-topic
-traces the rest of this appendix would need (`frontier_summary.json`,
-`stats_summary.json`, `events.jsonl`).
+**What is captured (implemented).** `scripts/capture_manifest.py <run-dir>
+--model <m.yaml>` in the `play_launch` repo writes a run's **structure** out
+as a contract: `nodes:` with their publishers and subscriptions, and
+`topics:` with `type:` and wiring, taken from the interception layer's record
+of every endpoint *created* (`endpoints.tsv`) rather than from message
+traffic — an endpoint exists whether or not a message ever crossed it, and
+grading by traffic would report a subscription on an unexercised pipeline as
+absent. Costs are the other implemented half: `play_launch measure <run-dir>
+--model <m.yaml>` emits a platform-file `budget_us` per node, taken as the
+observed **maximum** thread-CPU cost rather than a percentile (under CBS an
+overrun is throttled to the next replenishment, so a p99 budget converts the
+slowest 1% of invocations into a full-period stall), plus the measured
+`nodes.<n>.paths.<p>.min_latency` floors that make `max_jitter` falsifiable —
+those as comments, under a header saying they belong in the *contract*. Paths
+neither tool can measure are printed with the reason (timer-triggered,
+unstamped, not exercised), because omitting them would read as "costs
+nothing".
 
-Capture mode derives contracts from observed traces:
+**What is not captured, deliberately.** Neither tool emits `rate_hz`,
+`min_rate_hz`, `max_latency`, `max_age`, `max_jitter`, `paths:` or
+`criticality`. A run observes that a topic published at 9.97 Hz; it cannot
+observe whether 10 Hz was *required*. Every measured number is therefore
+emitted as a **comment** for a human to promote, and until someone does, the
+file is a description rather than a contract. The capture also emits no
+conditions: a run is one branch of the launch file with every `if:`/`unless:`
+already resolved, so a capture of the same system launched with different
+arguments is a different capture.
+
+**The technique this appendix originally proposed, and why it is not
+applied.** The natural next step is to turn those observations into bounds
+directly, with a safety margin $\alpha > 1$:
 
 $$\hat{G}_L = \max(\text{observed latencies}) \times \alpha$$
 $$\hat{A}_R = \min(\text{observed inter-arrivals}) / \alpha$$
 
-where $\alpha > 1$ is the safety margin (default 1.2).
-
-After $N$ observations without violation, at confidence level $c$:
+and to argue the residual risk from the run's length: after $N$ observations
+without violation, at confidence level $c$,
 
 $$P(\text{violation per trial}) \leq 1 - (1 - c)^{1/N}$$
 
-For $N = 1000$ at $c = 0.99$: $P \leq 0.0046$.
+so $N = 1000$ at $c = 0.99$ gives $P \leq 0.0046$.
 
-Capture provides a starting point. Users refine manually or tighten
-margins as more data is collected.
+The mathematics is sound and the technique is a real one; the tool does not
+apply it, and this is a ruling rather than a gap in the implementation.
+Multiplying a measurement by a margin **manufactures a requirement out of a
+measurement** — the one thing a contract must not contain (see *Derived
+Quantities*). The resulting number is unfalsifiable in the direction that
+matters: it was derived from the behaviour it would be used to check, so the
+system passes by construction, and the margin $\alpha$ encodes a judgement
+about acceptable risk that no run contains. The confidence bound
+compounds the problem rather than fixing it — it quantifies how often the
+*observed* workload violated the *observed* bound, which says nothing about
+the operating conditions the run did not visit, and a bound over a hazard
+belongs to the hazard analysis (`ftti`), not to a trace.
+
+So the split is permanent, not provisional: **structure and cost are
+captured, requirements are written.** The capture gives an author a file whose
+node keys, endpoints and wiring are already right, and leaves exactly the
+decisions that are theirs to make.
 
 ## References
 
