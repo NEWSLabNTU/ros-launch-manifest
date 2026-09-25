@@ -6,6 +6,42 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.45 - 2026-09-25
+
+Documentation only. No grammar, no arithmetic, no API change: the workspace
+Cargo version stays `0.1.6`, and play_launch need not bump its pin for this —
+v0.1.44 remains the code-bearing tag.
+
+Phase 82 made fault detection CLASS-AWARE, and three documents still described
+the rule it replaced.
+
+- **`docs/contract-theory.md`** gave the omission row as `qos.lease_duration`
+  alone, omitting the mechanism-gated `sub.max_age`, and said a hazard's
+  interval is "the min over them". It is min WITHIN a class and **max ACROSS**
+  the classes a hazard claims — so a hazard is timed by the slowest fault it
+  claims, and omitting `on:` buys no slack, which is the point of composing
+  that way. Checked against `detector_interval_ms` and `interval_over_kinds`
+  rather than against another document, and it agrees with
+  `docs/launch-manifest.md`, which was written from the code independently.
+- **Design issue #32** (capture mode) still described adding a documentation
+  section that no longer exists. Its body and its original status line are
+  untouched — it is a decision log — and a dated status line above them
+  records that the section was removed in `2fcb4d5`, that
+  `--save-manifest-dir` was never implemented and will not be under that name,
+  and that what exists is `play_launch measure` for costs and
+  `scripts/capture_manifest.py` for structure.
+- **Appendix C** is narrowed rather than deleted, and retitled for what it now
+  is. Its structure half shipped; its statistical half — an observed maximum
+  times a confidence factor — manufactures a REQUIREMENT out of a MEASUREMENT,
+  so the mathematics is kept as a described technique with the ruling stated:
+  a bound derived from the behaviour it would check is unfalsifiable, and says
+  nothing about operating conditions the run never visited. Stated as
+  permanent rather than provisional.
+- **`docs/slides.md`** moves capture from open items to shipped-in-part, with
+  the same split.
+
+`cargo test --workspace`: **566 passed, 0 failed**, unchanged.
+
 ## v0.1.44 - 2026-09-25
 
 `TopicView` is public, so the transport precedence is derived in one place.
