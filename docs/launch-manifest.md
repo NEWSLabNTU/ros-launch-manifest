@@ -2386,10 +2386,25 @@ nor charges it: above, `hpc_loss` (omission) lands straight on
 `emergency_stop`, while `odd_exit` waits out the takeover request.
 
 **`window:`** is `10s` (unbound) or `{ duration, param: <node>.<parameter> }`.
-A windowed rung is transitional: the system stays at most `duration`, then
-takes the next rung even if this one is still available. It is never a
-safe state, so it is never the floor, and it has no settle; what it costs --
-its route plus its window -- is charged to every rung below it.
+A windowed rung is transitional: while it stays available the system stays
+AT LEAST `duration`, then takes the next rung even if this one is still
+available. The duration is a guarantee to whoever the rung waits for -- a
+driver's takeover time, Drive Pilot's 10 s -- so the rung below must not
+start before the deadline (the rung's own route to its output, then
+`duration`). How late it may start is not a second number: it is the rung
+below's own reaction route, charged from the deadline, whose first hop is
+the node that owns the window noticing that the deadline has passed. A node
+that evaluates the deadline on a timer notices it up to one period late, so
+that hop must hold the period (`window-expiry`); a node that arms a one-shot
+timer at the deadline needs only its call. The window ends where the
+deadline is, not where the node notices it, which is why the notice is never
+charged twice. A rung left early because a function it requires is lost
+(the fault that removes it) is not waited out; its ladder falls to the rung
+that fault lands on. It is never a safe state, so it is never the floor, and
+it has no settle; what it costs -- its route plus its window -- is charged to
+every rung below it. Written out: the rung below starts no sooner than
+`duration` after the rung went on, and no later than
+`route + duration + route below` after the fault was detected.
 
 **`exit: { on: <function>, to: <mode> }`** is allowed only on a windowed
 rung (a parse error otherwise), so the grammar still has no general
@@ -2417,6 +2432,7 @@ The consumer's rules for these keys:
 | `ladder-window-floor` | Error | The last rung of a ladder has a window |
 | `window-param` | Error | The named parameter's resolved launch value, in seconds, is not the window, or it has none |
 | `window-unbound` | Warning | A window with no `param:` |
+| `window-expiry` | Error / Warning | The route of a rung below a window does not start at the node the window's `param:` names, or charges that node less than the period of its timer that publishes the windowed rung's output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the rung's output, so when the deadline is noticed is undeclared (warning) |
 | `mode-exit-target` | Error | `to:` is not a mode, or is a rung of some `fallback:` ladder |
 | `mode-exit-unwired` | Error | No node publishing the rung's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
 | `ladder-rung-budget` | Error | Now cumulative: detection + every windowed rung passed (route + window) + the rung's route + settle, against the interval |

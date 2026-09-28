@@ -239,7 +239,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `fallback` | requirement |  | Modes to fall to, in order, when this one is lost. The last rung is the floor and must require nothing losable. |
 | `reaction` | meta |  | The scope path that reaches this mode's safe state. |
 | `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
-| `window` | requirement |  | A transitional rung: stay at most this long, then take the next rung. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`. |
+| `window` | requirement |  | A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`). A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`. |
 | `exit` | requirement |  | `{ on: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list. |
 
 ## `hazards.<name>.guards[]`
@@ -288,7 +288,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `duration` | requirement |  | How long the rung may last. Required, positive. |
+| `duration` | requirement |  | The least time the rung lasts while it stays available: the rung below starts no sooner. Required, positive. |
 | `param` | fact |  | `<node>.<parameter>`: the parameter, in seconds, whose resolved launch value must equal `duration` (`window-param`). |
 
 ## `modes.<name>.exit`

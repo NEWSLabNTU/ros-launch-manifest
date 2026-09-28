@@ -995,7 +995,7 @@ pub const FIELDS: &[Field] = &[
         "window",
         Context::Mode,
         Kind::Requirement,
-        "A transitional rung: stay at most this long, then take the next rung. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`.",
+        "A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`). A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`.",
     ),
     live(
         "exit",
@@ -1115,7 +1115,7 @@ pub const FIELDS: &[Field] = &[
         "duration",
         Context::Window,
         Kind::Requirement,
-        "How long the rung may last. Required, positive.",
+        "The least time the rung lasts while it stays available: the rung below starts no sooner. Required, positive.",
     ),
     live(
         "param",

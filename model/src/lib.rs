@@ -858,8 +858,11 @@ pub struct ModeContract {
     /// the value it takes in this mode.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<ModeOverrideContract>,
-    /// A transitional rung's window (v0.1.46): the most time the system
-    /// spends here before taking the next rung.
+    /// A transitional rung's window (v0.1.46): the least time the system
+    /// spends here, while the rung stays available, before taking the next
+    /// rung (v0.1.47 corrects "the most": the window is a guarantee to
+    /// whoever the rung waits for, and the rung below's route, charged from
+    /// the deadline, bounds how late it may start).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowContract>,
     /// The success exit of a windowed rung (v0.1.46).

@@ -6,6 +6,42 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.47 - 2026-09-29
+
+What `window:` means, written down. Text only: no grammar, type or API
+change, and the workspace Cargo version stays `0.1.7`.
+
+### Why
+
+v0.1.46 documented `modes.<m>.window` as "stay at most this long" and its
+`duration` as "how long the rung may last". The rung it was made for is a
+takeover request, whose number is a promise to the DRIVER: Drive Pilot's
+10 s is time the driver is given, so the rung below must not start before
+it. "At most" said the opposite, and it cannot be met exactly by any
+implementation anyway: whatever enforces the window notices the deadline
+some time after it passes (on its next tick, or when a one-shot timer
+fires). The Autoware Safety Island's handler holds the request on its
+100 ms tick and was measured ending it 10000 or 10099 ms after it went on
+(phase8-W7); read as "at most 10 s", that looked like a 99 ms violation,
+while the consumer's arithmetic (play_launch phase 83) had in fact charged
+that tick all along, as the first hop of the route below the window.
+
+### What changed
+
+- `types` (the field table, so `docs/format-reference.md` too): `window` is
+  a transitional rung the system stays in AT LEAST `duration` while it stays
+  available; the rung below starts no sooner than the deadline and within
+  its own reaction route after it, which is where the late notice of the
+  deadline is charged. `duration` is "the least time the rung lasts".
+- `model`: `ModeContract.window`'s doc comment says the same.
+- `docs/launch-manifest.md`: the `window:` paragraph states the interval --
+  no sooner than `duration` after the rung went on, no later than
+  `route + duration + route below` after the fault was detected -- and why
+  the notice is charged once, in the route below; the consumer's rule table
+  gains `window-expiry` (play_launch phase 84), which checks that the route
+  below starts at the node the window's `param:` names and charges it at
+  least the period of the timer that publishes the rung's output.
+
 ## v0.1.46 - 2026-09-28
 
 Four keys for a takeover: a fault by value, a timed rung, the driver's answer,
