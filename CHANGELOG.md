@@ -6,6 +6,88 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.46 - 2026-09-28
+
+Four keys for a takeover: a fault by value, a timed rung, the driver's answer,
+and a settle derived from the braking profile. **Workspace Cargo version
+`0.1.6` -> `0.1.7`**: `Manifest.functions` is a map of `FunctionDecl` (was
+`GuardGroup`), `model::Contracts.functions` a map of `FunctionContract` (was
+`GuardContract`), and `HazardDecl`, `ModeDecl`, `SafeState` and their model
+twins gain fields, which breaks a struct literal.
+
+### Why
+
+The Autoware Safety Island's phase 8 is a Drive Pilot-style takeover: the
+vehicle leaves its operating domain, the driver is asked to take over within
+10 s, and if nobody does the island runs a minimal-risk manoeuvre. Four parts
+of that could not be stated (simple-autoware-safety-island,
+`docs/design/rtss-work-2026/brief-D-scenario.md` section 1.3):
+
+- `on: reported` said SOME node checks something; nothing said which value,
+  so neither a probe nor a plot could evaluate it, and a function could only
+  be lost by silence.
+- A rung the system waits in and then leaves had no spelling. The L4 design
+  fixture had to encode its `T_odd = 10 s` as an FTTI for want of one.
+- The driver's answer, which ends the ladder successfully, had none either.
+- `safe_state.settle` was a constant. The island's contract assumed 3.0 m/s
+  and derived 2034 ms by hand; its phase-7 runs braked from 4.23 m/s and
+  missed the 3 s interval while the island met every term of its own.
+
+### What changed
+
+- `types`, grammar (all closed; a misuse is a parse error naming the key):
+  - `hazards.<h>.when` and `functions.<f>: { of: [...], when: {...} }`:
+    `{ field: <dotted path>, <op>: <constant> }` with exactly one of
+    `equals | not_equals | lt | le | gt | ge`. An ordering operator needs a
+    number; a constant in upper snake case is a message constant name
+    (`PredicateValue::Constant`), any other string a literal. `of:` without
+    `when:`, `when:` without `of:`, and `all_of:` beside either are refused.
+    On a function the predicate is what LOSES it.
+  - `modes.<m>.window`: `10s` (unbound) or `{ duration, param }`, the
+    parameter as `<node>.<parameter>` split at the first dot (`ParamRef`). A
+    zero window is refused.
+  - `modes.<m>.exit: { on: <function>, to: <mode> }`, both required, and
+    only on a windowed rung -- otherwise a parse error, which is what keeps
+    general transitions out of the grammar.
+  - `hazards.<h>.entry_speed`, m/s, a positive number.
+  - `safe_state.settle` is a duration as before, or
+    `{ decel: <param>, jerk: <param> }` with an optional measured
+    `duration:` beside it (`SafeState.settle_profile`).
+    `SettleProfile::settle_s(v0, decel, jerk)` is the arithmetic, one copy for
+    every consumer: 3.0 m/s gives 2033.33 ms and 4.23 m/s 2525.33 ms at
+    a = 2.5, j = 1.5.
+- `model`: `HazardContract.{when, entry_speed_mps}`,
+  `FunctionContract { members, all_of, when }`,
+  `ModeContract.{window, exit}`, `SafeStateContract.settle_profile`. All
+  optional and skipped when absent, so a model without them is unchanged. A
+  constant name travels as `{ constant: MANUAL }`, never as a string.
+- `check`, `wiring`: a path output naming a `cli:` (or `srv:`) endpoint that
+  a service wires is no longer "not wired by any topic". The consumer's
+  reaction walk crosses a service through exactly that edge; the warning
+  fired on the island's own contract on every run.
+- Field table (five new contexts: `functions.<name>`, `when`,
+  `modes.<name>.window`, `modes.<name>.exit`, `safe_state.settle`),
+  `docs/format-reference.md` regenerated, and `docs/launch-manifest.md`
+  gains "The takeover keys", with the consumer's twelve rules.
+
+The rules that read the keys are the consumer's (play_launch phase 83):
+`when-requires-reported`, `when-field-unknown`, `ladder-window-floor`,
+`window-param`, `window-unbound`, `mode-exit-target`, `mode-exit-unwired`,
+a cumulative `ladder-rung-budget`, and the four `settle-*` rules.
+
+### Tests
+
+`types`: `the_four_takeover_keys_parse`,
+`a_literal_settle_still_parses_as_before`,
+`a_predicate_has_exactly_one_operator_and_a_fitting_constant`,
+`a_function_map_is_closed`, `a_window_is_positive_and_names_its_parameter`,
+`an_exit_needs_a_window_and_both_ends`,
+`entry_speed_is_a_positive_number_in_metres_per_second`,
+`a_settle_profile_names_both_parameters_and_nothing_else`,
+`settle_arithmetic_reproduces_the_islands_numbers`. `model`:
+`the_takeover_keys_round_trip`. `check`:
+`a_service_client_in_a_path_output_is_wired`. `cargo test --workspace
+--all-features` 566 -> **577 passed, 0 failed**.
 ## v0.1.45 - 2026-09-25
 
 Documentation only. No grammar, no arithmetic, no API change: the workspace
