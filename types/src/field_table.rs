@@ -89,6 +89,17 @@ pub enum Context {
     OnViolation,
     /// `safe_state` on a path.
     SafeState,
+    /// The map form of `functions.<name>` (v0.1.46): `{ all_of: [...] }` or
+    /// `{ of: [...], when: {...} }`.
+    Function,
+    /// A `when:` predicate, on a hazard or a function (v0.1.46).
+    Predicate,
+    /// The map form of `modes.<name>.window` (v0.1.46).
+    Window,
+    /// `modes.<name>.exit` (v0.1.46).
+    Exit,
+    /// The map form of `safe_state.settle`: a braking profile (v0.1.46).
+    Settle,
 }
 
 impl Context {
@@ -119,6 +130,11 @@ impl Context {
             Context::HazardGuard => "hazards.<name>.guards[]",
             Context::OnViolation => "on_violation",
             Context::SafeState => "safe_state",
+            Context::Function => "functions.<name>",
+            Context::Predicate => "when",
+            Context::Window => "modes.<name>.window",
+            Context::Exit => "modes.<name>.exit",
+            Context::Settle => "safe_state.settle",
         }
     }
 }
@@ -932,6 +948,18 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "The scope path whose route reaches the safe state.",
     ),
+    live(
+        "when",
+        Context::Hazard,
+        Kind::Fact,
+        "The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`).",
+    ),
+    live(
+        "entry_speed",
+        Context::Hazard,
+        Kind::Requirement,
+        "The speed the vehicle may travel at when the fault occurs, in m/s, a plain positive number: the operating domain's speed bound. A braking-profile settle is derived from it (`settle-derived`).",
+    ),
     // ── modes.<name> ──
     live(
         "description",
@@ -962,6 +990,18 @@ pub const FIELDS: &[Field] = &[
         Context::Mode,
         Kind::Requirement,
         "Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere.",
+    ),
+    live(
+        "window",
+        Context::Mode,
+        Kind::Requirement,
+        "A transitional rung: stay at most this long, then take the next rung. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`.",
+    ),
+    live(
+        "exit",
+        Context::Mode,
+        Kind::Requirement,
+        "`{ on: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list.",
     ),
     // ── hazards.<name>.guards[] ──
     live(
@@ -1006,7 +1046,114 @@ pub const FIELDS: &[Field] = &[
         "settle",
         Context::SafeState,
         Kind::Fact,
-        "How long the plant takes to reach the safe state once commanded. Measured, not authored.",
+        "How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name from which the settle is derived with the hazard's `entry_speed`.",
+    ),
+    // -- functions.<name> (map form) --
+    live(
+        "all_of",
+        Context::Function,
+        Kind::Meta,
+        "Members of a redundant group, lost only when every member is. At least two.",
+    ),
+    live(
+        "of",
+        Context::Function,
+        Kind::Meta,
+        "The topics a value function reads. Requires `when:`; without one, write the bare list.",
+    ),
+    live(
+        "when",
+        Context::Function,
+        Kind::Fact,
+        "The predicate that LOSES the function by value. A value function is lost by the value or by silence.",
+    ),
+    // -- when --
+    live(
+        "field",
+        Context::Predicate,
+        Kind::Fact,
+        "One scalar field of the message, a dotted path from its root. Checked against the `.msg` when the ament index resolves it (`when-field-unknown`).",
+    ),
+    live(
+        "equals",
+        Context::Predicate,
+        Kind::Fact,
+        "The field equals the constant: a bool, a number, a message constant name (upper snake case) or a string.",
+    ),
+    live(
+        "not_equals",
+        Context::Predicate,
+        Kind::Fact,
+        "The field differs from the constant.",
+    ),
+    live(
+        "lt",
+        Context::Predicate,
+        Kind::Fact,
+        "The field is below the constant, a number.",
+    ),
+    live(
+        "le",
+        Context::Predicate,
+        Kind::Fact,
+        "The field is at most the constant, a number.",
+    ),
+    live(
+        "gt",
+        Context::Predicate,
+        Kind::Fact,
+        "The field is above the constant, a number.",
+    ),
+    live(
+        "ge",
+        Context::Predicate,
+        Kind::Fact,
+        "The field is at least the constant, a number.",
+    ),
+    // -- modes.<name>.window --
+    live(
+        "duration",
+        Context::Window,
+        Kind::Requirement,
+        "How long the rung may last. Required, positive.",
+    ),
+    live(
+        "param",
+        Context::Window,
+        Kind::Fact,
+        "`<node>.<parameter>`: the parameter, in seconds, whose resolved launch value must equal `duration` (`window-param`).",
+    ),
+    // -- modes.<name>.exit --
+    live(
+        "on",
+        Context::Exit,
+        Kind::Fact,
+        "The function whose holding ends the ladder. Some node implementing the rung must take its topic on a path trigger (`mode-exit-unwired`).",
+    ),
+    live(
+        "to",
+        Context::Exit,
+        Kind::Meta,
+        "The mode the ladder ends in. Not a member of any `fallback:` list (`mode-exit-target`).",
+    ),
+    // -- safe_state.settle (profile form) --
+    live(
+        "decel",
+        Context::Settle,
+        Kind::Fact,
+        "The parameter on this path's node holding the deceleration, m/s^2, read as a magnitude.",
+    ),
+    live(
+        "jerk",
+        Context::Settle,
+        Kind::Fact,
+        "The parameter on this path's node holding the jerk the deceleration ramps at, m/s^3, read as a magnitude.",
+    ),
+    live(
+        "duration",
+        Context::Settle,
+        Kind::Fact,
+        "A measured settle beside the profile: the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`).",
     ),
 ];
 

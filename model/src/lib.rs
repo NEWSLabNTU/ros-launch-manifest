@@ -811,7 +811,7 @@ pub struct Contracts {
     /// Named guard groups (phase 75), keyed `"<scope id>/<name>"` with
     /// members resolved to topic FQNs.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub functions: BTreeMap<String, GuardContract>,
+    pub functions: BTreeMap<String, FunctionContract>,
     /// Operational modes (phase 75), keyed the same way. Read by the
     /// runtime observer to derive availability, and by a second toolchain
     /// that schedules per mode.
@@ -858,6 +858,78 @@ pub struct ModeContract {
     /// the value it takes in this mode.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<ModeOverrideContract>,
+    /// A transitional rung's window (v0.1.46): the most time the system
+    /// spends here before taking the next rung.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowContract>,
+    /// The success exit of a windowed rung (v0.1.46).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<ExitContract>,
+}
+
+/// `modes.<m>.window` after merge (v0.1.46).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WindowContract {
+    pub duration_ms: f64,
+    /// `<node FQN>.<parameter>`: the parameter that enforces the window,
+    /// read in seconds. Absent means the window is unbound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
+}
+
+/// `modes.<m>.exit` after merge (v0.1.46).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ExitContract {
+    /// Key into `functions`.
+    pub on: String,
+    /// Key into `modes`.
+    pub to: String,
+}
+
+/// A named function after merge (phase 75): a guard group, plus (v0.1.46)
+/// the predicate that loses it by value. Read by the runtime observer and by
+/// a contract probe that evaluates the predicate on the topic's samples.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FunctionContract {
+    pub members: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_of: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<PredicateContract>,
+}
+
+/// A `when:` predicate after merge (v0.1.46): one field, one operator, one
+/// constant.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PredicateContract {
+    pub field: String,
+    pub op: CompareOp,
+    pub value: PredicateValueContract,
+}
+
+/// The operator of a predicate. Mirrors the contract crate's closed set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareOp {
+    Equals,
+    NotEquals,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+/// The constant of a predicate. A message constant name is carried as
+/// `{ constant: MANUAL }` so a reader never mistakes it for a string
+/// literal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PredicateValueContract {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Constant { constant: String },
+    Str(String),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -891,6 +963,13 @@ pub struct HazardContract {
     /// Key into `scope_paths`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
+    /// The value that is the fault (v0.1.46).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<PredicateContract>,
+    /// The speed bound the vehicle may be at when the fault occurs, m/s
+    /// (v0.1.46).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_speed_mps: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -972,6 +1051,18 @@ pub struct SafeStateContract {
     pub emits: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settle_ms: Option<f64>,
+    /// The braking profile the settle is derived from, by parameter name on
+    /// the path's node (v0.1.46). The derivation needs a hazard's entry
+    /// speed, so the model carries the names rather than a number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_profile: Option<SettleProfileContract>,
+}
+
+/// `safe_state.settle: { decel, jerk }` after merge (v0.1.46).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SettleProfileContract {
+    pub decel: String,
+    pub jerk: String,
 }
 
 impl Contracts {
@@ -1689,6 +1780,89 @@ mod tests {
         assert!(
             std::path::Path::new(&input_path_string(&elsewhere, Some(&bringup))).is_absolute(),
             "an input outside the base stays absolute"
+        );
+    }
+
+    /// v0.1.46: the takeover keys round-trip, and a message constant name
+    /// never comes back as a string literal (or the other way round).
+    #[test]
+    fn the_takeover_keys_round_trip() {
+        let h = HazardContract {
+            on: vec![FaultKind::Reported],
+            when: Some(PredicateContract {
+                field: "autonomous".into(),
+                op: CompareOp::Equals,
+                value: PredicateValueContract::Bool(false),
+            }),
+            entry_speed_mps: Some(8.33),
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&h).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<HazardContract>(&y).unwrap(), h);
+
+        let f = FunctionContract {
+            members: vec!["/vehicle/status/control_mode".into()],
+            all_of: false,
+            when: Some(PredicateContract {
+                field: "mode".into(),
+                op: CompareOp::Equals,
+                value: PredicateValueContract::Constant {
+                    constant: "MANUAL".into(),
+                },
+            }),
+        };
+        let y = serde_yaml_ng::to_string(&f).unwrap();
+        assert!(y.contains("constant: MANUAL"), "{y}");
+        assert_eq!(serde_yaml_ng::from_str::<FunctionContract>(&y).unwrap(), f);
+        let lit = PredicateValueContract::Str("MANUAL".into());
+        let y = serde_yaml_ng::to_string(&lit).unwrap();
+        assert_eq!(
+            serde_yaml_ng::from_str::<PredicateValueContract>(&y).unwrap(),
+            lit
+        );
+        for v in [
+            PredicateValueContract::Int(4),
+            PredicateValueContract::Float(16.7),
+        ] {
+            let y = serde_yaml_ng::to_string(&v).unwrap();
+            assert_eq!(
+                serde_yaml_ng::from_str::<PredicateValueContract>(&y).unwrap(),
+                v
+            );
+        }
+
+        let m = ModeContract {
+            window: Some(WindowContract {
+                duration_ms: 10_000.0,
+                param: Some("/mrm_handler.takeover_request_timeout".into()),
+            }),
+            exit: Some(ExitContract {
+                on: "0/driver_took_over".into(),
+                to: "0/manual".into(),
+            }),
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&m).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<ModeContract>(&y).unwrap(), m);
+
+        let ss = SafeStateContract {
+            emits: "/op/cmd".into(),
+            settle_ms: None,
+            settle_profile: Some(SettleProfileContract {
+                decel: "target_acceleration".into(),
+                jerk: "target_jerk".into(),
+            }),
+        };
+        let y = serde_yaml_ng::to_string(&ss).unwrap();
+        assert_eq!(
+            serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
+            ss
+        );
+        // Absent keys stay absent: a model with none of them is unchanged.
+        let plain = serde_yaml_ng::to_string(&HazardContract::default()).unwrap();
+        assert!(
+            !plain.contains("when") && !plain.contains("entry_speed"),
+            "{plain}"
         );
     }
 

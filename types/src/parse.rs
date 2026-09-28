@@ -146,7 +146,7 @@ fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, Parse
     }
 }
 
-fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, GuardGroup>, ParseError> {
+fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, FunctionDecl>, ParseError> {
     let mut out = BTreeMap::new();
     let section = &doc["functions"];
     if section.is_badvalue() {
@@ -158,9 +158,286 @@ fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, GuardGroup>
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         let fctx = format_path(ctx, &format!("functions.{name}"));
-        out.insert(name, parse_guard_group(v, &fctx, "functions.<name>")?);
+        out.insert(name, parse_function(v, &fctx)?);
     }
     Ok(out)
+}
+
+/// One `functions.<name>`: the three guard-group shapes phase 75 accepts, or
+/// (v0.1.46) a VALUE function, `{ of: [...], when: {...} }`.
+///
+/// The map form is closed three ways. `all_of` is a redundant group and
+/// takes no predicate: "lost by value when every member is" is not a thing
+/// any detector evaluates. `of` without `when` is the bare list spelled
+/// twice, and `when` without `of` reads no topic -- both refused, so each
+/// meaning has one spelling.
+fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
+    let Yaml::Hash(_) = v else {
+        return Ok(FunctionDecl {
+            group: parse_guard_group(v, ctx, "functions.<name>")?,
+            when: None,
+        });
+    };
+    reject_unknown_keys(v, ctx, Context::Function)?;
+    let has = |key: &str| !v[key].is_badvalue();
+    match (has("all_of"), has("of"), has("when")) {
+        (true, false, false) => Ok(FunctionDecl {
+            group: parse_guard_group(v, ctx, "functions.<name>")?,
+            when: None,
+        }),
+        (true, _, _) => Err(field_err(
+            ctx,
+            "all_of",
+            "a redundant group takes no `of:` or `when:` -- a value function is `{ of: [...], \
+             when: {...} }`, lost by value on ANY member, and a redundant group is lost only by \
+             silence",
+        )),
+        (false, true, true) => {
+            let members = parse_string_or_list(v, "of", ctx)?;
+            if members.is_empty() {
+                return Err(field_err(
+                    ctx,
+                    "of",
+                    "a value function reads at least one topic",
+                ));
+            }
+            Ok(FunctionDecl {
+                group: GuardGroup {
+                    members,
+                    all_of: false,
+                },
+                when: parse_predicate(v, ctx)?,
+            })
+        }
+        (false, true, false) => Err(field_err(
+            ctx,
+            "of",
+            "`of:` without `when:` is the plain list written twice -- write the members bare \
+             (`functions.<name>: [...]`), or add the `when:` that loses the function by value",
+        )),
+        (false, false, true) => Err(field_err(
+            ctx,
+            "when",
+            "a predicate needs the topics it reads -- write `{ of: [<topic>], when: {...} }`",
+        )),
+        (false, false, false) => Err(field_err(
+            ctx,
+            "all_of",
+            "an empty mapping -- a function is a topic, a list, `{ all_of: [...] }` or \
+             `{ of: [...], when: {...} }`",
+        )),
+    }
+}
+
+/// `when: { field: <name>, <op>: <constant> }` (v0.1.46), on a hazard or a
+/// value function. Exactly one operator key; an ordering operator needs a
+/// number. `None` when the key is absent.
+fn parse_predicate(doc: &Yaml, ctx: &str) -> Result<Option<ValuePredicate>, ParseError> {
+    let section = &doc["when"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let pctx = &format_path(ctx, "when");
+    let Yaml::Hash(_) = section else {
+        return Err(type_err(
+            ctx,
+            "when",
+            "a mapping `{ field: <name>, <op>: <constant> }`",
+            section,
+        ));
+    };
+    reject_unknown_keys(section, pctx, Context::Predicate)?;
+    let field = yaml_string(section, "field", pctx)?.ok_or_else(|| {
+        field_err(
+            pctx,
+            "field",
+            "required: the message field the predicate reads, a dotted path from the root",
+        )
+    })?;
+    if field.is_empty() || field.split('.').any(str::is_empty) {
+        return Err(field_err(
+            pctx,
+            "field",
+            &format!("`{field}` is not a field path -- dot-separated names, none empty"),
+        ));
+    }
+    let ops: Vec<CompareOp> = CompareOp::ALL
+        .into_iter()
+        .filter(|op| !section[op.key()].is_badvalue())
+        .collect();
+    let accepted = CompareOp::ALL.map(CompareOp::key).join(", ");
+    let op = match ops.as_slice() {
+        [one] => *one,
+        [] => {
+            return Err(field_err(
+                pctx,
+                "field",
+                &format!("no operator -- write exactly one of {accepted} with the constant"),
+            ));
+        }
+        many => {
+            let named: Vec<&str> = many.iter().map(|o| o.key()).collect();
+            return Err(field_err(
+                pctx,
+                named[1],
+                &format!(
+                    "{} operators ({}) -- a predicate has exactly one. There are no \
+                     conjunctions: a second condition is a second function",
+                    many.len(),
+                    named.join(", ")
+                ),
+            ));
+        }
+    };
+    let raw = &section[op.key()];
+    let value = match raw {
+        Yaml::Boolean(b) => PredicateValue::Bool(*b),
+        Yaml::Integer(i) => PredicateValue::Int(*i),
+        Yaml::Real(r) => PredicateValue::Float(
+            r.parse()
+                .map_err(|_| type_err(pctx, op.key(), "a number", raw))?,
+        ),
+        Yaml::String(t) => PredicateValue::from_text(t),
+        other => {
+            return Err(type_err(
+                pctx,
+                op.key(),
+                "a scalar constant: a bool, a number, a message constant name or a string",
+                other,
+            ));
+        }
+    };
+    if op.is_ordering() && value.as_f64().is_none() {
+        return Err(field_err(
+            pctx,
+            op.key(),
+            &format!(
+                "`{}: {value}` -- an ordering operator compares numbers; use `equals` or \
+                 `not_equals` for anything else",
+                op.key()
+            ),
+        ));
+    }
+    Ok(Some(ValuePredicate { field, op, value }))
+}
+
+/// `modes.<m>.window` (v0.1.46): a bare duration (unbound), or
+/// `{ duration: <d>, param: <node>.<parameter> }`.
+fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<ModeWindow>, ParseError> {
+    let section = &doc["window"];
+    let positive = |d: crate::duration::Duration, at: &str| {
+        if d.as_millis_f64() > 0.0 {
+            Ok(d)
+        } else {
+            Err(field_err(
+                ctx,
+                at,
+                "a window of zero is no window -- the rung would be left the moment it was \
+                 entered",
+            ))
+        }
+    };
+    match section {
+        Yaml::BadValue => Ok(None),
+        Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) => {
+            let d = yaml_duration(doc, "window")
+                .map_err(|e| reframe(e, ctx))?
+                .expect("a scalar window parses or errors");
+            Ok(Some(ModeWindow {
+                duration: positive(d, "window")?,
+                param: None,
+            }))
+        }
+        Yaml::Hash(_) => {
+            let wctx = &format_path(ctx, "window");
+            reject_unknown_keys(section, wctx, Context::Window)?;
+            let d = yaml_duration(section, "duration")
+                .map_err(|e| reframe(e, wctx))?
+                .ok_or_else(|| {
+                    field_err(
+                        wctx,
+                        "duration",
+                        "required: how long the rung may last, with a unit (`10s`)",
+                    )
+                })?;
+            let param = yaml_string(section, "param", wctx)?
+                .map(|raw| parse_param_ref(&raw, wctx, "param"))
+                .transpose()?;
+            Ok(Some(ModeWindow {
+                duration: positive(d, "window.duration")?,
+                param,
+            }))
+        }
+        other => Err(type_err(
+            ctx,
+            "window",
+            "a duration or `{ duration, param }`",
+            other,
+        )),
+    }
+}
+
+/// `<node>.<parameter>`, split at the first dot.
+fn parse_param_ref(raw: &str, ctx: &str, key: &str) -> Result<ParamRef, ParseError> {
+    match raw.split_once('.') {
+        Some((node, name)) if !node.is_empty() && !name.is_empty() => Ok(ParamRef {
+            node: node.to_string(),
+            name: name.to_string(),
+        }),
+        _ => Err(field_err(
+            ctx,
+            key,
+            &format!(
+                "`{raw}` does not name a parameter -- write `<node>.<parameter>`, the node as \
+                 `nodes:` spells it (`mrm_handler.takeover_request_timeout`)"
+            ),
+        )),
+    }
+}
+
+/// `modes.<m>.exit` (v0.1.46): `{ on: <function>, to: <mode> }`, both
+/// required.
+fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
+    let section = &doc["exit"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let ectx = &format_path(ctx, "exit");
+    let Yaml::Hash(_) = section else {
+        return Err(type_err(
+            ctx,
+            "exit",
+            "a mapping `{ on: <function>, to: <mode> }`",
+            section,
+        ));
+    };
+    reject_unknown_keys(section, ectx, Context::Exit)?;
+    let on = yaml_string(section, "on", ectx)?.ok_or_else(|| {
+        field_err(
+            ectx,
+            "on",
+            "required: the function whose holding ends the ladder",
+        )
+    })?;
+    let to = yaml_string(section, "to", ectx)?.ok_or_else(|| {
+        field_err(
+            ectx,
+            "to",
+            "required: the mode the ladder ends in when the exit is taken",
+        )
+    })?;
+    Ok(Some(ModeExit { on, to }))
+}
+
+/// `yaml_duration` reports with an empty context; put the real one back.
+fn reframe(e: ParseError, ctx: &str) -> ParseError {
+    match e {
+        ParseError::Field { path, message } => ParseError::Field {
+            path: format_path(ctx, &path),
+            message,
+        },
+        other => other,
+    }
 }
 
 fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, ParseError> {
@@ -177,6 +454,20 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
         let mctx = format_path(ctx, &format!("modes.{name}"));
         reject_unknown_keys(v, &mctx, Context::Mode)?;
         let overrides = parse_mode_overrides(v, &mctx)?;
+        let window = parse_window(v, &mctx)?;
+        let exit = parse_exit(v, &mctx)?;
+        // An exit is the one way out of a TIMED rung. On a rung with no
+        // window it would be a general mode transition, which the grammar
+        // deliberately does not have (`operational-modes.md`: transitions
+        // are not folded in).
+        if exit.is_some() && window.is_none() {
+            return Err(field_err(
+                &mctx,
+                "exit",
+                "an exit is only for a windowed rung -- add the `window:` this rung waits \
+                 out, or drop the exit. A general mode transition is not in the grammar",
+            ));
+        }
         out.insert(
             name,
             ModeDecl {
@@ -185,6 +476,8 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
                 fallback: parse_string_or_list(v, "fallback", &mctx)?,
                 reaction: yaml_string(v, "reaction", &mctx)?,
                 overrides,
+                window,
+                exit,
             },
         );
     }
@@ -307,6 +600,19 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 on.push(kind);
             }
         }
+        let entry_speed = yaml_f64(v, "entry_speed", &hctx)?;
+        if let Some(s) = entry_speed
+            && !(s.is_finite() && s > 0.0)
+        {
+            return Err(field_err(
+                &hctx,
+                "entry_speed",
+                &format!(
+                    "`entry_speed: {s}` -- a speed in m/s, positive. It is the operating \
+                     domain's speed bound, and a braking settle is derived from it"
+                ),
+            ));
+        }
         out.insert(
             name,
             HazardDecl {
@@ -316,6 +622,8 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 on,
                 ftti: yaml_duration(v, "ftti")?,
                 reaction: yaml_string(v, "reaction", &hctx)?,
+                when: parse_predicate(v, &hctx)?,
+                entry_speed,
             },
         );
     }
@@ -377,9 +685,32 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
             "required: the endpoint this reaction commands the safe state on",
         )
     })?;
+    let (settle, settle_profile) = match &section["settle"] {
+        Yaml::Hash(_) => {
+            let sctx = &format_path(ctx, "settle");
+            let profile = &section["settle"];
+            reject_unknown_keys(profile, sctx, Context::Settle)?;
+            let param = |key: &str| {
+                yaml_string(profile, key, sctx)?.ok_or_else(|| {
+                    field_err(
+                        sctx,
+                        key,
+                        "required: a braking profile names both its deceleration and its jerk \
+                         parameter",
+                    )
+                })
+            };
+            let decel = param("decel")?;
+            let jerk = param("jerk")?;
+            let literal = yaml_duration(profile, "duration").map_err(|e| reframe(e, sctx))?;
+            (literal, Some(SettleProfile { decel, jerk }))
+        }
+        _ => (yaml_duration(section, "settle")?, None),
+    };
     Ok(Some(SafeState {
         emits,
-        settle: yaml_duration(section, "settle")?,
+        settle,
+        settle_profile,
     }))
 }
 
@@ -1782,10 +2113,10 @@ hazards:
     reaction: autonomous
 "#;
         let m = parse_manifest_str(yaml).unwrap();
-        assert!(m.functions["pose_estimation"].all_of);
-        assert_eq!(m.functions["pose_estimation"].members.len(), 2);
-        assert!(!m.functions["trajectory"].all_of);
-        assert_eq!(m.functions["scan"].members, vec!["/sensing/scan"]);
+        assert!(m.functions["pose_estimation"].group.all_of);
+        assert_eq!(m.functions["pose_estimation"].group.members.len(), 2);
+        assert!(!m.functions["trajectory"].group.all_of);
+        assert_eq!(m.functions["scan"].group.members, vec!["/sensing/scan"]);
         let auto = &m.modes["autonomous"];
         assert_eq!(auto.requires, vec!["pose_estimation", "trajectory"]);
         assert_eq!(auto.fallback, vec!["comfortable_stop", "emergency_stop"]);
@@ -2691,5 +3022,294 @@ topics:
         .unwrap();
         let c = empty.nodes["n"].concurrency.as_ref().expect("present");
         assert!(c.exclusive.is_empty());
+    }
+
+    // -- v0.1.46: the four keys of the takeover scenario --------------------
+
+    fn err_of(yaml: &str) -> String {
+        match parse_manifest_str(yaml) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected a parse error for:\n{yaml}"),
+        }
+    }
+
+    /// The demo contract's shapes, all four keys at once.
+    #[test]
+    fn the_four_takeover_keys_parse() {
+        let yaml = r#"
+version: 1
+functions:
+  hpc_alive: [/system/operation_mode/availability]
+  hpc_in_odd:
+    of: [/system/operation_mode/availability]
+    when: { field: autonomous, equals: false }
+  driver_took_over: { of: /vehicle/status/control_mode, when: { field: mode, equals: MANUAL } }
+hazards:
+  odd_exit:
+    guards: [/system/operation_mode/availability]
+    on: reported
+    when: { field: autonomous, equals: false }
+    entry_speed: 8.33
+    ftti: 30s
+    reaction: l3_engaged
+modes:
+  l3_engaged:
+    requires: [hpc_alive, hpc_in_odd]
+    fallback: [takeover_request, comfortable_stop, emergency_stop]
+  takeover_request:
+    requires: [hpc_alive]
+    reaction: island.tor
+    window: { duration: 10s, param: mrm_handler.takeover_request_timeout }
+    exit: { on: driver_took_over, to: manual }
+  comfortable_stop:
+    requires: [hpc_alive]
+    reaction: island.comfortable_stop
+    window: 30s
+  manual: {}
+nodes:
+  op:
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [cmd]
+        safe_state:
+          emits: cmd
+          settle: { decel: target_acceleration, jerk: target_jerk }
+      measured:
+        output: [cmd2]
+        safe_state: { emits: cmd2, settle: { decel: a, jerk: j, duration: 2034ms } }
+"#;
+        let m = parse_manifest_str(yaml).unwrap();
+
+        let odd = &m.functions["hpc_in_odd"];
+        assert_eq!(
+            odd.group.members,
+            vec!["/system/operation_mode/availability"]
+        );
+        assert!(!odd.group.all_of);
+        let w = odd.when.as_ref().unwrap();
+        assert_eq!(
+            (w.field.as_str(), w.op, &w.value),
+            (
+                "autonomous",
+                CompareOp::Equals,
+                &PredicateValue::Bool(false)
+            )
+        );
+        assert!(m.functions["hpc_alive"].when.is_none());
+        let drv = m.functions["driver_took_over"].when.as_ref().unwrap();
+        assert_eq!(drv.value, PredicateValue::Constant("MANUAL".into()));
+
+        let h = &m.hazards["odd_exit"];
+        assert_eq!(h.entry_speed, Some(8.33));
+        assert_eq!(h.when.as_ref().unwrap().field, "autonomous");
+
+        let tor = &m.modes["takeover_request"];
+        let win = tor.window.as_ref().unwrap();
+        assert_eq!(win.duration.as_millis_f64(), 10_000.0);
+        assert_eq!(
+            win.param,
+            Some(ParamRef {
+                node: "mrm_handler".into(),
+                name: "takeover_request_timeout".into()
+            })
+        );
+        assert_eq!(
+            tor.exit,
+            Some(ModeExit {
+                on: "driver_took_over".into(),
+                to: "manual".into()
+            })
+        );
+        // The scalar form is a window with no parameter: unbound.
+        let bare = m.modes["comfortable_stop"].window.as_ref().unwrap();
+        assert_eq!(
+            (bare.duration.as_millis_f64(), &bare.param),
+            (30_000.0, &None)
+        );
+
+        let ss = m.nodes["op"].paths["on_timer"].safe_state.as_ref().unwrap();
+        assert_eq!(ss.settle, None);
+        assert_eq!(
+            ss.settle_profile,
+            Some(SettleProfile {
+                decel: "target_acceleration".into(),
+                jerk: "target_jerk".into()
+            })
+        );
+        let both = m.nodes["op"].paths["measured"].safe_state.as_ref().unwrap();
+        assert_eq!(both.settle.map(|d| d.as_millis_f64()), Some(2034.0));
+        assert!(both.settle_profile.is_some());
+    }
+
+    /// A literal settle is unchanged by the new map form.
+    #[test]
+    fn a_literal_settle_still_parses_as_before() {
+        let m = parse_manifest_str(
+            "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
+             safe_state: { emits: o, settle: 2034ms }\n",
+        )
+        .unwrap();
+        let ss = m.nodes["n"].paths["p"].safe_state.as_ref().unwrap();
+        assert_eq!(ss.settle.map(|d| d.as_millis_f64()), Some(2034.0));
+        assert_eq!(ss.settle_profile, None);
+    }
+
+    #[test]
+    fn a_predicate_has_exactly_one_operator_and_a_fitting_constant() {
+        let h = |when: &str| {
+            format!(
+                "version: 1\nhazards:\n  h:\n    guards: [/t]\n    on: reported\n    when: {when}\n"
+            )
+        };
+        let e = err_of(&h("{ field: autonomous }"));
+        assert!(e.contains("no operator"), "{e}");
+        let e = err_of(&h("{ field: speed, gt: 1.0, lt: 5.0 }"));
+        assert!(
+            e.contains("exactly one") && e.contains("second function"),
+            "{e}"
+        );
+        let e = err_of(&h("{ field: autonomous, lt: false }"));
+        assert!(e.contains("ordering operator compares numbers"), "{e}");
+        let e = err_of(&h("{ equals: false }"));
+        assert!(
+            e.contains("hazards.h.when.field") && e.contains("required"),
+            "{e}"
+        );
+        let e = err_of(&h("{ field: a..b, equals: 1 }"));
+        assert!(e.contains("not a field path"), "{e}");
+        let e = err_of(&h("{ field: a, eq: 1 }"));
+        assert!(
+            e.contains("unknown key in `when`") && e.contains("equals"),
+            "{e}"
+        );
+        let e = err_of(&h("autonomous == false"));
+        assert!(e.contains("expected a mapping"), "{e}");
+        let e = err_of(&h("{ field: a, equals: [1, 2] }"));
+        assert!(e.contains("a scalar constant"), "{e}");
+        // The value classes.
+        let v = |when: &str| {
+            parse_manifest_str(&h(when)).unwrap().hazards["h"]
+                .when
+                .clone()
+                .unwrap()
+                .value
+        };
+        assert_eq!(v("{ field: v, ge: 16.7 }"), PredicateValue::Float(16.7));
+        assert_eq!(v("{ field: v, le: 3 }"), PredicateValue::Int(3));
+        assert_eq!(
+            v("{ field: s, equals: NOT_READY }"),
+            PredicateValue::Constant("NOT_READY".into())
+        );
+        assert_eq!(
+            v("{ field: s, not_equals: ready }"),
+            PredicateValue::Str("ready".into())
+        );
+    }
+
+    #[test]
+    fn a_function_map_is_closed() {
+        let f = |body: &str| format!("version: 1\nfunctions:\n  f: {body}\n");
+        let e = err_of(&f("{ of: [/t] }"));
+        assert!(e.contains("without `when:`"), "{e}");
+        let e = err_of(&f("{ when: { field: a, equals: 1 } }"));
+        assert!(e.contains("needs the topics it reads"), "{e}");
+        let e = err_of(&f("{ all_of: [/a, /b], when: { field: a, equals: 1 } }"));
+        assert!(e.contains("redundant group takes no"), "{e}");
+        let e = err_of(&f("{ of: [], when: { field: a, equals: 1 } }"));
+        assert!(e.contains("at least one topic"), "{e}");
+        let e = err_of(&f("{ any_of: [/a] }"));
+        assert!(e.contains("unknown key in `functions.<name>`"), "{e}");
+        // The phase-75 shapes are unchanged.
+        let m = parse_manifest_str(&f("{ all_of: [/a, /b] }")).unwrap();
+        assert!(m.functions["f"].group.all_of && m.functions["f"].when.is_none());
+    }
+
+    #[test]
+    fn a_window_is_positive_and_names_its_parameter() {
+        let m = |mode: &str| format!("version: 1\nmodes:\n  m:\n{mode}");
+        let e = err_of(&m("    window: 10\n"));
+        assert!(e.contains("modes.m.window") && e.contains("no unit"), "{e}");
+        let e = err_of(&m("    window: 0s\n"));
+        assert!(e.contains("a window of zero is no window"), "{e}");
+        let e = err_of(&m("    window: { param: h.p }\n"));
+        assert!(
+            e.contains("modes.m.window.duration") && e.contains("required"),
+            "{e}"
+        );
+        let e = err_of(&m(
+            "    window: { duration: 10s, param: takeover_request_timeout }\n",
+        ));
+        assert!(e.contains("<node>.<parameter>"), "{e}");
+        let e = err_of(&m("    window: { duration: 10s, parameter: h.p }\n"));
+        assert!(e.contains("accepted here: duration, param"), "{e}");
+        // A parameter name may itself contain dots; the node is the first
+        // segment.
+        let ok = parse_manifest_str(&m(
+            "    window: { duration: 500ms, param: mrm_handler.turning_hazard_on.emergency }\n",
+        ))
+        .unwrap();
+        let p = ok.modes["m"].window.clone().unwrap().param.unwrap();
+        assert_eq!(
+            (p.node.as_str(), p.name.as_str()),
+            ("mrm_handler", "turning_hazard_on.emergency")
+        );
+    }
+
+    #[test]
+    fn an_exit_needs_a_window_and_both_ends() {
+        let m = |mode: &str| format!("version: 1\nmodes:\n  m:\n{mode}");
+        let e = err_of(&m("    exit: { on: driver, to: manual }\n"));
+        assert!(e.contains("only for a windowed rung"), "{e}");
+        let e = err_of(&m("    window: 10s\n    exit: { on: driver }\n"));
+        assert!(
+            e.contains("modes.m.exit.to") && e.contains("required"),
+            "{e}"
+        );
+        let e = err_of(&m("    window: 10s\n    exit: { to: manual }\n"));
+        assert!(
+            e.contains("modes.m.exit.on") && e.contains("required"),
+            "{e}"
+        );
+        let e = err_of(&m("    window: 10s\n    exit: manual\n"));
+        assert!(e.contains("expected a mapping"), "{e}");
+    }
+
+    #[test]
+    fn entry_speed_is_a_positive_number_in_metres_per_second() {
+        let h = |v: &str| format!("version: 1\nhazards:\n  h:\n    entry_speed: {v}\n");
+        assert_eq!(
+            parse_manifest_str(&h("16.7")).unwrap().hazards["h"].entry_speed,
+            Some(16.7)
+        );
+        assert_eq!(
+            parse_manifest_str(&h("8")).unwrap().hazards["h"].entry_speed,
+            Some(8.0)
+        );
+        let e = err_of(&h("0"));
+        assert!(e.contains("positive"), "{e}");
+        let e = err_of(&h("-3.0"));
+        assert!(e.contains("positive"), "{e}");
+        let e = err_of(&h("30km/h"));
+        assert!(e.contains("hazards.h.entry_speed"), "{e}");
+    }
+
+    #[test]
+    fn a_settle_profile_names_both_parameters_and_nothing_else() {
+        let p = |settle: &str| {
+            format!(
+                "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
+                 safe_state: {{ emits: o, settle: {settle} }}\n"
+            )
+        };
+        let e = err_of(&p("{ decel: target_acceleration }"));
+        assert!(
+            e.contains("safe_state.settle.jerk") && e.contains("required"),
+            "{e}"
+        );
+        let e = err_of(&p("{ decel: a, jerk: j, entry_speed: 3.0 }"));
+        assert!(e.contains("unknown key in `safe_state.settle`"), "{e}");
+        let e = err_of(&p("{ decel: a, jerk: j, duration: 2034 }"));
+        assert!(e.contains("no unit"), "{e}");
     }
 }

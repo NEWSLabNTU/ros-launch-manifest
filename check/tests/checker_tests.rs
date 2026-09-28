@@ -2690,3 +2690,37 @@ fn test_registry_has_no_placeholder_rules() {
     sorted.dedup();
     assert_eq!(sorted.len(), ids.len(), "rule ids must be unique: {ids:?}");
 }
+
+/// v0.1.46: a `cli:` endpoint named in a path's `output` is wired by the
+/// service it calls. The consumer's reaction walk crosses a service through
+/// exactly that edge, so asking for a topic there was a false warning -- on
+/// the safety island's own contract, every run.
+#[test]
+fn a_service_client_in_a_path_output_is_wired() {
+    let yaml = r#"
+version: 1
+nodes:
+  handler:
+    cli: { operate: {} }
+    paths:
+      call:
+        output: [operate]
+  operator:
+    srv: { operate: {} }
+services:
+  /mrm/operate:
+    type: tier4_system_msgs/srv/OperateMrm
+    server: [operator/operate]
+    client: [handler/operate]
+"#;
+    let w = warnings(yaml);
+    assert!(!w.iter().any(|d| d.contains("wiring")), "{w:?}");
+    // Without the service the same output is still unwired.
+    let unwired = yaml.split("services:").next().unwrap();
+    let w = warnings(unwired);
+    assert!(
+        w.iter()
+            .any(|d| d.contains("wiring") && d.contains("operate")),
+        "{w:?}"
+    );
+}

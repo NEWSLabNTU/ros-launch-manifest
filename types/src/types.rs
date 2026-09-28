@@ -69,7 +69,7 @@ pub struct Manifest {
     /// together provide; a mode requires functions, and a hazard may guard
     /// one by name instead of repeating its members.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub functions: BTreeMap<String, GuardGroup>,
+    pub functions: BTreeMap<String, FunctionDecl>,
     /// Operational modes (phase 75): what each requires, and the ordered
     /// ladder to fall to when it is lost.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -102,6 +102,217 @@ pub struct ModeDecl {
     /// no requirement becomes a map).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<ModeOverride>,
+    /// A timed, TRANSITIONAL rung (v0.1.46): the system stays in this mode
+    /// at most `window.duration` and then takes the next rung of the ladder,
+    /// even while this one is still available. A takeover request is the
+    /// case it exists for. A windowed rung is not a safe state, so it cannot
+    /// be the floor of a ladder (`ladder-window-floor` in the consumer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<ModeWindow>,
+    /// The one way out of a windowed rung that is not the next rung
+    /// (v0.1.46): while this mode is active, the named function holding ends
+    /// the ladder successfully in `to`. Only a windowed rung may carry one --
+    /// a parse error otherwise -- which keeps general transitions out of the
+    /// grammar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit: Option<ModeExit>,
+}
+
+/// `modes.<m>.window` (v0.1.46): how long a transitional rung may last, and
+/// the parameter that makes the running image wait exactly that long.
+///
+/// `window: 10s` (a bare duration) parses too, as a window with no
+/// parameter -- UNBOUND: nothing in the image is tied to the number, which
+/// the consumer reports (`window-unbound`) rather than refuses.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ModeWindow {
+    pub duration: crate::duration::Duration,
+    /// `<node>.<parameter>`: the parameter whose resolved launch value, in
+    /// seconds, must equal `duration` (`window-param` in the consumer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub param: Option<ParamRef>,
+}
+
+/// A parameter named across the contract: `<node>.<parameter>`, split at
+/// the FIRST dot. A ROS node name cannot contain a dot and a parameter name
+/// can (`turning_hazard_on.emergency`), so the split is unambiguous.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParamRef {
+    /// The node's name as the contract's `nodes:` map spells it.
+    pub node: String,
+    /// The parameter name, as the node's `params:` map spells it.
+    pub name: String,
+}
+
+impl std::fmt::Display for ParamRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.node, self.name)
+    }
+}
+
+/// `modes.<m>.exit` (v0.1.46): `{ on: <function>, to: <mode> }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModeExit {
+    /// The function whose holding ends the ladder -- typically a value
+    /// function (`of:` + `when:`), such as "the control mode is MANUAL".
+    pub on: String,
+    /// The mode the ladder ends in. Outside every `fallback:` list: an exit
+    /// is not a rung (`mode-exit-target` in the consumer).
+    pub to: String,
+}
+
+/// A named function (phase 75): a guard group, lost when its topics are,
+/// and -- the `of:` + `when:` form, v0.1.46 -- also lost BY VALUE, when the
+/// predicate holds on a sample of one of its topics.
+///
+/// The three older shapes (a bare topic, a list, `{ all_of: [...] }`) carry
+/// no predicate: they are lost only by silence. A value function is lost by
+/// either, because silence also means "not known to be in the state the
+/// predicate excludes". Which fault removes which kind is the consumer's
+/// ladder selection: a `reported` fault removes the value functions on its
+/// topic, an omission, late or loss fault removes both kinds.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FunctionDecl {
+    pub group: GuardGroup,
+    /// Present only for the `{ of: [...], when: {...} }` form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<ValuePredicate>,
+}
+
+/// A predicate on ONE scalar field of a topic's message (v0.1.46):
+/// `when: { field: autonomous, equals: false }`.
+///
+/// Deliberately the smallest thing that names a value fault: one field (a
+/// dotted path reaches into nested messages), one operator, one constant.
+/// There are no conjunctions -- a second condition is a second function. The
+/// contract describes the predicate the application evaluates; it never
+/// generates it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ValuePredicate {
+    /// The field, a dotted path from the message root (`autonomous`,
+    /// `status.mode`). Checked against the `.msg` definition when the
+    /// consumer can resolve it (`when-field-unknown`).
+    pub field: String,
+    pub op: CompareOp,
+    pub value: PredicateValue,
+}
+
+/// The operator of a [`ValuePredicate`]. A closed set, written as the key
+/// that carries the constant: `equals: false`, `lt: 16.7`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareOp {
+    Equals,
+    NotEquals,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl CompareOp {
+    /// Every operator, in the order the grammar documents them.
+    pub const ALL: [CompareOp; 6] = [
+        CompareOp::Equals,
+        CompareOp::NotEquals,
+        CompareOp::Lt,
+        CompareOp::Le,
+        CompareOp::Gt,
+        CompareOp::Ge,
+    ];
+
+    /// The key the operator is written as.
+    pub fn key(self) -> &'static str {
+        match self {
+            CompareOp::Equals => "equals",
+            CompareOp::NotEquals => "not_equals",
+            CompareOp::Lt => "lt",
+            CompareOp::Le => "le",
+            CompareOp::Gt => "gt",
+            CompareOp::Ge => "ge",
+        }
+    }
+
+    /// The operator as the mathematical symbol, for messages.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            CompareOp::Equals => "==",
+            CompareOp::NotEquals => "!=",
+            CompareOp::Lt => "<",
+            CompareOp::Le => "<=",
+            CompareOp::Gt => ">",
+            CompareOp::Ge => ">=",
+        }
+    }
+
+    /// An ordering operator needs a number: `lt: false` is meaningless.
+    pub fn is_ordering(self) -> bool {
+        matches!(
+            self,
+            CompareOp::Lt | CompareOp::Le | CompareOp::Gt | CompareOp::Ge
+        )
+    }
+}
+
+/// The constant a [`ValuePredicate`] compares against.
+///
+/// An identifier in upper snake case (`MANUAL`, `NO_COMMAND`) is a MESSAGE
+/// CONSTANT NAME, resolved against the `.msg` that declares the field; any
+/// other string is a string literal. This is the ROS convention for
+/// constants, so the rule costs nothing in a real message definition.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PredicateValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Constant(String),
+    Str(String),
+}
+
+impl PredicateValue {
+    /// Classify a YAML string: upper snake case is a constant name.
+    pub fn from_text(s: &str) -> Self {
+        let mut chars = s.chars();
+        let is_constant = chars.next().is_some_and(|c| c.is_ascii_uppercase())
+            && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        if is_constant {
+            PredicateValue::Constant(s.to_string())
+        } else {
+            PredicateValue::Str(s.to_string())
+        }
+    }
+
+    /// The value as a number, when it is one.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            PredicateValue::Int(i) => Some(*i as f64),
+            PredicateValue::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for PredicateValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PredicateValue::Bool(b) => write!(f, "{b}"),
+            PredicateValue::Int(i) => write!(f, "{i}"),
+            PredicateValue::Float(x) => write!(f, "{x}"),
+            PredicateValue::Constant(c) => write!(f, "{c}"),
+            PredicateValue::Str(s) => write!(f, "{s:?}"),
+        }
+    }
+}
+
+impl Serialize for PredicateValue {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            PredicateValue::Bool(b) => s.serialize_bool(*b),
+            PredicateValue::Int(i) => s.serialize_i64(*i),
+            PredicateValue::Float(x) => s.serialize_f64(*x),
+            PredicateValue::Constant(c) | PredicateValue::Str(c) => s.serialize_str(c),
+        }
+    }
 }
 
 /// One `modes.<m>.overrides` entry: a requirement named by its contract
@@ -145,6 +356,18 @@ pub struct HazardDecl {
     /// The scope path whose route reaches the safe state.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
+    /// The VALUE that is the fault (v0.1.46), for a hazard whose guard is a
+    /// detector's output: `on: reported` says some node checks something,
+    /// and this names what. Only meaningful with `reported` among the fault
+    /// classes (`when-requires-reported` in the consumer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<ValuePredicate>,
+    /// The speed the vehicle may be travelling at when the fault occurs, in
+    /// METRES PER SECOND (v0.1.46): the operating domain's speed bound. A
+    /// plain number, positive. A `safe_state` whose settle is a braking
+    /// profile derives its settle time from it, per hazard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_speed: Option<f64>,
 }
 
 /// One guard: a topic, or a redundant set that faults only when all of its
@@ -211,8 +434,55 @@ pub struct OnViolation {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SafeState {
     pub emits: String,
+    /// A literal settle time. With a [`SettleProfile`] beside it, the
+    /// literal is what the consumer falls back to when the hazard states no
+    /// entry speed, and what it compares the derivation against
+    /// (`settle-conflict`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settle: Option<crate::duration::Duration>,
+    /// The settle DERIVED from a braking profile (v0.1.46):
+    /// `settle: { decel: <param>, jerk: <param> }`, the parameters by name
+    /// on this path's node, and the entry speed from the hazard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_profile: Option<SettleProfile>,
+}
+
+/// A braking profile named by the parameters that implement it (v0.1.46).
+///
+/// The node ramps its deceleration at `jerk` up to `decel` and holds it until
+/// standstill. Both are read as magnitudes, so Autoware's signed spellings
+/// (`target_acceleration: -2.5`, `target_jerk: -1.5`) name them unchanged.
+/// [`SettleProfile::settle_s`] is the arithmetic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SettleProfile {
+    /// The parameter holding the deceleration, m/s^2.
+    pub decel: String,
+    /// The parameter holding the jerk the deceleration ramps at, m/s^3.
+    pub jerk: String,
+}
+
+impl SettleProfile {
+    /// Seconds from the braking command to standstill, from entry speed
+    /// `v0` (m/s), deceleration `decel` (m/s^2) and jerk `jerk` (m/s^3),
+    /// both taken as magnitudes.
+    ///
+    /// With a = |decel| and j = |jerk|, the ramp to full deceleration takes
+    /// a/j and sheds `v_r = a^2 / (2 j)`. A vehicle slower than that stops
+    /// inside the ramp: `t = sqrt(2 v0 / j)`. Otherwise it finishes at full
+    /// deceleration: `t = a/j + (v0 - v_r) / a`. `None` when either
+    /// magnitude is zero or a value is not finite: no profile, no number.
+    pub fn settle_s(v0: f64, decel: f64, jerk: f64) -> Option<f64> {
+        let (a, j) = (decel.abs(), jerk.abs());
+        if !(v0.is_finite() && a.is_finite() && j.is_finite()) || a == 0.0 || j == 0.0 || v0 < 0.0 {
+            return None;
+        }
+        let v_r = a * a / (2.0 * j);
+        Some(if v0 <= v_r {
+            (2.0 * v0 / j).sqrt()
+        } else {
+            a / j + (v0 - v_r) / a
+        })
+    }
 }
 
 /// Node declaration.
@@ -1026,5 +1296,26 @@ mod tests {
         assert!(ep.min_rate_hz.is_none());
         assert!(ep.state.is_none());
         assert!(ep.required.is_none());
+    }
+
+    /// The arithmetic of the island's contract comment block, reproduced:
+    /// decel 2.5, jerk 1.5, so v_r = 2.0833 m/s. 3.0 m/s is past the ramp
+    /// and gives 2033.33 ms; phase 7's observed 4.23 m/s gives 2525.33 ms.
+    #[test]
+    fn settle_arithmetic_reproduces_the_islands_numbers() {
+        let ms = |v0: f64| SettleProfile::settle_s(v0, -2.5, -1.5).unwrap() * 1000.0;
+        assert!((ms(3.0) - 2033.333).abs() < 0.01, "{}", ms(3.0));
+        assert!((ms(4.23) - 2525.333).abs() < 0.01, "{}", ms(4.23));
+        // Below v_r the vehicle stops inside the ramp: sqrt(2 v0 / j).
+        let slow = SettleProfile::settle_s(1.5, 2.5, 1.5).unwrap();
+        assert!((slow - (2.0f64 * 1.5 / 1.5).sqrt()).abs() < 1e-12);
+        // The two branches meet at v_r: continuous, no jump.
+        let v_r = 2.5 * 2.5 / 3.0;
+        let a = SettleProfile::settle_s(v_r, 2.5, 1.5).unwrap();
+        let b = SettleProfile::settle_s(v_r + 1e-9, 2.5, 1.5).unwrap();
+        assert!((a - b).abs() < 1e-6);
+        // No profile, no number.
+        assert_eq!(SettleProfile::settle_s(3.0, 0.0, 1.5), None);
+        assert_eq!(SettleProfile::settle_s(3.0, 2.5, f64::NAN), None);
     }
 }

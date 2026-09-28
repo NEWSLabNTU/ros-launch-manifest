@@ -2139,7 +2139,9 @@ fire. The walk is:
 3. It ends at a path that publishes onto one of the reaction scope path's
    output topics; a `safe_state` whose `emits` lands there contributes its
    `settle`, and a path that merely publishes there ends the walk with no
-   settle.
+   settle -- unless a path upstream on the same branch declared a
+   `safe_state` of its own, whose settle is then carried to the sink
+   (v0.1.46).
 4. Fork-join takes the **longest branch**. The walk is depth-bounded (16)
    rather than cycle-detected: a reaction that re-triggers itself is a
    declaration error worth a wrong number, not a hang.
@@ -2308,6 +2310,120 @@ arithmetic that clears the default one says nothing about it.
 > Target paths are read **section-from-front, field-from-back**, because a
 > scope-path name may itself contain dots (`safety.stop`). Splitting
 > positionally fired `override-target-missing` on a correct contract.
+
+### The takeover keys: a value fault, a timed rung, an exit, a derived settle
+
+Four keys (v0.1.46) make a Drive Pilot-style takeover checkable without a
+transition language: a fault by **value**, a rung that lasts at most a
+**window**, the driver's answer as an **exit**, and a **settle derived** from
+the braking profile and the operating domain's speed bound.
+
+```yaml
+version: 1
+functions:
+  hpc_alive: [/system/operation_mode/availability]
+  hpc_in_odd:                                  # a VALUE function
+    of: [/system/operation_mode/availability]
+    when: { field: autonomous, equals: false } # the predicate that LOSES it
+  driver_took_over:
+    of: [/vehicle/status/control_mode]
+    when: { field: mode, not_equals: MANUAL }  # lost unless MANUAL: holds on MANUAL
+hazards:
+  odd_exit:
+    guards: [/system/operation_mode/availability]
+    on: reported                               # `when:` needs `reported`
+    when: { field: autonomous, equals: false }
+    entry_speed: 8.33                          # m/s: the speed bound
+    ftti: 30s
+    reaction: l3_engaged
+modes:
+  l3_engaged:
+    requires: [hpc_alive, hpc_in_odd]
+    fallback: [takeover_request, comfortable_stop, emergency_stop]
+  takeover_request:
+    requires: [hpc_alive]
+    reaction: island.tor
+    window: { duration: 10s, param: mrm_handler.takeover_request_timeout }
+    exit: { on: driver_took_over, to: manual }
+  comfortable_stop:
+    requires: [hpc_alive]
+    reaction: island.comfortable_stop
+  emergency_stop:
+    requires: []
+    reaction: island.emergency_stop
+  manual:
+    requires: []
+nodes:
+  mrm_emergency_stop_operator:
+    params:
+      target_acceleration: { type: double }
+      target_jerk: { type: double }
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [emergency_control_cmd]
+        safe_state:
+          emits: emergency_control_cmd
+          settle: { decel: target_acceleration, jerk: target_jerk }
+```
+
+**`when: { field, <op>: <constant> }`** names one scalar field (a dotted
+path reaches into nested messages) and exactly one operator of `equals`,
+`not_equals`, `lt`, `le`, `gt`, `ge`; an ordering operator needs a number.
+The constant is a bool, a number, a string, or -- in upper snake case -- a
+message constant name (`MANUAL`), resolved against the `.msg` that declares
+the field. There are no conjunctions: a second condition is a second
+function. On a hazard it is the value that IS the fault; on a function
+(`{ of: [...], when: {...} }`) it is the predicate that LOSES the function,
+which is also lost by silence. So a function that should HOLD on a value is
+written with the negated operator, as `driver_took_over` is above.
+
+**Which fault removes which function.** A `reported` fault removes the value
+functions on its topic; an omission, late or loss fault removes both kinds,
+because silence also means "not known to be in range". The ladder a hazard
+takes skips every rung that requires a removed function, and neither checks
+nor charges it: above, `hpc_loss` (omission) lands straight on
+`emergency_stop`, while `odd_exit` waits out the takeover request.
+
+**`window:`** is `10s` (unbound) or `{ duration, param: <node>.<parameter> }`.
+A windowed rung is transitional: the system stays at most `duration`, then
+takes the next rung even if this one is still available. It is never a
+safe state, so it is never the floor, and it has no settle; what it costs --
+its route plus its window -- is charged to every rung below it.
+
+**`exit: { on: <function>, to: <mode> }`** is allowed only on a windowed
+rung (a parse error otherwise), so the grammar still has no general
+transitions. While the rung is active, the function holding ends the ladder
+in `to`, which is outside every `fallback:` list.
+
+**`entry_speed`** (m/s, positive) on a hazard, and **`settle: { decel, jerk }`**
+naming two parameters of the path's node, derive the settle per hazard. With
+a = |decel| and j = |jerk|, the ramp to full deceleration sheds
+`v_r = a^2 / (2 j)`; a vehicle at `v0 <= v_r` stops inside the ramp,
+`t = sqrt(2 v0 / j)`, otherwise `t = a/j + (v0 - v_r)/a`. At a = 2.5 and
+j = 1.5 that is 2033.33 ms from 3.0 m/s and 2525.33 ms from 4.23 m/s. A
+measured value may sit beside the profile as `settle: { decel, jerk,
+duration: 2517ms }`: it is the fallback when the hazard states no entry
+speed, and it is compared with the derivation. A safe state commanded
+upstream of the sink -- a velocity limit the planner then carries to the
+actuator -- keeps its settle unless a hop nearer the sink declares one.
+
+The consumer's rules for these keys:
+
+| Rule | Severity | When |
+|------|----------|------|
+| `when-requires-reported` | Error | A hazard's `when:` without `reported` among its `on:` classes |
+| `when-field-unknown` | Error / Warning | The field is not in the topic's `.msg`, is not a scalar, or the constant is not declared there (error); the `.msg` is not on the ament index, so nothing was checked (warning) |
+| `ladder-window-floor` | Error | The last rung of a ladder has a window |
+| `window-param` | Error | The named parameter's resolved launch value, in seconds, is not the window, or it has none |
+| `window-unbound` | Warning | A window with no `param:` |
+| `mode-exit-target` | Error | `to:` is not a mode, or is a rung of some `fallback:` ladder |
+| `mode-exit-unwired` | Error | No node publishing the rung's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
+| `ladder-rung-budget` | Error | Now cumulative: detection + every windowed rung passed (route + window) + the rung's route + settle, against the interval |
+| `settle-derived` | Info | The arithmetic, printed |
+| `settle-entry-missing` | Warning | A braking profile reached by a hazard with no `entry_speed` |
+| `settle-param-unresolved` | Error | A profile parameter the node does not declare, or with no numeric launch value |
+| `settle-conflict` | Warning | A measured settle and the derivation differ by more than 1 % |
 
 ## Static Validation
 

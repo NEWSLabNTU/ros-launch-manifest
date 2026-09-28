@@ -227,6 +227,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
 | `reaction` | meta |  | The scope path whose route reaches the safe state. |
+| `when` | fact |  | The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`). |
+| `entry_speed` | requirement |  | The speed the vehicle may travel at when the fault occurs, in m/s, a plain positive number: the operating domain's speed bound. A braking-profile settle is derived from it (`settle-derived`). |
 
 ## `modes.<name>`
 
@@ -237,6 +239,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `fallback` | requirement |  | Modes to fall to, in order, when this one is lost. The last rung is the floor and must require nothing losable. |
 | `reaction` | meta |  | The scope path that reaches this mode's safe state. |
 | `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
+| `window` | requirement |  | A transitional rung: stay at most this long, then take the next rung. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`. |
+| `exit` | requirement |  | `{ on: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list. |
 
 ## `hazards.<name>.guards[]`
 
@@ -258,5 +262,47 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `emits` | fact |  | The endpoint this reaction commands the safe state on. |
-| `settle` | fact |  | How long the plant takes to reach the safe state once commanded. Measured, not authored. |
+| `settle` | fact |  | How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name from which the settle is derived with the hazard's `entry_speed`. |
+
+## `functions.<name>`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `all_of` | meta |  | Members of a redundant group, lost only when every member is. At least two. |
+| `of` | meta |  | The topics a value function reads. Requires `when:`; without one, write the bare list. |
+| `when` | fact |  | The predicate that LOSES the function by value. A value function is lost by the value or by silence. |
+
+## `when`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `field` | fact |  | One scalar field of the message, a dotted path from its root. Checked against the `.msg` when the ament index resolves it (`when-field-unknown`). |
+| `equals` | fact |  | The field equals the constant: a bool, a number, a message constant name (upper snake case) or a string. |
+| `not_equals` | fact |  | The field differs from the constant. |
+| `lt` | fact |  | The field is below the constant, a number. |
+| `le` | fact |  | The field is at most the constant, a number. |
+| `gt` | fact |  | The field is above the constant, a number. |
+| `ge` | fact |  | The field is at least the constant, a number. |
+
+## `modes.<name>.window`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `duration` | requirement |  | How long the rung may last. Required, positive. |
+| `param` | fact |  | `<node>.<parameter>`: the parameter, in seconds, whose resolved launch value must equal `duration` (`window-param`). |
+
+## `modes.<name>.exit`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `on` | fact |  | The function whose holding ends the ladder. Some node implementing the rung must take its topic on a path trigger (`mode-exit-unwired`). |
+| `to` | meta |  | The mode the ladder ends in. Not a member of any `fallback:` list (`mode-exit-target`). |
+
+## `safe_state.settle`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `decel` | fact |  | The parameter on this path's node holding the deceleration, m/s^2, read as a magnitude. |
+| `jerk` | fact |  | The parameter on this path's node holding the jerk the deceleration ramps at, m/s^3, read as a magnitude. |
+| `duration` | fact |  | A measured settle beside the profile: the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). |
 

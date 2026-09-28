@@ -20,6 +20,16 @@ impl ValidationRule for WiringRule {
                 wired_endpoints.insert(ep.clone());
             }
         }
+        // A service endpoint is wired too (v0.1.46). A `cli:` endpoint named in
+        // a path's `output` is how a reaction crosses a service call -- the
+        // consumer's reaction walk follows exactly that edge -- so warning
+        // that it is "not wired by any topic" asked for a topic that must not
+        // exist.
+        for svc in manifest.services.values() {
+            for ep in svc.client.iter().chain(svc.server.iter()) {
+                wired_endpoints.insert(ep.clone());
+            }
+        }
 
         // Check that every path input/output endpoint is wired
         for (node_name, node) in &manifest.nodes {
@@ -43,7 +53,7 @@ impl ValidationRule for WiringRule {
                             self.id(),
                             &format!("nodes.{node_name}.paths.{path_name}"),
                             format!(
-                                "path output '{output_ep}' is not wired by any topic (expected '{full_ref}' in a topic's pub list)"
+                                "path output '{output_ep}' is not wired by any topic or service (expected '{full_ref}' in a topic's pub list or a service's client list)"
                             ),
                         );
                     }

@@ -166,8 +166,8 @@ pub fn substitute_manifest(
 
     // Functions and modes (phase 75): guard members and the names a mode
     // references.
-    for g in m.functions.values_mut() {
-        g.members = substitute_vec(&g.members, args)?;
+    for f in m.functions.values_mut() {
+        f.group.members = substitute_vec(&f.group.members, args)?;
     }
     for mode in m.modes.values_mut() {
         mode.requires = substitute_vec(&mode.requires, args)?;
