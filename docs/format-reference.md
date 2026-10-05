@@ -11,6 +11,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `version` | meta |  | Manifest format version. Absent means 1. |
+| `rlm` | meta | since v0.1.49 | The grammar release this file needs, `v<major>.<minor>.<patch>` (or `>=` that). Checked before any other key: a checker whose grammar is older refuses the file naming both releases, instead of refusing the first key it does not know as if it were a typo. A checker before v0.1.49 refuses the key itself as unknown. Optional; beside `version`, which is the file format and stays 1. |
 | `args` | meta |  | Arguments this manifest requires, supplied by the launch scope. |
 | `exclude_patterns` |  | **removed** | Removed in phase 70 — it was parsed and read by nothing, so it excluded nothing. Mark an expected-absent side with `external:`. |
 | `nodes` | meta |  | Node declarations, keyed by bare node name. |
@@ -59,7 +60,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
-| `on_demand` | fact |  | Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
+| `on_demand` | fact | since v0.1.49 | Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
 | `jitter_ms` |  | **removed** | Removed in phase 68 — see `jitter`. |
 
@@ -166,7 +167,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `rate_hz` | fact |  | Timer rate. Required, and must be greater than zero. |
-| `jitter` | fact |  | Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (play_launch: the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. |
+| `jitter` | fact | since v0.1.49 | Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (play_launch: the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. |
 
 ## `sync`
 

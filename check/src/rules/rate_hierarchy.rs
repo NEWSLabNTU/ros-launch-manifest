@@ -137,7 +137,8 @@ fn check_on_demand(
         .publishers
         .iter()
         .filter(|p| {
-            resolve_endpoint(p, manifest, |n| &n.publishers).is_some_and(|e| e.on_demand == Some(true))
+            resolve_endpoint(p, manifest, |n| &n.publishers)
+                .is_some_and(|e| e.on_demand == Some(true))
         })
         .collect();
     let Some(first) = on_demand.first() else {
@@ -237,7 +238,10 @@ mod max_rate_tests {
         );
         let errs = errors(&format!("{}    rate_hz: 10\n", base.replace("SUB", "{}")));
         assert_eq!(errs.len(), 1, "{errs:?}");
-        assert!(errs[0].contains("beside on-demand publisher 'op/limit'"), "{errs:?}");
+        assert!(
+            errs[0].contains("beside on-demand publisher 'op/limit'"),
+            "{errs:?}"
+        );
     }
 
     #[test]

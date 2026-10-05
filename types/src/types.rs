@@ -30,6 +30,12 @@ impl ArgDecl {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Manifest {
     pub version: u32,
+    /// The grammar release the file needs, as written in its `rlm:` header
+    /// (`v0.1.49`, `0.1.49` or `>=0.1.49`; v0.1.49, play_launch phase 85
+    /// D5). Checked against [`crate::GRAMMAR_VERSION`] before the body is
+    /// read; `None` when the file states none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rlm: Option<String>,
     /// Manifest arguments — all mandatory. Values provided by scope args from record.json.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub args: BTreeMap<String, ArgDecl>,

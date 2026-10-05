@@ -6,6 +6,15 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+Three keys and a header for play_launch phase 85 (D1, D3, D5).
+
+- `pub.<ep>.on_demand: true`: a publisher that promises no rate (D3).
+- `trigger: { timer: { rate_hz, jitter } }`: a timer's release jitter (D1).
+- `rlm: v0.1.49`: the grammar a contract needs, checked before its body
+  (D5); `GRAMMAR_VERSION`, and `since` in the format reference.
+
 ## v0.1.48 - 2026-10-06
 
 Two grammar refusals made clearer, for play_launch phase 85 (I9, I10).

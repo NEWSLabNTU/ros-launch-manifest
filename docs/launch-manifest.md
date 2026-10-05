@@ -1198,6 +1198,18 @@ syntax, field table with defaults, and when to use.
 | Field     | Required | Description | If omitted |
 |-----------|----------|-------------|------------|
 | `version` | no       | Format version (currently `1`) | `1` — `parse.rs` reads `yaml_u32("version").unwrap_or(1)` |
+| `rlm`     | no       | The grammar release the file needs: `v0.1.49`, `0.1.49` or `>=0.1.49` (since v0.1.49) | no check: an older checker meets the first key it does not know |
+
+`rlm:` is read BEFORE any other key. A checker whose grammar
+(`ros_launch_manifest_types::GRAMMAR_VERSION`) is older refuses the file
+with both releases named -- "this contract needs rlm >= v0.1.50; this
+checker reads rlm v0.1.49" -- instead of refusing a key it has never heard
+of as if it were the author's typo. A checker older than the header itself
+(before v0.1.49) refuses `rlm:` as an unknown key; that is the fallback no
+header can avoid, and still better than a refusal for some key deep in the
+file. `version` stays the file FORMAT (1); `rlm` is the vocabulary. The
+format reference marks every key added since v0.1.49 with its release, so
+an author can choose the header from the keys a file uses.
 
 Every other manifest-level key opens one of the sections below. The
 complete top-level vocabulary, and nothing else, is:

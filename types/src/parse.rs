@@ -56,7 +56,80 @@ pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
             ..Default::default()
         });
     }
+    // play_launch phase 85 D5: the grammar the file needs, BEFORE any key of
+    // the body is read -- a file written for a newer grammar would otherwise
+    // be refused for its first new key, which reads as the author's typo.
+    check_grammar_header(&docs[0])?;
     with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""))
+}
+
+/// A release spelled `0.1.49`, `v0.1.49`, `>=0.1.49` or `>= v0.1.49`, as
+/// `(major, minor, patch)`.
+pub fn parse_grammar_version(raw: &str) -> Option<(u64, u64, u64)> {
+    let v = raw.trim();
+    let v = v.strip_prefix(">=").unwrap_or(v).trim_start();
+    let v = v.strip_prefix('v').unwrap_or(v);
+    let mut it = v.split('.').map(|p| p.parse::<u64>().ok());
+    let (Some(Some(a)), Some(Some(b)), Some(Some(c)), None) =
+        (it.next(), it.next(), it.next(), it.next())
+    else {
+        return None;
+    };
+    Some((a, b, c))
+}
+
+/// Refuse a file whose `rlm:` header names a grammar newer than this crate's
+/// ([`crate::GRAMMAR_VERSION`]), naming both releases (play_launch phase 85
+/// D5). A checker older than the header key itself (before v0.1.49) refuses
+/// `rlm:` as an unknown key instead, the fallback the header cannot avoid.
+fn check_grammar_header(doc: &Yaml) -> Result<(), ParseError> {
+    let v = &doc["rlm"];
+    if v.is_badvalue() {
+        return Ok(());
+    }
+    let ours = parse_grammar_version(crate::GRAMMAR_VERSION).expect("GRAMMAR_VERSION parses");
+    let raw = match v {
+        Yaml::String(s) => s.clone(),
+        other => {
+            return Err(field_err(
+                "",
+                "rlm",
+                &format!(
+                    "expected the grammar release this file needs as a string, like `rlm: \
+                     v{}`; found {}",
+                    crate::GRAMMAR_VERSION,
+                    yaml_kind(other)
+                ),
+            ));
+        }
+    };
+    let Some(needed) = parse_grammar_version(&raw) else {
+        return Err(field_err(
+            "",
+            "rlm",
+            &format!(
+                "`{raw}` is not a grammar release: write `v<major>.<minor>.<patch>` (or with \
+                 `>=`), like `rlm: v{}`",
+                crate::GRAMMAR_VERSION
+            ),
+        ));
+    };
+    if needed > ours {
+        return Err(field_err(
+            "",
+            "rlm",
+            &format!(
+                "this contract needs rlm >= v{}.{}.{}; this checker reads rlm v{}. Upgrade the \
+                 checker -- its grammar is older than the file's, so a key of the file may be \
+                 one it does not know",
+                needed.0,
+                needed.1,
+                needed.2,
+                crate::GRAMMAR_VERSION
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Parse a manifest from a YAML string, returning source and spans.
@@ -93,6 +166,11 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     }
     Ok(Manifest {
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
+        rlm: if ctx.is_empty() {
+            doc["rlm"].as_str().map(str::to_string)
+        } else {
+            None
+        },
         args: parse_args(doc, ctx)?,
         nodes: parse_nodes(doc, ctx)?,
         topics: parse_topics(doc, ctx)?,
@@ -2285,6 +2363,68 @@ hazards:
             m.hazards["lost_pose"].guards[0].members,
             vec!["pose_estimation"]
         );
+    }
+
+    /// play_launch phase 85 D5: a file states the grammar it needs, and a
+    /// newer one is refused before the body is read, naming both releases.
+    #[test]
+    fn a_contract_states_the_grammar_it_needs() {
+        let ours = crate::GRAMMAR_VERSION;
+        for ok in [
+            format!("v{ours}"),
+            ours.to_string(),
+            format!(">= v{ours}"),
+            "v0.1.0".into(),
+        ] {
+            let m = super::parse_manifest_str(&format!("version: 1\nrlm: \"{ok}\"\n"))
+                .unwrap_or_else(|e| panic!("{ok}: {e}"));
+            assert_eq!(m.rlm.as_deref(), Some(ok.as_str()));
+        }
+        // Newer than this grammar: refused even though the body also carries
+        // a key this grammar does not know -- the header is read first.
+        let err = super::parse_manifest_str(
+            "version: 1\nrlm: v99.0.0\nhazards:\n  h:\n    not_a_key_yet: 1\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains(&format!(
+                "this contract needs rlm >= v99.0.0; this checker reads rlm v{ours}"
+            )),
+            "{err}"
+        );
+        assert!(!err.contains("not_a_key_yet"), "{err}");
+        for (bad, needle) in [
+            ("rlm: latest\n", "is not a grammar release"),
+            ("rlm: 1\n", "as a string"),
+        ] {
+            let err = super::parse_manifest_str(bad).unwrap_err().to_string();
+            assert!(err.contains(needle), "{bad}: {err}");
+        }
+    }
+
+    /// `GRAMMAR_VERSION` is the release this crate is: equal to the newest
+    /// released heading of `CHANGELOG.md`, or its successor while an
+    /// `## Unreleased` section is on top.
+    #[test]
+    fn the_grammar_version_is_the_release() {
+        let log = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../CHANGELOG.md"),
+        )
+        .expect("CHANGELOG.md");
+        let headings: Vec<&str> = log.lines().filter(|l| l.starts_with("## ")).collect();
+        let released = headings
+            .iter()
+            .find_map(|h| h.strip_prefix("## v"))
+            .and_then(|h| h.split_whitespace().next())
+            .and_then(super::parse_grammar_version)
+            .expect("a released heading");
+        let ours = super::parse_grammar_version(crate::GRAMMAR_VERSION).unwrap();
+        if headings.first() == Some(&"## Unreleased") {
+            assert!(ours > released, "{ours:?} must be after {released:?}");
+        } else {
+            assert_eq!(ours, released, "GRAMMAR_VERSION must be the newest release");
+        }
     }
 
     /// play_launch phase 85 D3: `on_demand: true` is a publisher's

@@ -244,6 +244,12 @@ pub const FIELDS: &[Field] = &[
         "Manifest format version. Absent means 1.",
     ),
     live(
+        "rlm",
+        Context::Manifest,
+        Kind::Meta,
+        "The grammar release this file needs, `v<major>.<minor>.<patch>` (or `>=` that). Checked before any other key: a checker whose grammar is older refuses the file naming both releases, instead of refusing the first key it does not know as if it were a typo. A checker before v0.1.49 refuses the key itself as unknown. Optional; beside `version`, which is the file format and stays 1.",
+    ),
+    live(
         "args",
         Context::Manifest,
         Kind::Meta,
@@ -1217,6 +1223,10 @@ pub fn render_markdown() -> String {
                 (_, Kind::ByEndpoint) => "fact (pub) / requirement (sub)",
                 (_, Kind::Consequence) => "**consequence**",
             };
+            let status = match since(context, f.key) {
+                Some(v) if status.is_empty() => format!("since v{v}"),
+                _ => status,
+            };
             out.push_str(&format!(
                 "| `{}` | {} | {} | {} |\n",
                 f.key, kind, status, f.doc
@@ -1226,6 +1236,24 @@ pub fn render_markdown() -> String {
     }
     out
 }
+/// Keys added since v0.1.49, with the release that added each (play_launch
+/// phase 85 D5): what the format reference prints beside them. A column on
+/// [`Field`] would touch every row; earlier keys are not dated (their
+/// releases are in `CHANGELOG.md`).
+pub const SINCE: &[(Context, &str, &str)] = &[
+    (Context::Manifest, "rlm", "0.1.49"),
+    (Context::Endpoint, "on_demand", "0.1.49"),
+    (Context::TriggerTimer, "jitter", "0.1.49"),
+];
+
+/// The release that added `key` in `context`, when it is dated in [`SINCE`].
+pub fn since(context: Context, key: &str) -> Option<&'static str> {
+    SINCE
+        .iter()
+        .find(|(c, k, _)| *c == context && *k == key)
+        .map(|(_, _, v)| *v)
+}
+
 /// The keys legal in `context`, for the unknown-key check and for error
 /// messages. Includes deprecated and removed spellings: a removed key must
 /// reach its own dedicated error rather than a generic one.
