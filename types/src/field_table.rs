@@ -360,13 +360,13 @@ pub const FIELDS: &[Field] = &[
         "pub",
         Context::Node,
         Kind::Meta,
-        "Publisher endpoints, keyed by endpoint name.",
+        "Publisher endpoints, keyed by endpoint name. A key is a LOCAL name: the node's FQN is prefixed to it, so a `/` in a key is refused; connect the topic with a launch remap or a `topics:` entry.",
     ),
     live(
         "sub",
         Context::Node,
         Kind::Meta,
-        "Subscriber endpoints, keyed by endpoint name.",
+        "Subscriber endpoints, keyed by endpoint name. A key is a LOCAL name: the node's FQN is prefixed to it, so a `/` in a key is refused; connect the topic with a launch remap or a `topics:` entry.",
     ),
     live(
         "srv",

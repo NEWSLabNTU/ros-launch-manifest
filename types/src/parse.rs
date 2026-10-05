@@ -856,12 +856,14 @@ fn parse_endpoints(
         Yaml::Array(arr) => {
             for item in arr {
                 let name = yaml_str_owned(item);
+                reject_endpoint_path(ctx, key, &name)?;
                 eps.insert(name, EndpointProps::default());
             }
         }
         Yaml::Hash(hash) => {
             for (k, v) in hash {
                 let name = yaml_str_owned(k);
+                reject_endpoint_path(ctx, key, &name)?;
                 let path = format_path(ctx, &format!("{key}.{name}"));
                 let props = parse_endpoint_props(v, &path)?;
                 eps.insert(name, props);
@@ -872,6 +874,32 @@ fn parse_endpoints(
         }
     }
     Ok(eps)
+}
+
+/// Refuse a `/` in an endpoint key (`pub:`, `sub:`, `srv:`, `cli:`).
+///
+/// An endpoint key is a LOCAL name: the consumer prefixes the node's FQN to
+/// it, so `sub: { /abs/topic: ... }` became the endpoint `/node//abs/topic`,
+/// which matches no topic and was dropped in silence (the Autoware Safety
+/// Island's contract had to explain this in its head comment). A relative
+/// `a/b` is refused too: a `topics:` list names an endpoint as
+/// `node/endpoint` and splits at the last `/`, so the key cannot carry one.
+/// Where the endpoint is connected is the launch file's remap or the
+/// `topics:` entry's business, never the key's.
+fn reject_endpoint_path(ctx: &str, section: &str, name: &str) -> Result<(), ParseError> {
+    if !name.contains('/') {
+        return Ok(());
+    }
+    Err(field_err(
+        ctx,
+        &format!("{section}.{name}"),
+        &format!(
+            "endpoint key `{name}` contains `/`: an endpoint key is a local name, and the \
+             node's FQN is prefixed to it (`{name}` would become `<node>/{name}`). Use the \
+             endpoint's local name; remap the topic in the launch file or wire it under \
+             `topics:`"
+        ),
+    ))
 }
 
 fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseError> {
@@ -977,12 +1005,14 @@ fn parse_srv_endpoints(
         Yaml::Array(arr) => {
             for item in arr {
                 let name = yaml_str_owned(item);
+                reject_endpoint_path(ctx, key, &name)?;
                 eps.insert(name, SrvEndpointProps::default());
             }
         }
         Yaml::Hash(hash) => {
             for (k, v) in hash {
                 let name = yaml_str_owned(k);
+                reject_endpoint_path(ctx, key, &name)?;
                 reject_unknown_keys(v, ctx, Context::SrvEndpoint)?;
                 let props = SrvEndpointProps {
                     max_response: if v.is_null() || v.is_badvalue() {
@@ -3311,5 +3341,28 @@ nodes:
         assert!(e.contains("unknown key in `safe_state.settle`"), "{e}");
         let e = err_of(&p("{ decel: a, jerk: j, duration: 2034 }"));
         assert!(e.contains("no unit"), "{e}");
+    }
+
+    /// Phase 85 I9 (play_launch T8): an endpoint key is a local name. A `/`
+    /// in it is refused in every endpoint section and both spellings, with
+    /// the message saying where the topic is connected instead.
+    #[test]
+    fn an_endpoint_key_with_a_slash_is_refused() {
+        for (section, body) in [
+            ("pub", "{ /abs/topic: {} }"),
+            ("sub", "{ /abs/topic: { min_rate_hz: 10 } }"),
+            ("sub", "[/abs/topic]"),
+            ("cli", "{ ns/call: {} }"),
+            ("srv", "{ /abs/serve: {} }"),
+        ] {
+            let e = err_of(&format!("version: 1\nnodes:\n  n:\n    {section}: {body}\n"));
+            assert!(e.contains("contains `/`"), "{section} {body}: {e}");
+            assert!(e.contains("an endpoint key is a local name"), "{e}");
+            assert!(e.contains("remap the topic in the launch file or wire it under"), "{e}");
+            assert!(e.contains(&format!("at 'nodes.n.{section}.")), "{e}");
+        }
+        // A local name is unaffected.
+        let m = parse_manifest_str("version: 1\nnodes:\n  n:\n    pub: { scan: {} }\n").unwrap();
+        assert!(m.nodes["n"].publishers.contains_key("scan"));
     }
 }

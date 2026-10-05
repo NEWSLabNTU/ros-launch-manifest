@@ -35,8 +35,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `if` | meta |  | Include this node only when the condition holds. |
 | `unless` | meta |  | Include this node unless the condition holds. |
 | `lifecycle` | fact |  | True for a ROS 2 managed node; runtime monitors skip checks until it is Active. |
-| `pub` | meta |  | Publisher endpoints, keyed by endpoint name. |
-| `sub` | meta |  | Subscriber endpoints, keyed by endpoint name. |
+| `pub` | meta |  | Publisher endpoints, keyed by endpoint name. A key is a LOCAL name: the node's FQN is prefixed to it, so a `/` in a key is refused; connect the topic with a launch remap or a `topics:` entry. |
+| `sub` | meta |  | Subscriber endpoints, keyed by endpoint name. A key is a LOCAL name: the node's FQN is prefixed to it, so a `/` in a key is refused; connect the topic with a launch remap or a `topics:` entry. |
 | `srv` | meta |  | Service server endpoints, keyed by endpoint name. |
 | `cli` | meta |  | Service client endpoints, keyed by endpoint name. |
 | `paths` | meta |  | This node's internal paths, keyed by path name. |
