@@ -13,9 +13,38 @@ use ros_launch_manifest_types::{
 
 #[test]
 fn trigger_timer_serializes_as_spec_shape() {
-    let t = Trigger::Timer { rate_hz: 10.0 };
+    let t = Trigger::Timer {
+        rate_hz: 10.0,
+        jitter: None,
+    };
     let json = serde_json::to_value(&t).unwrap();
     assert_eq!(json, serde_json::json!({"timer": {"rate_hz": 10.0}}));
+}
+
+/// play_launch phase 85 D1: a timer's release jitter parses beside its
+/// rate, travels with the trigger, and must be less than one period.
+#[test]
+fn trigger_timer_carries_its_release_jitter() {
+    let m = parse_manifest_str(
+        "nodes:\n  h:\n    pub:\n      out: {}\n    paths:\n      tick:\n        trigger: { timer: { rate_hz: 10, jitter: 18ms } }\n        output: [out]\n",
+    )
+    .unwrap();
+    let tick = &m.nodes["h"].paths["tick"];
+    assert_eq!(tick.timer_jitter().map(|d| d.as_millis_f64()), Some(18.0));
+    assert_eq!(
+        tick.effective_trigger(),
+        EffectiveTrigger::Timer { rate_hz: 10.0 }
+    );
+    for (jitter, needle) in [
+        ("100ms", "a whole period (100ms at 10 Hz) or more"),
+        ("18", "jitter"),
+    ] {
+        let yaml = format!(
+            "nodes:\n  h:\n    paths:\n      tick:\n        trigger: {{ timer: {{ rate_hz: 10, jitter: {jitter} }} }}\n"
+        );
+        let err = parse_manifest_str(&yaml).expect_err(&yaml).to_string();
+        assert!(err.contains(needle), "`{needle}` not in: {err}");
+    }
 }
 
 #[test]
@@ -83,7 +112,13 @@ nodes:
     );
 
     let status_tick = &m.nodes["vehicle_cmd_gate"].paths["status_tick"];
-    assert_eq!(status_tick.trigger, Some(Trigger::Timer { rate_hz: 10.0 }));
+    assert_eq!(
+        status_tick.trigger,
+        Some(Trigger::Timer {
+            rate_hz: 10.0,
+            jitter: None
+        })
+    );
     assert_eq!(
         status_tick.effective_trigger(),
         EffectiveTrigger::Timer { rate_hz: 10.0 }

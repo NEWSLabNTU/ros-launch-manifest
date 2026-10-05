@@ -1360,6 +1360,17 @@ pub struct PathContract {
     /// stale model ranks nothing loudly rather than something wrongly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger: Option<ros_launch_manifest_sched::EffectiveTrigger>,
+    /// The release jitter of a timer trigger, ms (contract `trigger: {
+    /// timer: { rate_hz, jitter } }`, v0.1.49; play_launch phase 85 D1): how
+    /// late a tick may be released, so that a message the path reads on its
+    /// tick waits up to `period + jitter`. Beside [`Self::trigger`] rather
+    /// than inside its `Timer` variant, because that enum is `sched`'s and
+    /// every consumer constructs it. `None` for any other trigger, and for a
+    /// timer that states none (ticks on time). What reads it: play_launch's
+    /// reaction walk and `window-expiry`; the chain derivation's sampling
+    /// cost is still one period.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_jitter_ms: Option<f64>,
     /// Fan-in synchronisation policy of an `Input` path with two or more
     /// sources (Vocabulary v2; design issue #52). Absent when the path
     /// declared none.

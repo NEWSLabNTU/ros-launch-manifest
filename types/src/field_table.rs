@@ -798,6 +798,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Timer rate. Required, and must be greater than zero.",
     ),
+    live(
+        "jitter",
+        Context::TriggerTimer,
+        Kind::Fact,
+        "Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (play_launch: the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time.",
+    ),
     // ── sync ──
     live(
         "policy",

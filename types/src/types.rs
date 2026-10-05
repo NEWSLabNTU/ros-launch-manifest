@@ -1054,6 +1054,18 @@ pub struct PathDecl {
 }
 
 impl PathDecl {
+    /// The release jitter of this path's timer trigger (`trigger: { timer: {
+    /// rate_hz, jitter } }`, v0.1.49), or `None` for any other trigger or a
+    /// timer that states none. Kept off [`EffectiveTrigger`] on purpose:
+    /// that enum's `Timer` variant is matched by every consumer, and a
+    /// period is all most of them need.
+    pub fn timer_jitter(&self) -> Option<crate::duration::Duration> {
+        match &self.trigger {
+            Some(Trigger::Timer { jitter, .. }) => *jitter,
+            _ => None,
+        }
+    }
+
     /// Derive the trigger actually in effect for this path (Vocabulary
     /// v2, Phase 44.1 §1): an explicit `trigger:` always wins; otherwise
     /// a non-empty legacy `input:` list derives an input trigger (today's
@@ -1063,7 +1075,7 @@ impl PathDecl {
     pub fn effective_trigger(&self) -> EffectiveTrigger {
         if let Some(trigger) = &self.trigger {
             return match trigger {
-                Trigger::Timer { rate_hz } => EffectiveTrigger::Timer { rate_hz: *rate_hz },
+                Trigger::Timer { rate_hz, .. } => EffectiveTrigger::Timer { rate_hz: *rate_hz },
                 Trigger::Input(endpoints) => EffectiveTrigger::Input(endpoints.clone()),
                 Trigger::Once => EffectiveTrigger::Once,
                 Trigger::Spontaneous => EffectiveTrigger::Spontaneous,
@@ -1090,7 +1102,18 @@ impl PathDecl {
 pub enum Trigger {
     /// Periodic self-clocked callback. `rate_hz` is a REAL scheduling
     /// input (mapper fact); must be > 0.
-    Timer { rate_hz: f64 },
+    ///
+    /// `jitter` is the timer's RELEASE jitter (play_launch phase 85 D1): how
+    /// late a tick may be released after its nominal instant, so that a
+    /// message the path reads on its tick waits up to `1/rate_hz + jitter`.
+    /// A fact about the executor and the board, measured, never derived;
+    /// less than one period. Absent means the ticks are released on time
+    /// (the reading before v0.1.49).
+    Timer {
+        rate_hz: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        jitter: Option<crate::duration::Duration>,
+    },
     /// Output caused by these input endpoint/topic names. Rate is
     /// inherited from upstream, not authored here.
     Input(Vec<String>),

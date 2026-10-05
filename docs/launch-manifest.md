@@ -1850,9 +1850,22 @@ paths:
 | Form | Meaning |
 |------|---------|
 | `{ timer: { rate_hz: <f64> } }` | Periodic self-clocked callback. `rate_hz` must be > 0. |
+| `{ timer: { rate_hz: <f64>, jitter: <dur> } }` | The same, with the timer's measured release jitter (v0.1.49): a tick may be released up to `jitter` late, less than one period. |
 | `{ input: [ep, ...] }` | Message-driven; caused by these input endpoint/topic names. |
 | `once` | Published once (startup latch); scheduling-irrelevant. |
 | `spontaneous` | Caused outside the graph (operator, network, hardware); event-like. |
+
+**Release jitter** (v0.1.49). A timer's period is not all a message waits
+for it: the executor releases a tick late when something else holds the
+thread, and on a small board the lateness is the same order as the work.
+`jitter:` states it, measured (the Autoware Safety Island's handler: ticks
+up to 114.84 ms apart at 10 Hz, so `jitter: 18ms` with the margin). What
+waits for the tick is then charged `period + jitter` instead of a bare
+period: play_launch's reaction walk on a sampling hop, and `window-expiry`
+for the window owner's notice of a deadline. The model carries it as
+`PathContract.timer_jitter_ms`, beside the trigger. Without the key the
+island had to fold its 18 ms into a path's `max_latency`, where it also
+became nano-ros's node deadline.
 
 **Legacy derivation.** When `trigger:` is absent: a non-empty `input:`
 list derives an input trigger (today's contracts parse identically under

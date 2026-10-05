@@ -1508,7 +1508,22 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
             if rate_hz <= 0.0 {
                 return Err(field_err(ctx, "trigger.timer.rate_hz", "must be > 0"));
             }
-            Ok(Some(Trigger::Timer { rate_hz }))
+            let jitter = yaml_duration(v, "jitter")?;
+            if let Some(j) = jitter
+                && j.as_millis_f64() >= 1000.0 / rate_hz
+            {
+                return Err(field_err(
+                    ctx,
+                    "trigger.timer.jitter",
+                    &format!(
+                        "a release jitter of {}ms is a whole period ({}ms at {rate_hz} Hz) or \
+                         more: a tick that late is a missed tick, not a late one",
+                        j.as_millis_f64(),
+                        1000.0 / rate_hz
+                    ),
+                ));
+            }
+            Ok(Some(Trigger::Timer { rate_hz, jitter }))
         }
         "input" => {
             let endpoints = yaml_direct_string_list(v, "input", ctx)?;

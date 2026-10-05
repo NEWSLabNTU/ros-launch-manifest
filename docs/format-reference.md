@@ -166,6 +166,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `rate_hz` | fact |  | Timer rate. Required, and must be greater than zero. |
+| `jitter` | fact |  | Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (play_launch: the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. |
 
 ## `sync`
 
