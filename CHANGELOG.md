@@ -6,14 +6,67 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.1.49 - 2026-10-06
 
-Three keys and a header for play_launch phase 85 (D1, D3, D5).
+Three keys, a header and the semantics the Autoware Safety Island's
+contract had to explain in comments, for play_launch phase 85 (D1, D3,
+D5, D7). **Workspace Cargo version `0.1.7` -> `0.1.8`**:
+`Trigger::Timer` gains a field (a struct-pattern break), and `Manifest`,
+`EndpointProps`, `PubContract` and `PathContract` gain fields, which
+breaks a struct literal without `..Default::default()`. The model's
+additions are optional and skipped when absent, so a model without them
+is unchanged on the wire, and `sched`'s `EffectiveTrigger` is untouched.
 
-- `pub.<ep>.on_demand: true`: a publisher that promises no rate (D3).
-- `trigger: { timer: { rate_hz, jitter } }`: a timer's release jitter (D1).
-- `rlm: v0.1.49`: the grammar a contract needs, checked before its body
-  (D5); `GRAMMAR_VERSION`, and `since` in the format reference.
+### Why
+
+The island's board runs (phase8-W30/W31) sized three costs the grammar
+could not state where they happen: the UART link (stated as
+`max_transport`, which the consumer's fault arithmetic did not charge:
+play_launch phase 85 I1), the handler tick's release jitter (folded into
+`call_mrm` and the timeline tool's `TICK_MS`), and the absence of a rate
+on two publishers driven by a service callback (given a 10 Hz floor for
+want of a spelling, which the board image turned into two
+`rate-hierarchy-runtime` violations at start-up). A contract written for
+a newer grammar was refused for its first new key, which reads as the
+author's typo; and the contract's head comment explained thirteen points
+of grammar semantics no doc line said.
+
+### What changed
+
+- `types`, `pub.<ep>.on_demand: true` (D3): a publisher that publishes
+  when asked and promises no rate. Refused beside `min_rate_hz` and under
+  `sub:`/`cli:`. `model::PubContract.on_demand`: a consumer derives no
+  rate monitor for the endpoint. `check`, `rate-hierarchy`: a topic
+  `rate_hz` beside an on-demand publisher, and a non-`state` subscriber's
+  `min_rate_hz` on a topic whose every publisher is on demand, are errors.
+- `types`, `trigger: { timer: { rate_hz, jitter } }` (D1): the timer's
+  measured release jitter, less than one period. `Trigger::Timer.jitter`,
+  `PathDecl::timer_jitter()`; `EffectiveTrigger` unchanged.
+  `model::PathContract.timer_jitter_ms`, beside `trigger` (not inside
+  `sched`'s variant, which every consumer constructs). Read by
+  play_launch's reaction walk and `window-expiry`; the chain derivation's
+  sampling cost is still one period.
+- `types`, the `rlm:` header (D5): `rlm: v0.1.49` (or `0.1.49`,
+  `>=0.1.49`) names the grammar a file needs; `parse_manifest_str` reads
+  it before any key of the body and refuses a newer one: "this contract
+  needs rlm >= v0.1.50; this checker reads rlm v0.1.49". `GRAMMAR_VERSION`
+  is the release (a test holds it to this file's newest heading),
+  `parse_grammar_version` the spelling, `Manifest.rlm` what the file
+  wrote. A checker before v0.1.49 refuses the key as unknown: the
+  fallback no header can avoid. `field_table::SINCE` dates the keys added
+  from this release on, and the format reference prints "since v0.1.49".
+- Field table, so `docs/format-reference.md` (D7): `srv`/`cli`, `input`,
+  `trigger`, `min_rate_hz`, `state`, `max_transport` (endpoint and
+  topic), `max_latency`, `concurrency`, `criticality`, `severity_levels`,
+  `window` and `settle` now say what the island's head comment had to:
+  an omitted service is not neutral, an empty `input` is not a timer,
+  `min_rate_hz` is a requirement and not a detector, where a tick and a
+  link are charged, a node path's `max_latency` is also nano-ros's
+  deadline, a scope path's is the nominal traversal, every path of a node
+  serialises unless declared, criticality is the max over hazards, the
+  default severity scale is ISO 26262's, and the settle formula.
+- `docs/launch-manifest.md`: Metadata (`rlm:`), Derived Rates
+  (`on_demand`), Path triggers (`jitter`).
 
 ## v0.1.48 - 2026-10-06
 
