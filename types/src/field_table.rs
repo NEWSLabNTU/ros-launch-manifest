@@ -318,7 +318,7 @@ pub const FIELDS: &[Field] = &[
         "severity_levels",
         Context::Manifest,
         Kind::Meta,
-        "The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D.",
+        "The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader.",
     ),
     live(
         "external_topics",
@@ -378,13 +378,13 @@ pub const FIELDS: &[Field] = &[
         "srv",
         Context::Node,
         Kind::Meta,
-        "Service server endpoints, keyed by endpoint name.",
+        "Service server endpoints, keyed by LOCAL endpoint name. Not neutral when omitted: a consumer sizes the image's pools from this list (nano-ros derives its queryable and service counts from it), so a server the code creates and the contract leaves out is found at boot, not here.",
     ),
     live(
         "cli",
         Context::Node,
         Kind::Meta,
-        "Service client endpoints, keyed by endpoint name.",
+        "Service client endpoints, keyed by LOCAL endpoint name. Not neutral when omitted, for the same reason as `srv:`: pools are sized from the list. A reaction route crosses a client -> server edge as a message (play_launch's walk); a server with no path its request triggers latches the request for its own timer, and the walk charges that timer's period as a sampling hop.",
     ),
     live(
         "paths",
@@ -396,13 +396,13 @@ pub const FIELDS: &[Field] = &[
         "criticality",
         Context::Node,
         Kind::Consequence,
-        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72); the label stands only where no hazard reaches the node.",
+        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B. The label stands only where no hazard reaches the node.",
     ),
     live(
         "concurrency",
         Context::Node,
         Kind::Fact,
-        "Which of this node's paths may NOT run concurrently. Absent means all of them serialize.",
+        "Which of this node's paths may NOT run concurrently. Absent means all of them serialize: every path of the node waits for any other that is running (a single-threaded executor), and the checker charges that wait (`path-exclusion`). Declare `exclusive` groups to say which may in fact overlap.",
     ),
     live(
         "params",
@@ -415,7 +415,7 @@ pub const FIELDS: &[Field] = &[
         "min_rate_hz",
         Context::Endpoint,
         Kind::ByEndpoint,
-        "Lower bound on this endpoint's rate.",
+        "Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `on_demand: true` instead of leaving this out.",
     ),
     live(
         "max_rate_hz",
@@ -438,7 +438,7 @@ pub const FIELDS: &[Field] = &[
         "state",
         Context::Endpoint,
         Kind::Fact,
-        "Subscriber: read-latest rather than causal.",
+        "Subscriber: read-latest rather than causal. The node caches the message and a timer path reads it, so a reaction arriving here waits for that timer: the walk charges one period (the timer's `jitter` too, when stated) as a sampling hop, shown as `(+Nms sampling)` in a route.",
     ),
     live(
         "required",
@@ -456,7 +456,7 @@ pub const FIELDS: &[Field] = &[
         "max_transport",
         Context::Endpoint,
         Kind::Requirement,
-        "Transport latency budget for this endpoint.",
+        "Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
     ),
     removed(
         "max_transport_ms",
@@ -550,7 +550,7 @@ pub const FIELDS: &[Field] = &[
         "max_transport",
         Context::Topic,
         Kind::Requirement,
-        "Transport latency budget for every subscriber of this topic.",
+        "Transport latency budget for every subscriber of this topic that states none of its own. Charged as the subscriber's `max_transport` is: path and chain latencies, and a reaction route's guard edge.",
     ),
     removed(
         "max_transport_ms",
@@ -702,7 +702,7 @@ pub const FIELDS: &[Field] = &[
         "input",
         Context::Path,
         Kind::Fact,
-        "Legacy trigger spelling. Prefer `trigger: { input: [...] }`.",
+        "Legacy trigger spelling. Prefer `trigger: { input: [...] }`. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified.",
     ),
     live(
         "output",
@@ -714,7 +714,7 @@ pub const FIELDS: &[Field] = &[
         "max_latency",
         Context::Path,
         Kind::Requirement,
-        "Latency budget for this path.",
+        "Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; it ALSO becomes nano-ros's derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a SCOPE path: the NOMINAL end-to-end traversal of the subtree, checked by `scope-budget`; a hazard's fault route is derived separately by walking the reactions, and does not read it.",
     ),
     removed(
         "max_latency_ms",
@@ -747,7 +747,7 @@ pub const FIELDS: &[Field] = &[
         "trigger",
         Context::Path,
         Kind::Fact,
-        "What causes this path's output: timer | input | once | spontaneous.",
+        "What causes this path's output: timer | input | once | spontaneous. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick.",
     ),
     live(
         "sync",
@@ -1013,7 +1013,7 @@ pub const FIELDS: &[Field] = &[
         "window",
         Context::Mode,
         Kind::Requirement,
-        "A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`). A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`.",
+        "A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`.",
     ),
     live(
         "exit",
@@ -1064,7 +1064,7 @@ pub const FIELDS: &[Field] = &[
         "settle",
         Context::SafeState,
         Kind::Fact,
-        "How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name from which the settle is derived with the hazard's `entry_speed`.",
+        "How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic).",
     ),
     // -- functions.<name> (map form) --
     live(

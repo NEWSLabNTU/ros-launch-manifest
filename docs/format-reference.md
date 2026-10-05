@@ -23,7 +23,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
 | `modes` | meta |  | Operational modes: what each requires, and the ordered ladder to fall to when it is lost. |
-| `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D. |
+| `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. |
 | `external_topics` | meta |  | Topics produced or consumed outside the loaded manifest tree. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
@@ -38,25 +38,25 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `lifecycle` | fact |  | True for a ROS 2 managed node; runtime monitors skip checks until it is Active. |
 | `pub` | meta |  | Publisher endpoints, keyed by endpoint name. A key is a LOCAL name: the node's FQN is prefixed to it, so a `/` in a key is refused; connect the topic with a launch remap or a `topics:` entry. |
 | `sub` | meta |  | Subscriber endpoints, keyed by endpoint name. A key is a LOCAL name: the node's FQN is prefixed to it, so a `/` in a key is refused; connect the topic with a launch remap or a `topics:` entry. |
-| `srv` | meta |  | Service server endpoints, keyed by endpoint name. |
-| `cli` | meta |  | Service client endpoints, keyed by endpoint name. |
+| `srv` | meta |  | Service server endpoints, keyed by LOCAL endpoint name. Not neutral when omitted: a consumer sizes the image's pools from this list (nano-ros derives its queryable and service counts from it), so a server the code creates and the contract leaves out is found at boot, not here. |
+| `cli` | meta |  | Service client endpoints, keyed by LOCAL endpoint name. Not neutral when omitted, for the same reason as `srv:`: pools are sized from the list. A reaction route crosses a client -> server edge as a message (play_launch's walk); a server with no path its request triggers latches the request for its own timer, and the walk charges that timer's period as a sampling hop. |
 | `paths` | meta |  | This node's internal paths, keyed by path name. |
-| `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72); the label stands only where no hazard reaches the node. |
-| `concurrency` | fact |  | Which of this node's paths may NOT run concurrently. Absent means all of them serialize. |
+| `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B. The label stands only where no hazard reaches the node. |
+| `concurrency` | fact |  | Which of this node's paths may NOT run concurrently. Absent means all of them serialize: every path of the node waits for any other that is running (a single-threaded executor), and the checker charges that wait (`path-exclusion`). Declare `exclusive` groups to say which may in fact overlap. |
 | `params` | fact |  | Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. `params: {}` means the node declares no parameters; a missing `params:` means not stated. The two stay distinct in the model: `{}` becomes an empty `contracts.node_params` entry, a missing key none. |
 
 ## `pub/sub/cli.<endpoint>`
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `min_rate_hz` | fact (pub) / requirement (sub) |  | Lower bound on this endpoint's rate. |
+| `min_rate_hz` | fact (pub) / requirement (sub) |  | Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `on_demand: true` instead of leaving this out. |
 | `max_rate_hz` | fact (pub) / requirement (sub) |  | Upper bound on this endpoint's rate. |
 | `max_age` | requirement |  | Subscriber: maximum data age at receive (now - header.stamp). |
 | `max_age_ms` |  | **removed** | Removed in phase 70 — write `max_age: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
-| `state` | fact |  | Subscriber: read-latest rather than causal. |
+| `state` | fact |  | Subscriber: read-latest rather than causal. The node caches the message and a timer path reads it, so a reaction arriving here waits for that timer: the walk charges one period (the timer's `jitter` too, when stated) as a sampling hop, shown as `(+Nms sampling)` in a route. |
 | `required` | fact |  | Subscriber: this endpoint must be connected. |
 | `qos` | fact |  | QoS overrides for this endpoint. |
-| `max_transport` | requirement |  | Transport latency budget for this endpoint. |
+| `max_transport` | requirement |  | Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`). |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
@@ -82,7 +82,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `sub` | meta |  | Subscribing endpoints, as `node/endpoint`. |
 | `qos` | fact |  | Topic-level QoS, overridable per endpoint. |
 | `rate_hz` | **consequence** |  | Publication rate. Derivable from the timers that drive it — see `derivable-rate`. |
-| `max_transport` | requirement |  | Transport latency budget for every subscriber of this topic. |
+| `max_transport` | requirement |  | Transport latency budget for every subscriber of this topic that states none of its own. Charged as the subscriber's `max_transport` is: path and chain latencies, and a reaction route's guard edge. |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `drop` | requirement |  | Permitted message loss on this topic. |
 | `external` | meta |  | Mark one side of this topic as provided by an external system. |
@@ -139,15 +139,15 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `if` | meta |  | Declare this path only when the condition holds. |
 | `unless` | meta |  | Declare this path unless the condition holds. |
-| `input` | fact |  | Legacy trigger spelling. Prefer `trigger: { input: [...] }`. |
+| `input` | fact |  | Legacy trigger spelling. Prefer `trigger: { input: [...] }`. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified. |
 | `output` | fact |  | Endpoints (node path) or topics (scope path) this path produces. |
-| `max_latency` | requirement |  | Latency budget for this path. |
+| `max_latency` | requirement |  | Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; it ALSO becomes nano-ros's derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a SCOPE path: the NOMINAL end-to-end traversal of the subtree, checked by `scope-budget`; a hazard's fault route is derived separately by walking the reactions, and does not read it. |
 | `max_latency_ms` |  | **removed** | Removed in phase 70 — write `max_latency: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `correlation` |  | **removed** | Removed in phase 70 — nothing ever read it. State fan-in policy with `sync:`. |
 | `tolerance` | fact |  | Max `header.stamp` spread between a fan-in path's inputs still treated as one set. |
 | `tolerance_ms` |  | **removed** | Removed in phase 70 — write `tolerance: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `drop` | requirement |  | Permitted message loss along this path. |
-| `trigger` | fact |  | What causes this path's output: timer | input | once | spontaneous. |
+| `trigger` | fact |  | What causes this path's output: timer | input | once | spontaneous. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick. |
 | `sync` | fact |  | Fan-in synchronization policy for an input trigger with two or more endpoints. |
 | `max_jitter` | requirement |  | Permitted variation in this path's latency. |
 | `min_latency` | fact |  | Best-case latency. Exists so that `max_jitter` is falsifiable. |
@@ -242,7 +242,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `fallback` | requirement |  | Modes to fall to, in order, when this one is lost. The last rung is the floor and must require nothing losable. |
 | `reaction` | meta |  | The scope path that reaches this mode's safe state. |
 | `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
-| `window` | requirement |  | A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`). A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`. |
+| `window` | requirement |  | A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`. |
 | `exit` | requirement |  | `{ on: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list. |
 
 ## `hazards.<name>.guards[]`
@@ -265,7 +265,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `emits` | fact |  | The endpoint this reaction commands the safe state on. |
-| `settle` | fact |  | How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name from which the settle is derived with the hazard's `entry_speed`. |
+| `settle` | fact |  | How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic). |
 
 ## `functions.<name>`
 
