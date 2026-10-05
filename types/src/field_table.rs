@@ -1239,20 +1239,75 @@ pub fn suggestions(context: Context) -> Vec<&'static str> {
 }
 
 /// The accepted key in `context` closest to `key`, for a "did you mean"
-/// suggestion. `None` when nothing is close enough to be worth printing —
-/// an unrelated key produces no suggestion rather than a misleading one.
+/// suggestion: the first of [`nearest_all`]. `None` when nothing is close
+/// enough to be worth printing -- an unrelated key produces no suggestion
+/// rather than a misleading one.
 pub fn nearest(context: Context, key: &str) -> Option<&'static str> {
-    let budget = match key.len() {
-        0..=4 => 1,
-        5..=8 => 2,
-        _ => 3,
-    };
-    allowed(context)
+    nearest_all(context, key).into_iter().next()
+}
+
+/// Unit suffixes a key may carry; a typo that drops or swaps one is matched
+/// on the stem.
+const UNIT_SUFFIXES: [&str; 6] = ["_hz", "_ms", "_us", "_ns", "_s", "_mps"];
+
+fn unit_stem(k: &str) -> &str {
+    UNIT_SUFFIXES
+        .iter()
+        .find_map(|u| k.strip_suffix(u))
+        .unwrap_or(k)
+}
+
+/// Every accepted key in `context` that `key` most likely meant, best
+/// first; ties are all listed (phase 85 I10).
+///
+/// Structural matches win over edit distance, because a dropped unit
+/// suffix is the commonest slip and the costliest to Levenshtein: `max_rate`
+/// is 3 edits from `max_rate_hz` and 2 from `max_age`, so distance alone
+/// suggested the wrong key. A structural match is a key that `key` is a
+/// word prefix of (`max_rate` -> `max_rate_hz`; `key` at least 4
+/// characters, the rest starting at `_`), or one with the same stem once a
+/// unit suffix is dropped (`max_rate_ms` -> `max_rate_hz`). Otherwise the
+/// keys at the least edit distance within a budget of a third of the key's
+/// length (at least 1).
+pub fn nearest_all(context: Context, key: &str) -> Vec<&'static str> {
+    let candidates: Vec<&'static str> = allowed(context)
         .filter(|f| f.status != Status::Removed)
-        .map(|f| (edit_distance(f.key, key), f.key))
+        .map(|f| f.key)
+        .collect();
+    let mut structural: Vec<&'static str> = candidates
+        .iter()
+        .copied()
+        .filter(|c| {
+            let word_prefix = key.len() >= 4
+                && c.len() > key.len()
+                && c.starts_with(key)
+                && c[key.len()..].starts_with('_');
+            let (ks, cs) = (unit_stem(key), unit_stem(c));
+            let same_stem = *c != key && ks == cs && (ks != key || cs != *c);
+            word_prefix || same_stem
+        })
+        .collect();
+    if !structural.is_empty() {
+        structural.sort_unstable();
+        structural.dedup();
+        return structural;
+    }
+    let budget = (key.chars().count() / 3).max(1);
+    let scored: Vec<(usize, &'static str)> = candidates
+        .iter()
+        .map(|c| (edit_distance(c, key), *c))
         .filter(|(d, _)| *d <= budget)
-        .min_by_key(|(d, k)| (*d, *k))
+        .collect();
+    let Some(best) = scored.iter().map(|(d, _)| *d).min() else {
+        return Vec::new();
+    };
+    let mut keys: Vec<&'static str> = scored
+        .into_iter()
+        .filter(|(d, _)| *d == best)
         .map(|(_, k)| k)
+        .collect();
+    keys.sort_unstable();
+    keys
 }
 
 /// Levenshtein distance, two rows.
@@ -1337,6 +1392,33 @@ mod tests {
         assert_eq!(nearest(Context::Path, "max_latencyy"), Some("max_latency"));
         assert_eq!(nearest(Context::Topic, "rate_hzz"), Some("rate_hz"));
         assert_eq!(nearest(Context::Path, "bogus_field"), None);
+    }
+
+    /// Phase 85 I10 (play_launch T8): a dropped or swapped unit suffix is
+    /// matched on the stem, ahead of a closer edit distance.
+    #[test]
+    fn a_missing_unit_suffix_suggests_the_suffixed_key() {
+        assert_eq!(
+            nearest_all(Context::Endpoint, "max_rate"),
+            vec!["max_rate_hz"]
+        );
+        assert_eq!(
+            nearest_all(Context::Endpoint, "min_rate"),
+            vec!["min_rate_hz"]
+        );
+        assert_eq!(
+            nearest_all(Context::Endpoint, "max_rate_ms"),
+            vec!["max_rate_hz"]
+        );
+        // Too short to be a word prefix: falls back to edit distance.
+        assert!(!nearest_all(Context::Endpoint, "max").contains(&"max_rate_hz"));
+    }
+
+    /// Ties are all listed, sorted.
+    #[test]
+    fn equally_near_keys_are_all_listed() {
+        let all = nearest_all(Context::Endpoint, "m_rate_hz");
+        assert_eq!(all, vec!["max_rate_hz", "min_rate_hz"]);
     }
 
     /// [`render_markdown`] emits one section per context by walking FIELDS in

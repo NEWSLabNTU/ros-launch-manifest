@@ -56,7 +56,7 @@ pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
             ..Default::default()
         });
     }
-    parse_manifest_yaml(&docs[0], "")
+    with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""))
 }
 
 /// Parse a manifest from a YAML string, returning source and spans.
@@ -1620,14 +1620,22 @@ fn reject_unknown_keys(doc: &Yaml, ctx: &str, context: Context) -> Result<(), Pa
             }
             Some(_) => continue,
             None => {
-                let detail = match field_table::nearest(context, key) {
-                    Some(near) => format!("did you mean `{near}`?"),
-                    None => format!(
+                let near = field_table::nearest_all(context, key);
+                let detail = match near.as_slice() {
+                    [] => format!(
                         "accepted here: {}",
                         field_table::suggestions(context).join(", ")
                     ),
+                    [one] => format!("did you mean `{one}`?"),
+                    many => format!(
+                        "did you mean one of {}?",
+                        many.iter()
+                            .map(|k| format!("`{k}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
                 };
-                return Err(field_err(
+                let err = field_err(
                     ctx,
                     key,
                     &format!(
@@ -1636,11 +1644,81 @@ fn reject_unknown_keys(doc: &Yaml, ctx: &str, context: Context) -> Result<(), Pa
                          declare",
                         context.label()
                     ),
-                ));
+                );
+                // Phase 85 I10: inside a manifest parse, keep going and
+                // report every unknown key of the file in one refusal.
+                if let Some(err) = collect_unknown_key(err) {
+                    return Err(err);
+                }
             }
         }
     }
     Ok(())
+}
+
+thread_local! {
+    /// Unknown-key refusals gathered during one [`parse_manifest_str`] call
+    /// (phase 85 I10). `None` outside one: [`reject_unknown_keys`] then
+    /// returns the first refusal, as before.
+    static UNKNOWN_KEYS: std::cell::RefCell<Option<Vec<ParseError>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Hold `err` for the end of the parse when a collection is open; hand it
+/// back to be returned at once when none is.
+fn collect_unknown_key(err: ParseError) -> Option<ParseError> {
+    UNKNOWN_KEYS.with(|u| match u.borrow_mut().as_mut() {
+        Some(list) => {
+            list.push(err);
+            None
+        }
+        None => Some(err),
+    })
+}
+
+/// Run `parse` collecting every unknown key, and fold them into ONE refusal
+/// (phase 85 I10). A file with two typos used to take two runs to find
+/// both. An unknown key is skipped by the parser (it reads known keys only),
+/// so parsing on past one is safe; any other error still stops the parse
+/// and is reported after the unknown keys found before it. One unknown key
+/// alone reads exactly as it always did.
+fn with_unknown_keys_collected<T>(
+    parse: impl FnOnce() -> Result<T, ParseError>,
+) -> Result<T, ParseError> {
+    let outer = UNKNOWN_KEYS.with(|u| u.borrow_mut().replace(Vec::new()));
+    let result = parse();
+    let found = UNKNOWN_KEYS
+        .with(|u| std::mem::replace(&mut *u.borrow_mut(), outer))
+        .unwrap_or_default();
+    let mut found = found.into_iter();
+    let Some(first) = found.next() else {
+        return result;
+    };
+    // The "used to be discarded" sentence is said once, by the first.
+    let rest: Vec<String> = found
+        .map(|e| {
+            e.to_string().replace(
+                ". An unrecognised key used to be discarded in silence, which deleted \
+                     whatever it was meant to declare",
+                "",
+            )
+        })
+        .chain(result.err().map(|e| e.to_string()))
+        .collect();
+    if rest.is_empty() {
+        return Err(first);
+    }
+    let ParseError::Field { path, message } = first else {
+        return Err(first);
+    };
+    Err(ParseError::Field {
+        path,
+        message: format!(
+            "{message}. Also refused in this file ({} more): {}",
+            rest.len(),
+            rest.join("; ")
+        ),
+    })
 }
 
 fn reject_chains(doc: &Yaml, ctx: &str) -> Result<(), ParseError> {
@@ -3355,14 +3433,41 @@ nodes:
             ("cli", "{ ns/call: {} }"),
             ("srv", "{ /abs/serve: {} }"),
         ] {
-            let e = err_of(&format!("version: 1\nnodes:\n  n:\n    {section}: {body}\n"));
+            let e = err_of(&format!(
+                "version: 1\nnodes:\n  n:\n    {section}: {body}\n"
+            ));
             assert!(e.contains("contains `/`"), "{section} {body}: {e}");
             assert!(e.contains("an endpoint key is a local name"), "{e}");
-            assert!(e.contains("remap the topic in the launch file or wire it under"), "{e}");
+            assert!(
+                e.contains("remap the topic in the launch file or wire it under"),
+                "{e}"
+            );
             assert!(e.contains(&format!("at 'nodes.n.{section}.")), "{e}");
         }
         // A local name is unaffected.
         let m = parse_manifest_str("version: 1\nnodes:\n  n:\n    pub: { scan: {} }\n").unwrap();
         assert!(m.nodes["n"].publishers.contains_key("scan"));
+    }
+
+    /// Phase 85 I10 (play_launch T8): every unknown key of a file in one
+    /// refusal, and `max_rate` suggests `max_rate_hz`.
+    #[test]
+    fn every_unknown_key_is_named_at_once() {
+        let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      a: { max_rate: 10 }\n    \
+                    paths:\n      p: { max_latencyy: 5ms }\ntopics:\n  /t: { type: std_msgs/msg/String, rate_hzz: 1 }\n";
+        let e = err_of(yaml);
+        assert!(e.contains("at 'nodes.n.pub.a.max_rate'"), "{e}");
+        assert!(e.contains("did you mean `max_rate_hz`?"), "{e}");
+        assert!(e.contains("Also refused in this file (2 more)"), "{e}");
+        assert!(
+            e.contains("max_latencyy") && e.contains("`max_latency`"),
+            "{e}"
+        );
+        assert!(e.contains("rate_hzz") && e.contains("`rate_hz`"), "{e}");
+        // One unknown key reads as it always did.
+        let one = err_of("version: 1\ntopics:\n  /t: { type: std_msgs/msg/String, rate_hzz: 1 }\n");
+        assert!(!one.contains("Also refused"), "{one}");
+        // The collection does not leak into the next parse.
+        assert!(parse_manifest_str("version: 1\n").is_ok());
     }
 }

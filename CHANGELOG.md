@@ -6,6 +6,24 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased (branch `phase85-cheap`)
+
+Two grammar refusals made clearer, for play_launch phase 85 (I9, I10).
+
+- **An endpoint key is a local name.** A `/` in a `pub:`/`sub:`/`srv:`/
+  `cli:` key is a parse error, saying to remap the topic in the launch
+  file or wire it under `topics:`. `sub: { /abs/topic: ... }` used to
+  become the endpoint `/node//abs/topic` and match nothing, in silence.
+- **"Did you mean" reads the key's shape.** `nearest_all` (new; `nearest`
+  is its first entry) prefers a key the typo is a word prefix of, or one
+  with the same stem once a unit suffix (`_hz`, `_ms`, ...) is dropped,
+  over edit distance: `max_rate` now suggests `max_rate_hz`, not
+  `max_age`. The edit-distance budget is a third of the key's length,
+  and ties are all listed.
+- **Every unknown key at once.** `parse_manifest_str` collects every
+  unknown key of the file into one refusal (`... Also refused in this
+  file (N more): ...`); one unknown key alone reads as before.
+
 ## v0.1.47 - 2026-09-29
 
 What `window:` means, written down. Text only: no grammar, type or API
