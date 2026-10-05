@@ -6,9 +6,11 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased (branch `phase85-cheap`)
+## v0.1.48 - 2026-10-06
 
 Two grammar refusals made clearer, for play_launch phase 85 (I9, I10).
+Additive only (`nearest_all` is new; `nearest` keeps its signature), so
+the workspace Cargo version stays `0.1.7`.
 
 - **An endpoint key is a local name.** A `/` in a `pub:`/`sub:`/`srv:`/
   `cli:` key is a parse error, saying to remap the topic in the launch
