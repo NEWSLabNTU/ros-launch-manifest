@@ -484,6 +484,20 @@ Reporting 0 Hz would be a claim; omitting the topic silently would read as
   where an input's rate is derived but not declared, so deleting the
   declared copy cannot silence a real warning.
 
+**An on-demand publisher** (`pub: { <ep>: { on_demand: true } }`, v0.1.49)
+says the opposite of a rate: it publishes when asked -- a service call, an
+operator's command -- and promises none. That is not what an omitted
+`min_rate_hz` says (nothing at all), and the difference is acted on. A
+consumer derives no rate for the topic and generates no runtime rate
+monitor for the endpoint; `rate-hierarchy` refuses a topic `rate_hz`
+beside it and, when every publisher of the topic is on demand, a
+non-`state` subscriber's `min_rate_hz`. The key is refused beside
+`min_rate_hz` and under `sub:`/`cli:`. The Autoware Safety Island's
+comfortable-stop operator is the case: `max_velocity_candidates` is
+published from the `operate` service callback, and the 10 Hz floor its
+contract once had to give it became two `rate-hierarchy-runtime`
+violations on the board at start-up.
+
 Measured on `rt_workspace`: deleting all three `rate_hz` **and** all five
 `min_rate_hz` left the derived schedule byte-identical — eight of that
 file's nine copies of `100` were consequences of its one timer.

@@ -469,6 +469,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Buffering discriminator for a state subscriber: latest | queue.",
     ),
+    live(
+        "on_demand",
+        Context::Endpoint,
+        Kind::Fact,
+        "Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`.",
+    ),
     removed(
         "jitter",
         Context::Endpoint,

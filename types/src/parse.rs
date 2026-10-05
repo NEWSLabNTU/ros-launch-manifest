@@ -866,6 +866,15 @@ fn parse_endpoints(
                 reject_endpoint_path(ctx, key, &name)?;
                 let path = format_path(ctx, &format!("{key}.{name}"));
                 let props = parse_endpoint_props(v, &path)?;
+                if key != "pub" && props.on_demand.is_some() {
+                    return Err(field_err(
+                        &path,
+                        "on_demand",
+                        "`on_demand` is a publisher's statement (it publishes when asked and \
+                         promises no rate); a subscriber that needs no rate simply states no \
+                         `min_rate_hz`",
+                    ));
+                }
                 eps.insert(name, props);
             }
         }
@@ -941,7 +950,16 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         max_transport: yaml_duration(yaml, "max_transport")?,
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
+        on_demand: yaml_bool(yaml, "on_demand", ctx)?,
     };
+    if props.on_demand == Some(true) && props.min_rate_hz.is_some() {
+        return Err(field_err(
+            ctx,
+            "on_demand",
+            "`on_demand: true` says this publisher promises no rate, and `min_rate_hz` promises \
+             one: state one or the other",
+        ));
+    }
     if props.buffer.is_some() && props.state != Some(true) {
         return Err(field_err(
             ctx,
@@ -2252,6 +2270,37 @@ hazards:
             m.hazards["lost_pose"].guards[0].members,
             vec!["pose_estimation"]
         );
+    }
+
+    /// play_launch phase 85 D3: `on_demand: true` is a publisher's
+    /// statement that it promises no rate; beside a `min_rate_hz`, or on a
+    /// subscriber, it is refused.
+    #[test]
+    fn on_demand_is_a_publishers_statement() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  op:\n    pub:\n      limit: { on_demand: true }\n",
+        )
+        .expect("parses");
+        assert_eq!(m.nodes["op"].publishers["limit"].on_demand, Some(true));
+        for (yaml, needle) in [
+            (
+                "nodes:\n  op:\n    pub:\n      limit: { on_demand: true, min_rate_hz: 10 }\n",
+                "state one or the other",
+            ),
+            (
+                "nodes:\n  op:\n    sub:\n      limit: { on_demand: true }\n",
+                "is a publisher's statement",
+            ),
+            (
+                "nodes:\n  op:\n    pub:\n      limit: { on_demand: yes_please }\n",
+                "on_demand",
+            ),
+        ] {
+            let err = super::parse_manifest_str(yaml)
+                .expect_err(&format!("must not parse:\n{yaml}"))
+                .to_string();
+            assert!(err.contains(needle), "`{needle}` not in: {err}");
+        }
     }
 
     #[test]

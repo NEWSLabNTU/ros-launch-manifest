@@ -22,6 +22,7 @@ impl ValidationRule for RateHierarchyRule {
 
     fn check(&self, manifest: &Manifest, _graph: &DataflowGraph, ctx: &mut CheckContext) {
         for (topic_name, topic) in &manifest.topics {
+            check_on_demand(self.id(), topic_name, topic, manifest, ctx);
             let topic_rate = match topic.rate_hz {
                 Some(r) => r,
                 None => continue,
@@ -119,6 +120,62 @@ fn resolve_pub_min_rate(pub_ref: &str, manifest: &Manifest) -> Option<f64> {
     resolve_endpoint(pub_ref, manifest, |n| &n.publishers)?.min_rate_hz
 }
 
+/// An on-demand publisher (`on_demand: true`, play_launch phase 85 D3)
+/// promises no rate, so nothing may be held to one on its account: a topic
+/// `rate_hz` beside it is a claim no publisher makes, and when every
+/// publisher of the topic is on demand, a subscriber's `min_rate_hz` is a
+/// requirement nothing can meet. A `state: true` subscriber reads the latest
+/// value and requires no rate, so it is not held to one either.
+fn check_on_demand(
+    id: &str,
+    topic_name: &str,
+    topic: &ros_launch_manifest_types::TopicDecl,
+    manifest: &Manifest,
+    ctx: &mut CheckContext,
+) {
+    let on_demand: Vec<&String> = topic
+        .publishers
+        .iter()
+        .filter(|p| {
+            resolve_endpoint(p, manifest, |n| &n.publishers).is_some_and(|e| e.on_demand == Some(true))
+        })
+        .collect();
+    let Some(first) = on_demand.first() else {
+        return;
+    };
+    if let Some(rate) = topic.rate_hz {
+        ctx.error(
+            id,
+            &format!("topics.{topic_name}"),
+            format!(
+                "topic rate_hz ({rate}) beside on-demand publisher '{first}', which promises no \
+                 rate (`on_demand: true`)"
+            ),
+        );
+    }
+    if on_demand.len() != topic.publishers.len() {
+        return;
+    }
+    for sub_ref in &topic.subscribers {
+        let Some(sub) = resolve_endpoint(sub_ref, manifest, |n| &n.subscribers) else {
+            continue;
+        };
+        if sub.state == Some(true) {
+            continue;
+        }
+        if let Some(rate) = sub.min_rate_hz {
+            ctx.error(
+                id,
+                &format!("topics.{topic_name}"),
+                format!(
+                    "subscriber '{sub_ref}' requires min_rate_hz ({rate}), but every publisher of \
+                     the topic is on demand (`on_demand: true` on '{first}') and promises no rate"
+                ),
+            );
+        }
+    }
+}
+
 /// Resolve "node/endpoint" to the subscriber's min_rate_hz.
 fn resolve_sub_min_rate(sub_ref: &str, manifest: &Manifest) -> Option<f64> {
     resolve_endpoint(sub_ref, manifest, |n| &n.subscribers)?.min_rate_hz
@@ -161,6 +218,26 @@ mod max_rate_tests {
             errs[0].contains("publisher 'src/out' max_rate_hz (10)"),
             "{errs:?}"
         );
+    }
+
+    /// Phase 85 D3: an on-demand publisher holds nobody to a rate, and
+    /// nobody may hold it to one.
+    #[test]
+    fn an_on_demand_publisher_promises_no_rate() {
+        let base = "version: 1\nnodes:\n  op:\n    pub:\n      limit: { on_demand: true }\n  planner:\n    sub:\n      limit: SUB\ntopics:\n  limit:\n    type: T\n    pub: [op/limit]\n    sub: [planner/limit]\n";
+        // Nobody requires a rate: clean.
+        assert!(errors(&base.replace("SUB", "{}")).is_empty());
+        // A read-latest subscriber requires none either.
+        assert!(errors(&base.replace("SUB", "{ min_rate_hz: 10, state: true }")).is_empty());
+        let errs = errors(&base.replace("SUB", "{ min_rate_hz: 10 }"));
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].contains("subscriber 'planner/limit' requires min_rate_hz (10)"),
+            "{errs:?}"
+        );
+        let errs = errors(&format!("{}    rate_hz: 10\n", base.replace("SUB", "{}")));
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("beside on-demand publisher 'op/limit'"), "{errs:?}");
     }
 
     #[test]

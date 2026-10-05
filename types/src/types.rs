@@ -676,6 +676,16 @@ pub struct EndpointProps {
     /// (phase 71). Subscribers only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_violation: Option<OnViolation>,
+    /// Publisher only: this endpoint publishes when asked (a service call,
+    /// an operator's command) and promises NO rate (play_launch phase 85
+    /// D3). Not the same as leaving `min_rate_hz` out, which says nothing:
+    /// `on_demand: true` is a statement a consumer acts on -- no minimum
+    /// rate is derived for the topic, no rate monitor is generated for the
+    /// endpoint, and a subscriber that requires a rate of it is an error.
+    /// The parser refuses it beside `min_rate_hz` and on any side but
+    /// `pub:`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_demand: Option<bool>,
 }
 
 /// Buffering discipline for a `state: true` subscriber endpoint

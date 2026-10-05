@@ -1243,6 +1243,17 @@ pub struct PubContract {
     /// launch-param overlay both land here).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qos: Option<Qos>,
+    /// The publisher publishes when asked and promises NO rate (contract
+    /// `on_demand: true`, play_launch phase 85 D3). What a consumer must
+    /// derive from it: NO rate monitor for this endpoint (and none for a
+    /// subscriber of its topic on its account), and no period for the
+    /// topic. `min_rate_hz` is then absent, and an absent `min_rate_hz`
+    /// without this flag still means "not stated", not "no rate". The
+    /// Autoware Safety Island's board image raised two
+    /// `rate-hierarchy-runtime` violations at start-up on exactly such
+    /// endpoints when its contract had to give them a 10 Hz floor.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_demand: bool,
 }
 
 /// Subscriber assumption.
