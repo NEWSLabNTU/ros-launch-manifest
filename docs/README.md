@@ -39,6 +39,13 @@ What each document is, and a suggested reading order.
    core + POSIX realizer split, validation helpers, and the legacy
    `system.toml` bridge.
 
+**Changing what the SystemModel carries?**
+
+6b. [model-boundary.md](model-boundary.md) — the rule for what may enter the
+   model (topology, the platform-agnostic contract, scheduling) and what
+   leaves it: `Execution.features`, the system-wide lifecycle default, and
+   the build half of `Deploy`. Decided 2026-10-10.
+
 **Archaeology / rationale?**
 
 7. [design-issues.md](design-issues.md) — the issue log: every design
@@ -63,6 +70,7 @@ What each document is, and a suggested reading order.
 | `contract-verification.md` | Checker implementation | Descriptive (follows the code) |
 | `scheduling.md` | Scheduling crate reference | Descriptive (follows the code) |
 | `design-issues.md` | Decision log | Historical record — read the status lines, not the bodies |
+| `model-boundary.md` | What the SystemModel may carry | Normative for model content |
 | `slides.md` | Marp presentation deck | Informal overview |
 
 Consumer-side documentation lives with the consumers:
