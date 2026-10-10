@@ -29,10 +29,13 @@ build facts into the model:
 | --- | --- | --- |
 | `Execution.features` | `[system] features`, `[param_services]` | nano-ros capability switches. An rclcpp node has parameter services unless its code opts out; the switch is nano-ros build policy |
 | `lifecycle_autostart` set on every lifecycle node from one table | `[lifecycle] autostart` | the per-node field passes (Jazzy `LifecycleNode(autostart=)`); a system-wide default is nano-ros boot policy |
-| `Deploy.target = mcu:<board>`, `Deploy.extra` | `[deploy.<n>]` `board`, `framework`, `profile`, `optimize`, `features`, `[deploy.<n>.nros]` | these describe a build, as this crate's own comment says. nano-ros moved them to its own `[image.*]` and `[board_config.*]`; no tracked nano-ros `system.toml` writes `[deploy.*]` |
+| `Deploy.extra` | `[deploy.<n>]` `framework`, `profile`, `optimize`, `features`, `kind`, `[deploy.<n>.nros]` | these describe a build, as this crate's own comment says. nano-ros moved them to its own `[image.*]` and `[board_config.*]`; no tracked nano-ros `system.toml` writes `[deploy.*]` |
 
 These pass, and stay:
-- placement (`[host.*]`, `[deploy.<n>] kind` / `nodes` / `launch`);
+- placement (`[host.*]`, `[deploy.<n>] nodes` / `launch`, and `Deploy.target`
+  including `mcu:<board>`: nano-ros slices an entry's nodes by it, and
+  play_launch reads it as "not a node this machine runs" — corrected
+  2026-10-11 by nano-ros phase 486 W0);
 - `[tiers.*]` and `group_tiers` (scheduling, in the shared `sched` schema);
 - `[[component]] params` / `params_files` (ROS parameter values);
 - `[system] rmw` / `domain_id` / `locator`, `[[transport]]`, `[[bridge]]`;
@@ -46,7 +49,6 @@ These pass, and stay:
    writing:
    - `Execution.features`;
    - lifecycle defaults onto nodes;
-   - `Deploy.target = mcu:<board>`;
    - `Deploy.extra`.
 
    The per-node lifecycle fields are now filled only from the launch file
