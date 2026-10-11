@@ -29,7 +29,15 @@ use serde::{Deserialize, Serialize};
 ///
 /// Versioned independently of the manifest format version: the manifest is
 /// the authoring surface, the model is a derived artifact.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// - **2** (v0.1.51): a [`ParamValue::Str`] is always a string, and a list
+///   parameter is a [`ParamValue::StrList`] (see its doc for the element
+///   spelling). In version 1 an inline list rode as a `Str` holding its YAML
+///   flow text, so a string whose text looked like a list (`type="str"`,
+///   `value="[a, b]"`) could not be told from one, and was spawned as a list
+///   (play_launch issue #0067). [`SystemModel::from_yaml_str`] upgrades a
+///   version-1 model on read, giving it the meaning it had then.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Errors loading or saving a model.
 #[derive(Debug, thiserror::Error)]
@@ -56,15 +64,44 @@ pub struct SystemModel {
 
 impl SystemModel {
     /// Parse from YAML, rejecting schema versions newer than this reader.
+    ///
+    /// A version-1 model is upgraded to the current schema: an inline
+    /// parameter whose `Str` is YAML flow text (`[a, b]`) meant a list then,
+    /// and becomes a [`ParamValue::StrList`] (see [`SCHEMA_VERSION`]).
     pub fn from_yaml_str(s: &str) -> Result<Self, ModelError> {
-        let model: SystemModel = serde_yaml_ng::from_str(s)?;
+        let mut model: SystemModel = serde_yaml_ng::from_str(s)?;
         if model.meta.version > SCHEMA_VERSION {
             return Err(ModelError::UnsupportedVersion {
                 found: model.meta.version,
                 supported: SCHEMA_VERSION,
             });
         }
+        // Exactly 1: version 0 is only `Meta::default()`, which no producer
+        // writes, and treating it as old would change a model in memory.
+        if model.meta.version == 1 {
+            model.upgrade_v1_lists();
+            model.meta.version = SCHEMA_VERSION;
+        }
         Ok(model)
+    }
+
+    /// Version 1 -> 2: a `Str` holding flow-sequence text was a list.
+    fn upgrade_v1_lists(&mut self) {
+        let upgrade = |v: &mut ParamValue| {
+            if let ParamValue::Str(text) = v
+                && let Some(list) = ParamValue::list_from_flow(text)
+            {
+                *v = list;
+            }
+        };
+        for inst in self.structure.nodes.values_mut() {
+            inst.params.values_mut().for_each(upgrade);
+            for src in &mut inst.param_sources {
+                if let ParamSource::Inline { value, .. } = src {
+                    upgrade(value);
+                }
+            }
+        }
     }
 
     /// Canonical YAML form (deterministic: all maps are ordered).
@@ -488,6 +525,14 @@ pub enum Autostart {
 /// naturally; order matters (Bool before Int before Float before Str so
 /// `true`/`1`/`1.5`/`"x"` each hit the right arm; a float-typed param
 /// authored as `1` must be written `1.0`).
+///
+/// `Str` is always a string, whatever its text looks like (schema 2). A list
+/// is `StrList`, each element spelled as a YAML scalar that reads back as
+/// what it was: an integer `5`, a double `1.5`, a bool `true`, a string
+/// `a` — and a string that would read as something else single-quoted
+/// (`'5'`, `'true'`, `''`), the convention play_launch's parser uses for a
+/// scalar. A consumer that needs the list as YAML writes `[` + the elements
+/// joined by `, ` + `]`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ParamValue {
@@ -499,6 +544,22 @@ pub enum ParamValue {
 }
 
 impl ParamValue {
+    /// A list parameter from YAML flow text (`[a, 5, '5']`), elements spelled
+    /// as [`ParamValue`]'s doc describes; `None` when the text is not a flow
+    /// sequence of scalars. For a producer lowering an inline list, and for
+    /// the version-1 upgrade.
+    pub fn list_from_flow(text: &str) -> Option<ParamValue> {
+        let t = text.trim();
+        if !(t.starts_with('[') && t.ends_with(']')) {
+            return None;
+        }
+        let seq: Vec<serde_yaml_ng::Value> = serde_yaml_ng::from_str(t).ok()?;
+        seq.iter()
+            .map(list_element_text)
+            .collect::<Option<Vec<_>>>()
+            .map(ParamValue::StrList)
+    }
+
     /// Render for a consumer that bakes parameters as STRINGS — nano-ros's
     /// compile-time entry codegen, where the value is re-typed at runtime by
     /// inference over this text.
@@ -721,14 +782,11 @@ fn flatten_params(
                 out.insert(full, ParamValue::Str(st.clone()));
             }
             serde_yaml_ng::Value::Sequence(seq) => {
+                // Same element spelling as an inline list (`ParamValue`'s
+                // doc), so a string element `'5'` stays a string.
                 let items: Vec<String> = seq
                     .iter()
-                    .map(|e| match e {
-                        serde_yaml_ng::Value::String(s) => s.clone(),
-                        serde_yaml_ng::Value::Bool(b) => b.to_string(),
-                        serde_yaml_ng::Value::Number(n) => n.to_string(),
-                        _ => String::new(),
-                    })
+                    .map(|e| list_element_text(e).unwrap_or_default())
                     .collect();
                 out.insert(full, ParamValue::StrList(items));
             }
@@ -1232,6 +1290,32 @@ fn flow_sequence(s: &str) -> Option<Vec<String>> {
     }
     let seq: Vec<serde_yaml_ng::Value> = serde_yaml_ng::from_str(t).ok()?;
     seq.iter().map(yaml_scalar_text).collect()
+}
+
+/// One list element as a YAML scalar that reads back as what it was
+/// (`ParamValue`'s doc): a string that would read as another type is
+/// single-quoted, with any `'` inside doubled.
+fn list_element_text(e: &serde_yaml_ng::Value) -> Option<String> {
+    match e {
+        serde_yaml_ng::Value::String(s) => Some(if string_would_retype(s) {
+            format!("'{}'", s.replace('\'', "''"))
+        } else {
+            s.clone()
+        }),
+        serde_yaml_ng::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml_ng::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Whether a string's text would be read as something other than this
+/// string by a consumer that types by shape. The rule play_launch's parser
+/// applies to a scalar (`param_value::is_ambiguous`), kept equal to it.
+fn string_would_retype(s: &str) -> bool {
+    s.is_empty()
+        || matches!(s, "true" | "True" | "false" | "False")
+        || s.parse::<f64>().is_ok()
+        || s.starts_with(['\'', '['])
 }
 
 fn yaml_scalar_text(e: &serde_yaml_ng::Value) -> Option<String> {

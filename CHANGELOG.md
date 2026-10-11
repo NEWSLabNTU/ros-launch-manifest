@@ -6,6 +6,46 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.51 - 2026-10-11
+
+**SystemModel schema 1 -> 2**, for play_launch issue #0067. Workspace Cargo
+version unchanged (`0.1.9`): no type changes shape. A reader on an older
+release refuses a schema-2 model (`unsupported SystemModel schema version
+2`), which is the point: the meaning of a value changed.
+
+### Why
+
+In schema 1 an inline list parameter rode as a `ParamValue::Str` holding its
+YAML flow text (`"['a', 'b']"`), so a STRING whose text looked like a list
+(`<param value="[a, b]" type="str"/>`) arrived as the same `Str("[a, b]")`
+and play_launch spawned it as a list. The parser kept the two apart (it
+single-quotes such a string); the model did not.
+
+### Changed
+
+- `Str` is always a string. A list is `StrList`, each element spelled as a
+  YAML scalar that reads back as what it was: `5`, `1.5`, `1.0`, `true`, `a`,
+  and a string that would read as something else single-quoted (`'5'`,
+  `'true'`, `''`). The params-file projection (`resolved_params`,
+  `param_file_values`) uses the same spelling, so a string element `'5'` in a
+  params file is now quoted where it used to read as the integer 5.
+- `SystemModel::from_yaml_str` upgrades a schema-1 model on read: an inline
+  `Str` that parses as a flow sequence of scalars becomes a `StrList`, which
+  is what it meant then. A model built in memory (`Meta::default()`, version
+  0) is left alone.
+
+### Added
+
+- `ParamValue::list_from_flow(text)`: a list from YAML flow text in that
+  spelling, for producers lowering an inline list.
+
+### For nano-ros
+
+`to_bake_string` is unchanged, so an inline list now bakes as its elements
+joined by `,`, as a params-file list already did, where it used to bake as
+its flow text. Neither is read back as an array by `infer_param_value`, which
+has no array type.
+
 ## v0.1.50 - 2026-10-11
 
 One model field, for play_launch issue #0063. **Workspace Cargo version
