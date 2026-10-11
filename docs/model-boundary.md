@@ -1,6 +1,6 @@
 # What the SystemModel may carry
 
-Status: **decided** (2026-10-10, revised 2026-10-12). Not yet implemented.
+Status: **decided** (2026-10-10, revised 2026-10-12). **W6 implemented in v0.1.55** (the model stops carrying the realizer facts); W8 retirement pending.
 The cross-repository work is tracked in nano-ros phase 486
 (`docs/roadmap/phase-486-launch-model-boundary.md`); this repository's part
 is W6 (stop writing realizer facts, make the system config neutral) and the

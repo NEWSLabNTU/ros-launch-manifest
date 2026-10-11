@@ -1645,8 +1645,8 @@ pub struct Qos {
 // layer 3 — execution / deployment
 // ---------------------------------------------------------------------------
 
-/// Integrator-owned placement + scheduling. play_launch's runtime consumes
-/// the `linux` deploy subset; the nano-ros build system consumes `mcu:*`.
+/// Integrator-owned placement + scheduling: facts every realizer reads with
+/// the same meaning (`docs/model-boundary.md`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Execution {
     /// Node FQN → placement.
@@ -1672,8 +1672,10 @@ pub struct Execution {
     /// Topic types resolve from layer 1 wiring, never written here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bridges: Vec<Bridge>,
-    /// R1-M3 — system capability axes (`safety`, `param_services`, …).
-    /// Unknown names are a consumer bake-time error.
+    /// READ-TOLERANT, no longer written (v0.1.55, `docs/model-boundary.md`
+    /// W6). Was: one realizer's build switches (`safety`, `param_services`,
+    /// …). Kept so a model written before v0.1.55 still loads; nothing in
+    /// this crate writes or reads it, and it is deleted at W8.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
     // NOTE: the resolved scheduling plan is NOT carried in the model
@@ -1756,11 +1758,10 @@ impl Execution {
 /// Where a node runs.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Deploy {
-    /// `linux` or `mcu:<board>` (see [`Target`]). `None` = **board-agnostic**
-    /// — the node is placed, but a multi-board system (one that also declares
-    /// `kind = "embedded"` board builds) runs the same nodes on every board,
-    /// so the consuming entry's own board decides (nano-ros issue 0356).
-    /// Single-board placements are always `Some`.
+    /// READ-TOLERANT, no longer written (v0.1.55, `docs/model-boundary.md`
+    /// W6): always `None` in a new model. Was `linux` or `mcu:<board>` from
+    /// `[deploy.<n>] board`; no realizer read it. Kept so an older model
+    /// still loads; deleted, with [`Target`], at W8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<Target>,
     /// R1-M1 — ROS domain for this node's session (RFC-0045 baked rung
@@ -1775,12 +1776,12 @@ pub struct Deploy {
     /// cannot pick a backend without one of the two.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rmw: Option<String>,
-    /// R1-M1 — consumer-defined extras (build tuning, runner knobs:
-    /// `profile`, `optimize`, `kind`, `framework`, cargo `features`…).
-    /// Open map by design: these are per-consumer build semantics, not
-    /// cross-runtime system semantics — but they ride the model so the
-    /// consumer never parses `system.toml` directly (canonical-path
-    /// decision).
+    /// READ-TOLERANT, no longer written (v0.1.55, `docs/model-boundary.md`
+    /// W6): always empty in a new model. Was one realizer's build fields
+    /// (`profile`, `optimize`, `kind`, `framework`, `features`, …) plus the
+    /// placing table's name (`host_name`, `deploy_name`). A realizer keeps
+    /// its build facts in its own layer. Kept so an older model still loads;
+    /// deleted at W8.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, ExtraValue>,
 }

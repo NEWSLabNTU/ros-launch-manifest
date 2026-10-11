@@ -20,8 +20,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Autostart, Bridge, Deploy, Execution, ExtraValue, NodeInstance, ParamSource, ParamValue,
-    Target, Transport,
+    Autostart, Bridge, Deploy, Execution, NodeInstance, ParamSource, ParamValue, Transport,
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -437,13 +436,10 @@ impl SystemConfigToml {
     ) -> Result<Vec<String>, String> {
         let mut diags = Vec::new();
 
-        execution.features = self.system.features.clone();
-        // `[param_services]` is sugar for `features = ["param_services"]`.
-        if self.param_services.is_some()
-            && !execution.features.iter().any(|f| f == "param_services")
-        {
-            execution.features.push("param_services".to_string());
-        }
+        // `[system] features` and `[param_services]` are NOT written to
+        // `execution.features`: they are one realizer's build switches, and
+        // the model carries only facts every realizer reads the same way
+        // (docs/model-boundary.md, W6). They still parse, into nothing.
 
         // nano-ros `[tiers.*]` → the execution tier table (verbatim schema).
         execution.tiers = self.tiers.clone();
@@ -551,8 +547,9 @@ impl SystemConfigToml {
                         }
                     }
                 };
-                let mut extra = BTreeMap::new();
-                extra.insert("host_name".to_string(), ExtraValue::Str(hname.to_string()));
+                // The host's NAME is not written (`Deploy.extra` is no longer
+                // written at all, docs/model-boundary.md W6): nothing reads it,
+                // and the facts placement changes are the typed fields below.
                 execution.deploy.insert(
                     (*fqn).to_string(),
                     Deploy {
@@ -565,7 +562,7 @@ impl SystemConfigToml {
                             .clone()
                             .or_else(|| self.system.locator.clone()),
                         rmw: self.system.rmw.clone(),
-                        extra,
+                        extra: BTreeMap::new(),
                     },
                 );
             }
@@ -633,21 +630,6 @@ impl SystemConfigToml {
         if in_scope.is_empty() {
             return Ok(diags);
         }
-        // nano-ros issue 0356 — a system that ALSO declares `kind = "embedded"`
-        // board builds is multi-board: the same nodes run on the self machine(s)
-        // AND on every embedded board. The model deploy is single-target per
-        // node, so pinning a placed node to its self-block's concrete target
-        // (e.g. `linux`) makes `nros codegen entry --board <embedded>` drop it
-        // (`keep()` only keeps a `linux` node for the `native`/`posix` boards) —
-        // the model placed talker/listener on native, and the freertos entry
-        // found nothing. Leave such nodes board-AGNOSTIC (`target = None`): the
-        // codegen `keep()` includes a `None` node on EVERY board, and each
-        // entry's own `--board` supplies the concrete target. Single-target
-        // (no embedded) workspaces keep their exact placement.
-        let multi_board = self
-            .deploy
-            .values()
-            .any(|b| b.kind.as_deref() == Some("embedded"));
         let single = (in_scope.len() == 1).then(|| in_scope[0].0);
         for fqn in node_fqns {
             let (dname, block) = if let Some(k) = single {
@@ -681,46 +663,15 @@ impl SystemConfigToml {
                     }
                 }
             };
-            let target = if multi_board {
-                // Board-agnostic (issue 0356): the entry's `--board` decides.
-                None
-            } else if let Some(board) = &block.board {
-                Some(Target::Mcu {
-                    board: board.clone(),
-                })
-            } else {
-                Some(Target::Linux)
-            };
-            let mut extra = BTreeMap::new();
-            if let Some(v) = &block.kind {
-                extra.insert("kind".to_string(), ExtraValue::Str(v.clone()));
-            }
-            if let Some(v) = &block.target {
-                extra.insert("target".to_string(), ExtraValue::Str(v.clone()));
-            }
-            if let Some(v) = &block.framework {
-                extra.insert("framework".to_string(), ExtraValue::Str(v.clone()));
-            }
-            if let Some(v) = &block.profile {
-                extra.insert("profile".to_string(), ExtraValue::Str(v.clone()));
-            }
-            if let Some(v) = &block.optimize {
-                extra.insert("optimize".to_string(), ExtraValue::Str(v.clone()));
-            }
-            if !block.features.is_empty() {
-                extra.insert(
-                    "features".to_string(),
-                    ExtraValue::StrList(block.features.clone()),
-                );
-            }
-            extra.insert(
-                "deploy_name".to_string(),
-                ExtraValue::Str(dname.to_string()),
-            );
+            // `Deploy.target` and `Deploy.extra` are no longer written
+            // (docs/model-boundary.md W6): the board, kind and build fields
+            // of `[deploy.*]` describe one realizer's BUILD, and no realizer
+            // reads the target. Placement stays: the node is in the map,
+            // with the domain / locator / rmw its block states.
             execution.deploy.insert(
                 (*fqn).to_string(),
                 Deploy {
-                    target,
+                    target: None,
                     // RFC-0004 ladder: deploy override > system default.
                     domain: clamp_domain(block.domain_id, &mut diags, dname)
                         .or_else(|| clamp_domain(self.system.domain_id, &mut diags, "[system]")),
@@ -729,7 +680,7 @@ impl SystemConfigToml {
                         .clone()
                         .or_else(|| self.system.locator.clone()),
                     rmw: block.rmw.clone().or_else(|| self.system.rmw.clone()),
-                    extra,
+                    extra: BTreeMap::new(),
                 },
             );
         }
@@ -982,31 +933,16 @@ board = "nuttx-qemu-arm"
         let mut e = Execution::default();
         cfg.apply_to_launch(&mut e, &["/talker", "/listener"], Some("system.launch.xml"))
             .expect("embedded blocks do not partition; native places implicitly");
-        // Placed, but board-agnostic — the entry's `--board` decides.
+        // Placed, and board-agnostic: no target is written at all since W6
+        // (docs/model-boundary.md), so the consumer's own board decides.
         for n in ["/talker", "/listener"] {
             let d = e.deploy.get(n).unwrap_or_else(|| panic!("{n} placed"));
             assert!(
                 d.target.is_none(),
-                "{n} must be board-agnostic (target=None) in a multi-board system, got {:?}",
+                "{n}: no target is written, got {:?}",
                 d.target
             );
         }
-
-        // Control: WITHOUT any embedded block, the same native placement keeps
-        // its concrete Linux target (single-board behaviour is unchanged).
-        let single = toml
-            .split("[deploy.freertos]")
-            .next()
-            .expect("prefix before embedded blocks");
-        let cfg1 = parse_system_config(single).expect("parses");
-        let mut e1 = Execution::default();
-        cfg1.apply_to_launch(&mut e1, &["/talker"], Some("system.launch.xml"))
-            .expect("single self block places");
-        assert!(
-            matches!(e1.deploy["/talker"].target, Some(Target::Linux)),
-            "single-board native placement must keep its Linux target, got {:?}",
-            e1.deploy["/talker"].target
-        );
     }
 
     /// nano-ros issue 0364 — with `machine=` gone (ROS 1 roslaunch syntax;
@@ -1026,11 +962,13 @@ kind = "self"
 kind = "self"
 launch = "multihost.launch.xml"
 nodes = ["/talker"]
+domain_id = 1
 
 [deploy.robot2]
 kind = "self"
 launch = "multihost.launch.xml"
 nodes = ["/listener"]
+domain_id = 2
 "#;
         let cfg = parse_system_config(toml).expect("parses");
 
@@ -1042,14 +980,9 @@ nodes = ["/listener"]
         )
         .expect("nodes lists place both nodes");
 
-        assert_eq!(
-            e.deploy["/talker"].extra.get("deploy_name"),
-            Some(&ExtraValue::Str("robot1".into()))
-        );
-        assert_eq!(
-            e.deploy["/listener"].extra.get("deploy_name"),
-            Some(&ExtraValue::Str("robot2".into()))
-        );
+        // Which block placed each node, seen through what it changes.
+        assert_eq!(e.deploy["/talker"].domain, Some(1));
+        assert_eq!(e.deploy["/listener"].domain, Some(2));
 
         // A node in no list is unplaced -> fail loud (pre-0291 behaviour,
         // restored because the machine=-derived fact no longer exists).
@@ -1067,19 +1000,15 @@ nodes = ["/listener"]
             .apply_to(&mut e, &["/ctrl/control_node", "/sensing/imu_node"])
             .expect("applies");
         assert!(diags.is_empty(), "{diags:?}");
-        assert_eq!(e.features, vec!["safety"]);
+        // W6 (docs/model-boundary.md): build switches, build fields and the
+        // board never reach the model; placement and the session ladder do.
+        assert!(e.features.is_empty(), "{:?}", e.features);
         let ctrl = &e.deploy["/ctrl/control_node"];
-        assert_eq!(ctrl.target, Some(Target::Linux));
+        assert!(ctrl.target.is_none() && ctrl.extra.is_empty(), "{ctrl:?}");
         assert_eq!(ctrl.domain, Some(7), "system default rides the ladder");
         assert_eq!(ctrl.rmw.as_deref(), Some("zenoh"));
-        assert_eq!(ctrl.extra["profile"], ExtraValue::Str("release".into()));
         let imu = &e.deploy["/sensing/imu_node"];
-        assert_eq!(
-            imu.target.clone().unwrap(),
-            Target::Mcu {
-                board: "stm32f4".into()
-            }
-        );
+        assert!(imu.target.is_none() && imu.extra.is_empty(), "{imu:?}");
         assert_eq!(imu.domain, Some(9), "deploy override wins");
         assert_eq!(imu.rmw.as_deref(), Some("cyclonedds"));
         assert_eq!(e.transports[0].mac.as_deref(), Some("02:00:00:00:00:01"));
@@ -1207,25 +1136,25 @@ nodes = ["/listener"]
     }
 
     #[test]
-    fn bare_param_services_section_projects_into_features() {
+    fn a_bare_param_services_section_parses_and_reaches_nothing() {
         let cfg = parse_system_config(
             "[system]\nrmw = \"zenoh\"\n[param_services]\n[deploy.native]\nkind = \"self\"\n",
         )
         .expect("parses");
         let mut e = Execution::default();
         cfg.apply_to(&mut e, &["/a"]).expect("applies");
-        assert_eq!(e.features, vec!["param_services"]);
+        assert!(e.features.is_empty(), "{:?}", e.features);
     }
 
     #[test]
-    fn param_services_section_does_not_duplicate_explicit_feature() {
+    fn system_features_parse_and_reach_nothing() {
         let cfg = parse_system_config(
             "[system]\nrmw = \"zenoh\"\nfeatures = [\"param_services\"]\n[param_services]\n[deploy.native]\nkind = \"self\"\n",
         )
         .expect("parses");
         let mut e = Execution::default();
         cfg.apply_to(&mut e, &["/a"]).expect("applies");
-        assert_eq!(e.features, vec!["param_services"]);
+        assert!(e.features.is_empty(), "{:?}", e.features);
     }
 
     #[test]
@@ -1237,7 +1166,7 @@ nodes = ["/listener"]
         let mut e = Execution::default();
         cfg.apply_to(&mut e, &["/a", "/b"]).expect("applies");
         assert_eq!(e.deploy.len(), 2);
-        assert_eq!(e.deploy["/a"].target, Some(Target::Linux));
+        assert!(e.deploy["/a"].target.is_none());
     }
 
     // ---- [host.*] placement — nano-ros issue 0939 ----
@@ -1262,22 +1191,22 @@ name = "d"
 
 [host.robot1]
 nodes = ["/talker"]
+domain_id = 1
 
 [host.robot2]
 nodes = ["/listener"]
+domain_id = 2
 "#,
             &["/talker", "/listener"],
             None,
         );
         assert!(r.is_ok(), "{r:?}");
         assert_eq!(ex.deploy.len(), 2);
-        assert_eq!(
-            ex.deploy["/talker"].extra["host_name"],
-            ExtraValue::Str("robot1".into())
-        );
-        assert_eq!(
-            ex.deploy["/listener"].extra["host_name"],
-            ExtraValue::Str("robot2".into())
+        assert_eq!(ex.deploy["/talker"].domain, Some(1));
+        assert_eq!(ex.deploy["/listener"].domain, Some(2));
+        assert!(
+            ex.deploy["/talker"].extra.is_empty(),
+            "the host's name is not written"
         );
     }
 
@@ -1328,25 +1257,21 @@ name = "d"
 kind = "self"
 board = "some-board"
 nodes = ["/talker"]
+domain_id = 5
 
 [host.robot1]
 nodes = ["/talker"]
+domain_id = 1
 "#,
             &["/talker"],
             None,
         );
         assert_eq!(
-            ex.deploy["/talker"].extra["host_name"],
-            ExtraValue::Str("robot1".into())
-        );
-        assert!(
-            !ex.deploy["/talker"].extra.contains_key("deploy_name"),
+            ex.deploy["/talker"].domain,
+            Some(1),
             "the deploy block must not contribute when a host exists"
         );
-        assert!(
-            ex.deploy["/talker"].target.is_none(),
-            "and no Mcu target from its board"
-        );
+        assert!(ex.deploy["/talker"].target.is_none());
     }
 
     /// Absent `[host.*]`, every existing file resolves exactly as before.
@@ -1360,15 +1285,13 @@ name = "d"
 [deploy.native]
 kind = "self"
 board = "linux-x86"
+domain_id = 3
 "#,
             &["/talker"],
             None,
         );
         assert!(r.is_ok(), "{r:?}");
-        assert_eq!(
-            ex.deploy["/talker"].extra["deploy_name"],
-            ExtraValue::Str("native".into())
-        );
+        assert_eq!(ex.deploy["/talker"].domain, Some(3));
     }
 
     #[test]
@@ -1399,25 +1322,24 @@ name = "d"
 
 [deploy.native]
 kind = "self"
+domain_id = 3
 
 [host.robot1]
 launch = "multihost.launch.xml"
 nodes = ["/talker"]
+domain_id = 1
 "#;
         // The multihost launch: the host places it.
         let (ex, _) = place(src, &["/talker"], Some("multihost.launch.xml"));
-        assert_eq!(
-            ex.deploy["/talker"].extra["host_name"],
-            ExtraValue::Str("robot1".into())
-        );
+        assert_eq!(ex.deploy["/talker"].domain, Some(1));
 
         // Any OTHER launch file: no host governs it, so the deploy block still
         // places, exactly as before hosts existed.
         let (ex2, r2) = place(src, &["/fibonacci_client"], Some("action.launch.xml"));
         assert!(r2.is_ok(), "{r2:?}");
         assert_eq!(
-            ex2.deploy["/fibonacci_client"].extra["deploy_name"],
-            ExtraValue::Str("native".into()),
+            ex2.deploy["/fibonacci_client"].domain,
+            Some(3),
             "a launch file no host governs must fall back to [deploy.*]"
         );
     }
