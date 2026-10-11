@@ -25,8 +25,9 @@ without it is unchanged on the wire. Schema stays 2.
 
 ## v0.1.53 - 2026-10-12
 
-Tagged by mistake on v0.1.52's commit: it is v0.1.52, byte for byte. Pin
-v0.1.54 for `ScopeInfo.ns`.
+Not released. A tag of this name was pushed by mistake on v0.1.52's commit
+and deleted the same day; the version number is skipped. Pin v0.1.54 for
+`ScopeInfo.ns`.
 
 ## v0.1.52 - 2026-10-12
 
