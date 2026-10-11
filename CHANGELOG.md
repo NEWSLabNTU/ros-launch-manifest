@@ -6,6 +6,33 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.55 - 2026-10-12
+
+The model stops carrying one realizer's build facts
+(`docs/model-boundary.md`, W6). No API change: the fields stay and still
+deserialise, so a model written by an older resolver loads unchanged. Workspace
+Cargo version stays `0.1.10`; schema stays 2.
+
+### Changed
+
+- `SystemConfigToml::apply_to_launch` no longer writes:
+  - `Execution.features` (from `[system] features` and `[param_services]`);
+  - `Deploy.target` (from `[deploy.<n>] board`, `kind`; every new model has
+    `None`);
+  - `Deploy.extra` (the `[deploy.*]` build fields and the placing table's
+    name, `host_name` / `deploy_name`).
+
+  Placement is unchanged: a node is in `execution.deploy` exactly when it
+  was, with the `domain` / `locator` / `rmw` its block states. The keys that
+  fed the removed fields still PARSE, into nothing.
+- Those three fields are documented as read-tolerant and are deleted at W8.
+
+### Migration
+
+A reader of `execution.features`, `Deploy.target` or `Deploy.extra` must take
+those facts from its own layer before bumping to this tag; no realizer other
+than the one the fields came from read them.
+
 ## v0.1.54 - 2026-10-12
 
 One model field. **Workspace Cargo version `0.1.9` -> `0.1.10`**:
