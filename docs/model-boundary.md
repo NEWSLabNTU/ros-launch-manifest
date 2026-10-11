@@ -1,10 +1,24 @@
 # What the SystemModel may carry
 
-Status: **decided** (2026-10-10). Not yet implemented. The work is tracked in
-nano-ros phase 486 (`docs/roadmap/phase-486-launch-model-boundary.md`); this
-repository's part is W6 (stop projecting) and the W8 retirement row. The
-companion rulings are nano-ros RFC-0060's 2026-10-10 amendment and
-play_launch phase 86.
+Status: **decided** (2026-10-10, revised 2026-10-12). Not yet implemented.
+The cross-repository work is tracked in nano-ros phase 486
+(`docs/roadmap/phase-486-launch-model-boundary.md`); this repository's part
+is W6 (stop writing realizer facts, make the system config neutral) and the
+W8 retirement rows. The companion plan on the Linux side is play_launch
+phase 86.
+
+The 2026-10-12 revision corrects three statements the first version made
+about other repositories, each checked with `git grep` on their `main`, and
+adds one rule (the system config is this crate's own format):
+
+- the system-wide lifecycle default is projected onto nodes by play_launch's
+  resolver, not by `apply_to_launch` (which writes the execution layer only);
+- no realizer reads `Deploy.target`, so `Target::Mcu` is not kept as
+  placement — it has one writer (`[deploy.<n>] board`) and no tracked config
+  uses it;
+- `Deploy.extra` also carries `host_name` and `deploy_name`; nobody reads
+  either, and they leave with the rest of `extra`;
+- `SCHEMA_VERSION` is 2 since v0.1.51 (list parameters), not 1.
 
 ## The rule
 
@@ -13,29 +27,37 @@ play_launch phase 86.
 > fact that means something to one realizer's BUILD belongs to that
 > realizer's own layer, never to the model.**
 
-The `model` crate describes itself as "shared by play_launch (Linux runtime)
-and nano-ros (embedded build)". A field only one of them reads costs the
-other twice. It must carry a field it ignores, and it cannot tell an ignored
-field from a missing one. The test is asked per field: *would play_launch on
-Linux, given this field, do the same thing nano-ros does with it?*
+A field only one realizer reads costs every other realizer twice. It must
+carry a field it ignores, and it cannot tell an ignored field from a missing
+one. The test is asked per field: *would a different realizer, given this
+field, do the same thing with it?*
+
+The same rule applies one level up, to this crate itself: **this crate names
+no realizer.** Its types, its system-config format and its doc comments
+describe launch systems, not any one tool that consumes them.
 
 ## What fails the test today
 
-`system_config::SystemConfigToml` parses nano-ros's `system.toml`, and its doc
-comments name the owner of most keys. `apply_to_launch` projects three nano-ros
-build facts into the model:
+`apply_to_launch` writes four facts that only one realizer reads:
 
 | Model field | From | Why it fails |
 | --- | --- | --- |
-| `Execution.features` | `[system] features`, `[param_services]` | nano-ros capability switches. An rclcpp node has parameter services unless its code opts out; the switch is nano-ros build policy |
-| `lifecycle_autostart` set on every lifecycle node from one table | `[lifecycle] autostart` | the per-node field passes (Jazzy `LifecycleNode(autostart=)`); a system-wide default is nano-ros boot policy |
-| `Deploy.extra` | `[deploy.<n>]` `framework`, `profile`, `optimize`, `features`, `kind`, `[deploy.<n>.nros]` | these describe a build, as this crate's own comment says. nano-ros moved them to its own `[image.*]` and `[board_config.*]`; no tracked nano-ros `system.toml` writes `[deploy.*]` |
+| `Execution.features` | `[system] features`, `[param_services]` | capability switches of one embedded build. A ROS 2 node has parameter services unless its own code opts out; the switch is build policy |
+| `Deploy.extra` (`kind`, `target`, `framework`, `profile`, `optimize`, `features`, `[deploy.<n>.nros]`) | `[deploy.<n>]` | these describe a BUILD, as this crate's own comment says |
+| `Deploy.extra` (`host_name`, `deploy_name`) | `[host.<n>]`, `[deploy.<n>]` | the key of the table that placed the node. Nothing reads it; the facts the placement carries (`domain`, `locator`, `rmw`) are typed fields already |
+| `Deploy.target` (`Linux`, `Mcu { board }`) | `[deploy.<n>] board` | no realizer reads it. Its only consumer slices nodes per board for a `[deploy.*]` table that no tracked config writes |
+
+And one realizer-side projection, outside this crate but resting on its
+accessor: the system-wide `[lifecycle] autostart` is copied onto every
+lifecycle node by play_launch's resolver (`resolve/src/model.rs`), through
+`SystemConfigToml::lifecycle_autostart()`. The per-node field passes the test
+(launch_ros `LifecycleNode(autostart=)`); one default for the whole system is
+boot policy.
 
 These pass, and stay:
-- placement (`[host.*]`, `[deploy.<n>] nodes` / `launch`, and `Deploy.target`
-  including `mcu:<board>`: nano-ros slices an entry's nodes by it, and
-  play_launch reads it as "not a node this machine runs" — corrected
-  2026-10-11 by nano-ros phase 486 W0);
+- placement facts that change behaviour on any realizer: per-node `domain`,
+  `locator`, `rmw` in `Deploy`, from `[host.*]` (its `nodes` / `launch`
+  scoping included) and from `[system]`;
 - `[tiers.*]` and `group_tiers` (scheduling, in the shared `sched` schema);
 - `[[component]] params` / `params_files` (ROS parameter values);
 - `[system] rmw` / `domain_id` / `locator`, `[[transport]]`, `[[bridge]]`;
@@ -43,38 +65,57 @@ These pass, and stay:
   `Configure`: a launch file can state only `Active`, but "configure and wait"
   means something to any lifecycle manager.
 
+## The system config is this crate's format
+
+`system_config::SystemConfigToml` today is a lax copy of one realizer's
+`system.toml`: its doc comments name that realizer, and it parses keys only
+that realizer means anything by (`[lifecycle]`, `[param_services]`,
+`[system] features`, `[deploy.*]`'s build fields, `[deploy.<n>.nros]`). That
+is two parsers for one file, and the copy decides what reaches the model.
+
+The decision: **`SystemConfigToml` is the integrator's system config for
+the shared layers, and this crate owns its format.**
+
+- It declares exactly the tables whose facts pass the test above: `[system]`
+  (`rmw`, `domain_id`, `locator`), `[host.*]`, `[tiers.*]`, `[[component]]`,
+  `[[transport]]`, `[[bridge]]`.
+- **Every other table is ignored by design**, not refused. A realizer extends
+  the same file with its own tables and validates them itself. This is
+  what lets one `system.toml` serve several realizers without this crate
+  knowing any of them.
+- A realizer that wants one strict parse embeds this struct (for example
+  with `#[serde(flatten)]`) beside its own tables, rather than keeping a
+  second parser of the shared keys.
+- No doc comment in this crate names a realizer. History and cross-references
+  live in the CHANGELOG and in the realizers' own docs.
+
 ## What changes here
 
-1. **Stop projecting (nano-ros phase 486 W6).** `apply_to_launch` stops
-   writing:
-   - `Execution.features`;
-   - lifecycle defaults onto nodes;
-   - `Deploy.extra`.
-
-   The per-node lifecycle fields are now filled only from the launch file
-   (play_launch phase 86) and the contract.
-2. **Stay lax about keys this crate does not own.** `SystemConfigToml` keeps
-   PARSING `[param_services]`, `[lifecycle]`, `[system] features` and the
-   build fields of `[deploy.*]`, into nothing. The same file is read by
-   nano-ros's strict parser, which owns its validation. If rlm refused a key
-   it no longer projects, every valid nano-ros `system.toml` would fail to
-   resolve.
-3. **Old models still load.** `Execution.features` and `Deploy.extra` become
-   read-tolerant: they deserialise and nothing reads them. This is the
-   `jitter_ms` precedent (phase 68), and the golden fixture keeps them on disk
-   as the evidence. `SCHEMA_VERSION` stays 1, because a reader of a new model
-   loses nothing it could act on.
-4. **Retirement (nano-ros phase 486 W8).**
-   - Once nano-ros's re-exports drop them, the struct fields go:
-     `SystemConfigToml.lifecycle`, `.param_services`,
-     `SystemDefaults.features`, and `DeployBlock`'s build fields.
-   - The read-tolerant model fields are deleted one minor release after
-     nano-ros has bumped past W6, provided no tracked model or fixture except
-     the golden one carries them.
+1. **Stop writing realizer facts (W6).** `apply_to_launch` stops writing
+   `Execution.features`, `Deploy.extra` and `Deploy.target`. play_launch
+   deletes its lifecycle-default loop in the same window (its phase 86 W0).
+2. **Stay lax about tables this crate does not own.** The realizer-only keys
+   keep PARSING, into nothing, until the realizer that owns them has moved
+   its readers (phase 486 W8). Then they leave the struct, and the
+   "ignored by design" rule above covers them.
+3. **Old models still load.** `Execution.features`, `Deploy.extra` and
+   `Deploy.target` become read-tolerant: they deserialise and nothing reads
+   them (the `jitter_ms` precedent, phase 68), and the golden fixture keeps
+   them on disk as the evidence. Removing writes needs no schema bump: a
+   reader of a new model loses nothing it could act on. `SCHEMA_VERSION`
+   stays at its current value, 2.
+4. **Retirement (W8).**
+   - The realizer-only struct fields go: `SystemConfigToml.lifecycle`,
+     `.param_services`, `.deploy` (the whole `[deploy.*]` table, its
+     placement half included, since `[host.*]` covers placement),
+     `SystemDefaults.features`, and the `lifecycle_autostart()` accessor.
+   - The read-tolerant model fields, and `Target` itself, are deleted one
+     minor release after every known consumer has bumped past W6, provided
+     no tracked model or fixture except the golden one carries them.
+   - The doc comments are rewritten to name no realizer (the rule above).
 
 ## Where those facts go instead
 
-nano-ros writes them to its own overlay, `nros.toml`, beside the model it
-resolves (`<ws>/build/nros/models/<bringup>/`). play_launch has nothing to
-move: none of the three had a Linux meaning, and a `system.toml` passed
-through the legacy `--sched` bridge parses as before.
+Into each realizer's own layer, which it writes beside the model it
+resolves, from its own tables in the same `system.toml`. A realizer with no
+such facts has nothing to move.

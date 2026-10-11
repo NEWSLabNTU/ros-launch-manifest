@@ -43,8 +43,10 @@ What each document is, and a suggested reading order.
 
 6b. [model-boundary.md](model-boundary.md) — the rule for what may enter the
    model (topology, the platform-agnostic contract, scheduling) and what
-   leaves it: `Execution.features`, the system-wide lifecycle default, and
-   the build half of `Deploy`. Decided 2026-10-10.
+   leaves it: `Execution.features`, `Deploy.extra`, `Deploy.target` and the
+   system-wide lifecycle default. Also: the system config is this crate's own
+   realizer-neutral format, and tables it does not declare are ignored.
+   Decided 2026-10-10, revised 2026-10-12.
 
 **Archaeology / rationale?**
 
