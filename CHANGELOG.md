@@ -6,6 +6,23 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.52 - 2026-10-12
+
+A fix to v0.1.51's list spelling, for play_launch issue #0068. No schema
+change: schema stays 2, workspace Cargo version unchanged (`0.1.9`).
+
+### Fixed
+
+- A `StrList` element is written inside a flow sequence, and v0.1.51 quoted
+  it only by the scalar rule (would it read as a number, a bool, nothing).
+  An element that flow syntax re-shapes went out bare: `a: b` reads back as
+  a mapping, `a, b` as two elements, `a #b` loses its tail. Autoware's
+  `component_state_monitor` passes `["topic_state_monitor_x:
+  map_topic_status", ...]`, so its `launch.map` parameter reached the node as
+  a `string` where it declares `string_array`, and the component refused to
+  construct. An element is now quoted unless it reads back as itself between
+  `[` and `]`. The schema-1 upgrade goes through the same spelling.
+
 ## v0.1.51 - 2026-10-11
 
 **SystemModel schema 1 -> 2**, for play_launch issue #0067. Workspace Cargo

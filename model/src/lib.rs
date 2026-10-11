@@ -1295,13 +1295,20 @@ fn flow_sequence(s: &str) -> Option<Vec<String>> {
 /// One list element as a YAML scalar that reads back as what it was
 /// (`ParamValue`'s doc): a string that would read as another type is
 /// single-quoted, with any `'` inside doubled.
+///
+/// The element is written inside a flow sequence, where more than the
+/// scalar rule breaks it: `a: b` reads as a mapping, `a, b` as two elements,
+/// `a #b` loses its comment. So a string that does not read back as itself
+/// between `[` and `]` is quoted too.
 fn list_element_text(e: &serde_yaml_ng::Value) -> Option<String> {
     match e {
-        serde_yaml_ng::Value::String(s) => Some(if string_would_retype(s) {
-            format!("'{}'", s.replace('\'', "''"))
-        } else {
-            s.clone()
-        }),
+        serde_yaml_ng::Value::String(s) => {
+            Some(if string_would_retype(s) || !reads_back_in_flow(s) {
+                format!("'{}'", s.replace('\'', "''"))
+            } else {
+                s.clone()
+            })
+        }
         serde_yaml_ng::Value::Bool(b) => Some(b.to_string()),
         serde_yaml_ng::Value::Number(n) => Some(n.to_string()),
         _ => None,
@@ -1316,6 +1323,13 @@ fn string_would_retype(s: &str) -> bool {
         || matches!(s, "true" | "True" | "false" | "False")
         || s.parse::<f64>().is_ok()
         || s.starts_with(['\'', '['])
+}
+
+/// Whether `s`, written bare as the only element of a flow sequence, reads
+/// back as exactly the string `s`.
+fn reads_back_in_flow(s: &str) -> bool {
+    serde_yaml_ng::from_str::<Vec<serde_yaml_ng::Value>>(&format!("[{s}]"))
+        .is_ok_and(|v| matches!(v.as_slice(), [serde_yaml_ng::Value::String(r)] if r == s))
 }
 
 fn yaml_scalar_text(e: &serde_yaml_ng::Value) -> Option<String> {

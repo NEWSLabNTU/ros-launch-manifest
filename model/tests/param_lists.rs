@@ -17,12 +17,49 @@ fn list(items: &[&str]) -> ParamValue {
 fn a_flow_list_keeps_each_elements_type_in_its_spelling() {
     assert_eq!(
         ParamValue::list_from_flow("[a, 5, '5', true, 'true', 1.5, 1.0, '', 'it''s']"),
-        Some(list(&["a", "5", "'5'", "true", "'true'", "1.5", "1.0", "''", "it's"]))
+        Some(list(&[
+            "a", "5", "'5'", "true", "'true'", "1.5", "1.0", "''", "it's"
+        ]))
     );
     assert_eq!(ParamValue::list_from_flow("[]"), Some(list(&[])));
     // Not a flow sequence, or not one of scalars: not a list.
     assert_eq!(ParamValue::list_from_flow("a, b"), None);
     assert_eq!(ParamValue::list_from_flow("[[1], [2]]"), None);
+}
+
+/// An element is written inside `[...]`, so one that flow syntax would split
+/// or re-shape is quoted: Autoware's component_state_monitor passes
+/// `["topic_state_monitor_x: map_topic_status"]`, which bare reads as a
+/// mapping.
+#[test]
+fn an_element_flow_syntax_would_reshape_is_quoted() {
+    assert_eq!(
+        ParamValue::list_from_flow(
+            "['mon: map_status', 'a, b', 'x #y', '{z}', 'q]', '\"d\"', '- e', ' sp', plain, a-b, 'x:y']"
+        ),
+        Some(list(&[
+            "'mon: map_status'",
+            "'a, b'",
+            "'x #y'",
+            "'{z}'",
+            "'q]'",
+            "'\"d\"'",
+            "'- e'",
+            "' sp'",
+            "plain",
+            "a-b",
+            "x:y",
+        ]))
+    );
+    // Every spelling reads back, inside a flow sequence, as the element it was.
+    let ParamValue::StrList(items) =
+        ParamValue::list_from_flow("['mon: map_status', 'a, b', plain]").unwrap()
+    else {
+        unreachable!()
+    };
+    let back: Vec<String> =
+        serde_yaml_ng::from_str(&format!("[{}]", items.join(", "))).unwrap();
+    assert_eq!(back, ["mon: map_status", "a, b", "plain"]);
 }
 
 const V1_MODEL: &str = r#"
