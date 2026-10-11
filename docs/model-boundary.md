@@ -83,9 +83,11 @@ the shared layers, and this crate owns its format.**
   the same file with its own tables and validates them itself. This is
   what lets one `system.toml` serve several realizers without this crate
   knowing any of them.
-- A realizer that wants one strict parse embeds this struct (for example
-  with `#[serde(flatten)]`) beside its own tables, rather than keeping a
-  second parser of the shared keys.
+- A realizer that wants a strict parse deserialises the shared keys with
+  this struct and its own tables with its own, from the same document, and
+  refuses only what BOTH ignored, rather than keeping a second parser of the
+  shared keys. (`#[serde(flatten)]` cannot do this: serde does not combine
+  it with `deny_unknown_fields`.)
 - No doc comment in this crate names a realizer. History and cross-references
   live in the CHANGELOG and in the realizers' own docs.
 
