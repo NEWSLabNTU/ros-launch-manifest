@@ -6,6 +6,31 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.50 - 2026-10-11
+
+One model field, for play_launch issue #0063. **Workspace Cargo version
+`0.1.8` -> `0.1.9`**: `NodeInstance` gains a field, which breaks a struct
+literal without `..Default::default()`. It is optional and skipped when
+absent, so a model without it is unchanged on the wire.
+
+### Why
+
+`on_exit=Shutdown()` (Python) and `on_exit="shutdown"` (XML, YAML) mark a
+process as required: when it exits, `launch` ends the whole system. A
+scenario runner is the usual case, taking its simulator and stack down with
+it. play_launch read the flag from its launch-time dump, which `up
+<model.yaml>` does not have, so a system resolved to a model and started
+from it ignored the declaration and kept running after its required process
+exited.
+
+### Added
+
+- `NodeInstance.on_exit: Option<OnExit>`, with `OnExit::Shutdown`
+  (serialised `shutdown`, the XML/YAML spelling). Nodes and containers only,
+  as with `respawn`. It is a launch fact (what the system does when a process
+  ends), so it passes `docs/model-boundary.md`'s test. A realizer with no
+  process lifecycle ignores it, as it ignores `respawn`.
+
 ## v0.1.49 - 2026-10-06
 
 Three keys, a header and the semantics the Autoware Safety Island's

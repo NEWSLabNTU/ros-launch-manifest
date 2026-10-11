@@ -231,6 +231,17 @@ pub struct ScopeInfo {
 }
 
 /// One resolved node instance.
+/// What a node's exit does to the rest of the system (`NodeInstance::on_exit`).
+/// `launch` defines one such action for the XML/YAML frontends, `shutdown`;
+/// the Python API's other `on_exit` actions are not modelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnExit {
+    /// End the launch: `Shutdown()`, or an `EmitEvent` of
+    /// `launch.events.Shutdown`.
+    Shutdown,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NodeInstance {
     /// Owning scope id.
@@ -311,6 +322,16 @@ pub struct NodeInstance {
     /// `respawn` is `Some(true)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub respawn_delay: Option<f64>,
+    /// `on_exit=Shutdown()` (Python) / `on_exit="shutdown"` (XML, YAML): this
+    /// process is REQUIRED, and when it exits the whole system is shut down.
+    /// `None` = launch default (an exit ends nothing else). A launch fact, like
+    /// `respawn` beside it: it says what the system does when a process ends,
+    /// not how anything is built (`docs/model-boundary.md`). Nodes/containers
+    /// only — a composable node has no process of its own. play_launch issue
+    /// #0063: without this field the flag lived only in the launch-time dump,
+    /// so `up <model.yaml>` could not honour it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_exit: Option<OnExit>,
     /// Launch-declared environment variables (`<env name= value=/>`), in
     /// declaration order — a `Vec` (not `BTreeMap`) because launch env lists
     /// may legitimately repeat a name (last one spawn-time wins) and order
@@ -1995,6 +2016,7 @@ mod tests {
             ros_args: vec!["--log-level".into(), "detector_node:=debug".into()],
             respawn: Some(true),
             respawn_delay: Some(2.5),
+            on_exit: Some(OnExit::Shutdown),
             env: vec![EnvVar {
                 name: "CUDA_VISIBLE_DEVICES".into(),
                 value: "0".into(),
@@ -2010,6 +2032,7 @@ mod tests {
         assert!(yaml.contains("value: '0'"), "{yaml}");
         assert!(yaml.contains("respawn: true"), "{yaml}");
         assert!(yaml.contains("respawn_delay: 2.5"), "{yaml}");
+        assert!(yaml.contains("on_exit: shutdown"), "{yaml}");
 
         let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(node, reparsed);
@@ -2030,6 +2053,7 @@ exec: detector_node
         assert!(node.ros_args.is_empty());
         assert_eq!(node.respawn, None);
         assert_eq!(node.respawn_delay, None);
+        assert_eq!(node.on_exit, None);
         assert_eq!(node.start_delay_secs, None);
         assert!(node.env.is_empty());
 
@@ -2037,6 +2061,7 @@ exec: detector_node
         assert!(!re_emitted.contains("remaps:"), "{re_emitted}");
         assert!(!re_emitted.contains("ros_args:"), "{re_emitted}");
         assert!(!re_emitted.contains("respawn:"), "{re_emitted}");
+        assert!(!re_emitted.contains("on_exit:"), "{re_emitted}");
         assert!(!re_emitted.contains("start_delay_secs:"), "{re_emitted}");
         assert!(!re_emitted.contains("env:"), "{re_emitted}");
     }
