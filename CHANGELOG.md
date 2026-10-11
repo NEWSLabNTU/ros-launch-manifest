@@ -6,6 +6,28 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.54 - 2026-10-12
+
+One model field. **Workspace Cargo version `0.1.9` -> `0.1.10`**:
+`ScopeInfo` gains a field, which breaks a struct literal without
+`..Default::default()`. It is optional and skipped when absent, so a model
+without it is unchanged on the wire. Schema stays 2.
+
+### Added
+
+- `ScopeInfo.ns`: the ROS namespace in effect where the scope's file was
+  included, absent for the root namespace. play_launch's web launch tree
+  shows each include under its namespace. When it ran from a model with no
+  launch-time dump (`up <model.yaml>`), it had only the scope table, and the
+  namespace an include was made under is not recoverable from its nodes,
+  which may set their own. It is a launch fact, so it passes
+  `docs/model-boundary.md`; a realizer ignores it, as it ignores `args`.
+
+## v0.1.53 - 2026-10-12
+
+Tagged by mistake on v0.1.52's commit: it is v0.1.52, byte for byte. Pin
+v0.1.54 for `ScopeInfo.ns`.
+
 ## v0.1.52 - 2026-10-12
 
 A fix to v0.1.51's list spelling, for play_launch issue #0068. No schema

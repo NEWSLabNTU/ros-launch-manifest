@@ -261,6 +261,13 @@ pub struct ScopeInfo {
     /// Launch file basename (e.g. `control.launch.xml`), when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    /// ROS namespace in effect where this file was included (`/perception`
+    /// for an include under `<push-ros-namespace namespace="perception"/>`).
+    /// Absent means the root namespace, `/`. For launch-tree inspection: a
+    /// node's own namespace is in its FQN, but the namespace an include was
+    /// made under is not recoverable from its nodes, which may set their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ns: Option<String>,
     /// Resolved launch arguments passed to this include (`<include>`'s
     /// `<arg>`s), for launch-tree inspection. File scopes only.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
