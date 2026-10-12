@@ -6,9 +6,19 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.1.56 - 2026-10-12
 
-Docs only; no tag, no behaviour, type, field or API change.
+`GRAMMAR_VERSION` follows the release again, and the crates' doc comments name
+no realizer. No behaviour, type, field or API change beyond the version
+string. Workspace Cargo version stays `0.1.10`; schema stays 2.
+
+### Fixed
+
+- `GRAMMAR_VERSION` was left at `0.1.54` by v0.1.55, so a checker built from
+  v0.1.55 reported "reads rlm v0.1.54" for a contract needing a newer grammar
+  while `--version` said v0.1.55, and `the_grammar_version_is_the_release`
+  failed on the v0.1.55 commit. It is `0.1.56` now. Pin v0.1.56 rather than
+  v0.1.55.
 
 ### Changed
 
