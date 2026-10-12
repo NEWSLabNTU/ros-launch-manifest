@@ -15,12 +15,12 @@ pub use check::{
 /// Path to this repository's checker fixtures (`tests/fixtures/<pkg>/manifest.yaml`).
 ///
 /// Feature-gated behind `testdata` and intended for **dependent crates' tests**.
-/// `ros-launch-resolve` builds real `ManifestIndex`es from these 24 fixture
-/// packages; when it consumed this repository as a submodule it reached them
-/// with a hard-coded `../third-party/ros-launch-manifest/tests/fixtures`,
-/// which stops resolving the moment the dependency becomes a git dependency
-/// (play_launch phase-55 W2 — cargo checks git deps out under
-/// `~/.cargo/git/checkouts/` at a path nothing can predict).
+/// A resolver builds real `ManifestIndex`es from these 24 fixture packages;
+/// when one consumed this repository as a submodule it reached them with a
+/// hard-coded `../third-party/ros-launch-manifest/tests/fixtures`, which
+/// stops resolving the moment the dependency becomes a git dependency (cargo
+/// checks git deps out under `~/.cargo/git/checkouts/` at a path nothing can
+/// predict).
 ///
 /// Exposing the path from inside the repository that owns the fixtures keeps
 /// them single-sourced. The alternative — copying 24 fixture packages into

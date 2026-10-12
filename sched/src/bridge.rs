@@ -19,7 +19,7 @@ use crate::{
 /// Parse a legacy `system.toml` document into the v2 [`PlatformFile`] shape.
 ///
 /// - `target` is always `"posix"` (the legacy schema predates multi-target
-///   platform files; `nano-ros`'s RTOS targets use per-platform sub-tables
+///   platform files; RTOS targets use per-platform sub-tables
 ///   inside the same tier, resolved directly via [`crate::resolve::resolve`]
 ///   rather than through this bridge).
 /// - `mapper` is always `"manual"`.

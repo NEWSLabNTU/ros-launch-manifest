@@ -79,7 +79,7 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(dangling_entity::DanglingEntityRule),
         Box::new(satisfiability::SatisfiabilityRule),
         // NOT registered: `consistency`. The id is live — it is the CROSS-SCOPE
-        // rule the consumer (play_launch's `manifest_loader`) emits under, and
+        // rule a consumer's cross-scope manifest loader emits under, and
         // `--rule consistency` filters those diagnostics. What lived here was a
         // no-op body reserving the name for "phase 34.5", counted in the
         // documented rule registry, so a reader of the registry or of a

@@ -31,9 +31,9 @@ impl ArgDecl {
 pub struct Manifest {
     pub version: u32,
     /// The grammar release the file needs, as written in its `rlm:` header
-    /// (`v0.1.49`, `0.1.49` or `>=0.1.49`; v0.1.49, play_launch phase 85
-    /// D5). Checked against [`crate::GRAMMAR_VERSION`] before the body is
-    /// read; `None` when the file states none.
+    /// (`v0.1.49`, `0.1.49` or `>=0.1.49`; since v0.1.49). Checked against
+    /// [`crate::GRAMMAR_VERSION`] before the body is read; `None` when the file
+    /// states none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rlm: Option<String>,
     /// Manifest arguments — all mandatory. Values provided by scope args from record.json.
@@ -534,8 +534,8 @@ pub struct NodeDecl {
     ///
     /// Absent means **every path of this node serializes**, which is what both
     /// realizations already default to — `rclcpp`'s implicit per-node callback
-    /// group is `MutuallyExclusive`, and nano-ros's `default_cbg_type` is the
-    /// same string. So nothing is written unless an author claims MORE
+    /// group is `MutuallyExclusive`, and embedded executors commonly default
+    /// the same way. So nothing is written unless an author claims MORE
     /// concurrency than the safe answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<ConcurrencyDecl>,
@@ -683,8 +683,8 @@ pub struct EndpointProps {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_violation: Option<OnViolation>,
     /// Publisher only: this endpoint publishes when asked (a service call,
-    /// an operator's command) and promises NO rate (play_launch phase 85
-    /// D3). Not the same as leaving `min_rate_hz` out, which says nothing:
+    /// an operator's command) and promises NO rate (since v0.1.49). Not the
+    /// same as leaving `min_rate_hz` out, which says nothing:
     /// `on_demand: true` is a statement a consumer acts on -- no minimum
     /// rate is derived for the topic, no rate monitor is generated for the
     /// endpoint, and a subscriber that requires a rate of it is an error.
@@ -1045,7 +1045,7 @@ pub struct PathDecl {
     /// Best-case latency for this path (phase 67).
     ///
     /// Optional, and expected to be *measured* rather than authored in most
-    /// cases — `play_launch measure` already computes per-invocation
+    /// cases — a measurement of the running system yields per-invocation
     /// distributions. It exists because every other bound this vocabulary
     /// carries is an upper one, so `max_jitter` would otherwise be
     /// unfalsifiable.
@@ -1109,7 +1109,7 @@ pub enum Trigger {
     /// Periodic self-clocked callback. `rate_hz` is a REAL scheduling
     /// input (mapper fact); must be > 0.
     ///
-    /// `jitter` is the timer's RELEASE jitter (play_launch phase 85 D1): how
+    /// `jitter` is the timer's RELEASE jitter (since v0.1.49): how
     /// late a tick may be released after its nominal instant, so that a
     /// message the path reads on its tick waits up to `1/rate_hz + jitter`.
     /// A fact about the executor and the board, measured, never derived;
@@ -1246,8 +1246,8 @@ pub enum MissAction {
 ///
 /// An **exclusion relation**, from which callback groups are derived — a
 /// maximal mutually exclusive set IS a group. The group is a consequence, so
-/// it is never authored; nano-ros already infers groups from causal coupling
-/// and treats declaration as an override.
+/// it is never authored; a realizer may infer groups from causal coupling
+/// and treat a declaration as an override.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ConcurrencyDecl {
     /// Sets of path names that must not run concurrently with one another.

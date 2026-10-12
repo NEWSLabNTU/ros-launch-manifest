@@ -19,7 +19,8 @@
 //!   absence as zero would have turned every jitter requirement on a path
 //!   with a wide budget into a hard error. That is the absent-versus-zero
 //!   confusion phase 60 removed from the chain checker, and it does not get
-//!   to come back here. `play_launch measure` produces the floor.
+//!   to come back here. A measurement of the running system produces the
+//!   floor.
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};

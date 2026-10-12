@@ -120,7 +120,7 @@ fn resolve_pub_min_rate(pub_ref: &str, manifest: &Manifest) -> Option<f64> {
     resolve_endpoint(pub_ref, manifest, |n| &n.publishers)?.min_rate_hz
 }
 
-/// An on-demand publisher (`on_demand: true`, play_launch phase 85 D3)
+/// An on-demand publisher (`on_demand: true`, v0.1.49)
 /// promises no rate, so nothing may be held to one on its account: a topic
 /// `rate_hz` beside it is a claim no publisher makes, and when every
 /// publisher of the topic is on demand, a subscriber's `min_rate_hz` is a

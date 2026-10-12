@@ -2,14 +2,14 @@
 //!
 //! One `SystemModel` describes ONE concrete system variant (early binding:
 //! args bound, conditions evaluated, every name fully qualified), produced by
-//! `play_launch resolve` from the launch tree + contract manifests + the
-//! integrator's system config, and consumed by
+//! a resolver from the launch tree + contract manifests + the integrator's
+//! system config, and consumed by realizers, for example
 //!
-//! - the play_launch Linux runtime (spawn/supervise + contract monitors), and
-//! - the nano-ros build system (bake each `mcu:*` node's slice into its image).
+//! - a process runtime (spawn/supervise + contract monitors), and
+//! - an embedded build system (bake each node's slice into its image).
 //!
-//! Design: play_launch `docs/design/system-model.md` (producer side) and
-//! nano-ros RFC-0050 (consumer side). This crate is PURE SCHEMA — types,
+//! What the model may carry: `docs/model-boundary.md`. This crate names no
+//! realizer; history lives in the CHANGELOG. This crate is PURE SCHEMA — types,
 //! serde, and YAML round-trip; no resolver logic. The resolver refuses to
 //! emit a model when the manifest checker reports Error severity, so a model
 //! in hand is always a checked one; warnings ride along in
@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 ///   spelling). In version 1 an inline list rode as a `Str` holding its YAML
 ///   flow text, so a string whose text looked like a list (`type="str"`,
 ///   `value="[a, b]"`) could not be told from one, and was spawned as a list
-///   (play_launch issue #0067). [`SystemModel::from_yaml_str`] upgrades a
+///   (history: CHANGELOG). [`SystemModel::from_yaml_str`] upgrades a
 ///   version-1 model on read, giving it the meaning it had then.
 pub const SCHEMA_VERSION: u32 = 2;
 
@@ -132,7 +132,7 @@ pub struct Meta {
     /// Checker warnings embedded at resolve time (Errors refuse emission).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<String>,
-    // nano-ros issue 0320 — the `record` field (a bound `record.json`
+    // The `record` field (a bound `record.json`
     // companion) is retired: the producer only ever wrote `None`, the files it
     // named were never committed, and its sole reader was a round-trip test.
     // Old models still carry `record:` on disk; without `deny_unknown_fields`
@@ -143,12 +143,11 @@ pub struct Meta {
 /// path lies under it.
 ///
 /// These were `canonicalize`d absolute paths, baked into a COMMITTED artifact.
-/// That is not merely untidy — consumers read them back (nano-ros's
-/// `nros::main!` looks for the `.toml` input to find the system.toml the model
-/// was resolved against), and an absolute path from another machine fails its
-/// existence check and silently falls back to a fixed filename, reintroducing
-/// the per-target leak that recording the input was meant to prevent
-/// (nano-ros issue 0293).
+/// That is not merely untidy — consumers read them back (a realizer looks for
+/// the `.toml` input to find the system.toml the model was resolved
+/// against), and an absolute path from another machine fails its existence
+/// check and silently falls back to a fixed filename, reintroducing the
+/// per-target leak that recording the input was meant to prevent.
 ///
 /// Relative to the bringup package root the model is portable, and the
 /// consumer resolves it against its own root. An input OUTSIDE that root (an
@@ -222,10 +221,8 @@ pub struct Structure {
     /// internally-hardcoded default and breaks discovery for anything
     /// addressing it by that name — LifecycleNode services included. The key
     /// is the synthetic identifier; the node's own name is authoritative.
-    /// (play_launch issue #0017, which also carries the live-graph mapping and
-    /// how the real name can be observed.)
     ///
-    /// Issue 0382 — an ORDER-PRESERVING map, not a `BTreeMap`. Construct order
+    /// An ORDER-PRESERVING map, not a `BTreeMap`. Construct order
     /// is semantic: components initialize (and `configure()`) in the order the
     /// emitter walks this mapping, and the launch file is where the user
     /// expresses it. A `BTreeMap` alphabetized that away at resolve time, so a
@@ -337,13 +334,12 @@ pub struct NodeInstance {
     // -- Phase 46.1b — launch spawn inputs (docs/design/unified-system-model.md
     // decision (a)) -------------------------------------------------------
     //
-    // The following fields are launch-derived spawn INPUTS play_launch's
-    // Linux runtime consumes to derive argv/env at spawn time (Phase 46.3).
-    // nano-ros consumes `remaps` (its entry codegen bakes the rules into
-    // entity creation — nano-ros issue 0255 / phase-305 W3) and IGNORES the
-    // other three — it has no argv/process/respawn model for its embedded
-    // targets. They ride along per the "all launch info in the shared model"
-    // principle rather than a play_launch-private side channel. Additive: old
+    // The following fields are launch-derived spawn INPUTS a process runtime
+    // consumes to derive argv/env at spawn time. An embedded realizer may
+    // consume `remaps` (baking the rules into entity creation) and ignore the
+    // other three — it has no argv/process/respawn model for its targets.
+    // They ride along per the "all launch info in the shared model"
+    // principle rather than a realizer-private side channel. Additive: old
     // models with none of these keys parse unchanged (all default to
     // empty/`None`).
     /// Topic/service name remappings (`<remap from= to=/>`), in launch
@@ -371,9 +367,9 @@ pub struct NodeInstance {
     /// `None` = launch default (an exit ends nothing else). A launch fact, like
     /// `respawn` beside it: it says what the system does when a process ends,
     /// not how anything is built (`docs/model-boundary.md`). Nodes/containers
-    /// only — a composable node has no process of its own. play_launch issue
-    /// #0063: without this field the flag lived only in the launch-time dump,
-    /// so `up <model.yaml>` could not honour it.
+    /// only — a composable node has no process of its own. Without this
+    /// field the flag lived only in a launch-time dump, so a runtime started
+    /// from the model alone could not honour it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_exit: Option<OnExit>,
     /// Launch-declared environment variables (`<env name= value=/>`), in
@@ -384,7 +380,7 @@ pub struct NodeInstance {
     pub env: Vec<EnvVar>,
 
     // -- Phase 46.3a — close the spawn-completeness gaps found while
-    // auditing whether the model can drive `play_launch replay` (Wave B)
+    // auditing whether the model can drive a process runtime (Wave B)
     // without `record.json` (`docs/design/unified-system-model.md`,
     // `.superpowers/sdd/p46-w3-analysis.md`). Additive: old models with
     // none of these keys parse unchanged (all default to empty). --------
@@ -409,7 +405,7 @@ pub struct NodeInstance {
     /// parameters only via [`Self::params`] in their `LoadNode` request).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params_files: Vec<String>,
-    /// phase-54 / play_launch issue 0007 — the ORDERED parameter-source list.
+    /// The ORDERED parameter-source list.
     /// [`Self::params`] and [`Self::params_files`] are the legacy split views,
     /// which cannot express ROS's ordering (they force files-then-inline).
     /// When this is non-empty it is AUTHORITATIVE: fold it in order.
@@ -453,34 +449,33 @@ pub struct NodeInstance {
     /// `__node` onto a `name=None` node silently renames it away from its
     /// own internally-hardcoded default name, breaking service/action
     /// discovery for e.g. LifecycleNodes whose lifecycle services register
-    /// under the internal name — the exact regression play_launch's
-    /// `af7c524` ("Use None for the node name if it's not set instead of
-    /// exec_name fallback") fixed on the record path. With this field the
+    /// under the internal name — a regression a resolver once had to fix
+    /// on its pre-model path ("Use None for the node name if it's not set
+    /// instead of exec_name fallback"). With this field the
     /// model path reproduces that conditional exactly (emit `__node` iff
     /// `node_name.is_some()`). Containers and composable nodes always carry
     /// `Some` (their record types have a non-optional name).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_name: Option<String>,
     /// Whether this instance is a `<node_container>` (as opposed to a plain
-    /// `<node>` or a composable `<composable_node>`). The producer knows
-    /// this unambiguously (it comes from the record's `dump.container[]`
-    /// array); a consumer CANNOT reconstruct it from the other fields —
-    /// `model_builder` emits containers with `plugin: None, container:
-    /// None`, structurally identical to a plain node. The Linux spawn path
-    /// keys the `--container-mode` package/executable override
-    /// (`play_launch_container` + `--isolated`/`--use_multi_threaded_executor`)
-    /// off this bit; inferring it by reverse-resolving composable
-    /// `container=` references (the pre-46.3b heuristic) could misclassify
-    /// a regular node whose name coincides with a dangling/ambiguous
-    /// composable target and then corrupt its executable. Plain nodes and
-    /// composable nodes carry `false`.
+    /// `<node>` or a composable `<composable_node>`). The producer knows this
+    /// unambiguously (it comes from the record's `dump.container[]` array); a
+    /// consumer CANNOT reconstruct it from the other fields — `model_builder`
+    /// emits containers with `plugin: None, container: None`, structurally
+    /// identical to a plain node. The Linux spawn path keys a container
+    /// package/executable override (a replacement container with
+    /// `--isolated`/`--use_multi_threaded_executor`) off this bit; inferring it
+    /// by reverse-resolving composable `container=` references (the pre-46.3b
+    /// heuristic) could misclassify a regular node whose name coincides with a
+    /// dangling/ambiguous composable target and then corrupt its executable.
+    /// Plain nodes and composable nodes carry `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_container: bool,
 
     // -- Launch `<timer>` start delay. Additive: a model written before this
     // key existed parses with `start_delay_secs: None`, and a consumer that
-    // ignores it spawns exactly as it did before — nano-ros is such a
-    // consumer, since (per the Phase 46.1b note above) it has no argv/
+    // ignores it spawns exactly as it did before — an embedded realizer is
+    // such a consumer, since (per the Phase 46.1b note above) it has no argv/
     // process model to delay in the first place. -------------------------
     /// Delay in seconds before this instance is spawned for the FIRST time,
     /// from a launch `<timer period="…">` (`TimerAction`) enclosing it.
@@ -533,12 +528,12 @@ pub enum Autostart {
 /// `true`/`1`/`1.5`/`"x"` each hit the right arm; a float-typed param
 /// authored as `1` must be written `1.0`).
 ///
-/// `Str` is always a string, whatever its text looks like (schema 2). A list
-/// is `StrList`, each element spelled as a YAML scalar that reads back as
-/// what it was: an integer `5`, a double `1.5`, a bool `true`, a string
-/// `a` — and a string that would read as something else single-quoted
-/// (`'5'`, `'true'`, `''`), the convention play_launch's parser uses for a
-/// scalar. A consumer that needs the list as YAML writes `[` + the elements
+/// `Str` is always a string, whatever its text looks like (schema 2). A list is
+/// `StrList`, each element spelled as a YAML scalar that reads back as what it
+/// was: an integer `5`, a double `1.5`, a bool `true`, a string `a` — and a
+/// string that would read as something else single-quoted (`'5'`, `'true'`,
+/// `''`), the convention a launch parser that types by YAML 1.1 shape uses for
+/// a scalar. A consumer that needs the list as YAML writes `[` + the elements
 /// joined by `, ` + `]`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -567,9 +562,9 @@ impl ParamValue {
             .map(ParamValue::StrList)
     }
 
-    /// Render for a consumer that bakes parameters as STRINGS — nano-ros's
-    /// compile-time entry codegen, where the value is re-typed at runtime by
-    /// inference over this text.
+    /// Render for a consumer that bakes parameters as STRINGS — e.g. an
+    /// embedded realizer's compile-time codegen, where the value is re-typed
+    /// at runtime by inference over this text.
     ///
     /// Single-sourced because the inference is unforgiving: `1.0f64.to_string()`
     /// is `"1"`, which re-types as an INTEGER and silently changes a launch
@@ -586,8 +581,7 @@ impl ParamValue {
     }
 }
 
-/// phase-54 / play_launch issue 0007 — one parameter source, in ROS's ORDERED
-/// model.
+/// One parameter source, in ROS's ORDERED model.
 ///
 /// `launch_ros` keeps a single list per node: `parse_nested_parameters` appends
 /// one entry per `<param>` child in document order, and `execute` emits
@@ -595,7 +589,7 @@ impl ParamValue {
 /// temp params FILE first. Kind therefore carries NO precedence; position does,
 /// and a file written after an inline value wins.
 ///
-/// A consumer that cannot delegate to rcl (the nano-ros compile-time bake) must
+/// A consumer that cannot delegate to rcl (a compile-time bake) must
 /// fold this list IN ORDER, applying [`Self::File`] entries with FILE semantics
 /// (`ros__parameters` sections, `/**` and partial wildcards) rather than as a
 /// flat key/value overlay.
@@ -611,7 +605,7 @@ pub enum ParamSource {
 }
 
 impl NodeInstance {
-    /// nano-ros #276 — project `params_files` YAML into concrete parameter
+    /// Project `params_files` YAML into concrete parameter
     /// values, merged under the inline [`Self::params`].
     ///
     /// Embedded consumers have no launch runtime to pass `--params-file` to:
@@ -855,15 +849,16 @@ pub struct Contracts {
     /// **Presence in this map is the declaration.** An absent entry means
     /// every path of that node serialises — the safe answer, and what both
     /// realizations already do (`rclcpp`'s implicit callback group is
-    /// `MutuallyExclusive`; so is nano-ros's `default_cbg_type`). An entry
+    /// `MutuallyExclusive`, and embedded executors commonly default the
+    /// same way). An entry
     /// with an EMPTY `exclusive` is the opposite claim: every path may run
     /// concurrently. Flattening the two is the mistake this shape exists to
     /// prevent.
     ///
     /// Carried on the model because the model is the only artifact a second
-    /// toolchain reads. nano-ros INFERS callback groups from causal coupling
-    /// (`PlanCallbackGroup::inferred`) and defaults an uncoupled callback to
-    /// `Reentrant` — the OPPOSITE of the contract's default. A declared
+    /// toolchain reads. A realizer may INFER callback groups from causal
+    /// coupling and default an uncoupled callback to `Reentrant` — the
+    /// OPPOSITE of the contract's default. A declared
     /// relation is the fact that settles which is right for a given system,
     /// and until it crossed this boundary neither side could see the other's
     /// answer.
@@ -1323,8 +1318,8 @@ fn list_element_text(e: &serde_yaml_ng::Value) -> Option<String> {
 }
 
 /// Whether a string's text would be read as something other than this
-/// string by a consumer that types by shape. The rule play_launch's parser
-/// applies to a scalar (`param_value::is_ambiguous`), kept equal to it.
+/// string by a consumer that types by shape: the YAML 1.1 rule a launch
+/// parser that types by shape applies to a scalar, kept equal to it.
 fn string_would_retype(s: &str) -> bool {
     s.is_empty()
         || matches!(s, "true" | "True" | "false" | "False")
@@ -1370,7 +1365,7 @@ pub struct PubContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qos: Option<Qos>,
     /// The publisher publishes when asked and promises NO rate (contract
-    /// `on_demand: true`, play_launch phase 85 D3). What a consumer must
+    /// `on_demand: true`, v0.1.49). What a consumer must
     /// derive from it: NO rate monitor for this endpoint (and none for a
     /// subscriber of its topic on its account), and no period for the
     /// topic. `min_rate_hz` is then absent, and an absent `min_rate_hz`
@@ -1412,7 +1407,7 @@ pub struct SubContract {
     pub buffer: Option<BufferContract>,
     /// Worst-case transport into THIS subscriber, overriding
     /// [`TopicContract::max_transport_ms`] for the edges that end here
-    /// (play_launch issue #0042, design issue #55).
+    /// (design issue #55).
     ///
     /// One ROS topic does not have one transport cost: the same message
     /// reaching a subscriber in the publisher's own process is a pointer
@@ -1487,12 +1482,12 @@ pub struct PathContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger: Option<ros_launch_manifest_sched::EffectiveTrigger>,
     /// The release jitter of a timer trigger, ms (contract `trigger: {
-    /// timer: { rate_hz, jitter } }`, v0.1.49; play_launch phase 85 D1): how
+    /// timer: { rate_hz, jitter } }`, v0.1.49): how
     /// late a tick may be released, so that a message the path reads on its
     /// tick waits up to `period + jitter`. Beside [`Self::trigger`] rather
     /// than inside its `Timer` variant, because that enum is `sched`'s and
     /// every consumer constructs it. `None` for any other trigger, and for a
-    /// timer that states none (ticks on time). What reads it: play_launch's
+    /// timer that states none (ticks on time). What reads it: a resolver's
     /// reaction walk and `window-expiry`; the chain derivation's sampling
     /// cost is still one period.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1528,10 +1523,10 @@ pub struct PathContract {
     /// This is the field the endpoint-level `jitter:` was retired in favour
     /// of, and it is carried HERE — on the model — because the model is the
     /// only thing a second toolchain reads. Phase 67 added it to the contract
-    /// and to the sched crate's `MapperPath`, but not to this struct, so
-    /// nano-ros (which builds its `MapperPath` from the model rather than
-    /// from the manifest) could not see it at all: not "did not use it",
-    /// could not.
+    /// and to the sched crate's `MapperPath`, but not to this struct, so a
+    /// realizer that builds its `MapperPath` from the model rather than from
+    /// the manifest could not see it at all: not "did not use it", could
+    /// not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_jitter_ms: Option<f64>,
     /// What a missed deadline means for this path (phase 67): how many are
@@ -1668,7 +1663,7 @@ pub struct Execution {
     /// session. The embedded boot bake reads its board's transport here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transports: Vec<Transport>,
-    /// R1-M3 — in-binary topic-relay bridges (nano-ros RFC-0009 shape).
+    /// R1-M3 — in-binary topic-relay bridges.
     /// Topic types resolve from layer 1 wiring, never written here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bridges: Vec<Bridge>,
@@ -1681,9 +1676,9 @@ pub struct Execution {
     // NOTE: the resolved scheduling plan is NOT carried in the model
     // (2026-07-20 maintainer decision — reverted the 45.2/45.3 `sched`
     // embedding). The model is INPUT only; causality + execution modeling is
-    // each consumer's job (nano-ros RFC-0050/0052; scheduling.md §"Cross-repo
-    // design agreement"). The chain/DAG algorithm is a standalone reusable
-    // crate both runtimes call, not an embedded output.
+    // each consumer's job (scheduling.md §"Cross-repo design agreement"). The
+    // chain/DAG algorithm is a standalone reusable crate both runtimes call,
+    // not an embedded output.
 }
 
 /// R1-M2 — one transport/session declaration.
@@ -1894,7 +1889,7 @@ mod order_tests {
 mod tests {
     use super::*;
 
-    /// nano-ros issue 0293 — `meta.inputs` paths must be portable.
+    /// `meta.inputs` paths must be portable.
     ///
     /// They used to be canonicalised into a COMMITTED artifact, so a model was
     /// only correct on the machine that produced it: everywhere else the

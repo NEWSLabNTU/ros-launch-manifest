@@ -1,17 +1,16 @@
 //! The dataflow route a scope path resolves to.
 //!
-//! A port of play_launch's `manifest_graph::{build_global_graph,
-//! subgraph_for_scope_path, critical_path}` (`ros-launch-resolve/resolve/
-//! src/ros/manifest_graph.rs` at 0.11.0) from `ManifestIndex` onto the
-//! model: `structure.topics` endpoint refs are the edges, `node_paths`
-//! triggers and outputs attribute each hop to a path, `sub_endpoints.state`
-//! breaks cycles, `structure.scopes` gives the subtree and `scope_paths` the
-//! two ends. The arithmetic is unchanged -- series hops sum, a fork-join
-//! takes the slowest branch, a timer path costs one period plus its exec --
-//! so the scope-path form and the chain form of one system keep agreeing.
-//! The WEIGHTS are per edge rather than per topic: a subscriber may state
-//! its own transport, and the topic's value is the default for those that
-//! do not (play_launch issue #0042, design issue #55).
+//! A port of a resolver's manifest-graph walk (`build_global_graph`,
+//! `subgraph_for_scope_path`, `critical_path`; history: CHANGELOG) from
+//! `ManifestIndex` onto the model: `structure.topics` endpoint refs are the
+//! edges, `node_paths` triggers and outputs attribute each hop to a path,
+//! `sub_endpoints.state` breaks cycles, `structure.scopes` gives the subtree
+//! and `scope_paths` the two ends. The arithmetic is unchanged -- series hops
+//! sum, a fork-join takes the slowest branch, a timer path costs one period
+//! plus its exec -- so the scope-path form and the chain form of one system
+//! keep agreeing. The WEIGHTS are per edge rather than per topic: a subscriber
+//! may state its own transport, and the topic's value is the default for those
+//! that do not (design issue #55).
 //!
 //! Everything here is keyed by `BTreeMap`/`BTreeSet`, so a given model
 //! yields one route, in one order, on every run.

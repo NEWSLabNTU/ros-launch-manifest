@@ -112,11 +112,10 @@ pub struct TierPlatformSpec {
         skip_serializing_if = "Option::is_none"
     )]
     pub deadline: Option<ros_launch_manifest_types::duration::Duration>,
-    /// Per-platform sporadic execution budget (µs) — nano-ros phase-296
-    /// W5.9: lets ONE platform's kernel sporadic server (NuttX
-    /// SCHED_SPORADIC) engage without flipping every other platform's
-    /// executor into cooperative Sporadic gating (a GENERIC head budget
-    /// applies everywhere). Same sub-table-override precedent as
+    /// Per-platform sporadic execution budget (µs): lets ONE platform's kernel
+    /// sporadic server (NuttX SCHED_SPORADIC) engage without flipping every
+    /// other platform's executor into cooperative Sporadic gating (a GENERIC
+    /// head budget applies everywhere). Same sub-table-override precedent as
     /// `deadline_us`.
     #[serde(
         default,
@@ -134,7 +133,7 @@ pub struct TierPlatformSpec {
         skip_serializing_if = "Option::is_none"
     )]
     pub period: Option<ros_launch_manifest_types::duration::Duration>,
-    /// Per-platform round-robin time slice (µs) — nano-ros #0266: requests
+    /// Per-platform round-robin time slice (µs): requests
     /// time-slicing among same-priority tiers. ThreadX-only today (its
     /// `tx_thread_create` takes a per-thread slice); ignored elsewhere.
     /// Same sub-table-scoped precedent as `preempt_threshold`.

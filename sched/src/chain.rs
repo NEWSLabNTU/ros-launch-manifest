@@ -8,7 +8,7 @@
 //! sched crate has no dependency on `ros-launch-manifest-types` today (see
 //! `sched/Cargo.toml`) and is kept FQN-string-based/dependency-light,
 //! consistent with [`crate::resolve::SchedNode`] and
-//! [`crate::mapper::MapperNode`]. Callers (play_launch, wave 4) translate
+//! [`crate::mapper::MapperNode`]. Callers (a resolver, wave 4) translate
 //! from the real `types` crate's `PathDecl::effective_trigger()` /
 //! `ChainDecl` into these when building [`crate::mapper::MapperInput`].
 //!
@@ -18,7 +18,7 @@
 //! phase adds is `Serialize`/`Deserialize` on the resolved types below
 //! (`ResolvedChain`, `ChainElement`, `MapperPath`, `ChainAwareDetail`,
 //! `ChainSemantics`, `EffectiveTrigger`) so the `model` crate can embed them
-//! verbatim as the shared scheduling-structure schema (nano-ros RFC-0050/52)
+//! verbatim as the shared scheduling-structure schema
 //! — one resolved-side schema, no third hand-mirror. `MapWarning` /
 //! `MapDiagnostics` are a `--explain`-time diagnostic, not embedded in the
 //! model, and are intentionally left non-serializable.
@@ -71,8 +71,8 @@ impl EffectiveTrigger {
 
 /// One of a node's declared causal paths, as seen by the mapper (design
 /// steps 1 and 6). Also the per-(node, path) requirement-facts unit — the
-/// "mapper input" both play_launch's Linux runtime and nano-ros's own RTOS
-/// mapper read. (The 45.2 model-embedding of this was reverted 2026-07-20;
+/// "mapper input" both a Linux runtime and an RTOS realizer's own mapper
+/// read. (The 45.2 model-embedding of this was reverted 2026-07-20;
 /// consumers call this algorithm crate directly. See scheduling.md
 /// §"Cross-repo design agreement".)
 ///
@@ -178,8 +178,8 @@ impl MapperMissAction {
 /// This distinction is the whole content of the type and is easy to flatten by
 /// accident. An ABSENT declaration means every path serialises: that is the
 /// safe answer, and it is what both realizations already do (`rclcpp`'s
-/// implicit group is `MutuallyExclusive`, and so is nano-ros's
-/// `default_cbg_type`). `exclusive: []` is the OPPOSITE claim — every path may
+/// implicit group is `MutuallyExclusive`, and embedded executors commonly
+/// default the same way). `exclusive: []` is the OPPOSITE claim — every path may
 /// run concurrently. Modelling this as a bare `Vec` would make the two
 /// identical; it is carried as a presence/absence in the map that holds it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,8 +195,8 @@ pub struct ConcurrencyContract {
 /// arithmetic anywhere. It used to mirror `types::ChainSemantics`, which was
 /// removed with `chains:` in phase 68 W4 precisely because it was write-only.
 /// It survives here only because it is a field of the derived `ResolvedChain`
-/// that crosses into `system_model.yaml` and on to nano-ros; every route this
-/// crate now sees is derived, and a derived route is `Reaction`.
+/// that crosses into `system_model.yaml` and on to its realizers; every route
+/// this crate now sees is derived, and a derived route is `Reaction`.
 ///
 /// Serde shape: lowercase string (`reaction` | `age`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,8 +251,8 @@ pub enum ChainElement {
 }
 
 /// A declared chain (`chains:`), fully resolved against the launch DAG
-/// (design steps 1–2 input). The resolved chain shape both play_launch's
-/// Linux runtime and nano-ros's RTOS mapper consume — via this algorithm
+/// (design steps 1–2 input). The resolved chain shape both a Linux runtime
+/// and an RTOS realizer's mapper consume — via this algorithm
 /// crate directly, not embedded in the model (the 45.2 embedding was
 /// reverted 2026-07-20).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -274,8 +274,8 @@ pub struct ResolvedChain {
 /// One rank decision's per-(node, path) detail, for `--explain` support
 /// (design step 8). Returned by
 /// [`crate::mapper::SchedMapper::map_with_diagnostics`]. These are the
-/// LINUX REALIZATION — PiCAS fixed-priority ranks play_launch's
-/// Linux runtime applies; nano-ros ignores them entirely and derives
+/// LINUX REALIZATION — PiCAS fixed-priority ranks a Linux runtime
+/// applies; an RTOS realizer ignores them entirely and derives
 /// its own kernel-feature bindings from the resolved structure instead
 /// (`provenance` may still surface for cross-platform diagnostics).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -309,9 +309,9 @@ pub enum MapWarning {
     ///
     /// This is not a scheduling problem — it is an evidence problem. Absent is
     /// not zero: the verdict is optimistic by an unknown amount, and reporting
-    /// it as a plain `feasible` would claim headroom nobody measured. nano-ros
-    /// issue 0259 (the feasibility check assumes `B_i = 0` and `C_i = 0`
-    /// wherever a WCET is missing) is the standing analysis; this warning makes
+    /// it as a plain `feasible` would claim headroom nobody measured. The
+    /// standing analysis is that the feasibility check assumes `B_i = 0` and
+    /// `C_i = 0` wherever a WCET is missing; this warning makes
     /// the assumption visible at the point it is made rather than leaving it in
     /// a doc comment.
     ChainFeasibleWithoutWcet {

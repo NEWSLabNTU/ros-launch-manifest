@@ -378,13 +378,13 @@ pub const FIELDS: &[Field] = &[
         "srv",
         Context::Node,
         Kind::Meta,
-        "Service server endpoints, keyed by LOCAL endpoint name. Not neutral when omitted: a consumer sizes the image's pools from this list (nano-ros derives its queryable and service counts from it), so a server the code creates and the contract leaves out is found at boot, not here.",
+        "Service server endpoints, keyed by LOCAL endpoint name. Not neutral when omitted: a consumer sizes the image's pools from this list (an embedded realizer derives its service counts from it), so a server the code creates and the contract leaves out is found at boot, not here.",
     ),
     live(
         "cli",
         Context::Node,
         Kind::Meta,
-        "Service client endpoints, keyed by LOCAL endpoint name. Not neutral when omitted, for the same reason as `srv:`: pools are sized from the list. A reaction route crosses a client -> server edge as a message (play_launch's walk); a server with no path its request triggers latches the request for its own timer, and the walk charges that timer's period as a sampling hop.",
+        "Service client endpoints, keyed by LOCAL endpoint name. Not neutral when omitted, for the same reason as `srv:`: pools are sized from the list. A reaction route crosses a client -> server edge as a message (the resolver's reaction walk); a server with no path its request triggers latches the request for its own timer, and the walk charges that timer's period as a sampling hop.",
     ),
     live(
         "paths",
@@ -714,7 +714,7 @@ pub const FIELDS: &[Field] = &[
         "max_latency",
         Context::Path,
         Kind::Requirement,
-        "Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; it ALSO becomes nano-ros's derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a SCOPE path: the NOMINAL end-to-end traversal of the subtree, checked by `scope-budget`; a hazard's fault route is derived separately by walking the reactions, and does not read it.",
+        "Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; an embedded realizer may ALSO turn it into a derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a SCOPE path: the NOMINAL end-to-end traversal of the subtree, checked by `scope-budget`; a hazard's fault route is derived separately by walking the reactions, and does not read it.",
     ),
     removed(
         "max_latency_ms",
@@ -808,7 +808,7 @@ pub const FIELDS: &[Field] = &[
         "jitter",
         Context::TriggerTimer,
         Kind::Fact,
-        "Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (play_launch: the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time.",
+        "Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time.",
     ),
     // ── sync ──
     live(
@@ -1236,8 +1236,8 @@ pub fn render_markdown() -> String {
     }
     out
 }
-/// Keys added since v0.1.49, with the release that added each (play_launch
-/// phase 85 D5): what the format reference prints beside them. A column on
+/// Keys added since v0.1.49, with the release that added each: what the
+/// format reference prints beside them. A column on
 /// [`Field`] would touch every row; earlier keys are not dated (their
 /// releases are in `CHANGELOG.md`).
 pub const SINCE: &[(Context, &str, &str)] = &[
@@ -1434,7 +1434,7 @@ mod tests {
         assert_eq!(nearest(Context::Path, "bogus_field"), None);
     }
 
-    /// Phase 85 I10 (play_launch T8): a dropped or swapped unit suffix is
+    /// A dropped or swapped unit suffix is
     /// matched on the stem, ahead of a closer edit distance.
     #[test]
     fn a_missing_unit_suffix_suggests_the_suffixed_key() {

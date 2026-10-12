@@ -5,7 +5,7 @@
 //! `queue-drain-rate`) need to go from a path's endpoint-name input/output
 //! list back to the declared topic (for its `rate_hz`/`qos`). This is a
 //! single-manifest, best-effort lookup — cross-scope topic resolution is
-//! the `play_launch` `ManifestIndex` machinery's job, not this crate's.
+//! a resolver's `ManifestIndex` machinery's job, not this crate's.
 
 use ros_launch_manifest_types::{Manifest, TopicDecl};
 

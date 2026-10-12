@@ -266,8 +266,8 @@ pub fn resolve(
             preempt_threshold: spec.preempt_threshold,
             class: def.class.clone(),
             // W2 seam: TierDef now carries durations, ResolvedTier still
-            // speaks microseconds because it is the wire to play_launch and
-            // nano-ros. Both sides of that boundary move together in W4,
+            // speaks microseconds because it is the wire to the realizers.
+            // Both sides of that boundary move together in W4,
             // under one tag; converting here keeps W2 inside this repo.
             period_us: def.period.map(|d| d.as_micros()),
             budget_us: def.budget.map(|d| d.as_micros()),

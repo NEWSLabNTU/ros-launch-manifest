@@ -1,7 +1,7 @@
 //! Unit tests, on models hand-lowered from the checker fixtures under
 //! `tests/fixtures` (`manifest_pipeline`, `manifest_periodic`,
 //! `manifest_chain_a`, `manifest_parallel_pipeline`, `manifest_multi_scope`)
-//! the way `play_launch resolve` lowers them: names fully qualified,
+//! the way a resolver lowers them: names fully qualified,
 //! endpoints as `"<node FQN>/<endpoint>"` refs, durations in milliseconds,
 //! and the trigger as the checker's `effective_trigger()`. This repository
 //! has no resolver, so the lowering is by hand; R3's fixture model is the
@@ -381,7 +381,7 @@ fn timer_chain() -> SystemModel {
 }
 
 /// `manifest_periodic`: three timer nodes whose subscriptions are all
-/// `state: true`, plus the `min_rate_hz` promises the old nano-ros
+/// `state: true`, plus the `min_rate_hz` promises an older realizer-side
 /// derivation read the rate from.
 fn periodic() -> SystemModel {
     let mut m = Model::new(&[("/", None)])
@@ -1060,7 +1060,7 @@ fn a_fork_join_route_is_the_slowest_branch() {
 /// `manifest_endpoint_transport`: one topic, two subscribers, one
 /// transport each. The topic's `max_transport` is the default and a
 /// subscriber's own beats it on the edges that END at that subscriber
-/// (play_launch issue #0042, design issue #55) — the resolver's precedence,
+/// (design issue #55) — the resolver's precedence,
 /// which the model could not carry until `SubContract` gained the field.
 ///
 /// Two scope paths, one per branch, because one route total cannot fail in

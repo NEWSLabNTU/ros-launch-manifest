@@ -56,7 +56,7 @@ pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
             ..Default::default()
         });
     }
-    // play_launch phase 85 D5: the grammar the file needs, BEFORE any key of
+    // The grammar the file needs, BEFORE any key of
     // the body is read -- a file written for a newer grammar would otherwise
     // be refused for its first new key, which reads as the author's typo.
     check_grammar_header(&docs[0])?;
@@ -79,9 +79,9 @@ pub fn parse_grammar_version(raw: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// Refuse a file whose `rlm:` header names a grammar newer than this crate's
-/// ([`crate::GRAMMAR_VERSION`]), naming both releases (play_launch phase 85
-/// D5). A checker older than the header key itself (before v0.1.49) refuses
-/// `rlm:` as an unknown key instead, the fallback the header cannot avoid.
+/// ([`crate::GRAMMAR_VERSION`]), naming both releases. A checker older than the
+/// header key itself (before v0.1.49) refuses `rlm:` as an unknown key instead,
+/// the fallback the header cannot avoid.
 fn check_grammar_header(doc: &Yaml) -> Result<(), ParseError> {
     let v = &doc["rlm"];
     if v.is_badvalue() {
@@ -2042,7 +2042,7 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
 ///
 /// An ABSENT section and an empty `exclusive:` list mean opposite things, so
 /// the distinction is preserved rather than normalised away: absent means every
-/// path serializes (the conservative default both `rclcpp` and nano-ros
+/// path serializes (the conservative default `rclcpp` and embedded executors
 /// already take), while `exclusive: []` says they may all run concurrently.
 fn parse_concurrency(doc: &Yaml, ctx: &str) -> Result<Option<ConcurrencyDecl>, ParseError> {
     let section = &doc["concurrency"];
@@ -2365,7 +2365,7 @@ hazards:
         );
     }
 
-    /// play_launch phase 85 D5: a file states the grammar it needs, and a
+    /// A file states the grammar it needs, and a
     /// newer one is refused before the body is read, naming both releases.
     #[test]
     fn a_contract_states_the_grammar_it_needs() {
@@ -2427,7 +2427,7 @@ hazards:
         }
     }
 
-    /// play_launch phase 85 D3: `on_demand: true` is a publisher's
+    /// `on_demand: true` is a publisher's
     /// statement that it promises no rate; beside a `min_rate_hz`, or on a
     /// subscriber, it is refused.
     #[test]
@@ -3625,7 +3625,7 @@ nodes:
         assert!(e.contains("no unit"), "{e}");
     }
 
-    /// Phase 85 I9 (play_launch T8): an endpoint key is a local name. A `/`
+    /// An endpoint key is a local name. A `/`
     /// in it is refused in every endpoint section and both spellings, with
     /// the message saying where the topic is connected instead.
     #[test]
@@ -3653,7 +3653,7 @@ nodes:
         assert!(m.nodes["n"].publishers.contains_key("scan"));
     }
 
-    /// Phase 85 I10 (play_launch T8): every unknown key of a file in one
+    /// Every unknown key of a file in one
     /// refusal, and `max_rate` suggests `max_rate_hz`.
     #[test]
     fn every_unknown_key_is_named_at_once() {

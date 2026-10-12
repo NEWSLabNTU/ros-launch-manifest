@@ -37,7 +37,7 @@ pub enum Criticality {
 }
 
 /// One node as seen by a `SchedMapper` — dependency-free, extracted from
-/// launch + contract by the caller (play_launch, in wave 2). Intentionally
+/// launch + contract by the caller (a resolver). Intentionally
 /// minimal: no graph edges yet (YAGNI; a future field, e.g. `depends_on`,
 /// can be added additively once a mapper needs them).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -125,8 +125,8 @@ pub enum MapError {
 ///
 /// `map` derives a [`SchedPlan`] from per-node facts and platform facts.
 /// Applying explicit `overrides` on top of the derived plan (design §5, §6:
-/// "override beats derived, always") is the caller's job (play_launch, wave
-/// 2's pipeline) — not part of the trait, since overrides are
+/// "override beats derived, always") is the caller's job — not part of the
+/// trait, since overrides are
 /// mapper-independent and platform-file-scoped, not mapper logic.
 pub trait SchedMapper {
     /// The name this mapper is registered/selected under (`platform.mapper`
@@ -480,8 +480,8 @@ impl SchedMapper for DeadlineMonotonicMapper {
 }
 
 /// Registry of named mappers. Built-ins are registered by
-/// [`MapperRegistry::with_builtins`]; consumers (play_launch, nano-ros)
-/// register additional mappers at link time via [`MapperRegistry::register`].
+/// [`MapperRegistry::with_builtins`]; consumers register additional mappers at
+/// link time via [`MapperRegistry::register`].
 #[derive(Default)]
 pub struct MapperRegistry {
     mappers: BTreeMap<String, Box<dyn SchedMapper>>,

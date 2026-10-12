@@ -88,7 +88,7 @@ impl SchedMapper for ChainAwareMapper {
 
 impl ChainAwareMapper {
     /// Platform-agnostic ranking (design steps 1–4): the priorityless
-    /// [`RankedPlan`] an RTOS realizer (nano-ros) consumes instead of the
+    /// [`RankedPlan`] an RTOS realizer consumes instead of the
     /// `posix` band-compressed [`SchedPlan`]. No `PlatformFacts` — no band, no
     /// OS priorities. Thin wrapper over [`chain_aware_rank`].
     pub fn rank(&self, input: &MapperInput) -> RankedPlan {
@@ -107,7 +107,7 @@ struct ChainFeasibility {
     /// `node/path` of every boundary whose WCET was ABSENT and therefore
     /// counted as zero. A verdict computed with these is optimistic by an
     /// unknown amount; the caller reports it rather than presenting a bare
-    /// `feasible` (nano-ros issue 0259).
+    /// `feasible`.
     boundaries_without_wcet: Vec<String>,
 }
 
@@ -147,8 +147,8 @@ fn chain_feasibility(chain: &ResolvedChain) -> ChainFeasibility {
 /// platform-agnostic core's output (design steps 1–4). The `Vec<RankItem>`
 /// order IS the priority order (highest first); no OS priority numbers are
 /// assigned here. Each platform realizer turns this into concrete scheduling:
-/// play_launch's `posix` realizer band-compresses into
-/// [`crate::resolve::ResolvedTierTable`] (steps 5–6), while nano-ros's RTOS
+/// the `posix` realizer band-compresses into
+/// [`crate::resolve::ResolvedTierTable`] (steps 5–6), while an RTOS
 /// realizer maps segments → executors + kernel features (EDF /
 /// preemption-threshold / sporadic / affinity) from the same ordering.
 #[derive(Clone, Debug, PartialEq)]
@@ -182,7 +182,7 @@ pub struct RankItem {
 /// ordered/segmented ranking plus the feasibility warnings. No band, no OS
 /// priorities — each runtime's realizer turns this into concrete scheduling.
 /// Produced by [`chain_aware_rank`] / [`ChainAwareMapper::rank`]; consumed by
-/// the `posix` realizer ([`chain_aware_map`]) and by nano-ros's RTOS realizer.
+/// the `posix` realizer ([`chain_aware_map`]) and by RTOS realizers.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct RankedPlan {
     /// Ranked (node, path) items, highest-priority-first.
@@ -395,11 +395,11 @@ fn non_chain_item_order(
 
 /// Platform-agnostic core (design steps 1–4): feasibility → chain order →
 /// per-chain + non-chain ranking. Produces the priorityless [`RankedPlan`] —
-/// no band, no OS priorities. Both play_launch's `posix` realizer
-/// ([`chain_aware_map`]) and nano-ros's RTOS realizer consume this same
+/// no band, no OS priorities. Both the `posix` realizer
+/// ([`chain_aware_map`]) and an RTOS realizer consume this same
 /// ordering; the split (2026-07-20) lets each apply its own realization
 /// without inheriting the other's (see the crate's `docs/scheduling.md`
-/// §"Cross-repo design agreement" + play_launch phase-45 §45.10).
+/// §"Cross-repo design agreement").
 pub fn chain_aware_rank(input: &MapperInput) -> RankedPlan {
     let mut warnings = Vec::new();
     let mut group_counter = 0usize;
@@ -469,8 +469,8 @@ fn chain_aware_map(
 
 /// The `posix` (Linux) realizer (design steps 5–6): band-compress the agnostic
 /// ranking into OS priorities, project per-node (max over paths), and emit a
-/// [`ResolvedTierTable`]. play_launch's Linux apply layer consumes this;
-/// nano-ros does NOT — it writes its own RTOS realizer over the same
+/// [`ResolvedTierTable`]. A Linux apply layer consumes this; an RTOS
+/// realizer does NOT — it writes its own realization over the same
 /// [`RankedPlan`] ([`chain_aware_rank`]).
 /// Decide which tied nodes get `SCHED_RR` instead of `SCHED_FIFO`.
 ///
@@ -1128,7 +1128,7 @@ mod tests {
         // example declares periods and deadlines, never WCETs, so both of its
         // boundaries were counted as zero execution time. That is worth pinning
         // rather than hiding: the canonical example is itself an instance of
-        // the optimism nano-ros issue 0259 describes, and the 30 ms of
+        // the optimism `boundaries_without_wcet` reports, and the 30 ms of
         // "controllable" slack above is an upper bound, not a measurement.
         let assumed: Vec<_> = diag
             .warnings
@@ -1282,7 +1282,7 @@ mod tests {
         }
     }
 
-    /// nano-ros issue 0259 — a chain judged feasible while a boundary carries
+    /// A chain judged feasible while a boundary carries
     /// NO WCET says so. The sum still counts the missing hop as zero (there is
     /// nothing better to count), but "absent" and "zero" stop being the same
     /// answer: the verdict is optimistic by an unknown amount and reports it.

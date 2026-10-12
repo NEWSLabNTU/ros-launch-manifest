@@ -10,10 +10,9 @@
 //! One exception, and it is deliberate: [`TopicView`] is `pub`, holds four
 //! declared facts and no model reference, and carries
 //! [`TopicView::transport_ms`] -- the per-edge transport precedence. A
-//! consumer whose graph is built before any model exists (play_launch's
-//! resolver, from a `ManifestIndex`) builds the view itself and calls that
-//! method, so the rule has one implementation rather than one per consumer
-//! (play_launch issue #0052).
+//! consumer whose graph is built before any model exists (a resolver,
+//! from a `ManifestIndex`) builds the view itself and calls that method,
+//! so the rule has one implementation rather than one per consumer.
 //!
 //! Key shapes, from the model's own docs: node paths are keyed
 //! `"<node FQN>/<path name>"`, scope paths `"<scope id>/<path name>"`, and
@@ -149,9 +148,9 @@ impl NodeView {
 ///
 /// PUBLIC on purpose, and built from either end of the pipeline. The
 /// derivation here reads it off a `SystemModel` ([`ModelView::from_model`]);
-/// play_launch's resolver builds one from its `ManifestIndex`, which exists
-/// long before any model does. Both then call [`TopicView::transport_ms`],
-/// which is why that precedence is written once (play_launch issue #0052).
+/// a resolver builds one from its `ManifestIndex`, which exists long before
+/// any model does. Both then call [`TopicView::transport_ms`], which is why
+/// that precedence is written once.
 /// Nothing in this type needs a model — it is four declared facts — so the
 /// input shape that kept the resolver out is not one this type has.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -173,10 +172,10 @@ impl TopicView {
     /// The transport charged for the edge that ENDS at `sub_ep`: the
     /// subscriber's own value if it declared one, else the topic's.
     ///
-    /// THE one copy of this precedence (issue #44, play_launch #0042 and
-    /// #0052). The reason it is per subscriber is placement: a subscriber
-    /// in the publisher's process pays a pointer handoff where one across
-    /// the network pays the network, on the same topic (design issue #55).
+    /// THE one copy of this precedence (issue #44). The reason it is per
+    /// subscriber is placement: a subscriber in the publisher's process pays a
+    /// pointer handoff where one across the network pays the network, on the
+    /// same topic (design issue #55).
     ///
     /// `sub_ep` is an endpoint REF, `"<node FQN>/<endpoint>"` — the same
     /// spelling `subscribers` and the keys of `sub_max_transport_ms` use.
@@ -184,8 +183,8 @@ impl TopicView {
     /// the ref to ask here, or every lookup misses and every edge silently
     /// falls back to the topic default.
     ///
-    /// The gate is play_launch's `tests/tests/endpoint_transport.rs`: one
-    /// contract, both consumers, a FORK so the override decides which
+    /// The gate is a consumer-side end-to-end test: one contract, both
+    /// consumers, a FORK so the override decides which
     /// branch is the critical path rather than only shifting a total.
     pub fn transport_ms(&self, sub_ep: &str) -> Option<f64> {
         self.sub_max_transport_ms
@@ -381,8 +380,8 @@ fn node_criticality(model: &SystemModel, fqn: &str) -> Option<Criticality> {
 }
 
 /// `high` | `medium` | `low`, case-insensitive; anything else is `None`
-/// (advisory, never an error -- the same rule as play_launch's
-/// `sched_derive::parse_criticality`).
+/// (advisory, never an error -- the same rule a resolver applies to the
+/// label).
 pub fn parse_criticality_label(raw: &str) -> Option<Criticality> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "high" => Some(Criticality::High),

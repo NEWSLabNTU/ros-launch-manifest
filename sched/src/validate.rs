@@ -1,5 +1,5 @@
 //! Conflict-semantics validation helpers (design §6), consumed by
-//! play_launch's `--sched-apply warn|strict` pipeline (wave 2). Pure
+//! a realizer's warn-or-strict apply pipeline. Pure
 //! functions over an already-derived [`SchedPlan`] — no I/O, no mode
 //! decision (warn vs strict is the caller's call).
 
@@ -22,8 +22,8 @@ pub struct BandViolation {
 }
 
 /// List every non-default tier in `plan` whose priority falls outside
-/// `band`. The caller (play_launch) decides warn-and-clamp vs strict-error
-/// per `--sched-apply`; this function only reports.
+/// `band`. The caller decides warn-and-clamp vs strict-error; this function
+/// only reports.
 pub fn band_violations(plan: &SchedPlan, band: &PriorityBand) -> Vec<BandViolation> {
     plan.tiers
         .iter()

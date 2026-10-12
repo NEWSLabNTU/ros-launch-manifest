@@ -6,6 +6,28 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+Docs only; no tag, no behaviour, type, field or API change.
+
+### Changed
+
+- The crates' doc comments name no realizer (`docs/model-boundary.md`, "The
+  system config is this crate's format"). Doc comments in `model`, `sched`,
+  `derive`, `check` and `types` describe launch systems, resolvers and
+  realizers instead of naming the tools that consume them; cross-repository
+  issue and phase numbers are dropped, the reasoning they carried stays.
+  - `system_config`: the realizer-owned keys still declared
+    (`[lifecycle]`, `[param_services]`, `[system] features`, the build fields
+    of `[deploy.*]` and its opaque sub-table) are each documented as "a
+    realizer-owned key, parsed and ignored here". `apply_params_to_nodes` no
+    longer describes `[lifecycle] autostart` as projected.
+  - The generated `docs/format-reference.md` follows four field
+    descriptions (`srv`, `cli`, `max_latency`, timer `jitter`).
+  - Left as they are: the `DeployBlock.nros` field and its test data (the
+    field is removed at W8), one diagnostic's text in `jitter-range`
+    (runtime output), and a cgroup path in a `posix` test.
+
 ## v0.1.55 - 2026-10-12
 
 The model stops carrying one realizer's build facts

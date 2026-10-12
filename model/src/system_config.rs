@@ -1,13 +1,14 @@
-//! R1-P1 — the integrator `system.toml` reader (canonical-path decision:
-//! `play_launch resolve` ingests the system config and fills the model's
-//! execution layer; consumers never parse `system.toml` themselves).
+//! R1-P1 — the integrator's system config (`system.toml`), the format this
+//! crate owns for the shared layers (`docs/model-boundary.md`). A resolver
+//! ingests it and fills the model's execution layer; realizers read the
+//! model, not this file.
 //!
-//! This is a LENIENT SUBSET reader: it understands the execution-relevant
-//! sections (`[system]` defaults, `[deploy.<name>]`, `[[transport]]`,
-//! `[[bridge]]`) and ignores everything else (components, tiers — tiers
-//! ride the sched pipeline). Unknown fields are tolerated so richer
-//! consumer schemas (nano-ros's full `SystemToml`) stay authoritative for
-//! their own sections.
+//! This is a LENIENT reader: it understands the shared sections (`[system]`
+//! defaults, `[host.<name>]`, `[deploy.<name>]` placement, `[tiers.*]`,
+//! `[[component]]`, `[[transport]]`, `[[bridge]]`) and ignores every other
+//! table by design. A realizer extends the same file with its own tables and
+//! validates those itself. A few realizer-owned keys are still declared
+//! below; each is parsed and ignored here.
 //!
 //! Placement: `[deploy.<name>].nodes = ["/fqn", …]` lists the node FQNs
 //! deployed to that target. A single deploy block with no `nodes` list
@@ -31,7 +32,7 @@ pub struct SystemConfigToml {
     pub deploy: BTreeMap<String, DeployBlock>,
     /// `[host.<name>]` — a MACHINE, and the only thing that partitions nodes.
     ///
-    /// nano-ros issue 0939. `[deploy.*]` carries two meanings and the resolver
+    /// `[deploy.*]` carries two meanings and the resolver
     /// below has to filter one of them out to work: `kind = "self"` is a
     /// machine that takes a SHARE of the nodes, `kind = "embedded"` is a whole
     /// board build that runs ALL of them. The comment in `apply_to_launch`
@@ -39,8 +40,8 @@ pub struct SystemConfigToml {
     ///
     /// `[host.*]` is the un-conflated half. A block here is always a machine,
     /// so no `kind` is needed and none is accepted; placement reads these
-    /// blocks alone when any exist. The consumer's build-side table (nano-ros
-    /// calls it `[image.*]`) owns the other half.
+    /// blocks alone when any exist. A realizer's own build-side table owns
+    /// the other half.
     ///
     /// Additive on purpose: when no `[host.*]` exists the `[deploy.*]` path
     /// runs exactly as before, so every file written against the old schema
@@ -51,28 +52,26 @@ pub struct SystemConfigToml {
     pub transports: Vec<TransportBlock>,
     #[serde(default, rename = "bridge")]
     pub bridges: Vec<BridgeBlock>,
-    /// nano-ros `[tiers.<name>]` scheduling tiers (RFC-0015). The block is
-    /// the shared-schema `sched::TierDef` verbatim — `spin_period_us` +
-    /// per-RTOS sub-tables — so it deserializes straight into
-    /// `execution.tiers`. (play_launch's own systems supply tiers via
-    /// `--sched`; nano-ros authors them inline in `system.toml`, and the
-    /// canonical-path decision is that `resolve` consumes `system.toml`.)
+    /// `[tiers.<name>]` scheduling tiers. The block is the shared-schema
+    /// `sched::TierDef` verbatim — `spin_period_us` + per-RTOS sub-tables —
+    /// so it deserializes straight into `execution.tiers`. (A system may
+    /// instead supply tiers through a scheduling platform file; one that
+    /// authors them inline here has them consumed by the resolver.)
     #[serde(default)]
     pub tiers: BTreeMap<String, ros_launch_manifest_sched::TierDef>,
-    /// nano-ros `[lifecycle] autostart = "none|configure|active"`.
+    /// `[lifecycle] autostart = "none|configure|active"` — a realizer-owned
+    /// key, parsed and ignored here (`docs/model-boundary.md`). A node's
+    /// lifecycle autostart comes from its launch file and contract.
     #[serde(default)]
     pub lifecycle: Option<LifecycleBlock>,
-    /// nano-ros `[[component]]` rows — carry `group_tiers` (the
+    /// `[[component]]` rows — carry `group_tiers` (the
     /// group→tier bindings) keyed by the component/node `name`.
     #[serde(default, rename = "component")]
     pub components: Vec<ComponentBlock>,
-    /// nano-ros `[param_services]` — presence enables the runtime parameter
-    /// services capability. The historical nano-ros spelling is a bare table
-    /// (`[param_services]`), equivalent to `[system] features =
-    /// ["param_services"]`; before this field existed the section was
-    /// SILENTLY ignored (no top-level deny), so a resolver-produced model
-    /// lost the capability while the hand-migrated ones kept it — nano-ros
-    /// issue 0387's params arm.
+    /// `[param_services]` — a realizer-owned key, parsed and ignored here
+    /// (`docs/model-boundary.md`). It is one realizer's build switch for the
+    /// runtime parameter services capability, spelled as a bare table and
+    /// equivalent to `[system] features = ["param_services"]`.
     #[serde(default)]
     pub param_services: Option<ParamServicesBlock>,
 }
@@ -106,7 +105,7 @@ pub struct ComponentBlock {
     ///
     /// Some parameters are a property of the DEPLOYMENT rather than of the
     /// launch description — a `qos_overrides.…` entry chosen per system is the
-    /// motivating case (nano-ros `ws-qos-rust`). Before this existed the only
+    /// motivating case. Before this existed the only
     /// way to express one was to type it into the resolved model by hand, so
     /// re-resolving silently dropped it: the model was both the artifact and
     /// the only record of the intent.
@@ -127,21 +126,24 @@ pub struct SystemDefaults {
     pub domain_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locator: Option<String>,
+    /// `[system] features` — a realizer-owned key, parsed and ignored here
+    /// (`docs/model-boundary.md`): capability switches of one realizer's
+    /// build.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
 }
 
-/// `[host.<name>]` — one machine in a multi-host system (nano-ros issue 0939).
+/// `[host.<name>]` — one machine in a multi-host system.
 ///
 /// The half of `[deploy.*]` that is genuinely a placement. Deliberately tiny:
 /// a machine is identified by its name, says which nodes it runs, and
 /// optionally scopes itself to one launch file. Everything else a deploy block
 /// carried — board, target, rmw, profile, features — describes a BUILD and
-/// belongs to the consumer's build table.
+/// belongs to the realizer's own build table.
 ///
 /// `deny_unknown_fields` for the same reason `DeployBlock` has it: a mistyped
-/// key here silently unplaces a node, which surfaces far away as an empty
-/// entry binary (nano-ros issues 0356/0370).
+/// key here silently unplaces a node, which surfaces far away as a realizer
+/// that runs no nodes on that machine.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostBlock {
@@ -181,17 +183,24 @@ impl HostBlock {
 
 /// One `[deploy.<name>]` block.
 ///
-/// **This is the single definition of the `system.toml` deploy schema**
-/// (nano-ros issue 0293). It used to be mirrored by nano-ros's own
-/// `DeployTarget`, and the two drifted: this struct lacked `launch`, so serde
-/// silently dropped it and launch-scoped blocks were counted against every
-/// launch file. nano-ros re-exports this type rather than redeclaring it.
+/// **This is the single definition of the `system.toml` deploy schema.**
+/// A realizer that mirrored it in its own type drifted from it once: this
+/// struct lacked `launch`, so serde silently dropped it and launch-scoped
+/// blocks were counted against every launch file. A realizer re-exports this
+/// type rather than redeclaring it (history: CHANGELOG).
 ///
 /// `deny_unknown_fields` makes the next divergence a loud parse error instead
-/// of a silently ignored key. Safe to add: nano-ros's mirror already denied,
-/// so any `system.toml` in use already satisfies this field set.
-// `Eq` dropped when `nros` was added: `toml::Value` is only `PartialEq`
-// (floats). `==` still works; nothing in this repo or in nano-ros used
+/// of a silently ignored key.
+///
+/// Of the fields below, placement (`nodes`, `launch`, and `kind`, which
+/// tells a machine that takes a share of the nodes from a whole-system
+/// build that runs all of them) and the session facts (`rmw`, `domain_id`,
+/// `locator`) reach the model. `target`, `board`, `framework`, `profile`,
+/// `optimize`, `features` and the opaque realizer sub-table describe a
+/// BUILD: realizer-owned keys, parsed and ignored here
+/// (`docs/model-boundary.md`).
+// `Eq` dropped when the opaque realizer sub-table was added: `toml::Value` is
+// only `PartialEq` (floats). `==` still works; no known consumer used
 // `DeployBlock` as a set key or otherwise required total equality.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -222,16 +231,17 @@ pub struct DeployBlock {
     /// Launch file this block applies to, relative to the bringup pkg
     /// (`multihost.launch.xml`). `None` means "every launch file".
     ///
-    /// nano-ros has always written this key (its own `DeployTarget` mirror
-    /// carries a `launch` field), but this struct did not declare it and
-    /// serde silently dropped it. Placement then counted launch-scoped blocks
+    /// Realizers wrote this key before this struct declared it, and serde
+    /// silently dropped it. Placement then counted launch-scoped blocks
     /// against launch files they were never meant to govern — see
-    /// [`Self::applies_to_launch`] and nano-ros issue 0291.
+    /// [`Self::applies_to_launch`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<String>,
 
-    /// `[deploy.<name>.nros]` — the consumer's own deploy configuration,
-    /// carried verbatim and **not interpreted by this crate**.
+    /// `[deploy.<name>.<realizer>]` — one realizer's own deploy
+    /// configuration, carried verbatim and **not interpreted by this crate**.
+    /// A realizer-owned key, parsed and ignored here
+    /// (`docs/model-boundary.md`); the field's name is historical.
     ///
     /// This crate models launch and system STRUCTURE. A consumer's site
     /// configuration — where its RTOS SDK lives, which network stack it chose,
@@ -254,7 +264,8 @@ impl DeployBlock {
     /// one governs only its own — compared on the file NAME, since the key is
     /// written relative to the bringup pkg while callers hold a full path.
     /// An unknown caller launch (`None`) keeps every block, preserving the
-    /// pre-0291 behaviour for callers that cannot say which file they resolve.
+    /// behaviour from before the key existed, for callers that cannot say
+    /// which file they resolve.
     pub fn applies_to_launch(&self, launch_file: Option<&str>) -> bool {
         let (Some(scope), Some(current)) = (self.launch.as_deref(), launch_file) else {
             return true;
@@ -329,7 +340,7 @@ impl SystemConfigToml {
     /// clamped domains); ambiguity (multiple deploy blocks, none listing a
     /// node) is an `Err` — fail-loud, never silent partial placement.
     /// Project `[[component]] params` / `params_files` onto the STRUCTURE
-    /// layer, the way `[lifecycle] autostart` is projected by the resolver.
+    /// layer.
     ///
     /// `apply_to` only reaches `Execution`; parameters are a per-node property
     /// and live in `structure.nodes`, so this is a separate entry point rather
@@ -427,7 +438,7 @@ impl SystemConfigToml {
     /// plus two scoped ones looked like "three deploy blocks" to every launch
     /// file, and the multi-block rule below demanded an explicit
     /// `nodes = [..]` for nodes the scoped blocks never governed — a hard
-    /// error on a config that is correct (nano-ros issue 0291).
+    /// error on a config that is correct.
     pub fn apply_to_launch(
         &self,
         execution: &mut Execution,
@@ -441,7 +452,7 @@ impl SystemConfigToml {
         // the model carries only facts every realizer reads the same way
         // (docs/model-boundary.md, W6). They still parse, into nothing.
 
-        // nano-ros `[tiers.*]` → the execution tier table (verbatim schema).
+        // `[tiers.*]` → the execution tier table (verbatim schema).
         execution.tiers = self.tiers.clone();
 
         // `[[component]].group_tiers` → `execution.bindings`
@@ -499,24 +510,24 @@ impl SystemConfigToml {
             });
         }
 
-        // `[host.*]` placement — nano-ros issue 0939, and the un-conflated
-        // path. Hosts win for the launch files they GOVERN, and only those.
+        // `[host.*]` placement — the un-conflated path. Hosts win for the
+        // launch files they GOVERN, and only those.
         //
         // Scoped, not global, and the difference is what makes an incremental
         // migration possible. Hosts are usually `launch`-scoped (a multi-host
         // bringup) while the `[deploy.*]` blocks beside them are not, so a
         // "any host disables deploy" rule silently drops placement for every
-        // OTHER launch file in the same package — measured on nano-ros's rust
+        // OTHER launch file in the same package — measured on a real
         // workspace, where `execution.deploy` vanished from every non-multihost
         // model. For a launch file no host governs, the deploy path below runs
         // unchanged.
         //
         // Target is deliberately `None` for every placed node. A host says
-        // WHERE a node runs; what it is built as comes from the consumer's own
-        // build table, and the entry's `--board` supplies the concrete target.
-        // That is the same conclusion nano-ros issue 0356 forced on the
-        // multi-board deploy path, reached here by construction instead of by
-        // a special case.
+        // WHERE a node runs; what it is built as comes from the realizer's own
+        // build table, which supplies the concrete target. That is the same
+        // conclusion the multi-board deploy path reached (see
+        // `embedded_blocks_make_placement_board_agnostic`), reached here by
+        // construction instead of by a special case.
         let hosts_in_scope: Vec<(&String, &HostBlock)> = self
             .host
             .iter()
@@ -586,15 +597,15 @@ impl SystemConfigToml {
         //
         // Counting embedded blocks as placement domains asks "which of these
         // six machines runs /talker" about six builds of one image, and the
-        // answer is "all of them". `ws-realtime-c` states this plainly: native
-        // + zephyr + nuttx, two nodes, no `nodes = [..]` anywhere — and it
-        // could not re-resolve at all, failing `node '/ctrl_node' is not
-        // placed`. It only looked healthy because its committed model predates
-        // this resolver and was never regenerated (nano-ros issue 0320).
+        // answer is "all of them". A system with native + zephyr + nuttx
+        // blocks, two nodes and no `nodes = [..]` anywhere states this plainly
+        // — and it could not re-resolve at all, failing `node '/ctrl_node' is
+        // not placed`. It only looked healthy because its committed model
+        // predated this resolver and was never regenerated.
         //
-        // Same class as issue 0291 immediately above: placement counting blocks
-        // it was never meant to govern. That one was a dropped `launch` field;
-        // this one is a conflated axis.
+        // Same class as the launch-scope filter immediately above: placement
+        // counting blocks it was never meant to govern. That one was a dropped
+        // `launch` field; this one is a conflated axis.
         let partitioning: Vec<(&String, &DeployBlock)> = self
             .deploy
             .iter()
@@ -610,8 +621,8 @@ impl SystemConfigToml {
         // answer is "all of them" — a node->target map cannot say that. The
         // first version of this fell back unconditionally and so turned two
         // embedded blocks into `node '/ctrl_node' is not placed`, which is the
-        // very error this filter exists to prevent (nano-ros ws-realtime-c-mps2
-        // and ws-realtime-cpp-mps2 both declare freertos + mps2-an385-freertos).
+        // very error this filter exists to prevent (a system declaring two
+        // embedded builds of one image, e.g. two RTOSes on one board).
         //
         // So: emit NO placement instead. Consumers already treat a board the
         // map never mentions as unconstrained, which is exactly right here.
@@ -642,10 +653,9 @@ impl SystemConfigToml {
                 // The one placement source: an explicit `nodes = [..]` entry.
                 //
                 // There used to be a second — the node's `<node machine="…">`,
-                // recorded by `model_builder` as `execution.deploy[fqn].host`
-                // (nano-ros issue 0291) — but `machine=` is ROS 1 roslaunch
-                // syntax that ROS 2's frontend rejects, so the capture and the
-                // `Deploy.host` field are gone (nano-ros issue 0364). Per-host
+                // recorded as `execution.deploy[fqn].host` — but `machine=` is
+                // ROS 1 roslaunch syntax that ROS 2's frontend rejects, so the
+                // capture and the `Deploy.host` field are gone. Per-host
                 // slicing now happens at RESOLVE time via an ordinary launch
                 // argument + `if=` conditions; each per-host model then
                 // contains only that host's nodes.
@@ -700,10 +710,11 @@ impl SystemConfigToml {
         Ok(diags)
     }
 
-    /// The `[lifecycle] autostart` level, if declared. The consumer applies
-    /// it to each lifecycle node's `structure.nodes[].lifecycle_autostart`
-    /// (it lives in the structure layer, which `apply_to` — execution-only —
-    /// cannot reach). Unknown strings return `None`.
+    /// The `[lifecycle] autostart` level, if declared. A realizer-owned key,
+    /// parsed and ignored here (`docs/model-boundary.md`): nothing in this
+    /// crate applies it, and a node's `lifecycle_autostart` comes from its
+    /// launch file and contract. Kept as a read accessor for the realizer
+    /// that owns the key. Unknown strings return `None`.
     pub fn lifecycle_autostart(&self) -> Option<Autostart> {
         match self.lifecycle.as_ref()?.autostart.as_deref()? {
             "active" => Some(Autostart::Active),
@@ -751,8 +762,8 @@ topics = ["/perception/objects"]
 
     #[test]
     fn reads_tiers_lifecycle_and_group_tier_bindings() {
-        // nano-ros system.toml shape: inline [tiers.*], [[component]]
-        // group_tiers, [lifecycle].
+        // A system.toml with inline [tiers.*], [[component]] group_tiers and
+        // the realizer-owned [lifecycle] table.
         let toml = r#"
 [system]
 rmw = "zenoh"
@@ -797,18 +808,18 @@ priority = 10
         assert_eq!(cfg.lifecycle_autostart(), Some(Autostart::Active));
     }
 
-    /// nano-ros issue 0291 — a bringup with ONE unscoped deploy block plus
-    /// launch-scoped siblings must not trip the multi-block placement rule.
+    /// A bringup with ONE unscoped deploy block plus launch-scoped siblings
+    /// must not trip the multi-block placement rule.
     ///
-    /// This is `examples/workspaces/cpp/src/demo_bringup` verbatim: three
-    /// `[deploy.*]` blocks, no `nodes = [..]` anywhere, robot1/robot2 scoped
-    /// to `multihost.launch.xml`. Resolving `system.launch.xml` used to fail
-    /// with "node '/listener' is not placed" because `launch` was not a field
-    /// on `DeployBlock` at all — serde dropped it and all three blocks counted.
-    /// nano-ros issue 0293 (SSoT half) — this struct is the ONE definition of
-    /// the deploy schema, and `deny_unknown_fields` makes the next divergence
-    /// loud. A key no field claims is now a parse error, not a silent drop —
-    /// silently dropping `launch` is exactly how the original bug happened.
+    /// The shape is a real bringup's: three `[deploy.*]` blocks, no `nodes =
+    /// [..]` anywhere, robot1/robot2 scoped to `multihost.launch.xml`.
+    /// Resolving `system.launch.xml` used to fail with "node '/listener' is not
+    /// placed" because `launch` was not a field on `DeployBlock` at all — serde
+    /// dropped it and all three blocks counted. This struct is the ONE
+    /// definition of the deploy schema, and `deny_unknown_fields` makes the
+    /// next divergence loud. A key no field claims is now a parse error, not a
+    /// silent drop — silently dropping `launch` is exactly how the original bug
+    /// happened.
     #[test]
     fn deploy_block_rejects_unknown_keys_and_round_trips() {
         let toml = r#"
@@ -826,7 +837,7 @@ nodes = ["/talker"]
         assert_eq!(b.launch.as_deref(), Some("multihost.launch.xml"));
         assert_eq!(b.nodes, vec!["/talker".to_string()]);
 
-        // Serialize is required because nano-ros WRITES system.toml through
+        // Serialize is required because a realizer WRITES system.toml through
         // this same type; absent options must not appear.
         let out = toml::to_string(b).expect("serializes");
         assert!(out.contains("launch = "), "{out}");
@@ -903,14 +914,14 @@ launch = "multihost.launch.xml"
         );
     }
 
-    /// nano-ros issue 0356 — a system that declares BOTH self machines and
-    /// `kind = "embedded"` board builds is multi-board: the same nodes run on
-    /// native AND on every embedded board. Because the model deploy is
-    /// single-target per node, such placements must be board-AGNOSTIC
-    /// (`target = None`), so `nros codegen entry --board <b>` (whose `keep()`
-    /// admits a `None` node on every board) includes them for native and each
-    /// embedded board alike. Pinning `native`'s `linux` target here made the
-    /// freertos/nuttx/threadx entries codegen-fail "no nodes on board".
+    /// A system that declares BOTH self machines and `kind = "embedded"`
+    /// board builds is multi-board: the same nodes run on native AND on every
+    /// embedded board. Because the model deploy is single-target per node,
+    /// such placements must be board-AGNOSTIC (`target = None`), so a
+    /// realizer that slices nodes per board (admitting a `None` node on every
+    /// board) includes them for native and each embedded board alike. Pinning
+    /// `native`'s `linux` target here left every embedded build with no
+    /// nodes.
     #[test]
     fn embedded_blocks_make_placement_board_agnostic() {
         let toml = r#"
@@ -945,8 +956,8 @@ board = "nuttx-qemu-arm"
         }
     }
 
-    /// nano-ros issue 0364 — with `machine=` gone (ROS 1 roslaunch syntax;
-    /// its `Deploy.host` fallback of issue 0291 went with it), `nodes = [..]`
+    /// With `machine=` gone (ROS 1 roslaunch syntax; its `Deploy.host`
+    /// fallback went with it), `nodes = [..]`
     /// is the ONLY placement source when multiple self blocks are in scope.
     /// A node in no list fails loud instead of riding a launch-derived host.
     #[test]
@@ -984,8 +995,9 @@ domain_id = 2
         assert_eq!(e.deploy["/talker"].domain, Some(1));
         assert_eq!(e.deploy["/listener"].domain, Some(2));
 
-        // A node in no list is unplaced -> fail loud (pre-0291 behaviour,
-        // restored because the machine=-derived fact no longer exists).
+        // A node in no list is unplaced -> fail loud (the behaviour from
+        // before the `machine=` fallback, restored because the
+        // machine=-derived fact no longer exists).
         let err = cfg
             .apply_to_launch(&mut e, &["/ghost"], Some("multihost.launch.xml"))
             .expect_err("a node in no nodes list is not placed");
@@ -1169,7 +1181,7 @@ domain_id = 2
         assert!(e.deploy["/a"].target.is_none());
     }
 
-    // ---- [host.*] placement — nano-ros issue 0939 ----
+    // ---- [host.*] placement ----
 
     fn place(
         toml_src: &str,
@@ -1210,10 +1222,10 @@ domain_id = 2
         );
     }
 
-    /// A host says WHERE, never WHAT. The build half lives in the consumer's
-    /// own table, so a placed node is board-agnostic and the entry's `--board`
-    /// decides — the conclusion nano-ros issue 0356 forced on the deploy path,
-    /// here true by construction.
+    /// A host says WHERE, never WHAT. The build half lives in the realizer's
+    /// own table, so a placed node is board-agnostic and the realizer's board
+    /// decides — the conclusion the multi-board deploy path reached, here
+    /// true by construction.
     #[test]
     fn a_host_placement_is_board_agnostic() {
         let (ex, _) = place(
@@ -1312,7 +1324,7 @@ nodes = ["/talker"]
 
     /// The case a real migration hits, and the one an "any host wins" rule
     /// breaks: hosts scoped to ONE launch file, `[deploy.*]` governing the
-    /// others. Measured on nano-ros's rust workspace, where the aggressive rule
+    /// others. Measured on a real workspace, where the aggressive rule
     /// emptied `execution.deploy` for every non-multihost model.
     #[test]
     fn a_launch_no_host_governs_still_uses_deploy() {
@@ -1379,8 +1391,8 @@ fn toml_to_param_value(v: &toml::Value) -> Option<ParamValue> {
 mod deploy_consumer_block_tests {
     use super::DeployBlock;
 
-    /// The sanctioned extension point: a consumer's own keys ride in
-    /// `[deploy.<n>.nros]` and are carried verbatim.
+    /// The sanctioned extension point: a realizer's own keys ride in the
+    /// deploy block's opaque sub-table and are carried verbatim.
     #[test]
     fn a_consumer_block_is_carried_verbatim() {
         let b: DeployBlock = toml::from_str(

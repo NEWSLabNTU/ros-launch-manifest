@@ -1,8 +1,8 @@
 //! The one derivation of the scheduling mapper's input from a `SystemModel`.
 //!
-//! Design issue #52 (`docs/design-issues.md`): play_launch and nano-ros each
-//! derived `ros_launch_manifest_sched::MapperInput` from their own view of
-//! the system, and the two derivations disagreed on most of the facts the
+//! Design issue #52 (`docs/design-issues.md`): two realizers each derived
+//! `ros_launch_manifest_sched::MapperInput` from their own view of the
+//! system, and the two derivations disagreed on most of the facts the
 //! `chain_aware` algorithm ranks by. This crate is the replacement both
 //! consumers call and neither reimplements:
 //!
@@ -11,15 +11,14 @@
 //!   `contracts.node_paths`, and the chains from [`resolve_chains`] -- and a
 //!   [`DeriveReport`] saying what the model could not tell it.
 //! - [`resolve_chains`] derives one `ResolvedChain` per scope path from the
-//!   dataflow route through the model (the port of play_launch's
-//!   `manifest_graph`, see [`graph`]).
+//!   dataflow route through the model (the port of a resolver's manifest
+//!   graph walk, see [`graph`]).
 //! - [`TopicView`] is the one exception to "this crate reads a model":
 //!   it is four declared facts about a topic and carries
 //!   [`TopicView::transport_ms`], the per-edge transport precedence
-//!   (subscriber's own value, else the topic's). play_launch's resolver
-//!   builds one from its `ManifestIndex` — which exists before any model
-//!   does — so that rule is written once rather than once per consumer
-//!   (play_launch issue #0052).
+//!   (subscriber's own value, else the topic's). A resolver builds one
+//!   from its `ManifestIndex` — which exists before any model does — so
+//!   that rule is written once rather than once per consumer.
 //! - [`DeriveFacts`] carries the one thing the model does not: each
 //!   consumer's execution-cost facts (a platform file's `budget_us`, a
 //!   `[wcet]` profile). The attribution rule is in here so both apply it
@@ -40,7 +39,7 @@
 //! | `rate_hz` | the fastest `Timer` trigger among the node's paths, and nothing else: authored `topics.<t>.rate_hz` and `pub.<ep>.min_rate_hz` are runtime promises no mapper reads |
 //! | `deadline_us` / `path_budget_ms` | min over the node's paths' `max_latency_ms` and its services' `max_response_ms` |
 //! | criticality | the model's effective value when it carries one, else the advisory label (`high`/`medium`/`low`, case-insensitive) |
-//! | `claims_concurrency` | play_launch's merged-group rule: declared exclusion sets sharing a member merge; concurrency is claimed unless one merged group covers every declared path (`exclusive: []` claims it; an absent declaration or a single path does not) |
+//! | `claims_concurrency` | the merged-group rule: declared exclusion sets sharing a member merge; concurrency is claimed unless one merged group covers every declared path (`exclusive: []` claims it; an absent declaration or a single path does not) |
 //! | `exec_ms` | `DeriveFacts::path_exec_ms` by `"<node>/<path>"`, else `DeriveFacts::node_exec_ms` only when the node has exactly one path; never invented |
 //! | chains | one per scope path with a budget: the longest causal route from the input topics to the output topics inside the scope's subtree, timer paths as boundaries (`period_ms = 1000 / rate_hz`), the rest as segments; criticality = max over members |
 //!
@@ -64,9 +63,10 @@ use view::{ModelView, NodeView};
 pub use view::{TopicView, parse_criticality_label};
 
 /// The consumer's execution-cost facts, the one input the model does not
-/// carry because it differs per platform. play_launch fills `node_exec_ms`
-/// from its platform file's `budget_us` (in ms here); nano-ros fills
-/// `path_exec_ms` from its `[wcet]` profile. Either may be empty. No WCET
+/// carry because it differs per platform. A Linux realizer may fill
+/// `node_exec_ms` from its platform file's `budget_us` (in ms here); an
+/// embedded one may fill `path_exec_ms` from a WCET profile. Either may be
+/// empty. No WCET
 /// is ever invented from a deadline.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeriveFacts {
@@ -81,8 +81,8 @@ pub struct DeriveFacts {
 impl DeriveFacts {
     /// The cost of one path. A per-path fact wins. A per-NODE fact is
     /// attributed only when the node has exactly one path: where it has
-    /// several the split is unknown (`play_launch measure` emits a node
-    /// budget as the SUM of its per-path maxima), and giving the sum to any
+    /// several the split is unknown (a measured node budget is typically
+    /// the SUM of its per-path maxima), and giving the sum to any
     /// one path would overstate it. Absent is the honest answer, and the
     /// feasibility diagnostic reports absent cost as "feasible on incomplete
     /// evidence" rather than as feasible.
@@ -278,16 +278,15 @@ fn node_namespace(fqn: &str) -> String {
 
 /// Does this node claim that some of its callbacks may run concurrently?
 ///
-/// The merged-group rule play_launch's `sched_derive::claims_concurrency`
-/// applies, the one that models what an executor does: a maximal mutually
-/// exclusive set IS a callback group, so declared sets sharing a member
-/// merge (`[[a, b], [b, c]]` is one group), and concurrency is claimed
+/// The merged-group rule, the one that models what an executor does: a maximal
+/// mutually exclusive set IS a callback group, so declared sets sharing a
+/// member merge (`[[a, b], [b, c]]` is one group), and concurrency is claimed
 /// unless one merged group covers every declared path. `exclusive: []`
-/// therefore claims full concurrency, the opposite of omitting the
-/// declaration, which means everything serialises. One path cannot contend
-/// with itself, whatever is declared.
+/// therefore claims full concurrency, the opposite of omitting the declaration,
+/// which means everything serialises. One path cannot contend with itself,
+/// whatever is declared.
 ///
-/// nano-ros's former rule ("some path is outside every set") gave a
+/// A former rule in one realizer ("some path is outside every set") gave a
 /// different answer on `[[a, b], [c]]` over `{a, b, c}`: no path is outside
 /// a set, yet `a` and `c` may run at once, so concurrency IS claimed.
 fn claims_concurrency(node: &NodeView) -> bool {

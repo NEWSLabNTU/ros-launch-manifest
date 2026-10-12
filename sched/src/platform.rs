@@ -1,10 +1,10 @@
 //! v2 platform-file schema (YAML): `target` + `mapper` + `resources` +
 //! `overrides`. One file names one target; `resources`/`overrides` value
-//! vocabulary is per-target. `posix` (Linux RT) is typed concretely here;
-//! any other target (`zephyr`, `freertos`, ...) is kept as a raw
-//! [`serde_yaml_ng::Value`] passthrough — nano-ros validates its own
-//! target vocabularies, this crate only guarantees the file parses and the
-//! `posix` shape is well-formed.
+//! vocabulary is per-target. `posix` (Linux RT) is typed concretely here; any
+//! other target (`zephyr`, `freertos`, ...) is kept as a raw
+//! [`serde_yaml_ng::Value`] passthrough — the realizer for that target
+//! validates its own vocabulary, this crate only guarantees the file parses and
+//! the `posix` shape is well-formed.
 //!
 //! Legacy `system.toml` documents (see [`crate::types::SystemSched`]) parse
 //! through a separate path ([`crate::bridge`]) into the same [`PlatformFile`]
@@ -59,7 +59,7 @@ pub struct PosixResources {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rt_priority_band: Option<PriorityBand>,
     /// CPU cores reserved for isolated (RT) workloads (advisory; consumed by
-    /// play_launch/nano-ros placement policy, not enforced by this crate).
+    /// a realizer's placement policy, not enforced by this crate).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub isolated_cpus: Vec<u32>,
     /// The host's `SCHED_RR` time slice.
@@ -182,7 +182,7 @@ pub struct PosixOverride {
     /// high-percentile observed cost, used *as* an upper bound.
     ///
     /// Phase 63: spelled `budget: 8000us`, with `budget_us: 8000` still
-    /// accepted. This is the field `play_launch measure` writes, and it was
+    /// accepted. This is the field a measuring tool writes, and it was
     /// missed by the W2 sweep — that wave scoped itself to the fields it
     /// believed "the v2 schema has none of", which was true of `TierDef` and
     /// false here. The result was a shipped verb whose output the loader
@@ -529,7 +529,7 @@ overrides:
 
     /// Both spellings of a budget parse to the same cost.
     ///
-    /// The unit-suffixed form is not cosmetic here: `play_launch measure`
+    /// The unit-suffixed form is not cosmetic here: a measuring tool
     /// emits `budget: <n>us`, and while this struct carried only `budget_us`
     /// under `deny_unknown_fields`, that output was rejected as an unknown
     /// field — a verb whose whole purpose is to produce a pasteable fragment
