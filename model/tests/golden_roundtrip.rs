@@ -457,27 +457,20 @@ fn a_path_contract_carries_each_trigger_kind_across_the_boundary() {
 #[test]
 fn execution_layer_slices() {
     let e = golden().execution;
-    // the two consumer slices
-    assert_eq!(
-        e.deploy["/perception/detection/detector"].target,
-        Some(Target::Linux)
-    );
-    assert_eq!(
-        e.deploy["/sensing/imu_node"].target,
-        Some(Target::Mcu {
-            board: "stm32f4".into()
-        })
-    );
-    // R1-M1/M2/M3 — deploy fields, transports, bridges, features
+    // The golden model still carries `target`, `extra` and `features` on disk
+    // (written before v0.1.55). They were read-tolerant until v0.1.56 and are
+    // gone from the types since v0.1.57: the model still loads, and the keys
+    // reach nothing. The text check keeps this test honest about the fixture.
+    let text = include_str!("golden/perception.system_model.yaml");
+    for key in ["target: mcu:stm32f4", "extra:", "features:"] {
+        assert!(text.contains(key), "the golden fixture must keep `{key}`");
+    }
+    // R1-M1/M2/M3 — deploy session fields, transports, bridges
     let imu = &e.deploy["/sensing/imu_node"];
     assert_eq!(imu.domain, Some(7));
     assert_eq!(imu.locator.as_deref(), Some("tcp/10.0.2.1:7447"));
     assert_eq!(imu.rmw.as_deref(), Some("zenoh"));
-    assert_eq!(imu.extra["optimize"], ExtraValue::Str("size".to_string()));
-    assert_eq!(
-        imu.extra["features"],
-        ExtraValue::StrList(vec!["safety".to_string()])
-    );
+    assert!(e.deploy.contains_key("/perception/detection/detector"));
 
     let t = &e.transports[0];
     assert_eq!(t.kind, "ethernet");
@@ -486,7 +479,6 @@ fn execution_layer_slices() {
     assert_eq!(t.domain, Some(7));
     assert_eq!(e.bridges[0].from, "eth0");
     assert_eq!(e.bridges[0].topics, vec!["/perception/objects"]);
-    assert_eq!(e.features, vec!["safety"]);
 
     // tier table (sched crate TierDef schema) + per-callback-group binding
     let high = &e.tiers["high"];

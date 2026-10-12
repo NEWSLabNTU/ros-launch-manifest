@@ -1667,12 +1667,9 @@ pub struct Execution {
     /// Topic types resolve from layer 1 wiring, never written here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bridges: Vec<Bridge>,
-    /// READ-TOLERANT, no longer written (v0.1.55, `docs/model-boundary.md`
-    /// W6). Was: one realizer's build switches (`safety`, `param_services`,
-    /// …). Kept so a model written before v0.1.55 still loads; nothing in
-    /// this crate writes or reads it, and it is deleted at W8.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<String>,
+    // `features` (one realizer's build switches) was written until v0.1.54
+    // and read-tolerant until v0.1.56. A model that still carries it loads:
+    // `Execution` does not deny unknown fields, so the key is ignored.
     // NOTE: the resolved scheduling plan is NOT carried in the model
     // (2026-07-20 maintainer decision — reverted the 45.2/45.3 `sched`
     // embedding). The model is INPUT only; causality + execution modeling is
@@ -1746,19 +1743,16 @@ impl Execution {
             && self.bindings.is_empty()
             && self.transports.is_empty()
             && self.bridges.is_empty()
-            && self.features.is_empty()
     }
 }
 
 /// Where a node runs.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Deploy {
-    /// READ-TOLERANT, no longer written (v0.1.55, `docs/model-boundary.md`
-    /// W6): always `None` in a new model. Was `linux` or `mcu:<board>` from
-    /// `[deploy.<n>] board`; no realizer read it. Kept so an older model
-    /// still loads; deleted, with [`Target`], at W8.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<Target>,
+    // `target` (`linux` / `mcu:<board>`) and `extra` (one realizer's build
+    // fields) were written until v0.1.54 and read-tolerant until v0.1.56. A
+    // model that still carries them loads: `Deploy` does not deny unknown
+    // fields, so the keys are ignored. No realizer read either.
     /// R1-M1 — ROS domain for this node's session (RFC-0045 baked rung
     /// on embedded). `None` = system default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1771,78 +1765,6 @@ pub struct Deploy {
     /// cannot pick a backend without one of the two.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rmw: Option<String>,
-    /// READ-TOLERANT, no longer written (v0.1.55, `docs/model-boundary.md`
-    /// W6): always empty in a new model. Was one realizer's build fields
-    /// (`profile`, `optimize`, `kind`, `framework`, `features`, …) plus the
-    /// placing table's name (`host_name`, `deploy_name`). A realizer keeps
-    /// its build facts in its own layer. Kept so an older model still loads;
-    /// deleted at W8.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, ExtraValue>,
-}
-
-/// R1-M1 — a deploy-extra value (untagged; Bool before Int before Float
-/// before Str, then string lists).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ExtraValue {
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    Str(String),
-    StrList(Vec<String>),
-}
-
-/// Deployment target. Serialized as `linux` or `mcu:<board>`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum Target {
-    #[default]
-    Linux,
-    Mcu {
-        board: String,
-    },
-}
-
-impl std::fmt::Display for Target {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Target::Linux => write!(f, "linux"),
-            Target::Mcu { board } => write!(f, "mcu:{board}"),
-        }
-    }
-}
-
-impl std::str::FromStr for Target {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "linux" {
-            return Ok(Target::Linux);
-        }
-        if let Some(board) = s.strip_prefix("mcu:") {
-            if board.is_empty() {
-                return Err("empty board in `mcu:<board>` target".into());
-            }
-            return Ok(Target::Mcu {
-                board: board.to_string(),
-            });
-        }
-        Err(format!(
-            "unknown target `{s}` (expected `linux` or `mcu:<board>`)"
-        ))
-    }
-}
-
-impl Serialize for Target {
-    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        ser.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for Target {
-    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(de)?;
-        s.parse().map_err(serde::de::Error::custom)
-    }
 }
 
 /// Tier definitions reuse the sched crate's schema (RT config v2, phase 41):
@@ -2038,26 +1960,6 @@ mod tests {
         let none: HazardContract = serde_yaml_ng::from_str("ftti_ms: 5.0\n").unwrap();
         assert!(none.on.is_empty());
         assert!(!serde_yaml_ng::to_string(&none).unwrap().contains("on:"));
-    }
-
-    #[test]
-    fn target_string_forms() {
-        assert_eq!("linux".parse::<Target>().unwrap(), Target::Linux);
-        assert_eq!(
-            "mcu:stm32f4".parse::<Target>().unwrap(),
-            Target::Mcu {
-                board: "stm32f4".into()
-            }
-        );
-        assert_eq!(
-            Target::Mcu {
-                board: "stm32f4".into()
-            }
-            .to_string(),
-            "mcu:stm32f4"
-        );
-        assert!("mcu:".parse::<Target>().is_err());
-        assert!("cloud".parse::<Target>().is_err());
     }
 
     #[test]

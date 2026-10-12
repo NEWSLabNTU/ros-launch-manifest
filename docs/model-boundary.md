@@ -1,6 +1,6 @@
 # What the SystemModel may carry
 
-Status: **decided** (2026-10-10, revised 2026-10-12). **W6 implemented in v0.1.55** (the model stops carrying the realizer facts); W8 retirement pending.
+Status: **decided** (2026-10-10, revised 2026-10-12). **W6 implemented in v0.1.55** (the model stops carrying the realizer facts); **W8 implemented in v0.1.57** (the system config and the model name no realizer's facts; `[deploy.*]` is gone, placement is `[host.*]` alone).
 The cross-repository work is tracked in nano-ros phase 486
 (`docs/roadmap/phase-486-launch-model-boundary.md`); this repository's part
 is W6 (stop writing realizer facts, make the system config neutral) and the
@@ -106,15 +106,15 @@ the shared layers, and this crate owns its format.**
    them on disk as the evidence. Removing writes needs no schema bump: a
    reader of a new model loses nothing it could act on. `SCHEMA_VERSION`
    stays at its current value, 2.
-4. **Retirement (W8).**
-   - The realizer-only struct fields go: `SystemConfigToml.lifecycle`,
+4. **Retirement (W8, done in v0.1.57).**
+   - The realizer-only struct fields went: `SystemConfigToml.lifecycle`,
      `.param_services`, `.deploy` (the whole `[deploy.*]` table, its
      placement half included, since `[host.*]` covers placement),
      `SystemDefaults.features`, and the `lifecycle_autostart()` accessor.
-   - The read-tolerant model fields, and `Target` itself, are deleted one
-     minor release after every known consumer has bumped past W6, provided
-     no tracked model or fixture except the golden one carries them.
-   - The doc comments are rewritten to name no realizer (the rule above).
+   - The read-tolerant model fields, and `Target` itself, went in the same
+     release: both known consumers pinned v0.1.56, past W6, and no tracked
+     model or fixture except the golden one carries them.
+   - The doc comments name no realizer (the rule above, v0.1.56).
 
 ## Where those facts go instead
 

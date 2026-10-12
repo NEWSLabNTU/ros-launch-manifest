@@ -6,6 +6,44 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.57 - 2026-10-13
+
+The system config and the model name no realizer's facts: W8 of
+`docs/model-boundary.md`. **Workspace Cargo version `0.1.10` -> `0.1.11`**:
+public fields and types are removed. Schema stays 2, and every model written
+before this still loads.
+
+### Removed
+
+- **`[deploy.*]`, the whole table.** `SystemConfigToml.deploy`, `DeployBlock`
+  and the placement path in `apply_to_launch` that read it, including the
+  `kind = "embedded"` filter (one realizer's board-build concept) and the
+  opaque `[deploy.<n>.nros]` sub-table. Placement is `[host.*]` alone. A
+  `[deploy.*]` table is now ignored like any other table this crate does not
+  declare, and places nothing.
+- **Realizer-owned keys:** `SystemConfigToml.lifecycle` (`LifecycleBlock`),
+  `.param_services` (`ParamServicesBlock`), `SystemDefaults.features`, and the
+  `SystemConfigToml::lifecycle_autostart()` accessor. A node's lifecycle
+  autostart comes from its launch file and contract.
+- **The read-tolerant model fields:** `Execution.features`, `Deploy.target`
+  (with `Target`) and `Deploy.extra` (with `ExtraValue`). No release since
+  v0.1.55 wrote them, and both known consumers pin v0.1.56. `Execution` and
+  `Deploy` do not deny unknown fields, so an older model that still carries
+  the keys loads and they are ignored; the golden fixture keeps them on disk
+  as the evidence (`execution_layer_slices`).
+
+### Changed
+
+- With no `[host.*]` in scope for a launch file, nothing is placed:
+  `execution.deploy` stays empty and every node runs wherever the model is
+  realized. A launch no host governs used to fall back to `[deploy.*]`.
+
+### Fixed
+
+- `cargo clippy --workspace --all-targets -- -D warnings` is clean on Rust
+  1.98 again: two `field_reassign_with_default` sites in `system_config`'s
+  tests and one `map_or_identity` in `derive/tests/parity.rs`. Test code only.
+
 ## v0.1.56 - 2026-10-12
 
 `GRAMMAR_VERSION` follows the release again, and the crates' doc comments name
