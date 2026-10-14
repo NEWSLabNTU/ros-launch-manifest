@@ -80,17 +80,12 @@ pub struct Manifest {
     /// ladder to fall to when it is lost.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, ModeDecl>,
-    /// Where each budget comes from (phase 10 B7): the `source:` of every
-    /// budget written in its map form (`max_latency: { duration: 149ms,
-    /// source: ... }`), keyed by the budget's dotted contract path from this
-    /// manifest's root (`nodes.h.paths.call_mrm.max_latency`,
-    /// `modes.tor.window`). A budget written as a bare duration states no
-    /// source and has no entry.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub budget_sources: BTreeMap<String, BudgetSource>,
+    // Where each budget comes from (phase 10 B7) is the `source` of its
+    // [`crate::Bound`] (phase 90 G2); [`Manifest::budget_sources`] lists
+    // them by dotted contract path.
 }
 
-/// `source:` on a budget (phase 10 B7): where the number comes from.
+/// `source:` on a bound (phase 10 B7): where the number comes from.
 ///
 /// A measured budget is the largest value some runs observed, plus a margin;
 /// it is NOT an upper bound, and a consumer must not present a total that
@@ -237,12 +232,18 @@ pub struct ModeDecl {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<ModeOverride>,
     /// A timed, TRANSITIONAL rung (v0.1.46): the system stays in this mode
-    /// at most `window.duration` and then takes the next rung of the ladder,
-    /// even while this one is still available. A takeover request is the
+    /// `window` (a least-time bound, phase 90 G2) and then takes the next
+    /// rung of the ladder, even while this one is still available. A takeover request is the
     /// case it exists for. A windowed rung is not a safe state, so it cannot
     /// be the floor of a ladder (`ladder-window-floor` in the consumer).
+    ///
+    /// `window: 10s` (a bare duration) parses as a window with no parameter
+    /// -- UNBOUND: nothing in the image is tied to the number, which the
+    /// consumer reports (`window-unbound`) rather than refuses. The map form
+    /// `{ duration, param: <node>.<parameter>, source }` is a budget's
+    /// (phase 90 G2); its `param` is a [`crate::ParamBinding::Node`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub window: Option<ModeWindow>,
+    pub window: Option<crate::bound::Bound>,
     /// The one way out of a windowed rung that is not the next rung
     /// (v0.1.46): while this mode is active, the named function holding ends
     /// the ladder successfully in `to`. Only a windowed rung may carry one --
@@ -250,21 +251,6 @@ pub struct ModeDecl {
     /// grammar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit: Option<ModeExit>,
-}
-
-/// `modes.<m>.window` (v0.1.46): how long a transitional rung may last, and
-/// the parameter that makes the running image wait exactly that long.
-///
-/// `window: 10s` (a bare duration) parses too, as a window with no
-/// parameter -- UNBOUND: nothing in the image is tied to the number, which
-/// the consumer reports (`window-unbound`) rather than refuses.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ModeWindow {
-    pub duration: crate::duration::Duration,
-    /// `<node>.<parameter>`: the parameter whose resolved launch value, in
-    /// seconds, must equal `duration` (`window-param` in the consumer).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub param: Option<ParamRef>,
 }
 
 /// A parameter named across the contract: `<node>.<parameter>`, split at
@@ -493,8 +479,8 @@ pub struct HazardDecl {
     pub on: Vec<FaultKind>,
     /// The fault-tolerant time interval: fault → hazardous event, absent
     /// reaction. The only new number; `FDTI + FRTI` must fit inside it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ftti: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ftti: Option<crate::bound::Bound>,
     /// The mode this hazard enters (v0.1.59): the top of the fallback ladder
     /// it walks to a safe state. Exactly one of `enters` and `reaction` is
     /// written; the parser refuses both.
@@ -593,8 +579,8 @@ pub struct OnViolation {
     /// A path on THIS node whose trigger includes the subscription.
     pub reaction: String,
     /// This hop's share of the fault reaction time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub within: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub within: Option<crate::bound::Bound>,
     #[serde(default)]
     pub mechanism: DetectMechanism,
 }
@@ -609,8 +595,8 @@ pub struct SafeState {
     /// literal is what the consumer falls back to when the hazard states no
     /// entry speed, and what it compares the derivation against
     /// (`settle-conflict`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub settle: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle: Option<crate::bound::Bound>,
     /// The settle DERIVED from a braking profile (v0.1.46):
     /// `settle: { decel: <param>, jerk: <param> }`, the parameters by name
     /// on this path's node, and the entry speed from the hazard.
@@ -624,7 +610,7 @@ pub struct SafeState {
 /// standstill. Both are read as magnitudes, so Autoware's signed spellings
 /// (`target_acceleration: -2.5`, `target_jerk: -1.5`) name them unchanged.
 /// [`SettleProfile::settle_s`] is the arithmetic.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SettleProfile {
     /// The parameter holding the deceleration, m/s^2.
     pub decel: String,
@@ -634,7 +620,7 @@ pub struct SettleProfile {
     /// command to the deceleration the profile assumes, written (measured
     /// or analysed), and added to the derived profile time.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response: Option<crate::duration::Duration>,
+    pub response: Option<crate::bound::Bound>,
 }
 
 impl SettleProfile {
@@ -810,18 +796,18 @@ impl std::str::FromStr for ParamType {
 /// Publisher/subscriber endpoint properties (all optional).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct EndpointProps {
+    /// A rate bound: the publisher's promise, or the subscriber's need.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_rate_hz: Option<f64>,
+    pub min_rate_hz: Option<crate::bound::Bound>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_rate_hz: Option<f64>,
+    pub max_rate_hz: Option<crate::bound::Bound>,
     /// Sub endpoint: max data age at receive (now - header.stamp), runtime-checked.
-    #[serde(
-        default,
-        alias = "max_age_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_age: Option<crate::duration::Duration>,
+    /// Its `param` (phase 10 B1, `max_age: { duration: 500ms, param: <name> }`)
+    /// is the parameter of this node, in seconds, whose resolved launch value
+    /// must equal it (`max-age-param` in the consumer): a
+    /// [`crate::ParamBinding::Own`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age: Option<crate::bound::Bound>,
     /// Sub endpoint: read-latest, not causal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<bool>,
@@ -837,13 +823,8 @@ pub struct EndpointProps {
     /// Used as the edge weight from publisher to this subscriber in
     /// scope-path critical-path computation. Inherits topic-level
     /// `max_transport_ms` when not declared.
-    #[serde(
-        default,
-        alias = "max_transport_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_transport: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_transport: Option<crate::bound::Bound>,
     /// Sub endpoint: buffering discipline for a `state: true` subscription
     /// (Vocabulary v2, Phase 44.1 §3). `latest` (default) — staleness is
     /// the failure mode; `queue` — backlog is the failure mode, drained
@@ -865,12 +846,6 @@ pub struct EndpointProps {
     /// `pub:`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_demand: Option<bool>,
-    /// Sub endpoint (phase 10 B1): the parameter of this node, in seconds,
-    /// whose resolved launch value must equal `max_age`:
-    /// `max_age: { duration: 500ms, param: <name> }` (`max-age-param` in the
-    /// consumer).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_age_param: Option<String>,
 }
 
 /// Buffering discipline for a `state: true` subscriber endpoint
@@ -890,13 +865,8 @@ pub enum Buffer {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SrvEndpointProps {
     /// Max time from request to response (runtime monitoring only).
-    #[serde(
-        default,
-        alias = "max_response_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_response: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_response: Option<crate::bound::Bound>,
 }
 
 /// Topic declaration.
@@ -917,13 +887,8 @@ pub struct TopicDecl {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_hz: Option<f64>,
     /// Worst-case transport latency (ms) for this topic hop.
-    #[serde(
-        default,
-        alias = "max_transport_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_transport: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_transport: Option<crate::bound::Bound>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
     /// Per-topic external override. When set, the matching side
@@ -1180,13 +1145,8 @@ pub struct PathDecl {
     /// Node paths: endpoint names. Scope paths: topic names (relative/absolute).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
-    #[serde(
-        default,
-        alias = "max_latency_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_latency: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_latency: Option<crate::bound::Bound>,
     /// Maximum `header.stamp` spread between the inputs of a fan-in path
     /// that the callback will still treat as one set. A window the
     /// synchroniser may wait for, so `sync-budget` checks it against
@@ -1217,8 +1177,8 @@ pub struct PathDecl {
     /// latency jitter as a first-class analysis output rather than a
     /// by-product. Checking it needs a lower bound as well as an upper one —
     /// see [`PathDecl::min_latency`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_jitter: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_jitter: Option<crate::bound::Bound>,
     /// Best-case latency for this path (phase 67).
     ///
     /// Optional, and expected to be *measured* rather than authored in most
@@ -1226,8 +1186,8 @@ pub struct PathDecl {
     /// distributions. It exists because every other bound this vocabulary
     /// carries is an upper one, so `max_jitter` would otherwise be
     /// unfalsifiable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_latency: Option<crate::duration::Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_latency: Option<crate::bound::Bound>,
     /// What a missed deadline costs and what to do about it (phase 67).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<MissSpec>,
@@ -1248,9 +1208,9 @@ impl PathDecl {
     /// timer that states none. Kept off [`EffectiveTrigger`] on purpose:
     /// that enum's `Timer` variant is matched by every consumer, and a
     /// period is all most of them need.
-    pub fn timer_jitter(&self) -> Option<crate::duration::Duration> {
+    pub fn timer_jitter(&self) -> Option<&crate::bound::Bound> {
         match &self.trigger {
-            Some(Trigger::Timer { jitter, .. }) => *jitter,
+            Some(Trigger::Timer { jitter, .. }) => jitter.as_ref(),
             _ => None,
         }
     }
@@ -1301,7 +1261,7 @@ pub enum Trigger {
     Timer {
         rate_hz: f64,
         #[serde(skip_serializing_if = "Option::is_none")]
-        jitter: Option<crate::duration::Duration>,
+        jitter: Option<crate::bound::Bound>,
     },
     /// Output caused by these input endpoint/topic names. Rate is
     /// inherited from upstream, not authored here.
@@ -1367,17 +1327,18 @@ pub enum SyncPolicy {
     TimeoutAny,
 }
 
-/// Drop tolerance specification.
+/// Drop tolerance specification. Both are count bounds (phase 90 G2).
 #[derive(Debug, Clone, Serialize)]
 pub struct DropSpec {
-    /// "N / W" format: max N drops per W messages.
-    pub max_count: Option<DropCount>,
-    /// Max consecutive drops.
-    pub max_consecutive: Option<u32>,
+    /// "N / W" format: max N drops per W messages
+    /// ([`crate::Quantity::CountPer`]).
+    pub max_count: Option<crate::bound::Bound>,
+    /// Max consecutive drops ([`crate::Quantity::Count`]).
+    pub max_consecutive: Option<crate::bound::Bound>,
 }
 
 /// Drop count: N drops per W messages.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DropCount {
     pub n: u32,
     pub w: u32,
@@ -1395,11 +1356,11 @@ pub struct MissSpec {
     /// "N / W" format: at most N missed deadlines per W releases — the
     /// weakly-hard (m,K) model.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tolerate: Option<DropCount>,
+    pub tolerate: Option<crate::bound::Bound>,
     /// Maximum consecutive misses. Distinct from `tolerate`: a controller can
     /// survive a scattered 2-in-100 and be destabilised by 2 in a row.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub consecutive: Option<u32>,
+    pub consecutive: Option<crate::bound::Bound>,
     /// What to do when a deadline IS missed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<MissAction>,

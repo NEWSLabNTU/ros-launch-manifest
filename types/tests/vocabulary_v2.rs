@@ -30,7 +30,11 @@ fn trigger_timer_carries_its_release_jitter() {
     )
     .unwrap();
     let tick = &m.nodes["h"].paths["tick"];
-    assert_eq!(tick.timer_jitter().map(|d| d.as_millis_f64()), Some(18.0));
+    assert_eq!(
+        tick.timer_jitter()
+            .and_then(ros_launch_manifest_types::Bound::ms),
+        Some(18.0)
+    );
     assert_eq!(
         tick.effective_trigger(),
         EffectiveTrigger::Timer { rate_hz: 10.0 }
