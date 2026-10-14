@@ -187,20 +187,28 @@ impl Measurement {
 
 /// The parameter that sets a timer's period (phase 10 B1), on the path's
 /// own node: `trigger: { timer: { rate_hz: 10, param: update_rate } }` (a
-/// rate in Hz) or `period_param: <name>` (a period in seconds).
+/// rate in Hz) or `period_param: <name>` (a period in seconds). The binding
+/// is the one a bound's `param` is (phase 90 G2): a
+/// [`crate::ParamBinding::Own`], since the parameter is the path's node's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TimerParam {
     /// The parameter holds the rate, Hz.
-    Rate(String),
+    Rate(crate::bound::ParamBinding),
     /// The parameter holds the period, seconds.
-    Period(String),
+    Period(crate::bound::ParamBinding),
 }
 
 impl TimerParam {
+    /// The parameter's name on the path's node.
     pub fn name(&self) -> &str {
+        self.binding().name()
+    }
+
+    /// The parameter binding, whichever unit it holds.
+    pub fn binding(&self) -> &crate::bound::ParamBinding {
         match self {
-            TimerParam::Rate(n) | TimerParam::Period(n) => n,
+            TimerParam::Rate(b) | TimerParam::Period(b) => b,
         }
     }
 }
