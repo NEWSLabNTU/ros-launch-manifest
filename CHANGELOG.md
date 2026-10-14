@@ -6,14 +6,14 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased (v0.1.58)
+## v0.1.58 - 2026-10-15
 
 Where a contract's budgets come from, and the parameters that set them.
 Every key is optional and every old contract parses to the same values; the
-rules that read the new keys live in the consumer (play_launch). The release
-should set `GRAMMAR_VERSION` to `0.1.58` (the format reference already dates
-the keys `since v0.1.58`). Workspace Cargo version unchanged: fields are only
-added, to structs every consumer builds with `..Default::default()`.
+rules that read the new keys live in the consumer (play_launch).
+`GRAMMAR_VERSION` is `0.1.58` (the format reference dates the keys `since
+v0.1.58`). Workspace Cargo version unchanged: fields are only added, to
+structs every consumer builds with `..Default::default()`.
 
 ### Added
 
