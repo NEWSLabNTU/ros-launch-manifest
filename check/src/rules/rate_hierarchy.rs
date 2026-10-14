@@ -12,6 +12,7 @@
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
 use ros_launch_manifest_types::Manifest;
+use ros_launch_manifest_types::OptBound;
 
 pub struct RateHierarchyRule;
 
@@ -69,7 +70,7 @@ impl ValidationRule for RateHierarchyRule {
             // than it declares it can consume.
             for pub_ref in &topic.publishers {
                 if let Some(max) = resolve_endpoint(pub_ref, manifest, |n| &n.publishers)
-                    .and_then(|p| p.max_rate_hz)
+                    .and_then(|p| p.max_rate_hz.hz())
                     && topic_rate > max
                 {
                     ctx.error(
@@ -83,7 +84,7 @@ impl ValidationRule for RateHierarchyRule {
             }
             for sub_ref in &topic.subscribers {
                 if let Some(max) = resolve_endpoint(sub_ref, manifest, |n| &n.subscribers)
-                    .and_then(|p| p.max_rate_hz)
+                    .and_then(|p| p.max_rate_hz.hz())
                     && topic_rate > max
                 {
                     ctx.error(
@@ -117,7 +118,9 @@ where
 
 /// Resolve "node/endpoint" to the publisher's min_rate_hz.
 fn resolve_pub_min_rate(pub_ref: &str, manifest: &Manifest) -> Option<f64> {
-    resolve_endpoint(pub_ref, manifest, |n| &n.publishers)?.min_rate_hz
+    resolve_endpoint(pub_ref, manifest, |n| &n.publishers)?
+        .min_rate_hz
+        .hz()
 }
 
 /// An on-demand publisher (`on_demand: true`, v0.1.49)
@@ -164,7 +167,7 @@ fn check_on_demand(
         if sub.state == Some(true) {
             continue;
         }
-        if let Some(rate) = sub.min_rate_hz {
+        if let Some(rate) = sub.min_rate_hz.hz() {
             ctx.error(
                 id,
                 &format!("topics.{topic_name}"),
@@ -179,7 +182,9 @@ fn check_on_demand(
 
 /// Resolve "node/endpoint" to the subscriber's min_rate_hz.
 fn resolve_sub_min_rate(sub_ref: &str, manifest: &Manifest) -> Option<f64> {
-    resolve_endpoint(sub_ref, manifest, |n| &n.subscribers)?.min_rate_hz
+    resolve_endpoint(sub_ref, manifest, |n| &n.subscribers)?
+        .min_rate_hz
+        .hz()
 }
 
 #[cfg(test)]

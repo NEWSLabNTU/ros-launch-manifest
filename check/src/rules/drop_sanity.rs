@@ -8,6 +8,7 @@
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
 use ros_launch_manifest_types::Manifest;
+use ros_launch_manifest_types::OptBound;
 
 pub struct DropSanityRule;
 
@@ -51,7 +52,7 @@ impl ValidationRule for DropSanityRule {
                 None => continue,
             };
             let drop_rate = match &topic.drop {
-                Some(d) => match &d.max_count {
+                Some(d) => match d.max_count.count_per() {
                     Some(c) => c.drop_rate(),
                     None => continue,
                 },
@@ -86,7 +87,7 @@ fn check_drop_values(
     rule_id: &str,
 ) {
     // (a) max_drop_rate in [0, 1]
-    if let Some(count) = &drop.max_count {
+    if let Some(count) = drop.max_count.count_per() {
         let rate = count.drop_rate();
         if !(0.0..=1.0).contains(&rate) {
             ctx.error(
@@ -108,7 +109,7 @@ fn check_drop_values(
     }
 
     // (b) max_consecutive > 0
-    if let Some(k) = drop.max_consecutive
+    if let Some(k) = drop.max_consecutive.count()
         && k == 0
     {
         ctx.error(
@@ -126,5 +127,5 @@ fn resolve_sub_min_rate(sub_ref: &str, manifest: &Manifest) -> Option<f64> {
     let (node_name, ep_name) = sub_ref.split_once('/')?;
     let node = manifest.nodes.get(node_name)?;
     let props = node.subscribers.get(ep_name)?;
-    props.min_rate_hz
+    props.min_rate_hz.hz()
 }

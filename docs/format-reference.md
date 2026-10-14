@@ -289,14 +289,6 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `gt` | fact |  | The field is above the constant, a number. |
 | `ge` | fact |  | The field is at least the constant, a number. |
 
-## `modes.<name>.window`
-
-| key | kind | status | meaning |
-|---|---|---|---|
-| `duration` | requirement |  | The least time the rung lasts while it stays available: the rung below starts no sooner. Required, positive. |
-| `param` | fact |  | `<node>.<parameter>`: the parameter, in seconds, whose resolved launch value must equal `duration` (`window-param`). |
-| `source` | meta | since v0.1.58 | Where the window's duration comes from: `requirement`, `measured`, `derived` or `analysed` (see `source` under the budget map form). |
-
 ## `modes.<name>.exit`
 
 | key | kind | status | meaning |
@@ -317,8 +309,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `duration` | requirement | since v0.1.58 | The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter` and a settle's `response`. |
-| `param` | fact | since v0.1.58 | `max_age` only: the parameter of this subscriber's node, in seconds, whose resolved launch value must equal `duration` (`max-age-param`). |
+| `duration` | requirement | since v0.1.58 | The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter`, a settle's `response` and a mode's `window` (where it is the least time the rung lasts while it stays available: the rung below starts no sooner; positive). See Bounds below. |
+| `param` | fact | since v0.1.58 | The parameter whose resolved launch value, in seconds, must equal `duration`. On `max_age`: a parameter of this subscriber's node (`max-age-param`). On a mode's `window`: `<node>.<parameter>` (`window-param`). No other bound takes one. |
 | `source` | meta | since v0.1.58 | Where the budget comes from: `requirement` (chosen: a hazard analysis, a decision, a configured value), `measured` (an observed maximum plus a margin: NOT a bound), `derived` (computed from other numbers of the contract or the image's parameters) or `analysed` (an upper bound from an analysis). `{ measured: { max, n, margin } }` states the observations, and the consumer checks that `max x (1 + margin)`, rounded up to the next ms, reproduces `duration` (`budget-rule`). |
 
 ## `source.measured`
@@ -338,4 +330,31 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `max` | fact | since v0.1.58 | The largest value observed for this term (a duration). Required. |
 | `n` | fact | since v0.1.58 | How many samples the maximum is over. |
 | `period` | fact | since v0.1.58 | A timer tick's period, charged without margin. |
+
+## Bounds
+
+Every key below is a spelling of one bound: a value with a unit, what it limits (its **kind**), from which side, where the number comes from (`source`, in the map form) and, for two of them, the parameter of the image that must carry it (`param`). The keys keep their names; each parses to the bound its row gives. **map form** says what the key accepts besides its bare value: `{ duration, source }` (the budget map form above), or that plus `param`.
+
+| key | where | kind | limit | unit | map form |
+|---|---|---|---|---|---|
+| `max_latency` | `paths.<name>` | latency | at most | duration | `{ duration, source }` |
+| `min_latency` | `paths.<name>` | latency | at least | duration |  |
+| `max_jitter` | `paths.<name>` | jitter | at most | duration | `{ duration, source }` |
+| `jitter` | `trigger.timer` | jitter | at most | duration | `{ duration, source }` |
+| `min_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at least | Hz |  |
+| `max_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at most | Hz |  |
+| `max_age` | `pub/sub/cli.<endpoint>` | age | at most | duration | `{ duration, source, param }`; `param`: a parameter of the subscriber's node, seconds (`max-age-param`) |
+| `max_transport` | `pub/sub/cli.<endpoint>` | transport | at most | duration | `{ duration, source }` |
+| `max_transport` | `topics.<name>` | transport | at most | duration | `{ duration, source }` |
+| `max_response` | `srv.<endpoint>` | response | at most | duration | `{ duration, source }` |
+| `within` | `on_violation` | deadline | at most | duration | `{ duration, source }` |
+| `ftti` | `hazards.<name>` | deadline | at most | duration | `{ duration, source }` |
+| `window` | `modes.<name>` | least time | at least | duration | `{ duration, source, param }`; `param`: `<node>.<parameter>`, seconds (`window-param`) |
+| `settle` | `safe_state` | response | at most | duration |  |
+| `duration` | `safe_state.settle` | response | at most | duration |  |
+| `response` | `safe_state.settle` | response | at most | duration | `{ duration, source }` |
+| `max_count` | `drop` | count | at most | count / window |  |
+| `max_consecutive` | `drop` | count | at most | count |  |
+| `tolerate` | `miss` | count | at most | count / window |  |
+| `consecutive` | `miss` | count | at most | count |  |
 

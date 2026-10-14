@@ -94,14 +94,13 @@ pub enum Context {
     Function,
     /// A `when:` predicate, on a hazard or a function (v0.1.46).
     Predicate,
-    /// The map form of `modes.<name>.window` (v0.1.46).
-    Window,
     /// `modes.<name>.exit` (v0.1.46).
     Exit,
     /// The map form of `safe_state.settle`: a braking profile (v0.1.46).
     Settle,
     /// The map form of a budget (phase 10): `{ duration, source }`, and on
-    /// `max_age` also `param`.
+    /// `max_age` and a mode's `window` also `param` (phase 90 G2: the
+    /// window's map form is a budget's, no context of its own).
     Budget,
     /// The map under `source: { measured: ... }` (phase 10).
     Measured,
@@ -139,7 +138,6 @@ impl Context {
             Context::SafeState => "safe_state",
             Context::Function => "functions.<name>",
             Context::Predicate => "when",
-            Context::Window => "modes.<name>.window",
             Context::Exit => "modes.<name>.exit",
             Context::Settle => "safe_state.settle",
             Context::Budget => "<budget> (map form)",
@@ -1150,25 +1148,6 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "The field is at least the constant, a number.",
     ),
-    // -- modes.<name>.window --
-    live(
-        "duration",
-        Context::Window,
-        Kind::Requirement,
-        "The least time the rung lasts while it stays available: the rung below starts no sooner. Required, positive.",
-    ),
-    live(
-        "param",
-        Context::Window,
-        Kind::Fact,
-        "`<node>.<parameter>`: the parameter, in seconds, whose resolved launch value must equal `duration` (`window-param`).",
-    ),
-    live(
-        "source",
-        Context::Window,
-        Kind::Meta,
-        "Where the window's duration comes from: `requirement`, `measured`, `derived` or `analysed` (see `source` under the budget map form).",
-    ),
     // -- modes.<name>.exit --
     live(
         "on",
@@ -1212,13 +1191,13 @@ pub const FIELDS: &[Field] = &[
         "duration",
         Context::Budget,
         Kind::Requirement,
-        "The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter` and a settle's `response`.",
+        "The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter`, a settle's `response` and a mode's `window` (where it is the least time the rung lasts while it stays available: the rung below starts no sooner; positive). See Bounds below.",
     ),
     live(
         "param",
         Context::Budget,
         Kind::Fact,
-        "`max_age` only: the parameter of this subscriber's node, in seconds, whose resolved launch value must equal `duration` (`max-age-param`).",
+        "The parameter whose resolved launch value, in seconds, must equal `duration`. On `max_age`: a parameter of this subscriber's node (`max-age-param`). On a mode's `window`: `<node>.<parameter>` (`window-param`). No other bound takes one.",
     ),
     live(
         "source",
@@ -1336,6 +1315,43 @@ pub fn render_markdown() -> String {
         }
         out.push('\n');
     }
+    out.push_str(&render_bounds());
+    out
+}
+
+/// The "Bounds" section of the Format Reference (phase 90 G2): every bound
+/// key, the context it is written in, and the bound it parses to.
+fn render_bounds() -> String {
+    use crate::bound::{BOUND_KEYS, Form};
+    let mut out = String::new();
+    out.push_str("## Bounds\n\n");
+    out.push_str(
+        "Every key below is a spelling of one bound: a value with a unit, what it \
+         limits (its **kind**), from which side, where the number comes from \
+         (`source`, in the map form) and, for two of them, the parameter of the \
+         image that must carry it (`param`). The keys keep their names; each \
+         parses to the bound its row gives. **map form** says what the key \
+         accepts besides its bare value: `{ duration, source }` (the budget map \
+         form above), or that plus `param`.\n\n",
+    );
+    out.push_str("| key | where | kind | limit | unit | map form |\n|---|---|---|---|---|---|\n");
+    for b in BOUND_KEYS {
+        let form = match b.form {
+            Form::Bare => "".to_string(),
+            Form::Map => "`{ duration, source }`".to_string(),
+            Form::MapParam => format!("`{{ duration, source, param }}`; `param`: {}", b.param),
+        };
+        out.push_str(&format!(
+            "| `{}` | `{}` | {} | {} | {} | {} |\n",
+            b.key,
+            b.context.label(),
+            b.kind,
+            b.limit.as_str(),
+            b.unit,
+            form
+        ));
+    }
+    out.push('\n');
     out
 }
 /// Keys added since v0.1.49, with the release that added each: what the
@@ -1348,7 +1364,6 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::TriggerTimer, "jitter", "0.1.49"),
     (Context::TriggerTimer, "param", "0.1.58"),
     (Context::TriggerTimer, "period_param", "0.1.58"),
-    (Context::Window, "source", "0.1.58"),
     (Context::Settle, "response", "0.1.58"),
     (Context::Budget, "duration", "0.1.58"),
     (Context::Budget, "param", "0.1.58"),

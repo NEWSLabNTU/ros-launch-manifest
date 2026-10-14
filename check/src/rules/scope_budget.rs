@@ -16,6 +16,7 @@
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
 use ros_launch_manifest_types::Manifest;
+use ros_launch_manifest_types::OptBound;
 
 pub struct ScopeBudgetRule;
 
@@ -34,7 +35,7 @@ impl ValidationRule for ScopeBudgetRule {
             let max_lat = node
                 .paths
                 .values()
-                .filter_map(|p| p.max_latency.map(|d| d.as_millis_f64()))
+                .filter_map(|p| p.max_latency.ms())
                 .fold(0.0_f64, f64::max);
             if max_lat > 0.0 {
                 node_latencies.insert(node_name.clone(), max_lat);
@@ -47,7 +48,7 @@ impl ValidationRule for ScopeBudgetRule {
                 let max_lat = inner
                     .paths
                     .values()
-                    .filter_map(|p| p.max_latency.map(|d| d.as_millis_f64()))
+                    .filter_map(|p| p.max_latency.ms())
                     .fold(0.0_f64, f64::max);
                 if max_lat > 0.0 {
                     node_latencies.insert(scope_name.clone(), max_lat);
@@ -60,17 +61,17 @@ impl ValidationRule for ScopeBudgetRule {
         let topic_transport: f64 = manifest
             .topics
             .values()
-            .filter_map(|t| t.max_transport.map(|d| d.as_millis_f64()))
+            .filter_map(|t| t.max_transport.ms())
             .sum();
         let undeclared_transport_count = manifest
             .topics
             .values()
-            .filter(|t| t.max_transport.map(|d| d.as_millis_f64()).is_none())
+            .filter(|t| t.max_transport.ms().is_none())
             .count();
 
         // Check scope-level paths
         for (path_name, path) in &manifest.paths {
-            if let Some(declared) = path.max_latency.map(|d| d.as_millis_f64()) {
+            if let Some(declared) = path.max_latency.ms() {
                 // Sum: node latencies + declared topic transport.
                 // Topics without max_transport_ms contribute 0; their transport
                 // is absorbed into the scope's residual headroom.
