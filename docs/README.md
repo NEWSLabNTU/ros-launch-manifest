@@ -67,6 +67,7 @@ What each document is, and a suggested reading order.
 | Document | Role | Authority |
 |----------|------|-----------|
 | `format-reference.md` | Exhaustive key list, **generated** from `types/src/field_table.rs` | Normative for the grammar — never edited by hand |
+| `key-inventory.md` | Every key: kind, since, who reads it, which contracts write it; **generated** by `scripts/key_inventory.py` | Descriptive (a census at the commits it names) |
 | `launch-manifest.md` | Manifest format specification | Normative for the format |
 | `contract-theory.md` | Formal foundations | Normative for composition math |
 | `contract-verification.md` | Checker implementation | Descriptive (follows the code) |
