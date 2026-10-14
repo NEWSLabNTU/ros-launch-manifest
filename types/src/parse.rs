@@ -1885,8 +1885,8 @@ fn parse_timer_param(doc: &Yaml, ctx: &str) -> Result<Option<TimerParam>, ParseE
         yaml_string(timer, "period_param", tctx)?,
     ) {
         (None, None) => Ok(None),
-        (Some(r), None) => Ok(Some(TimerParam::Rate(r))),
-        (None, Some(p)) => Ok(Some(TimerParam::Period(p))),
+        (Some(r), None) => Ok(Some(TimerParam::Rate(ParamBinding::Own(r)))),
+        (None, Some(p)) => Ok(Some(TimerParam::Period(ParamBinding::Own(p)))),
         (Some(_), Some(_)) => Err(field_err(
             tctx,
             "period_param",
@@ -4077,11 +4077,11 @@ nodes:
         let n = &m.nodes["n"];
         assert_eq!(
             n.paths["tick"].timer_param,
-            Some(TimerParam::Rate("update_rate".into()))
+            Some(TimerParam::Rate(ParamBinding::Own("update_rate".into())))
         );
         assert_eq!(
             n.paths["slow"].timer_param,
-            Some(TimerParam::Period("period_s".into()))
+            Some(TimerParam::Period(ParamBinding::Own("period_s".into())))
         );
         assert_eq!(
             n.paths["tick"].timer_jitter().and_then(crate::Bound::ms),
