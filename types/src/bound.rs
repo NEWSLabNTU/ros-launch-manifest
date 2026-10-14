@@ -127,10 +127,9 @@ impl Serialize for Quantity {
 ///
 /// One representation for the three ways a contract binds a parameter: a
 /// bare name on the bound's own node (`max_age: { param: <name> }`, and a
-/// timer's `trigger: { timer: { param | period_param } }`, which binds the
-/// timer's rate rather than a bound and is kept as [`crate::TimerParam`]
-/// for its Hz-or-seconds distinction), and `<node>.<parameter>` across the
-/// contract (`window: { param }`).
+/// timer's `trigger: { timer: { param | period_param } }`, whose
+/// [`crate::TimerParam`] says whether the parameter holds Hz or seconds),
+/// and `<node>.<parameter>` across the contract (`window: { param }`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamBinding {
     /// A parameter of the bound's own node (`max_age: { param: <name> }`).
