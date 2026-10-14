@@ -530,15 +530,41 @@ pub fn bound_key(context: Context, key: &str) -> Option<&'static BoundKey> {
         .find(|b| b.context == context && b.key == key)
 }
 
-/// A [`Bound`] for the spelling `key` in `context`, holding `value`.
+/// A [`Bound`] for the spelling `key` in `context`, holding `value`: what
+/// the parser builds for that key, and what a consumer building a contract
+/// in code writes (`spelled(Context::Path, "max_latency", d.into())`).
 ///
 /// # Panics
-/// When `key` is not a bound key in `context`: the parser calls this only
-/// for the rows of [`BOUND_KEYS`].
-pub(crate) fn spelled(context: Context, key: &str, value: Quantity) -> Bound {
+/// When `key` is not a bound key in `context` (a row of [`BOUND_KEYS`]).
+pub fn spelled(context: Context, key: &str, value: impl Into<Quantity>) -> Bound {
     let b = bound_key(context, key)
         .unwrap_or_else(|| panic!("`{key}` in {} is not a bound key", context.label()));
-    Bound::new(b.kind, b.limit, value)
+    Bound::new(b.kind, b.limit, value.into())
+}
+
+impl From<Duration> for Quantity {
+    fn from(d: Duration) -> Self {
+        Quantity::Duration(d)
+    }
+}
+
+impl From<f64> for Quantity {
+    /// A rate, Hz.
+    fn from(v: f64) -> Self {
+        Quantity::Hz(v)
+    }
+}
+
+impl From<u32> for Quantity {
+    fn from(n: u32) -> Self {
+        Quantity::Count(n)
+    }
+}
+
+impl From<DropCount> for Quantity {
+    fn from(c: DropCount) -> Self {
+        Quantity::CountPer(c)
+    }
 }
 
 impl Bound {
