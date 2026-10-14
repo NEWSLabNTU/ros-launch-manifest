@@ -6,6 +6,40 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased (v0.1.58)
+
+Where a contract's budgets come from, and the parameters that set them.
+Every key is optional and every old contract parses to the same values; the
+rules that read the new keys live in the consumer (play_launch). The release
+should set `GRAMMAR_VERSION` to `0.1.58` (the format reference already dates
+the keys `since v0.1.58`). Workspace Cargo version unchanged: fields are only
+added, to structs every consumer builds with `..Default::default()`.
+
+### Added
+
+- **A timer bound to its parameter.** `trigger: { timer: { rate_hz: 10,
+  param: update_rate } }` names the parameter of the path's node that holds
+  the rate (Hz); `period_param:` names one that holds the period (seconds).
+  Stored as `PathDecl.timer_param` (`TimerParam::Rate` / `Period`), so the
+  `Trigger::Timer` variant every consumer matches is unchanged.
+- **A staleness bound bound to its parameter.** `max_age: { duration: 500ms,
+  param: timeout_operation_mode_availability }` (seconds), stored as
+  `EndpointProps.max_age_param`.
+- **The vehicle's response in a derived settle.** `settle: { decel, jerk,
+  response: 256ms }`, stored as `SettleProfile.response`: the time from the
+  braking command to the deceleration the profile assumes, added to the
+  derived profile time.
+- **A budget's source.** Every budget key (`max_latency`, `max_jitter`,
+  `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's
+  `jitter`, a settle's `response`) also takes the map form `{ duration,
+  source }`, and a window takes `source` beside `duration`. `source:` is
+  `requirement`, `measured`, `derived` or `analysed`; `{ measured: { max, n,
+  margin } }` (or `{ measured: { margin, terms: { <name>: { max, n, period
+  } } } }`) states the observations a measured budget was sized from.
+  Collected per manifest in `Manifest.budget_sources`, keyed by the budget's
+  dotted contract path. `Measurement::budget_ms()` is the rule: each term
+  `period + max x (1 + margin)`, rounded up to the next ms, summed.
+
 ## v0.1.57 - 2026-10-13
 
 The system config and the model name no realizer's facts: W8 of

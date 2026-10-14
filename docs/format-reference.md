@@ -167,7 +167,9 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `rate_hz` | fact |  | Timer rate. Required, and must be greater than zero. |
-| `jitter` | fact | since v0.1.49 | Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. |
+| `jitter` | fact | since v0.1.49 | Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. A budget: the map form `{ duration, source }` applies. |
+| `param` | fact | since v0.1.58 | The parameter of this path's node that holds the timer's RATE, Hz (`update_rate`). Its resolved launch value must equal `rate_hz` (`timer-param`). At most one of `param` and `period_param`. |
+| `period_param` | fact | since v0.1.58 | The parameter of this path's node that holds the timer's PERIOD, seconds. Its resolved launch value must equal `1 / rate_hz` (`timer-param`). |
 
 ## `sync`
 
@@ -293,6 +295,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `duration` | requirement |  | The least time the rung lasts while it stays available: the rung below starts no sooner. Required, positive. |
 | `param` | fact |  | `<node>.<parameter>`: the parameter, in seconds, whose resolved launch value must equal `duration` (`window-param`). |
+| `source` | meta | since v0.1.58 | Where the window's duration comes from: `requirement`, `measured`, `derived` or `analysed` (see `source` under the budget map form). |
 
 ## `modes.<name>.exit`
 
@@ -308,4 +311,31 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `decel` | fact |  | The parameter on this path's node holding the deceleration, m/s^2, read as a magnitude. |
 | `jerk` | fact |  | The parameter on this path's node holding the jerk the deceleration ramps at, m/s^3, read as a magnitude. |
 | `duration` | fact |  | A measured settle beside the profile: the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). |
+| `response` | requirement | since v0.1.58 | The vehicle's response: from the braking command to the deceleration the profile assumes (a duration). Added to the derived profile time, `settle = response + a/j + (v0 - v_r)/a` (`settle-derived` prints both parts). A budget: the map form `{ duration, source }` applies. |
+
+## `<budget> (map form)`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `duration` | requirement | since v0.1.58 | The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter` and a settle's `response`. |
+| `param` | fact | since v0.1.58 | `max_age` only: the parameter of this subscriber's node, in seconds, whose resolved launch value must equal `duration` (`max-age-param`). |
+| `source` | meta | since v0.1.58 | Where the budget comes from: `requirement` (chosen: a hazard analysis, a decision, a configured value), `measured` (an observed maximum plus a margin: NOT a bound), `derived` (computed from other numbers of the contract or the image's parameters) or `analysed` (an upper bound from an analysis). `{ measured: { max, n, margin } }` states the observations, and the consumer checks that `max x (1 + margin)`, rounded up to the next ms, reproduces `duration` (`budget-rule`). |
+
+## `source.measured`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `max` | fact | since v0.1.58 | Single-term form: the largest value observed (a duration). For a timer tick with `period`, the largest lateness beyond the period. |
+| `n` | fact | since v0.1.58 | Single-term form: how many samples the maximum is over. |
+| `period` | fact | since v0.1.58 | Single-term form: a timer tick's period, charged without margin: the term is `period + max x (1 + margin)`. |
+| `margin` | requirement | since v0.1.58 | The margin over the observed maximum, a fraction (`0.2` = 20 %). Required with `max` or `terms`. |
+| `terms` | fact | since v0.1.58 | Several terms summed, a map of name -> `{ max, n, period }`: each is rounded up to the next ms on its own, then they are added (`tick: { period: 100ms, max: 14.84ms }`, `work: { max: 25.04ms }` -> 118 + 31 = 149 ms). Refused beside `max`. |
+
+## `source.measured.terms.<name>`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `max` | fact | since v0.1.58 | The largest value observed for this term (a duration). Required. |
+| `n` | fact | since v0.1.58 | How many samples the maximum is over. |
+| `period` | fact | since v0.1.58 | A timer tick's period, charged without margin. |
 

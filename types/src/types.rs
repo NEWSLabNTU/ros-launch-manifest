@@ -80,6 +80,134 @@ pub struct Manifest {
     /// ladder to fall to when it is lost.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, ModeDecl>,
+    /// Where each budget comes from (phase 10 B7): the `source:` of every
+    /// budget written in its map form (`max_latency: { duration: 149ms,
+    /// source: ... }`), keyed by the budget's dotted contract path from this
+    /// manifest's root (`nodes.h.paths.call_mrm.max_latency`,
+    /// `modes.tor.window`). A budget written as a bare duration states no
+    /// source and has no entry.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub budget_sources: BTreeMap<String, BudgetSource>,
+}
+
+/// `source:` on a budget (phase 10 B7): where the number comes from.
+///
+/// A measured budget is the largest value some runs observed, plus a margin;
+/// it is NOT an upper bound, and a consumer must not present a total that
+/// contains one as if it were.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BudgetSource {
+    pub kind: SourceKind,
+    /// `measured` only, and optional there: the observations the budget was
+    /// sized from, which the consumer reproduces (`budget-rule`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured: Option<Measurement>,
+}
+
+/// The four provenances a budget can have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    /// Chosen: a hazard analysis, a decision, a configured parameter.
+    Requirement,
+    /// The observed maximum of runs plus a margin. Not a bound.
+    Measured,
+    /// Computed from other numbers of the contract or the image's parameters.
+    Derived,
+    /// An upper bound from an analysis (WCET, response time, link schedule).
+    Analysed,
+}
+
+impl SourceKind {
+    pub const ALL: [SourceKind; 4] = [
+        SourceKind::Requirement,
+        SourceKind::Measured,
+        SourceKind::Derived,
+        SourceKind::Analysed,
+    ];
+
+    /// The contract spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceKind::Requirement => "requirement",
+            SourceKind::Measured => "measured",
+            SourceKind::Derived => "derived",
+            SourceKind::Analysed => "analysed",
+        }
+    }
+}
+
+impl std::fmt::Display for SourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The observations behind a measured budget: one or more terms, each sized
+/// as `period + max x (1 + margin)` rounded up to the next millisecond, and
+/// summed. A term with a `period` is a timer tick: the period is the
+/// parameter the image runs and takes no margin; only the lateness beyond it
+/// (`max`) does.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Measurement {
+    /// The margin over the observed maximum, as a fraction (`0.2` = 20 %).
+    pub margin: f64,
+    pub terms: Vec<MeasuredTerm>,
+}
+
+/// One measured term of a budget.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MeasuredTerm {
+    /// The term's name in the `terms:` map; `None` for the single-term form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The largest value observed (for a timer tick: the largest lateness
+    /// beyond `period`).
+    pub max: crate::duration::Duration,
+    /// How many samples the maximum is over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub n: Option<u64>,
+    /// A timer tick's period, charged without margin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub period: Option<crate::duration::Duration>,
+}
+
+impl MeasuredTerm {
+    /// `period + max x (1 + margin)`, rounded up to the next millisecond.
+    pub fn budget_ms(&self, margin: f64) -> f64 {
+        let raw = self.period.map_or(0.0, |p| p.as_millis_f64())
+            + self.max.as_millis_f64() * (1.0 + margin);
+        // A product such as 50 x 1.2 lands a hair above 60 in binary; it is
+        // 60, not 61.
+        (raw - 1e-9).ceil()
+    }
+}
+
+impl Measurement {
+    /// The budget the rule gives: the sum of the terms' budgets.
+    pub fn budget_ms(&self) -> f64 {
+        self.terms.iter().map(|t| t.budget_ms(self.margin)).sum()
+    }
+}
+
+/// The parameter that sets a timer's period (phase 10 B1), on the path's
+/// own node: `trigger: { timer: { rate_hz: 10, param: update_rate } }` (a
+/// rate in Hz) or `period_param: <name>` (a period in seconds).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimerParam {
+    /// The parameter holds the rate, Hz.
+    Rate(String),
+    /// The parameter holds the period, seconds.
+    Period(String),
+}
+
+impl TimerParam {
+    pub fn name(&self) -> &str {
+        match self {
+            TimerParam::Rate(n) | TimerParam::Period(n) => n,
+        }
+    }
 }
 
 /// One operational mode (phase 75, `docs/design/operational-modes.md`).
@@ -465,6 +593,11 @@ pub struct SettleProfile {
     pub decel: String,
     /// The parameter holding the jerk the deceleration ramps at, m/s^3.
     pub jerk: String,
+    /// The vehicle's response (phase 10 B2): the time from the braking
+    /// command to the deceleration the profile assumes, written (measured
+    /// or analysed), and added to the derived profile time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<crate::duration::Duration>,
 }
 
 impl SettleProfile {
@@ -692,6 +825,12 @@ pub struct EndpointProps {
     /// `pub:`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_demand: Option<bool>,
+    /// Sub endpoint (phase 10 B1): the parameter of this node, in seconds,
+    /// whose resolved launch value must equal `max_age`:
+    /// `max_age: { duration: 500ms, param: <name> }` (`max-age-param` in the
+    /// consumer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_param: Option<String>,
 }
 
 /// Buffering discipline for a `state: true` subscriber endpoint
@@ -1057,6 +1196,12 @@ pub struct PathDecl {
     /// What this path produces when it is a reaction (phase 71).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe_state: Option<SafeState>,
+    /// The parameter that sets this path's timer period (phase 10 B1),
+    /// written inside `trigger: { timer: { ... } }` and kept here so the
+    /// [`Trigger::Timer`] variant every consumer matches stays unchanged
+    /// (`timer-param` in the consumer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_param: Option<TimerParam>,
 }
 
 impl PathDecl {

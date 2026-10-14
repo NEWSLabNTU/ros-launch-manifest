@@ -100,6 +100,13 @@ pub enum Context {
     Exit,
     /// The map form of `safe_state.settle`: a braking profile (v0.1.46).
     Settle,
+    /// The map form of a budget (phase 10): `{ duration, source }`, and on
+    /// `max_age` also `param`.
+    Budget,
+    /// The map under `source: { measured: ... }` (phase 10).
+    Measured,
+    /// One entry of `source: { measured: { terms: ... } }` (phase 10).
+    MeasuredTerm,
 }
 
 impl Context {
@@ -135,6 +142,9 @@ impl Context {
             Context::Window => "modes.<name>.window",
             Context::Exit => "modes.<name>.exit",
             Context::Settle => "safe_state.settle",
+            Context::Budget => "<budget> (map form)",
+            Context::Measured => "source.measured",
+            Context::MeasuredTerm => "source.measured.terms.<name>",
         }
     }
 }
@@ -808,7 +818,19 @@ pub const FIELDS: &[Field] = &[
         "jitter",
         Context::TriggerTimer,
         Kind::Fact,
-        "Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time.",
+        "Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. A budget: the map form `{ duration, source }` applies.",
+    ),
+    live(
+        "param",
+        Context::TriggerTimer,
+        Kind::Fact,
+        "The parameter of this path's node that holds the timer's RATE, Hz (`update_rate`). Its resolved launch value must equal `rate_hz` (`timer-param`). At most one of `param` and `period_param`.",
+    ),
+    live(
+        "period_param",
+        Context::TriggerTimer,
+        Kind::Fact,
+        "The parameter of this path's node that holds the timer's PERIOD, seconds. Its resolved launch value must equal `1 / rate_hz` (`timer-param`).",
     ),
     // ── sync ──
     live(
@@ -1141,6 +1163,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "`<node>.<parameter>`: the parameter, in seconds, whose resolved launch value must equal `duration` (`window-param`).",
     ),
+    live(
+        "source",
+        Context::Window,
+        Kind::Meta,
+        "Where the window's duration comes from: `requirement`, `measured`, `derived` or `analysed` (see `source` under the budget map form).",
+    ),
     // -- modes.<name>.exit --
     live(
         "on",
@@ -1172,6 +1200,80 @@ pub const FIELDS: &[Field] = &[
         Context::Settle,
         Kind::Fact,
         "A measured settle beside the profile: the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`).",
+    ),
+    live(
+        "response",
+        Context::Settle,
+        Kind::Requirement,
+        "The vehicle's response: from the braking command to the deceleration the profile assumes (a duration). Added to the derived profile time, `settle = response + a/j + (v0 - v_r)/a` (`settle-derived` prints both parts). A budget: the map form `{ duration, source }` applies.",
+    ),
+    // -- the map form of a budget (phase 10) --
+    live(
+        "duration",
+        Context::Budget,
+        Kind::Requirement,
+        "The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter` and a settle's `response`.",
+    ),
+    live(
+        "param",
+        Context::Budget,
+        Kind::Fact,
+        "`max_age` only: the parameter of this subscriber's node, in seconds, whose resolved launch value must equal `duration` (`max-age-param`).",
+    ),
+    live(
+        "source",
+        Context::Budget,
+        Kind::Meta,
+        "Where the budget comes from: `requirement` (chosen: a hazard analysis, a decision, a configured value), `measured` (an observed maximum plus a margin: NOT a bound), `derived` (computed from other numbers of the contract or the image's parameters) or `analysed` (an upper bound from an analysis). `{ measured: { max, n, margin } }` states the observations, and the consumer checks that `max x (1 + margin)`, rounded up to the next ms, reproduces `duration` (`budget-rule`).",
+    ),
+    // -- source: { measured: ... } --
+    live(
+        "max",
+        Context::Measured,
+        Kind::Fact,
+        "Single-term form: the largest value observed (a duration). For a timer tick with `period`, the largest lateness beyond the period.",
+    ),
+    live(
+        "n",
+        Context::Measured,
+        Kind::Fact,
+        "Single-term form: how many samples the maximum is over.",
+    ),
+    live(
+        "period",
+        Context::Measured,
+        Kind::Fact,
+        "Single-term form: a timer tick's period, charged without margin: the term is `period + max x (1 + margin)`.",
+    ),
+    live(
+        "margin",
+        Context::Measured,
+        Kind::Requirement,
+        "The margin over the observed maximum, a fraction (`0.2` = 20 %). Required with `max` or `terms`.",
+    ),
+    live(
+        "terms",
+        Context::Measured,
+        Kind::Fact,
+        "Several terms summed, a map of name -> `{ max, n, period }`: each is rounded up to the next ms on its own, then they are added (`tick: { period: 100ms, max: 14.84ms }`, `work: { max: 25.04ms }` -> 118 + 31 = 149 ms). Refused beside `max`.",
+    ),
+    live(
+        "max",
+        Context::MeasuredTerm,
+        Kind::Fact,
+        "The largest value observed for this term (a duration). Required.",
+    ),
+    live(
+        "n",
+        Context::MeasuredTerm,
+        Kind::Fact,
+        "How many samples the maximum is over.",
+    ),
+    live(
+        "period",
+        Context::MeasuredTerm,
+        Kind::Fact,
+        "A timer tick's period, charged without margin.",
     ),
 ];
 
@@ -1244,6 +1346,21 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Manifest, "rlm", "0.1.49"),
     (Context::Endpoint, "on_demand", "0.1.49"),
     (Context::TriggerTimer, "jitter", "0.1.49"),
+    (Context::TriggerTimer, "param", "0.1.58"),
+    (Context::TriggerTimer, "period_param", "0.1.58"),
+    (Context::Window, "source", "0.1.58"),
+    (Context::Settle, "response", "0.1.58"),
+    (Context::Budget, "duration", "0.1.58"),
+    (Context::Budget, "param", "0.1.58"),
+    (Context::Budget, "source", "0.1.58"),
+    (Context::Measured, "max", "0.1.58"),
+    (Context::Measured, "n", "0.1.58"),
+    (Context::Measured, "period", "0.1.58"),
+    (Context::Measured, "margin", "0.1.58"),
+    (Context::Measured, "terms", "0.1.58"),
+    (Context::MeasuredTerm, "max", "0.1.58"),
+    (Context::MeasuredTerm, "n", "0.1.58"),
+    (Context::MeasuredTerm, "period", "0.1.58"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

@@ -60,6 +60,7 @@ pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
     // the body is read -- a file written for a newer grammar would otherwise
     // be refused for its first new key, which reads as the author's typo.
     check_grammar_header(&docs[0])?;
+    BUDGET_SOURCES.with(|b| b.borrow_mut().clear());
     with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""))
 }
 
@@ -164,7 +165,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
             }
         }
     }
-    Ok(Manifest {
+    let mut manifest = Manifest {
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
         rlm: if ctx.is_empty() {
             doc["rlm"].as_str().map(str::to_string)
@@ -183,7 +184,205 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         severity_levels: yaml_string_list(doc, "severity_levels", ctx)?,
         functions: parse_functions(doc, ctx)?,
         modes: parse_modes(doc, ctx)?,
-    })
+        budget_sources: BTreeMap::new(),
+    };
+    // The sources recorded under this manifest's root. An inline include is
+    // parsed (and drains its own) before its parent gets here.
+    let prefix = if ctx.is_empty() {
+        String::new()
+    } else {
+        format!("{ctx}.")
+    };
+    BUDGET_SOURCES.with(|b| {
+        let mut all = b.borrow_mut();
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *all)
+            .into_iter()
+            .partition(|(path, _)| path.starts_with(&prefix));
+        *all = rest;
+        for (path, src) in mine {
+            manifest
+                .budget_sources
+                .insert(path[prefix.len()..].to_string(), src);
+        }
+    });
+    Ok(manifest)
+}
+
+thread_local! {
+    /// The `source:` of every budget parsed in its map form during one
+    /// manifest parse (phase 10 B7), as (dotted path from the file root,
+    /// source). Drained into each manifest by [`parse_manifest_yaml`].
+    static BUDGET_SOURCES: std::cell::RefCell<Vec<(String, BudgetSource)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record_source(path: String, src: BudgetSource) {
+    BUDGET_SOURCES.with(|b| b.borrow_mut().push((path, src)));
+}
+
+/// A budget: a bare duration (`max_latency: 149ms`), or its map form
+/// `{ duration, source }` (phase 10 B7), which also takes `param` where
+/// `allow_param` says the key can be bound to a parameter (`max_age`).
+/// Records the source under `<ctx>.<key>`.
+fn yaml_budget(
+    doc: &Yaml,
+    key: &str,
+    ctx: &str,
+    allow_param: bool,
+) -> Result<(Option<Duration>, Option<String>), ParseError> {
+    let v = &doc[key];
+    let Yaml::Hash(_) = v else {
+        return Ok((yaml_duration(doc, key)?, None));
+    };
+    let bctx = &format_path(ctx, key);
+    reject_unknown_keys(v, bctx, Context::Budget)?;
+    let d = yaml_duration(v, "duration")
+        .map_err(|e| reframe(e, bctx))?
+        .ok_or_else(|| {
+            field_err(
+                bctx,
+                "duration",
+                "required: the budget itself, with a unit (`149ms`)",
+            )
+        })?;
+    let param = yaml_string(v, "param", bctx)?;
+    if param.is_some() && !allow_param {
+        return Err(field_err(
+            bctx,
+            "param",
+            &format!(
+                "`{key}` cannot be bound to a parameter; `param:` binds `max_age` (a subscriber's \
+                 staleness bound), a timer (`trigger: {{ timer: {{ param }} }}`) and a window"
+            ),
+        ));
+    }
+    if !v["source"].is_badvalue() {
+        let src = parse_source(&v["source"], bctx)?;
+        record_source(bctx.clone(), src);
+    }
+    Ok((Some(d), param))
+}
+
+/// `source:` (phase 10 B7): `requirement | measured | derived | analysed`,
+/// or `{ measured: { max, n, period, margin } }`, or `{ measured: { margin,
+/// terms: { <name>: { max, n, period } } } }`.
+fn parse_source(v: &Yaml, ctx: &str) -> Result<BudgetSource, ParseError> {
+    let kinds = || {
+        SourceKind::ALL
+            .iter()
+            .map(|k| k.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let kind_of = |name: &str| {
+        SourceKind::ALL
+            .into_iter()
+            .find(|k| k.as_str() == name)
+            .ok_or_else(|| {
+                field_err(
+                    ctx,
+                    "source",
+                    &format!("`{name}` is not a source -- accepted: {}", kinds()),
+                )
+            })
+    };
+    match v {
+        Yaml::String(s) => Ok(BudgetSource {
+            kind: kind_of(s)?,
+            measured: None,
+        }),
+        Yaml::Hash(h) if h.len() == 1 => {
+            let (k, body) = h.iter().next().expect("len == 1");
+            let kind = kind_of(&yaml_str_owned(k))?;
+            if kind != SourceKind::Measured {
+                return Err(field_err(
+                    ctx,
+                    "source",
+                    &format!("only `measured` carries observations; write `source: {kind}`"),
+                ));
+            }
+            let mctx = &format_path(ctx, "source.measured");
+            reject_unknown_keys(body, mctx, Context::Measured)?;
+            let margin = yaml_f64(body, "margin", mctx)?.ok_or_else(|| {
+                field_err(
+                    mctx,
+                    "margin",
+                    "required: the margin over the observed maximum, a fraction (`0.2`)",
+                )
+            })?;
+            if !(margin.is_finite() && margin >= 0.0) {
+                return Err(field_err(mctx, "margin", "must be a fraction >= 0"));
+            }
+            let term =
+                |t: &Yaml, tctx: &str, name: Option<String>| -> Result<MeasuredTerm, ParseError> {
+                    let max = yaml_duration(t, "max")
+                        .map_err(|e| reframe(e, tctx))?
+                        .ok_or_else(|| {
+                            field_err(tctx, "max", "required: the largest value observed")
+                        })?;
+                    let n = match &t["n"] {
+                        Yaml::BadValue | Yaml::Null => None,
+                        Yaml::Integer(i) if *i > 0 => Some(*i as u64),
+                        other => return Err(type_err(tctx, "n", "a positive sample count", other)),
+                    };
+                    Ok(MeasuredTerm {
+                        name,
+                        max,
+                        n,
+                        period: yaml_duration(t, "period").map_err(|e| reframe(e, tctx))?,
+                    })
+                };
+            let terms = match (&body["terms"], body["max"].is_badvalue()) {
+                (Yaml::BadValue, true) => {
+                    return Err(field_err(
+                        mctx,
+                        "max",
+                        "required: the observed maximum (`max`), or several terms (`terms`)",
+                    ));
+                }
+                (Yaml::BadValue, false) => vec![term(body, mctx, None)?],
+                (Yaml::Hash(th), true) => {
+                    let tctx = &format_path(mctx, "terms");
+                    let mut out = Vec::new();
+                    for (tk, tv) in th {
+                        let name = yaml_str_owned(tk);
+                        let one = &format_path(tctx, &name);
+                        reject_unknown_keys(tv, one, Context::MeasuredTerm)?;
+                        out.push(term(tv, one, Some(name))?);
+                    }
+                    if out.is_empty() {
+                        return Err(field_err(mctx, "terms", "names no term"));
+                    }
+                    out
+                }
+                (Yaml::Hash(_), false) => {
+                    return Err(field_err(
+                        mctx,
+                        "terms",
+                        "state one maximum (`max`) or several terms (`terms`), not both",
+                    ));
+                }
+                (other, _) => {
+                    return Err(type_err(
+                        mctx,
+                        "terms",
+                        "a map of name -> { max, n, period }",
+                        other,
+                    ));
+                }
+            };
+            Ok(BudgetSource {
+                kind,
+                measured: Some(Measurement { margin, terms }),
+            })
+        }
+        other => Err(type_err(
+            ctx,
+            "source",
+            "a source name or `{ measured: { max, n, margin } }`",
+            other,
+        )),
+    }
 }
 
 /// A guard group in the two shapes phase 71 established: a bare list is
@@ -441,6 +640,10 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<ModeWindow>, ParseError>
             let param = yaml_string(section, "param", wctx)?
                 .map(|raw| parse_param_ref(&raw, wctx, "param"))
                 .transpose()?;
+            if !section["source"].is_badvalue() {
+                let src = parse_source(&section["source"], wctx)?;
+                record_source(wctx.clone(), src);
+            }
             Ok(Some(ModeWindow {
                 duration: positive(d, "window.duration")?,
                 param,
@@ -698,7 +901,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 description: yaml_string(v, "description", &hctx)?,
                 guards,
                 on,
-                ftti: yaml_duration(v, "ftti")?,
+                ftti: yaml_budget(v, "ftti", &hctx, false)?.0,
                 reaction: yaml_string(v, "reaction", &hctx)?,
                 when: parse_predicate(v, &hctx)?,
                 entry_speed,
@@ -744,7 +947,7 @@ fn parse_on_violation(doc: &Yaml, ctx: &str) -> Result<Option<OnViolation>, Pars
     Ok(Some(OnViolation {
         on,
         reaction,
-        within: yaml_duration(section, "within")?,
+        within: yaml_budget(section, "within", ctx, false)?.0,
         mechanism,
     }))
 }
@@ -781,7 +984,15 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
             let decel = param("decel")?;
             let jerk = param("jerk")?;
             let literal = yaml_duration(profile, "duration").map_err(|e| reframe(e, sctx))?;
-            (literal, Some(SettleProfile { decel, jerk }))
+            let response = yaml_budget(profile, "response", sctx, false)?.0;
+            (
+                literal,
+                Some(SettleProfile {
+                    decel,
+                    jerk,
+                    response,
+                }),
+            )
         }
         _ => (yaml_duration(section, "settle")?, None),
     };
@@ -1018,14 +1229,16 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         ));
     }
     reject_unknown_keys(yaml, ctx, Context::Endpoint)?;
+    let (max_age, max_age_param) = yaml_budget(yaml, "max_age", ctx, true)?;
     let props = EndpointProps {
         min_rate_hz: yaml_f64(yaml, "min_rate_hz", ctx)?,
         max_rate_hz: yaml_f64(yaml, "max_rate_hz", ctx)?,
-        max_age: yaml_duration(yaml, "max_age")?,
+        max_age,
+        max_age_param,
         state: yaml_bool(yaml, "state", ctx)?,
         required: yaml_bool(yaml, "required", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        max_transport: yaml_duration(yaml, "max_transport")?,
+        max_transport: yaml_budget(yaml, "max_transport", ctx, false)?.0,
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
         on_demand: yaml_bool(yaml, "on_demand", ctx)?,
@@ -1114,7 +1327,7 @@ fn parse_srv_endpoints(
                     max_response: if v.is_null() || v.is_badvalue() {
                         None
                     } else {
-                        yaml_duration(v, "max_response")?
+                        yaml_budget(v, "max_response", &format_path(ctx, &name), false)?.0
                     },
                 };
                 eps.insert(name, props);
@@ -1193,7 +1406,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
         rate_hz: yaml_f64(yaml, "rate_hz", ctx)?,
-        max_transport: yaml_duration(yaml, "max_transport")?,
+        max_transport: yaml_budget(yaml, "max_transport", ctx, false)?.0,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external: parse_external_side(yaml, "external", ctx)?,
     })
@@ -1508,15 +1721,16 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         unless_condition: yaml_string(yaml, "unless", ctx)?,
         input,
         output: yaml_string_list(yaml, "output", ctx)?,
-        max_latency: yaml_duration(yaml, "max_latency")?,
+        max_latency: yaml_budget(yaml, "max_latency", ctx, false)?.0,
         tolerance: yaml_duration(yaml, "tolerance")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         trigger,
         sync,
-        max_jitter: yaml_duration(yaml, "max_jitter")?,
+        max_jitter: yaml_budget(yaml, "max_jitter", ctx, false)?.0,
         min_latency: yaml_duration(yaml, "min_latency")?,
         miss: parse_miss_spec(yaml, ctx)?,
         safe_state: parse_safe_state(yaml, ctx)?,
+        timer_param: parse_timer_param(yaml, ctx)?,
     };
 
     // Vocabulary v2 §2: sync only meaningful with an input trigger with
@@ -1586,7 +1800,7 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
             if rate_hz <= 0.0 {
                 return Err(field_err(ctx, "trigger.timer.rate_hz", "must be > 0"));
             }
-            let jitter = yaml_duration(v, "jitter")?;
+            let jitter = yaml_budget(v, "jitter", &format_path(ctx, "trigger.timer"), false)?.0;
             if let Some(j) = jitter
                 && j.as_millis_f64() >= 1000.0 / rate_hz
             {
@@ -1611,6 +1825,30 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
             ctx,
             "trigger",
             &format!("invalid trigger key '{other}', expected 'timer' or 'input'"),
+        )),
+    }
+}
+
+/// `trigger: { timer: { param | period_param } }` (phase 10 B1): the
+/// parameter of the path's node that sets the timer's period.
+fn parse_timer_param(doc: &Yaml, ctx: &str) -> Result<Option<TimerParam>, ParseError> {
+    let timer = &doc["trigger"]["timer"];
+    if !timer.is_hash() {
+        return Ok(None);
+    }
+    let tctx = &format_path(ctx, "trigger.timer");
+    match (
+        yaml_string(timer, "param", tctx)?,
+        yaml_string(timer, "period_param", tctx)?,
+    ) {
+        (None, None) => Ok(None),
+        (Some(r), None) => Ok(Some(TimerParam::Rate(r))),
+        (None, Some(p)) => Ok(Some(TimerParam::Period(p))),
+        (Some(_), Some(_)) => Err(field_err(
+            tctx,
+            "period_param",
+            "a timer is bound to ONE parameter: its rate (`param`, Hz) or its period \
+             (`period_param`, seconds), not both",
         )),
     }
 }
@@ -3446,7 +3684,8 @@ nodes:
             ss.settle_profile,
             Some(SettleProfile {
                 decel: "target_acceleration".into(),
-                jerk: "target_jerk".into()
+                jerk: "target_jerk".into(),
+                response: None,
             })
         );
         let both = m.nodes["op"].paths["measured"].safe_state.as_ref().unwrap();
@@ -3673,5 +3912,174 @@ nodes:
         assert!(!one.contains("Also refused"), "{one}");
         // The collection does not leak into the next parse.
         assert!(parse_manifest_str("version: 1\n").is_ok());
+    }
+
+    /// Phase 10 B1, B2, B7: a timer and a `max_age` bound to their
+    /// parameters, a settle's response, and a budget's source in each form.
+    #[test]
+    fn phase10_budget_keys_parse() {
+        let m = parse_manifest_str(
+            r#"
+version: 1
+hazards:
+  h:
+    guards: [/a]
+    ftti: { duration: 10s, source: requirement }
+    reaction: r
+modes:
+  tor:
+    requires: []
+    window: { duration: 10s, param: n.timeout, source: requirement }
+nodes:
+  n:
+    params:
+      update_rate: { type: integer }
+      period_s: { type: double }
+      timeout: { type: double }
+      response: { type: double }
+    sub:
+      a:
+        max_age: { duration: 500ms, param: timeout, source: requirement }
+        max_transport:
+          duration: 56ms
+          source: { measured: { max: 46.42ms, n: 12, margin: 0.2 } }
+        on_violation:
+          reaction: react
+          within: { duration: 149ms, source: derived }
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 10, param: update_rate, jitter: { duration: 18ms, source: measured } } }
+        output: [b]
+      slow:
+        trigger: { timer: { rate_hz: 2, period_param: period_s } }
+        output: [b]
+      react:
+        trigger: { input: [a] }
+        output: [b]
+        max_latency:
+          duration: 149ms
+          source:
+            measured:
+              margin: 0.2
+              terms:
+                tick: { period: 100ms, max: 14.84ms, n: 1641 }
+                work: { max: 25.04ms, n: 13 }
+        safe_state:
+          emits: b
+          settle: { decel: d, jerk: j, response: { duration: 256ms, source: { measured: { max: 213.11ms, n: 3, margin: 0.2 } } } }
+    pub:
+      b: {}
+"#,
+        )
+        .unwrap();
+        let n = &m.nodes["n"];
+        assert_eq!(
+            n.paths["tick"].timer_param,
+            Some(TimerParam::Rate("update_rate".into()))
+        );
+        assert_eq!(
+            n.paths["slow"].timer_param,
+            Some(TimerParam::Period("period_s".into()))
+        );
+        assert_eq!(
+            n.paths["tick"].timer_jitter().map(|d| d.as_millis_f64()),
+            Some(18.0)
+        );
+        let a = &n.subscribers["a"];
+        assert_eq!(a.max_age.map(|d| d.as_millis_f64()), Some(500.0));
+        assert_eq!(a.max_age_param.as_deref(), Some("timeout"));
+        assert_eq!(a.max_transport.map(|d| d.as_millis_f64()), Some(56.0));
+        let react = &n.paths["react"];
+        assert_eq!(react.max_latency.map(|d| d.as_millis_f64()), Some(149.0));
+        let profile = react
+            .safe_state
+            .as_ref()
+            .unwrap()
+            .settle_profile
+            .as_ref()
+            .unwrap();
+        assert_eq!(profile.response.map(|d| d.as_millis_f64()), Some(256.0));
+
+        let src = |k: &str| m.budget_sources.get(k).unwrap_or_else(|| panic!("{k}"));
+        assert_eq!(src("hazards.h.ftti").kind, SourceKind::Requirement);
+        assert_eq!(src("modes.tor.window").kind, SourceKind::Requirement);
+        assert_eq!(src("nodes.n.sub.a.max_age").kind, SourceKind::Requirement);
+        assert_eq!(
+            src("nodes.n.sub.a.on_violation.within").kind,
+            SourceKind::Derived
+        );
+        let jit = src("nodes.n.paths.tick.trigger.timer.jitter");
+        assert_eq!(
+            (jit.kind, jit.measured.is_none()),
+            (SourceKind::Measured, true)
+        );
+        let link = src("nodes.n.sub.a.max_transport")
+            .measured
+            .as_ref()
+            .unwrap();
+        assert_eq!(link.budget_ms(), 56.0, "46.42 x 1.2 = 55.70 -> 56");
+        let route = src("nodes.n.paths.react.max_latency")
+            .measured
+            .as_ref()
+            .unwrap();
+        assert_eq!(route.terms.len(), 2);
+        assert_eq!(route.terms[0].name.as_deref(), Some("tick"));
+        assert_eq!(
+            route.budget_ms(),
+            149.0,
+            "100 + 14.84 x 1.2 -> 118, 25.04 x 1.2 -> 31"
+        );
+        let resp = src("nodes.n.paths.react.safe_state.settle.response")
+            .measured
+            .as_ref()
+            .unwrap();
+        assert_eq!(resp.budget_ms(), 256.0);
+        assert_eq!(m.budget_sources.len(), 8);
+    }
+
+    /// The new keys refuse what they cannot mean.
+    #[test]
+    fn phase10_budget_keys_refuse_nonsense() {
+        let base = |body: &str| {
+            parse_manifest_str(&format!(
+                "version: 1\nnodes:\n  n:\n    sub:\n      a: {{}}\n    paths:\n      p:\n{body}"
+            ))
+        };
+        let err = |body: &str| base(body).unwrap_err().to_string();
+        let e = err("        trigger: { timer: { rate_hz: 10, param: r, period_param: p } }\n");
+        assert!(e.contains("not both"), "{e}");
+        let e = err(
+            "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, param: x }\n",
+        );
+        assert!(e.contains("cannot be bound to a parameter"), "{e}");
+        let e = err("        trigger: { input: [a] }\n        max_latency: { source: measured }\n");
+        assert!(e.contains("required: the budget itself"), "{e}");
+        let e = err(
+            "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: guessed }\n",
+        );
+        assert!(e.contains("is not a source"), "{e}");
+        let e = err(
+            "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: { derived: x } }\n",
+        );
+        assert!(e.contains("only `measured` carries observations"), "{e}");
+        let e = err(
+            "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: { measured: { max: 4ms } } }\n",
+        );
+        assert!(e.contains("margin"), "{e}");
+        let e = err(
+            "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: { measured: { max: 4ms, margin: 0.2, terms: { a: { max: 1ms } } } } }\n",
+        );
+        assert!(e.contains("not both"), "{e}");
+        let e = err(
+            "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: { measured: { margin: 0.2, terms: { a: { mx: 1ms } } } } }\n",
+        );
+        assert!(e.contains("unknown key"), "{e}");
+        // The bare forms are unchanged, and record no source.
+        let m = base(
+            "        trigger: { timer: { rate_hz: 10, jitter: 2ms } }\n        max_latency: 5ms\n",
+        )
+        .unwrap();
+        assert!(m.budget_sources.is_empty());
+        assert_eq!(m.nodes["n"].paths["p"].timer_param, None);
     }
 }
