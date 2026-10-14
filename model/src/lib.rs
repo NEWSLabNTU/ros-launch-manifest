@@ -964,7 +964,8 @@ pub struct WindowContract {
 /// `modes.<m>.exit` after merge (v0.1.46).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExitContract {
-    /// Key into `functions`.
+    /// Key into `functions`: the contract's `exit.holds` (spelled `exit.on`
+    /// before v0.1.59; the model's field keeps the old name).
     pub on: String,
     /// Key into `modes`.
     pub to: String,
@@ -1044,7 +1045,11 @@ pub struct HazardContract {
     pub on: Vec<FaultKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ftti_ms: Option<f64>,
-    /// Key into `scope_paths`.
+    /// Where the hazard's reaction starts: a key into `modes` when the
+    /// hazard enters a mode (the contract's `enters:`, or the deprecated
+    /// `reaction: <mode>`), else a key into `scope_paths` (the contract's
+    /// `reaction: <path>`, one rung). The model keeps one field for both, so
+    /// a reader resolves it the way the checker does: a mode first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
     /// The value that is the fault (v0.1.46).

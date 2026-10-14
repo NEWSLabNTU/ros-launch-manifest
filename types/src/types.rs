@@ -284,12 +284,20 @@ impl std::fmt::Display for ParamRef {
     }
 }
 
-/// `modes.<m>.exit` (v0.1.46): `{ on: <function>, to: <mode> }`.
+/// `modes.<m>.exit` (v0.1.46): `{ holds: <function>, to: <mode> }`.
+///
+/// v0.1.59 renamed `on:` to `holds:`, so that `on` names fault classes only
+/// (`hazards.<h>.on`, `on_violation.on`). `on:` still parses for one release
+/// and sets [`Self::spelled_on`], which the consumer reports as deprecated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ModeExit {
     /// The function whose holding ends the ladder -- typically a value
     /// function (`of:` + `when:`), such as "the control mode is MANUAL".
-    pub on: String,
+    pub holds: String,
+    /// `true` when the contract wrote the deprecated `on:` instead of
+    /// `holds:`.
+    #[serde(skip)]
+    pub spelled_on: bool,
     /// The mode the ladder ends in. Outside every `fallback:` list: an exit
     /// is not a rung (`mode-exit-target` in the consumer).
     pub to: String,
@@ -487,7 +495,16 @@ pub struct HazardDecl {
     /// reaction. The only new number; `FDTI + FRTI` must fit inside it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ftti: Option<crate::duration::Duration>,
-    /// The scope path whose route reaches the safe state.
+    /// The mode this hazard enters (v0.1.59): the top of the fallback ladder
+    /// it walks to a safe state. Exactly one of `enters` and `reaction` is
+    /// written; the parser refuses both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enters: Option<String>,
+    /// The scope path whose route reaches the safe state: a one-rung
+    /// reaction. Before v0.1.59 a hazard also wrote the MODE it enters here;
+    /// that spelling still parses for one release, and the consumer tells
+    /// the two apart by lookup (a mode of the hazard's scope first) and
+    /// reports it as deprecated, naming `enters:`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
     /// The VALUE that is the fault (v0.1.46), for a hazard whose guard is a
@@ -502,6 +519,26 @@ pub struct HazardDecl {
     /// profile derives its settle time from it, per hazard.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_speed: Option<f64>,
+}
+
+impl HazardDecl {
+    /// The name the hazard's reaction starts from: the mode it `enters`, or
+    /// the `reaction` it names. The consumer resolves it the one way it
+    /// always has (a mode of the hazard's scope first, else a scope path),
+    /// so the deprecated `reaction: <mode>` spelling keeps its meaning.
+    pub fn entry(&self) -> Option<&String> {
+        self.enters.as_ref().or(self.reaction.as_ref())
+    }
+
+    /// The key [`Self::entry`] was written under, for diagnostic paths:
+    /// `enters` or `reaction`.
+    pub fn entry_key(&self) -> &'static str {
+        if self.enters.is_some() {
+            "enters"
+        } else {
+            "reaction"
+        }
+    }
 }
 
 /// One guard: a topic, or a redundant set that faults only when all of its
@@ -657,10 +694,13 @@ pub struct NodeDecl {
     ///
     /// Since phase 72 the label is a CONSEQUENCE rather than a free
     /// declaration: a node that feeds, detects or reacts to a hazard takes
-    /// that hazard's severity (max over hazards), and `sched_derive` reads
-    /// the derivation BEFORE any label. `derivable-criticality` (info) and
-    /// `criticality-mismatch` (warning) compare the two. The key stays live
-    /// for the underivable case — a node no hazard reaches keeps its label.
+    /// that hazard's severity (max over hazards, mapped by
+    /// [`crate::severity::criticality_of`]), and `sched_derive` reads the
+    /// derivation BEFORE any label. Since v0.1.59 a label on a node a hazard
+    /// reaches is an error in the consumer (`derivable-criticality` when it
+    /// agrees, `criticality-mismatch` when it does not; the fix is to delete
+    /// it). The key stays live for the underivable case: a node no hazard
+    /// reaches keeps its label, and it is the scheduler mapper's input there.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub criticality: Option<String>,
     /// Which of this node's paths may NOT run concurrently (phase 67).

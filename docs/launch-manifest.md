@@ -1353,14 +1353,15 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 |---------------|-----------------------------------------------|------------|
 | `lifecycle`   | True if ROS 2 lifecycle (managed) node — contracts are runtime-gated on Active state | `false` — regular node |
 | `if` / `unless` | Condition                                   | Always included |
-| `criticality` | `high` \| `medium` \| `low`, and **nothing else** — the set is closed and any other value is a parse error. A **consequence**, not a hint: since phase 72 it is derived from the hazards a node feeds, detects or reacts for, and the derivation is what the mapper reads. The label stands only where no hazard reaches the node | Derived from the hazards; if none reaches this node, it buckets below all criticality-tagged nodes |
+| `criticality` | `high` \| `medium` \| `low`, and **nothing else** — the set is closed and any other value is a parse error. A **consequence**, not a hint: since phase 72 it is derived from the hazards a node feeds, detects or reacts for, and the derivation is what the mapper reads. Written on a node a hazard reaches it is an error (delete it); it stands only where no hazard reaches the node | Derived from the hazards; if none reaches this node, it buckets below all criticality-tagged nodes |
 
 `criticality` used to accept any string, and its one reader answered an
 unknown value with a debug log and `None` — so `criticality: urgent`
 scheduled a node exactly as if nothing had been declared. Where a hazard
-does reach the node, the consumer compares the label against the
-derivation: `derivable-criticality` (info) when they agree,
-`criticality-mismatch` (warning) when they do not. See
+does reach the node, a written label is an error (v0.1.59): the consumer
+reports `derivable-criticality` when it agrees with the derivation and
+`criticality-mismatch` when it does not, and the fix is the same, delete
+it. See
 [Fault detection and reaction](#fault-detection-and-reaction)
 for `hazards:`, and the `severity_levels:` scale they draw from.
 
@@ -2241,13 +2242,21 @@ A node takes the **max** over the hazards that reach it, ranked by
 position in `severity_levels:` — never a sum. `sched_derive` reads the
 derivation before any label.
 
-Where a hazard reaches the node, the label is compared against it:
-`derivable-criticality` (info — the label is a deletable second copy) when
-they agree, `criticality-mismatch` (warning — the derivation wins for
-scheduling, and one of the two is wrong) when they do not. Where **no**
-hazard reaches the node the label stands: that is the underivable case,
-the same absence of information the rate derivation reports as `Unknown`,
-and it is why the key stays live.
+The map from a severity to a criticality is grammar, stated in
+`types/src/severity.rs` and printed in the format reference ("Severity to
+criticality"): the scale's first entry derives nothing, and the other `n`
+entries split into thirds by `ceil(3 rank / n)` (1 `low`, 2 `medium`, 3
+`high`). On the default scale: QM none, ASIL_A `low`, ASIL_B `medium`,
+ASIL_C and ASIL_D `high`.
+
+Where a hazard reaches the node, a written label is an **error** (v0.1.59;
+info and warning before): `derivable-criticality` when it agrees with the
+derivation (a second copy), `criticality-mismatch` when it does not (one of
+the two is wrong, and the derivation wins for scheduling). Either way the
+fix is to delete the label. Where **no** hazard reaches the node the label
+stands: that is the underivable case, the same absence of information the
+rate derivation reports as `Unknown`; there it is the scheduler mapper's
+only input, and it is why the key stays live.
 
 The label's own grammar is closed — `high`, `medium`, `low`, and nothing
 else. It used to accept any string, and its one reader answered an unknown
@@ -2256,9 +2265,19 @@ node exactly as if nothing had been declared.
 
 ## Operational modes
 
-A hazard's `reaction:` may name a **mode** instead of a scope path, and
-then the fallback ladder *is* the reaction. Phase 71's single-path form is
-the one-rung case, byte-identical.
+A hazard may **enter a mode** instead of reacting by one scope path, and
+then the fallback ladder *is* the reaction: `enters: <mode>`. Phase 71's
+single-path form, `reaction: <scope path>`, is the one-rung case,
+byte-identical. A hazard writes exactly one of the two. So `reaction`
+names a path wherever it appears: a scope path on a hazard and on a mode, a
+path of the subscriber's own node on `on_violation`.
+
+Before v0.1.59 a hazard wrote the mode it enters as `reaction: <mode>`. That
+spelling still parses for one release; the checker tells it from a path by
+its lookup (a mode of the hazard's scope first), reports
+`deprecated-spelling` (warning) naming `enters:`, and `play_launch migrate`
+rewrites it. `enters:` naming something that is not a mode of the scope is
+`enters-unknown-mode` (error).
 
 - `functions.<f>` names a **guard group**: what a set of topics together
   provides. The three shapes are a bare topic, a list (any member lost is
@@ -2296,7 +2315,7 @@ hazards:
   lost_pose:
     guards: [pose_estimation]
     ftti: 2s
-    reaction: autonomous
+    enters: autonomous
 ```
 
 **Each rung is judged in its own right.** A graded reaction is a promise,
@@ -2309,7 +2328,7 @@ guaranteed to reach. Autoware's real four-mode ladder proves
 the emergency floor beneath it can.
 
 **A ladder must terminate.** `ladder-unterminated` (error) fires two ways:
-a mode named as a reaction with no `fallback:` at all, and — the one worth
+a mode a hazard enters with no `fallback:` at all, and — the one worth
 stating — a **last rung that requires something the hazard's own guards
 can take away**. That is not a floor: losing the guard takes the whole
 ladder with it. A rung naming a mode that does not exist, or a rung with
@@ -2374,7 +2393,7 @@ hazards:
     when: { field: autonomous, equals: false }
     entry_speed: 8.33                          # m/s: the speed bound
     ftti: 30s
-    reaction: l3_engaged
+    enters: l3_engaged
 modes:
   l3_engaged:
     requires: [hpc_alive, hpc_in_odd]
@@ -2383,7 +2402,7 @@ modes:
     requires: [hpc_alive]
     reaction: island.tor
     window: { duration: 10s, param: mrm_handler.takeover_request_timeout }
-    exit: { on: driver_took_over, to: manual }
+    exit: { holds: driver_took_over, to: manual }
   comfortable_stop:
     requires: [hpc_alive]
     reaction: island.comfortable_stop
@@ -2445,10 +2464,13 @@ every rung below it. Written out: the rung below starts no sooner than
 `duration` after the rung went on, and no later than
 `route + duration + route below` after the fault was detected.
 
-**`exit: { on: <function>, to: <mode> }`** is allowed only on a windowed
+**`exit: { holds: <function>, to: <mode> }`** is allowed only on a windowed
 rung (a parse error otherwise), so the grammar still has no general
 transitions. While the rung is active, the function holding ends the ladder
-in `to`, which is outside every `fallback:` list.
+in `to`, which is outside every `fallback:` list. Before v0.1.59 the
+function was written `on:`; that spelling still parses for one release, with
+a `deprecated-spelling` warning (`on` names fault classes everywhere else:
+`hazards.<h>.on`, `on_violation.on`), and `play_launch migrate` rewrites it.
 
 **`entry_speed`** (m/s, positive) on a hazard, and **`settle: { decel, jerk }`**
 naming two parameters of the path's node, derive the settle per hazard. With

@@ -676,8 +676,10 @@ fn parse_param_ref(raw: &str, ctx: &str, key: &str) -> Result<ParamRef, ParseErr
     }
 }
 
-/// `modes.<m>.exit` (v0.1.46): `{ on: <function>, to: <mode> }`, both
-/// required.
+/// `modes.<m>.exit` (v0.1.46): `{ holds: <function>, to: <mode> }`, both
+/// required. `on:` is the pre-0.1.59 spelling of `holds:` (deprecated: it
+/// parses, and [`ModeExit::spelled_on`] records it for the consumer's
+/// warning); writing both is an error.
 fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
     let section = &doc["exit"];
     if section.is_badvalue() {
@@ -688,15 +690,25 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
         return Err(type_err(
             ctx,
             "exit",
-            "a mapping `{ on: <function>, to: <mode> }`",
+            "a mapping `{ holds: <function>, to: <mode> }`",
             section,
         ));
     };
     reject_unknown_keys(section, ectx, Context::Exit)?;
-    let on = yaml_string(section, "on", ectx)?.ok_or_else(|| {
-        field_err(
+    let holds = yaml_string(section, "holds", ectx)?;
+    let on = yaml_string(section, "on", ectx)?;
+    if holds.is_some() && on.is_some() {
+        return Err(field_err(
             ectx,
             "on",
+            "`on:` is the old spelling of `holds:` -- write `holds:` alone",
+        ));
+    }
+    let spelled_on = on.is_some();
+    let holds = holds.or(on).ok_or_else(|| {
+        field_err(
+            ectx,
+            "holds",
             "required: the function whose holding ends the ladder",
         )
     })?;
@@ -707,7 +719,11 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
             "required: the mode the ladder ends in when the exit is taken",
         )
     })?;
-    Ok(Some(ModeExit { on, to }))
+    Ok(Some(ModeExit {
+        holds,
+        spelled_on,
+        to,
+    }))
 }
 
 /// `yaml_duration` reports with an empty context; put the real one back.
@@ -894,6 +910,19 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 ),
             ));
         }
+        // v0.1.59: a hazard either enters a mode (the ladder) or reacts by
+        // one scope path, never both. `reaction:` naming a mode is the old
+        // spelling of `enters:`; the consumer tells the two apart by lookup.
+        let enters = yaml_string(v, "enters", &hctx)?;
+        let reaction = yaml_string(v, "reaction", &hctx)?;
+        if enters.is_some() && reaction.is_some() {
+            return Err(field_err(
+                &hctx,
+                "enters",
+                "a hazard either enters a mode (`enters: <mode>`, the fallback ladder) or \
+                 reacts by one scope path (`reaction: <path>`), not both -- keep one",
+            ));
+        }
         out.insert(
             name,
             HazardDecl {
@@ -902,7 +931,8 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 guards,
                 on,
                 ftti: yaml_budget(v, "ftti", &hctx, false)?.0,
-                reaction: yaml_string(v, "reaction", &hctx)?,
+                enters,
+                reaction,
                 when: parse_predicate(v, &hctx)?,
                 entry_speed,
             },
@@ -3610,7 +3640,7 @@ modes:
     requires: [hpc_alive]
     reaction: island.tor
     window: { duration: 10s, param: mrm_handler.takeover_request_timeout }
-    exit: { on: driver_took_over, to: manual }
+    exit: { holds: driver_took_over, to: manual }
   comfortable_stop:
     requires: [hpc_alive]
     reaction: island.comfortable_stop
@@ -3667,7 +3697,8 @@ nodes:
         assert_eq!(
             tor.exit,
             Some(ModeExit {
-                on: "driver_took_over".into(),
+                holds: "driver_took_over".into(),
+                spelled_on: false,
                 to: "manual".into()
             })
         );
@@ -3810,20 +3841,62 @@ nodes:
     #[test]
     fn an_exit_needs_a_window_and_both_ends() {
         let m = |mode: &str| format!("version: 1\nmodes:\n  m:\n{mode}");
-        let e = err_of(&m("    exit: { on: driver, to: manual }\n"));
+        let e = err_of(&m("    exit: { holds: driver, to: manual }\n"));
         assert!(e.contains("only for a windowed rung"), "{e}");
-        let e = err_of(&m("    window: 10s\n    exit: { on: driver }\n"));
+        let e = err_of(&m("    window: 10s\n    exit: { holds: driver }\n"));
         assert!(
             e.contains("modes.m.exit.to") && e.contains("required"),
             "{e}"
         );
         let e = err_of(&m("    window: 10s\n    exit: { to: manual }\n"));
         assert!(
-            e.contains("modes.m.exit.on") && e.contains("required"),
+            e.contains("modes.m.exit.holds") && e.contains("required"),
             "{e}"
         );
         let e = err_of(&m("    window: 10s\n    exit: manual\n"));
         assert!(e.contains("expected a mapping"), "{e}");
+    }
+
+    /// v0.1.59 (phase 90 G4): `exit.on` became `exit.holds`, so `on` names
+    /// fault classes only. The old spelling parses for one release and is
+    /// marked for the consumer's warning; both at once is an error.
+    #[test]
+    fn exit_on_is_the_old_spelling_of_holds() {
+        let m = |exit: &str| format!("version: 1\nmodes:\n  m:\n    window: 10s\n{exit}");
+        let new = parse_manifest_str(&m("    exit: { holds: driver, to: manual }\n")).unwrap();
+        let old = parse_manifest_str(&m("    exit: { on: driver, to: manual }\n")).unwrap();
+        let (n, o) = (
+            new.modes["m"].exit.clone().unwrap(),
+            old.modes["m"].exit.clone().unwrap(),
+        );
+        assert_eq!((n.holds.as_str(), n.spelled_on), ("driver", false));
+        assert_eq!((o.holds.as_str(), o.spelled_on), ("driver", true));
+        assert_eq!((n.to, o.to), ("manual".to_string(), "manual".to_string()));
+        let e = err_of(&m("    exit: { holds: a, on: a, to: manual }\n"));
+        assert!(e.contains("old spelling of `holds:`"), "{e}");
+    }
+
+    /// v0.1.59 (phase 90 G4): a hazard enters a mode or reacts by one scope
+    /// path, never both. `reaction:` keeps parsing whatever it names; the
+    /// consumer tells a mode from a path by lookup.
+    #[test]
+    fn a_hazard_enters_a_mode_or_reacts_by_a_path_not_both() {
+        let h = |body: &str| format!("version: 1\nhazards:\n  h:\n{body}");
+        let m = parse_manifest_str(&h("    enters: driving\n")).unwrap();
+        let d = &m.hazards["h"];
+        assert_eq!(
+            (d.enters.as_deref(), d.reaction.as_deref(), d.entry_key()),
+            (Some("driving"), None, "enters")
+        );
+        assert_eq!(d.entry().map(String::as_str), Some("driving"));
+        let m = parse_manifest_str(&h("    reaction: safety.stop\n")).unwrap();
+        let d = &m.hazards["h"];
+        assert_eq!(
+            (d.entry().map(String::as_str), d.entry_key()),
+            (Some("safety.stop"), "reaction")
+        );
+        let e = err_of(&h("    enters: driving\n    reaction: safety.stop\n"));
+        assert!(e.contains("not both"), "{e}");
     }
 
     #[test]

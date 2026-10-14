@@ -6,6 +6,41 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased (v0.1.59)
+
+Phase 90 G4 and G5: one meaning per key for `reaction` and `on`, and the
+severity-to-criticality map stated in the grammar. Every contract that
+parsed still parses to the same values; the old spellings are deprecated,
+reported by the consumer, and rewritten by `ros_launch_manifest_types::
+migrate` (play_launch's `migrate` verb).
+
+### Added
+
+- **`hazards.<h>.enters: <mode>`**, the mode a hazard enters (the top of its
+  fallback ladder). A hazard writes exactly one of `enters` and `reaction`
+  (both is a parse error), so `reaction` names a path in all three contexts.
+  Stored as `HazardDecl.enters`; `HazardDecl::entry()` is the name the
+  reaction starts from (`enters`, else `reaction`), resolved the way the
+  consumer always has (a mode of the scope first).
+- **`modes.<m>.exit.holds: <function>`**, replacing `exit.on`.
+- **`severity` module**: `DEFAULT_SEVERITY_LEVELS`, `criticality_of(rank,
+  scale_len)` (rank 0 none, the rest by `ceil(3 rank / n)`: low, medium,
+  high) and `criticality_map`, printed in the format reference under
+  "Severity to criticality". `sched::Criticality::from_severity` wraps it.
+- **`migrate` module**: `migrate_str` rewrites deprecated spellings as
+  minimal textual edits (comments and layout kept), from the `REWRITES`
+  table: `hazard-reaction-enters` and `exit-on-holds`.
+
+### Changed
+
+- `ModeExit.on` is now `ModeExit.holds`; `ModeExit.spelled_on` records the
+  deprecated `on:` spelling (types API break; the model's `ExitContract.on`
+  keeps its name and wire form).
+- `hazards.<h>.reaction: <mode>` and `exit.on` are deprecated: they parse for
+  one release.
+- A written `nodes.<n>.criticality` on a node a hazard reaches is an error in
+  the consumer (was info or warning); the field table says so.
+
 ## v0.1.58 - 2026-10-15
 
 Where a contract's budgets come from, and the parameters that set them.

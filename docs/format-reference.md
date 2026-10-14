@@ -41,7 +41,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `srv` | meta |  | Service server endpoints, keyed by LOCAL endpoint name. Not neutral when omitted: a consumer sizes the image's pools from this list (an embedded realizer derives its service counts from it), so a server the code creates and the contract leaves out is found at boot, not here. |
 | `cli` | meta |  | Service client endpoints, keyed by LOCAL endpoint name. Not neutral when omitted, for the same reason as `srv:`: pools are sized from the list. A reaction route crosses a client -> server edge as a message (the resolver's reaction walk); a server with no path its request triggers latches the request for its own timer, and the walk charges that timer's period as a sampling hop. |
 | `paths` | meta |  | This node's internal paths, keyed by path name. |
-| `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B. The label stands only where no hazard reaches the node. |
+| `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under "Severity to criticality" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there. |
 | `concurrency` | fact |  | Which of this node's paths may NOT run concurrently. Absent means all of them serialize: every path of the node waits for any other that is running (a single-threaded executor), and the checker charges that wait (`path-exclusion`). Declare `exclusive` groups to say which may in fact overlap. |
 | `params` | fact |  | Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. `params: {}` means the node declares no parameters; a missing `params:` means not stated. The two stay distinct in the model: `{}` becomes an empty `contracts.node_params` entry, a missing key none. |
 
@@ -231,7 +231,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `guards` | meta |  | Topics watched for the fault. A bare name is one guard; `{ all_of: [...] }` is a redundant set that faults only when every member does. |
 | `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
-| `reaction` | meta |  | The scope path whose route reaches the safe state. |
+| `enters` | meta | since v0.1.59 | The mode the hazard enters: the top of the `fallback:` ladder it walks to a safe state, each rung checked in its own right (`ladder-rung-budget`) and the floor against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
+| `reaction` | meta |  | The scope path whose route reaches the safe state: a one-rung reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
 | `when` | fact |  | The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`). |
 | `entry_speed` | requirement |  | The speed the vehicle may travel at when the fault occurs, in m/s, a plain positive number: the operating domain's speed bound. A braking-profile settle is derived from it (`settle-derived`). |
 
@@ -245,7 +246,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `reaction` | meta |  | The scope path that reaches this mode's safe state. |
 | `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
 | `window` | requirement |  | A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`. |
-| `exit` | requirement |  | `{ on: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list. |
+| `exit` | requirement |  | `{ holds: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list. |
 
 ## `hazards.<name>.guards[]`
 
@@ -301,7 +302,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `on` | fact |  | The function whose holding ends the ladder. Some node implementing the rung must take its topic on a path trigger (`mode-exit-unwired`). |
+| `holds` | fact | since v0.1.59 | The function whose holding ends the ladder. Some node implementing the rung must take its topic on a path trigger (`mode-exit-unwired`). |
+| `on` |  | deprecated — use `holds` | Deprecated spelling. |
 | `to` | meta |  | The mode the ladder ends in. Not a member of any `fallback:` list (`mode-exit-target`). |
 
 ## `safe_state.settle`
@@ -338,4 +340,16 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `max` | fact | since v0.1.58 | The largest value observed for this term (a duration). Required. |
 | `n` | fact | since v0.1.58 | How many samples the maximum is over. |
 | `period` | fact | since v0.1.58 | A timer tick's period, charged without margin. |
+
+## Severity to criticality
+
+A node a hazard reaches (it feeds, detects for, or reacts for the hazard) takes a scheduling criticality from the hazard's `severity`, the MAX over every hazard that reaches it. The first entry of `severity_levels` is "no safety requirement" and derives nothing; the other `n` entries split into three buckets by `ceil(3 rank / n)` (1 low, 2 medium, 3 high). A written `criticality` on such a node is an error; on a node no hazard reaches it stands. The default scale (no `severity_levels` declared):
+
+| severity | criticality |
+|---|---|
+| `QM` | none |
+| `ASIL_A` | low |
+| `ASIL_B` | medium |
+| `ASIL_C` | high |
+| `ASIL_D` | high |
 

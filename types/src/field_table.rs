@@ -406,7 +406,7 @@ pub const FIELDS: &[Field] = &[
         "criticality",
         Context::Node,
         Kind::Consequence,
-        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B. The label stands only where no hazard reaches the node.",
+        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under \"Severity to criticality\" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there.",
     ),
     live(
         "concurrency",
@@ -983,10 +983,16 @@ pub const FIELDS: &[Field] = &[
         "Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`.",
     ),
     live(
+        "enters",
+        Context::Hazard,
+        Kind::Meta,
+        "The mode the hazard enters: the top of the `fallback:` ladder it walks to a safe state, each rung checked in its own right (`ladder-rung-budget`) and the floor against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
+    ),
+    live(
         "reaction",
         Context::Hazard,
         Kind::Meta,
-        "The scope path whose route reaches the safe state.",
+        "The scope path whose route reaches the safe state: a one-rung reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
     ),
     live(
         "when",
@@ -1041,7 +1047,7 @@ pub const FIELDS: &[Field] = &[
         "exit",
         Context::Mode,
         Kind::Requirement,
-        "`{ on: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list.",
+        "`{ holds: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list.",
     ),
     // ── hazards.<name>.guards[] ──
     live(
@@ -1171,11 +1177,12 @@ pub const FIELDS: &[Field] = &[
     ),
     // -- modes.<name>.exit --
     live(
-        "on",
+        "holds",
         Context::Exit,
         Kind::Fact,
         "The function whose holding ends the ladder. Some node implementing the rung must take its topic on a path trigger (`mode-exit-unwired`).",
     ),
+    alias("on", Context::Exit, "holds"),
     live(
         "to",
         Context::Exit,
@@ -1336,6 +1343,7 @@ pub fn render_markdown() -> String {
         }
         out.push('\n');
     }
+    out.push_str(&crate::severity::render_markdown());
     out
 }
 /// Keys added since v0.1.49, with the release that added each: what the
@@ -1361,6 +1369,8 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::MeasuredTerm, "max", "0.1.58"),
     (Context::MeasuredTerm, "n", "0.1.58"),
     (Context::MeasuredTerm, "period", "0.1.58"),
+    (Context::Hazard, "enters", "0.1.59"),
+    (Context::Exit, "holds", "0.1.59"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

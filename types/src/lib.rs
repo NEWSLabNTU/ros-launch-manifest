@@ -6,7 +6,9 @@
 pub mod cond;
 pub mod duration;
 pub mod field_table;
+pub mod migrate;
 pub mod parse;
+pub mod severity;
 pub mod span;
 pub mod subst;
 pub mod types;

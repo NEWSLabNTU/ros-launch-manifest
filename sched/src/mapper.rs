@@ -36,6 +36,20 @@ pub enum Criticality {
     High,
 }
 
+impl Criticality {
+    /// The criticality a hazard severity of `rank` on a scale of
+    /// `scale_len` entries derives, by the grammar's map
+    /// (`ros_launch_manifest_types::severity::criticality_of`): rank 0 is no
+    /// safety requirement and derives `None`; the rest split into thirds.
+    pub fn from_severity(rank: usize, scale_len: usize) -> Option<Self> {
+        match ros_launch_manifest_types::severity::criticality_of(rank, scale_len)? {
+            "low" => Some(Criticality::Low),
+            "medium" => Some(Criticality::Medium),
+            _ => Some(Criticality::High),
+        }
+    }
+}
+
 /// One node as seen by a `SchedMapper` — dependency-free, extracted from
 /// launch + contract by the caller (a resolver). Intentionally
 /// minimal: no graph edges yet (YAGNI; a future field, e.g. `depends_on`,
