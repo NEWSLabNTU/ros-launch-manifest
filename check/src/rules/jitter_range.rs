@@ -24,6 +24,7 @@
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
+use ros_launch_manifest_types::OptBound;
 use ros_launch_manifest_types::{Manifest, PathDecl};
 
 pub struct JitterRangeRule;
@@ -58,8 +59,8 @@ impl ValidationRule for JitterRangeRule {
 }
 
 fn check_path(rule_id: &str, yaml_path: &str, what: &str, path: &PathDecl, ctx: &mut CheckContext) {
-    let max = path.max_latency.map(|d| d.as_millis_f64());
-    let min = path.min_latency.map(|d| d.as_millis_f64());
+    let max = path.max_latency.ms();
+    let min = path.min_latency.ms();
 
     if let (Some(max), Some(min)) = (max, min)
         && min > max
@@ -75,7 +76,7 @@ fn check_path(rule_id: &str, yaml_path: &str, what: &str, path: &PathDecl, ctx: 
         return;
     }
 
-    let Some(jitter) = path.max_jitter.map(|d| d.as_millis_f64()) else {
+    let Some(jitter) = path.max_jitter.ms() else {
         return;
     };
     let Some(max) = max else {

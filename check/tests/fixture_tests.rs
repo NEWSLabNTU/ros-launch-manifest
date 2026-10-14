@@ -1,6 +1,7 @@
 //! Integration tests that load YAML fixture files and run the static checker.
 
 use ros_launch_manifest_check::{Severity, run_checks};
+use ros_launch_manifest_types::OptBound;
 use ros_launch_manifest_types::{
     filter_manifest, parse_manifest, parse_manifest_str, resolve_args, substitute_manifest,
 };
@@ -852,8 +853,8 @@ fn fixture_standalone_subscriber_max_age_ms() {
     let m = parse_manifest(&fixture_path("manifest_standalone")).unwrap();
     let consumer = &m.nodes["consumer"];
     let odometry = &consumer.subscribers["odometry"];
-    assert_eq!(odometry.max_age.map(|d| d.as_millis_f64()), Some(100.0));
-    assert_eq!(odometry.min_rate_hz, Some(50.0));
+    assert_eq!(odometry.max_age.ms(), Some(100.0));
+    assert_eq!(odometry.min_rate_hz.hz(), Some(50.0));
 }
 
 // ── manifest_qos_match: qos-match rule end-to-end ──
@@ -948,15 +949,11 @@ fn fixture_qos_match_canonical_vector_map_clean() {
 fn fixture_endpoint_transport_declares_both_values() {
     let m = parse_manifest(&fixture_path("manifest_endpoint_transport")).unwrap();
     let topic = &m.topics["/perception/objects"];
-    assert_eq!(
-        topic.max_transport.map(|d| d.as_millis_f64()),
-        Some(10.0),
-        "the topic's default"
-    );
+    assert_eq!(topic.max_transport.ms(), Some(10.0), "the topic's default");
     assert_eq!(
         m.nodes["collocated"].subscribers["objects"]
             .max_transport
-            .map(|d| d.as_millis_f64()),
+            .ms(),
         Some(0.0),
         "the collocated subscriber's own"
     );

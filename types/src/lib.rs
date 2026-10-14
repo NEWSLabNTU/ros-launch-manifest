@@ -3,6 +3,7 @@
 //! This crate defines the typed AST for launch manifest files and
 //! provides a parser that reads YAML with source span tracking.
 
+pub mod bound;
 pub mod cond;
 pub mod duration;
 pub mod field_table;
@@ -13,6 +14,10 @@ pub mod span;
 pub mod subst;
 pub mod types;
 
+pub use bound::{
+    BOUND_KEYS, Bound, BoundKey, BoundKind, Form, Limit, OptBound, ParamBinding, Quantity,
+    bound_key,
+};
 pub use cond::{evaluate as evaluate_condition, filter_manifest};
 pub use parse::{
     ParseResult, parse_manifest, parse_manifest_str, parse_manifest_str_with_spans,

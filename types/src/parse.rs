@@ -4,6 +4,7 @@
 //! and map forms for endpoints (e.g., `pub: [a, b]` vs `pub: {a: {min_rate_hz: 10}}`).
 
 use crate::{
+    bound::{Bound, ParamBinding, Quantity, spelled},
     duration::Duration,
     field_table::{self, Context},
     span::SpanIndex,
@@ -60,7 +61,6 @@ pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
     // the body is read -- a file written for a newer grammar would otherwise
     // be refused for its first new key, which reads as the author's typo.
     check_grammar_header(&docs[0])?;
-    BUDGET_SOURCES.with(|b| b.borrow_mut().clear());
     with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""))
 }
 
@@ -165,7 +165,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
             }
         }
     }
-    let mut manifest = Manifest {
+    let manifest = Manifest {
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
         rlm: if ctx.is_empty() {
             doc["rlm"].as_str().map(str::to_string)
@@ -184,56 +184,32 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         severity_levels: yaml_string_list(doc, "severity_levels", ctx)?,
         functions: parse_functions(doc, ctx)?,
         modes: parse_modes(doc, ctx)?,
-        budget_sources: BTreeMap::new(),
     };
-    // The sources recorded under this manifest's root. An inline include is
-    // parsed (and drains its own) before its parent gets here.
-    let prefix = if ctx.is_empty() {
-        String::new()
-    } else {
-        format!("{ctx}.")
-    };
-    BUDGET_SOURCES.with(|b| {
-        let mut all = b.borrow_mut();
-        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *all)
-            .into_iter()
-            .partition(|(path, _)| path.starts_with(&prefix));
-        *all = rest;
-        for (path, src) in mine {
-            manifest
-                .budget_sources
-                .insert(path[prefix.len()..].to_string(), src);
-        }
-    });
     Ok(manifest)
 }
 
-thread_local! {
-    /// The `source:` of every budget parsed in its map form during one
-    /// manifest parse (phase 10 B7), as (dotted path from the file root,
-    /// source). Drained into each manifest by [`parse_manifest_yaml`].
-    static BUDGET_SOURCES: std::cell::RefCell<Vec<(String, BudgetSource)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-fn record_source(path: String, src: BudgetSource) {
-    BUDGET_SOURCES.with(|b| b.borrow_mut().push((path, src)));
-}
-
-/// A budget: a bare duration (`max_latency: 149ms`), or its map form
-/// `{ duration, source }` (phase 10 B7), which also takes `param` where
-/// `allow_param` says the key can be bound to a parameter (`max_age`).
-/// Records the source under `<ctx>.<key>`.
-fn yaml_budget(
+/// A duration bound (phase 90 G2): the key `key` of `context`, read into
+/// the [`Bound`] its row of [`crate::BOUND_KEYS`] gives. A bare duration
+/// (`max_latency: 149ms`), or -- for a key whose form allows it -- the map
+/// form `{ duration, source }` (phase 10 B7), which also takes `param` on a
+/// key that can be bound to a parameter (`max_age`).
+fn yaml_bound(
     doc: &Yaml,
     key: &str,
     ctx: &str,
-    allow_param: bool,
-) -> Result<(Option<Duration>, Option<String>), ParseError> {
+    context: Context,
+) -> Result<Option<Bound>, ParseError> {
+    let form = crate::bound::bound_key(context, key)
+        .unwrap_or_else(|| panic!("`{key}` in {} is not a bound key", context.label()))
+        .form;
     let v = &doc[key];
     let Yaml::Hash(_) = v else {
-        return Ok((yaml_duration(doc, key)?, None));
+        return Ok(yaml_duration(doc, key)?.map(|d| spelled(context, key, Quantity::Duration(d))));
     };
+    if form == crate::bound::Form::Bare {
+        // What `yaml_duration` says about a map where a duration belongs.
+        return Ok(yaml_duration(doc, key)?.map(|d| spelled(context, key, Quantity::Duration(d))));
+    }
     let bctx = &format_path(ctx, key);
     reject_unknown_keys(v, bctx, Context::Budget)?;
     let d = yaml_duration(v, "duration")
@@ -246,7 +222,7 @@ fn yaml_budget(
             )
         })?;
     let param = yaml_string(v, "param", bctx)?;
-    if param.is_some() && !allow_param {
+    if param.is_some() && form != crate::bound::Form::MapParam {
         return Err(field_err(
             bctx,
             "param",
@@ -256,11 +232,22 @@ fn yaml_budget(
             ),
         ));
     }
+    let mut b = spelled(context, key, Quantity::Duration(d));
+    b.param = param.map(ParamBinding::Own);
     if !v["source"].is_badvalue() {
-        let src = parse_source(&v["source"], bctx)?;
-        record_source(bctx.clone(), src);
+        b.source = Some(parse_source(&v["source"], bctx)?);
     }
-    Ok((Some(d), param))
+    Ok(Some(b))
+}
+
+/// A rate bound (phase 90 G2): a number of Hz under `key` of `context`.
+fn yaml_rate_bound(
+    doc: &Yaml,
+    key: &str,
+    ctx: &str,
+    context: Context,
+) -> Result<Option<Bound>, ParseError> {
+    Ok(yaml_f64(doc, key, ctx)?.map(|v| spelled(context, key, Quantity::Hz(v))))
 }
 
 /// `source:` (phase 10 B7): `requirement | measured | derived | analysed`,
@@ -598,9 +585,10 @@ fn parse_predicate(doc: &Yaml, ctx: &str) -> Result<Option<ValuePredicate>, Pars
     Ok(Some(ValuePredicate { field, op, value }))
 }
 
-/// `modes.<m>.window` (v0.1.46): a bare duration (unbound), or
-/// `{ duration: <d>, param: <node>.<parameter> }`.
-fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<ModeWindow>, ParseError> {
+/// `modes.<m>.window` (v0.1.46): a bare duration (unbound), or the map
+/// form of a budget, `{ duration, param: <node>.<parameter>, source }`
+/// (phase 90 G2: a least-time bound, no context of its own).
+fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
     let section = &doc["window"];
     let positive = |d: crate::duration::Duration, at: &str| {
         if d.as_millis_f64() > 0.0 {
@@ -614,20 +602,18 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<ModeWindow>, ParseError>
             ))
         }
     };
+    let window = |d| spelled(Context::Mode, "window", Quantity::Duration(d));
     match section {
         Yaml::BadValue => Ok(None),
         Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) => {
             let d = yaml_duration(doc, "window")
                 .map_err(|e| reframe(e, ctx))?
                 .expect("a scalar window parses or errors");
-            Ok(Some(ModeWindow {
-                duration: positive(d, "window")?,
-                param: None,
-            }))
+            Ok(Some(window(positive(d, "window")?)))
         }
         Yaml::Hash(_) => {
             let wctx = &format_path(ctx, "window");
-            reject_unknown_keys(section, wctx, Context::Window)?;
+            reject_unknown_keys(section, wctx, Context::Budget)?;
             let d = yaml_duration(section, "duration")
                 .map_err(|e| reframe(e, wctx))?
                 .ok_or_else(|| {
@@ -640,14 +626,15 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<ModeWindow>, ParseError>
             let param = yaml_string(section, "param", wctx)?
                 .map(|raw| parse_param_ref(&raw, wctx, "param"))
                 .transpose()?;
-            if !section["source"].is_badvalue() {
-                let src = parse_source(&section["source"], wctx)?;
-                record_source(wctx.clone(), src);
-            }
-            Ok(Some(ModeWindow {
-                duration: positive(d, "window.duration")?,
-                param,
-            }))
+            let source = if section["source"].is_badvalue() {
+                None
+            } else {
+                Some(parse_source(&section["source"], wctx)?)
+            };
+            let mut b = window(positive(d, "window.duration")?);
+            b.param = param.map(ParamBinding::Node);
+            b.source = source;
+            Ok(Some(b))
         }
         other => Err(type_err(
             ctx,
@@ -930,7 +917,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 description: yaml_string(v, "description", &hctx)?,
                 guards,
                 on,
-                ftti: yaml_budget(v, "ftti", &hctx, false)?.0,
+                ftti: yaml_bound(v, "ftti", &hctx, Context::Hazard)?,
                 enters,
                 reaction,
                 when: parse_predicate(v, &hctx)?,
@@ -977,7 +964,7 @@ fn parse_on_violation(doc: &Yaml, ctx: &str) -> Result<Option<OnViolation>, Pars
     Ok(Some(OnViolation {
         on,
         reaction,
-        within: yaml_budget(section, "within", ctx, false)?.0,
+        within: yaml_bound(section, "within", ctx, Context::OnViolation)?,
         mechanism,
     }))
 }
@@ -1013,8 +1000,9 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
             };
             let decel = param("decel")?;
             let jerk = param("jerk")?;
-            let literal = yaml_duration(profile, "duration").map_err(|e| reframe(e, sctx))?;
-            let response = yaml_budget(profile, "response", sctx, false)?.0;
+            let literal = yaml_bound(profile, "duration", sctx, Context::Settle)
+                .map_err(|e| reframe(e, sctx))?;
+            let response = yaml_bound(profile, "response", sctx, Context::Settle)?;
             (
                 literal,
                 Some(SettleProfile {
@@ -1024,7 +1012,10 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
                 }),
             )
         }
-        _ => (yaml_duration(section, "settle")?, None),
+        _ => (
+            yaml_bound(section, "settle", ctx, Context::SafeState)?,
+            None,
+        ),
     };
     Ok(Some(SafeState {
         emits,
@@ -1259,16 +1250,14 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         ));
     }
     reject_unknown_keys(yaml, ctx, Context::Endpoint)?;
-    let (max_age, max_age_param) = yaml_budget(yaml, "max_age", ctx, true)?;
     let props = EndpointProps {
-        min_rate_hz: yaml_f64(yaml, "min_rate_hz", ctx)?,
-        max_rate_hz: yaml_f64(yaml, "max_rate_hz", ctx)?,
-        max_age,
-        max_age_param,
+        min_rate_hz: yaml_rate_bound(yaml, "min_rate_hz", ctx, Context::Endpoint)?,
+        max_rate_hz: yaml_rate_bound(yaml, "max_rate_hz", ctx, Context::Endpoint)?,
+        max_age: yaml_bound(yaml, "max_age", ctx, Context::Endpoint)?,
         state: yaml_bool(yaml, "state", ctx)?,
         required: yaml_bool(yaml, "required", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        max_transport: yaml_budget(yaml, "max_transport", ctx, false)?.0,
+        max_transport: yaml_bound(yaml, "max_transport", ctx, Context::Endpoint)?,
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
         on_demand: yaml_bool(yaml, "on_demand", ctx)?,
@@ -1357,7 +1346,12 @@ fn parse_srv_endpoints(
                     max_response: if v.is_null() || v.is_badvalue() {
                         None
                     } else {
-                        yaml_budget(v, "max_response", &format_path(ctx, &name), false)?.0
+                        yaml_bound(
+                            v,
+                            "max_response",
+                            &format_path(ctx, &name),
+                            Context::SrvEndpoint,
+                        )?
                     },
                 };
                 eps.insert(name, props);
@@ -1436,7 +1430,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
         rate_hz: yaml_f64(yaml, "rate_hz", ctx)?,
-        max_transport: yaml_budget(yaml, "max_transport", ctx, false)?.0,
+        max_transport: yaml_bound(yaml, "max_transport", ctx, Context::Topic)?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external: parse_external_side(yaml, "external", ctx)?,
     })
@@ -1751,13 +1745,13 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         unless_condition: yaml_string(yaml, "unless", ctx)?,
         input,
         output: yaml_string_list(yaml, "output", ctx)?,
-        max_latency: yaml_budget(yaml, "max_latency", ctx, false)?.0,
+        max_latency: yaml_bound(yaml, "max_latency", ctx, Context::Path)?,
         tolerance: yaml_duration(yaml, "tolerance")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         trigger,
         sync,
-        max_jitter: yaml_budget(yaml, "max_jitter", ctx, false)?.0,
-        min_latency: yaml_duration(yaml, "min_latency")?,
+        max_jitter: yaml_bound(yaml, "max_jitter", ctx, Context::Path)?,
+        min_latency: yaml_bound(yaml, "min_latency", ctx, Context::Path)?,
         miss: parse_miss_spec(yaml, ctx)?,
         safe_state: parse_safe_state(yaml, ctx)?,
         timer_param: parse_timer_param(yaml, ctx)?,
@@ -1830,8 +1824,13 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
             if rate_hz <= 0.0 {
                 return Err(field_err(ctx, "trigger.timer.rate_hz", "must be > 0"));
             }
-            let jitter = yaml_budget(v, "jitter", &format_path(ctx, "trigger.timer"), false)?.0;
-            if let Some(j) = jitter
+            let jitter = yaml_bound(
+                v,
+                "jitter",
+                &format_path(ctx, "trigger.timer"),
+                Context::TriggerTimer,
+            )?;
+            if let Some(j) = jitter.as_ref().and_then(Bound::duration)
                 && j.as_millis_f64() >= 1000.0 / rate_hz
             {
                 return Err(field_err(
@@ -2123,6 +2122,11 @@ fn reject_chains(doc: &Yaml, ctx: &str) -> Result<(), ParseError> {
 
 // ── Drop ──
 
+/// An `N / W` count bound.
+fn count_bound(context: Context, key: &str, c: DropCount) -> Bound {
+    spelled(context, key, Quantity::CountPer(c))
+}
+
 fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>, ParseError> {
     let section = &doc[key];
     if section.is_badvalue() {
@@ -2134,7 +2138,7 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
     if let Some(s) = section.as_str() {
         let count: DropCount = s.parse().map_err(|e: String| field_err(ctx, key, &e))?;
         return Ok(Some(DropSpec {
-            max_count: Some(count),
+            max_count: Some(count_bound(Context::Drop, "max_count", count)),
             max_consecutive: None,
         }));
     }
@@ -2145,8 +2149,10 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
             s.parse::<DropCount>()
                 .map_err(|e| field_err(ctx, "max_count", &e.to_string()))
         })
-        .transpose()?;
-    let max_consecutive = yaml_u32(section, "max_consecutive", ctx)?;
+        .transpose()?
+        .map(|c| count_bound(Context::Drop, "max_count", c));
+    let max_consecutive = yaml_u32(section, "max_consecutive", ctx)?
+        .map(|n| spelled(Context::Drop, "max_consecutive", Quantity::Count(n)));
 
     Ok(Some(DropSpec {
         max_count,
@@ -2274,7 +2280,7 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
             .parse()
             .map_err(|e: String| field_err(ctx, "miss", &e))?;
         return Ok(Some(MissSpec {
-            tolerate: Some(count),
+            tolerate: Some(count_bound(Context::Miss, "tolerate", count)),
             consecutive: None,
             action: None,
         }));
@@ -2285,7 +2291,8 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
             s.parse::<DropCount>()
                 .map_err(|e| field_err(ctx, "tolerate", &e.to_string()))
         })
-        .transpose()?;
+        .transpose()?
+        .map(|c| count_bound(Context::Miss, "tolerate", c));
     let action = match yaml_string(section, "action", ctx)?.as_deref() {
         None => None,
         Some("continue") => Some(MissAction::Continue),
@@ -2301,7 +2308,8 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
     };
     Ok(Some(MissSpec {
         tolerate,
-        consecutive: yaml_u32(section, "consecutive", ctx)?,
+        consecutive: yaml_u32(section, "consecutive", ctx)?
+            .map(|n| spelled(Context::Miss, "consecutive", Quantity::Count(n))),
         action,
     }))
 }
@@ -2431,6 +2439,7 @@ fn format_path(ctx: &str, field: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::bound::OptBound;
 
     /// Phase 69: the three typos that motivated the field table. Each one
     /// used to parse cleanly and silently discard what it was meant to
@@ -2788,7 +2797,7 @@ nodes:
         assert!(!h.guards[0].all_of && h.guards[0].members == vec!["/safety/scan"]);
         assert!(h.guards[1].all_of && h.guards[1].members.len() == 2);
         assert_eq!(h.on, vec![FaultKind::Omission]);
-        assert_eq!(h.ftti.unwrap().as_millis_f64(), 500.0);
+        assert_eq!(h.ftti.ms().unwrap(), 500.0);
         assert_eq!(h.reaction.as_deref(), Some("safety.stop"));
         let ov = m.nodes["brake"].subscribers["obstacles"]
             .on_violation
@@ -2796,14 +2805,14 @@ nodes:
             .unwrap();
         assert_eq!(ov.on, vec![FaultKind::Late, FaultKind::Omission]);
         assert_eq!(ov.reaction, "emergency_stop");
-        assert_eq!(ov.within.unwrap().as_millis_f64(), 20.0);
+        assert_eq!(ov.within.ms().unwrap(), 20.0);
         assert_eq!(ov.mechanism, DetectMechanism::Diagnostics);
         let ss = m.nodes["brake"].paths["emergency_stop"]
             .safe_state
             .as_ref()
             .unwrap();
         assert_eq!(ss.emits, "brake_cmd");
-        assert_eq!(ss.settle.unwrap().as_millis_f64(), 200.0);
+        assert_eq!(ss.settle.ms().unwrap(), 200.0);
     }
 
     /// Phase 82: `hazards.<h>.on` is a set. A scalar is the set of one, a
@@ -3012,17 +3021,15 @@ nodes:
         let m = parse_manifest_str(yaml).unwrap();
         let ndt = &m.nodes["ndt"];
 
-        assert_eq!(ndt.subscribers["sensor_points"].min_rate_hz, Some(10.0));
+        assert_eq!(
+            ndt.subscribers["sensor_points"].min_rate_hz.hz(),
+            Some(10.0)
+        );
         assert_eq!(ndt.subscribers["initial_pose"].required, Some(true));
         assert_eq!(ndt.subscribers["regularization_pose"].state, Some(true));
-        assert_eq!(ndt.publishers["ndt_pose"].min_rate_hz, Some(10.0));
+        assert_eq!(ndt.publishers["ndt_pose"].min_rate_hz.hz(), Some(10.0));
         assert!(ndt.publishers.contains_key("exe_time_ms"));
-        assert_eq!(
-            ndt.srv["trigger_node"]
-                .max_response
-                .map(|d| d.as_millis_f64()),
-            Some(100.0)
-        );
+        assert_eq!(ndt.srv["trigger_node"].max_response.ms(), Some(100.0));
     }
 
     #[test]
@@ -3087,11 +3094,11 @@ nodes:
         let loc = &ndt.paths["localization"];
         assert_eq!(loc.input, vec!["sensor_points"]);
         assert_eq!(loc.output, vec!["ndt_pose"]);
-        assert_eq!(loc.max_latency.map(|d| d.as_millis_f64()), Some(50.0));
+        assert_eq!(loc.max_latency.ms(), Some(50.0));
         let drop = loc.drop.as_ref().unwrap();
-        assert_eq!(drop.max_count.as_ref().unwrap().n, 10);
-        assert_eq!(drop.max_count.as_ref().unwrap().w, 100);
-        assert_eq!(drop.max_consecutive, Some(5));
+        assert_eq!(drop.max_count.count_per().unwrap().n, 10);
+        assert_eq!(drop.max_count.count_per().unwrap().w, 100);
+        assert_eq!(drop.max_consecutive.count(), Some(5));
 
         let debug = &ndt.paths["debug"];
         assert_eq!(debug.input, vec!["sensor_points"]);
@@ -3124,8 +3131,8 @@ topics:
         assert_eq!(qos.reliability.as_deref(), Some("best_effort"));
         assert_eq!(qos.depth, Some(1));
         let drop = pc.drop.as_ref().unwrap();
-        assert_eq!(drop.max_count.as_ref().unwrap().n, 1);
-        assert_eq!(drop.max_count.as_ref().unwrap().w, 100);
+        assert_eq!(drop.max_count.count_per().unwrap().n, 1);
+        assert_eq!(drop.max_count.count_per().unwrap().w, 100);
 
         // Shorthand form
         let debug = &m.topics["debug_output"];
@@ -3227,7 +3234,7 @@ paths:
         let main = &m.paths["main"];
         assert_eq!(main.input, vec!["raw_data"]);
         assert_eq!(main.output, vec!["detections"]);
-        assert_eq!(main.max_latency.map(|d| d.as_millis_f64()), Some(50.0));
+        assert_eq!(main.max_latency.ms(), Some(50.0));
     }
 
     #[test]
@@ -3329,17 +3336,11 @@ nodes:
         let perception_sub = &m.nodes["perception"].subscribers["pointcloud"];
         let perception_qos = perception_sub.qos.as_ref().unwrap();
         assert_eq!(perception_qos.reliability.as_deref(), Some("reliable"));
-        assert_eq!(
-            perception_sub.max_transport.map(|d| d.as_millis_f64()),
-            Some(0.0)
-        );
+        assert_eq!(perception_sub.max_transport.ms(), Some(0.0));
 
         let remote_sub = &m.nodes["remote_viz"].subscribers["pointcloud"];
         assert!(remote_sub.qos.is_none());
-        assert_eq!(
-            remote_sub.max_transport.map(|d| d.as_millis_f64()),
-            Some(10.0)
-        );
+        assert_eq!(remote_sub.max_transport.ms(), Some(10.0));
     }
 
     #[test]
@@ -3460,8 +3461,8 @@ topics:
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let drop = m.topics["pointcloud"].drop.as_ref().unwrap();
-        assert_eq!(drop.max_count.as_ref().unwrap().n, 5);
-        assert_eq!(drop.max_count.as_ref().unwrap().w, 100);
+        assert_eq!(drop.max_count.count_per().unwrap().n, 5);
+        assert_eq!(drop.max_count.count_per().unwrap().w, 100);
         assert!(drop.max_consecutive.is_none());
     }
 
@@ -3511,13 +3512,13 @@ topics:
         let d = &m.nodes["detector"];
 
         let boxes = &d.paths["to_boxes"];
-        assert_eq!(boxes.max_jitter.unwrap().as_millis_f64(), 4.0);
-        assert_eq!(boxes.min_latency.unwrap().as_millis_f64(), 6.0);
+        assert_eq!(boxes.max_jitter.ms().unwrap(), 4.0);
+        assert_eq!(boxes.min_latency.ms().unwrap(), 6.0);
 
         let miss = boxes.miss.as_ref().expect("miss: parsed");
-        let tol = miss.tolerate.as_ref().expect("tolerate: parsed");
+        let tol = miss.tolerate.count_per().expect("tolerate: parsed");
         assert_eq!((tol.n, tol.w), (2, 100));
-        assert_eq!(miss.consecutive, Some(1));
+        assert_eq!(miss.consecutive.count(), Some(1));
         assert_eq!(miss.action, Some(MissAction::SkipNext));
 
         let ex = &d
@@ -3579,7 +3580,7 @@ topics:
                     output: [o]\n        miss: 3 / 50\n";
         let m = parse_manifest_str(yaml).unwrap();
         let miss = m.nodes["n"].paths["p"].miss.as_ref().unwrap();
-        let tol = miss.tolerate.as_ref().unwrap();
+        let tol = miss.tolerate.count_per().unwrap();
         assert_eq!((tol.n, tol.w), (3, 50));
         assert_eq!(miss.action, None, "shorthand states tolerance only");
     }
@@ -3686,13 +3687,14 @@ nodes:
 
         let tor = &m.modes["takeover_request"];
         let win = tor.window.as_ref().unwrap();
-        assert_eq!(win.duration.as_millis_f64(), 10_000.0);
+        assert_eq!(win.ms(), Some(10_000.0));
+        assert_eq!(win.kind, crate::BoundKind::LeastTime);
         assert_eq!(
             win.param,
-            Some(ParamRef {
+            Some(crate::ParamBinding::Node(ParamRef {
                 node: "mrm_handler".into(),
                 name: "takeover_request_timeout".into()
-            })
+            }))
         );
         assert_eq!(
             tor.exit,
@@ -3704,10 +3706,7 @@ nodes:
         );
         // The scalar form is a window with no parameter: unbound.
         let bare = m.modes["comfortable_stop"].window.as_ref().unwrap();
-        assert_eq!(
-            (bare.duration.as_millis_f64(), &bare.param),
-            (30_000.0, &None)
-        );
+        assert_eq!((bare.ms(), &bare.param), (Some(30_000.0), &None));
 
         let ss = m.nodes["op"].paths["on_timer"].safe_state.as_ref().unwrap();
         assert_eq!(ss.settle, None);
@@ -3720,7 +3719,7 @@ nodes:
             })
         );
         let both = m.nodes["op"].paths["measured"].safe_state.as_ref().unwrap();
-        assert_eq!(both.settle.map(|d| d.as_millis_f64()), Some(2034.0));
+        assert_eq!(both.settle.ms(), Some(2034.0));
         assert!(both.settle_profile.is_some());
     }
 
@@ -3733,7 +3732,7 @@ nodes:
         )
         .unwrap();
         let ss = m.nodes["n"].paths["p"].safe_state.as_ref().unwrap();
-        assert_eq!(ss.settle.map(|d| d.as_millis_f64()), Some(2034.0));
+        assert_eq!(ss.settle.ms(), Some(2034.0));
         assert_eq!(ss.settle_profile, None);
     }
 
@@ -3833,7 +3832,7 @@ nodes:
         .unwrap();
         let p = ok.modes["m"].window.clone().unwrap().param.unwrap();
         assert_eq!(
-            (p.node.as_str(), p.name.as_str()),
+            (p.node().unwrap(), p.name()),
             ("mrm_handler", "turning_hazard_on.emergency")
         );
     }
@@ -4055,15 +4054,18 @@ nodes:
             Some(TimerParam::Period("period_s".into()))
         );
         assert_eq!(
-            n.paths["tick"].timer_jitter().map(|d| d.as_millis_f64()),
+            n.paths["tick"].timer_jitter().and_then(crate::Bound::ms),
             Some(18.0)
         );
         let a = &n.subscribers["a"];
-        assert_eq!(a.max_age.map(|d| d.as_millis_f64()), Some(500.0));
-        assert_eq!(a.max_age_param.as_deref(), Some("timeout"));
-        assert_eq!(a.max_transport.map(|d| d.as_millis_f64()), Some(56.0));
+        assert_eq!(a.max_age.ms(), Some(500.0));
+        assert_eq!(
+            a.max_age.param(),
+            Some(&crate::ParamBinding::Own("timeout".into()))
+        );
+        assert_eq!(a.max_transport.ms(), Some(56.0));
         let react = &n.paths["react"];
-        assert_eq!(react.max_latency.map(|d| d.as_millis_f64()), Some(149.0));
+        assert_eq!(react.max_latency.ms(), Some(149.0));
         let profile = react
             .safe_state
             .as_ref()
@@ -4071,9 +4073,10 @@ nodes:
             .settle_profile
             .as_ref()
             .unwrap();
-        assert_eq!(profile.response.map(|d| d.as_millis_f64()), Some(256.0));
+        assert_eq!(profile.response.ms(), Some(256.0));
 
-        let src = |k: &str| m.budget_sources.get(k).unwrap_or_else(|| panic!("{k}"));
+        let sources = m.budget_sources();
+        let src = |k: &str| *sources.get(k).unwrap_or_else(|| panic!("{k}"));
         assert_eq!(src("hazards.h.ftti").kind, SourceKind::Requirement);
         assert_eq!(src("modes.tor.window").kind, SourceKind::Requirement);
         assert_eq!(src("nodes.n.sub.a.max_age").kind, SourceKind::Requirement);
@@ -4107,7 +4110,7 @@ nodes:
             .as_ref()
             .unwrap();
         assert_eq!(resp.budget_ms(), 256.0);
-        assert_eq!(m.budget_sources.len(), 8);
+        assert_eq!(m.budget_sources().len(), 8);
     }
 
     /// The new keys refuse what they cannot mean.
@@ -4152,7 +4155,7 @@ nodes:
             "        trigger: { timer: { rate_hz: 10, jitter: 2ms } }\n        max_latency: 5ms\n",
         )
         .unwrap();
-        assert!(m.budget_sources.is_empty());
+        assert!(m.budget_sources().is_empty());
         assert_eq!(m.nodes["n"].paths["p"].timer_param, None);
     }
 }
