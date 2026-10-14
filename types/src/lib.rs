@@ -14,7 +14,7 @@ pub mod types;
 
 pub use bound::{
     BOUND_KEYS, Bound, BoundKey, BoundKind, Form, Limit, OptBound, ParamBinding, Quantity,
-    bound_key,
+    bound_key, spelled,
 };
 pub use cond::{evaluate as evaluate_condition, filter_manifest};
 pub use parse::{
