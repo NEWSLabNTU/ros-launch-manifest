@@ -250,6 +250,18 @@ PATTERNS = {
     ("MeasuredTerm", "max"): [r"\.terms\b", r"MeasuredTerm"],
     ("MeasuredTerm", "n"): [r"\.terms\b", r"MeasuredTerm"],
     ("MeasuredTerm", "period"): [r"\.terms\b", r"MeasuredTerm"],
+    ("Budget", "supervise"): [r"\.supervise\b", r"\bsupervised\(\)", r"BudgetLevel::"],
+    ("Settle", "supervise"): [r"\.supervise\b", r"\bsupervised\(\)"],
+    ("Supervise", "reaction"): [r"SuperviseReaction::Reaction\b"],
+    ("Supervise", "enters"): [r"SuperviseReaction::Enters\b"],
+    ("Supervise", "mechanism"): [r"SuperviseMechanism::"],
+    ("Manifest", "policy"): [r"\.policy\b"],
+    ("Policy", "unsupervised_measured"): [r"\.unsupervised_measured\b"],
+    ("Manifest", "supervision"): [r"\.supervision\b"],
+    ("Supervision", "tick"): [r"\.tick\b"],
+    ("Supervision", "switch"): [r"\.switch\b"],
+    ("TimerRate", "value"): [r"\btimer_rate_source\b"],
+    ("TimerRate", "source"): [r"\btimer_rate_source\b", r"SourceKind::Allocated\b"],
 }
 
 # Rows whose patterns are known to match a field of the same name in another
@@ -259,6 +271,7 @@ SHARED_FIELD = {
     "on", "reaction", "when", "all_of", "description", "external", "rate_hz",
     "paths", "server", "client", "max", "n", "period", "param", "source",
     "duration", "input", "action", "consecutive", "state", "required",
+    "policy", "mechanism", "tick",
 }
 
 # Rows a grep cannot attribute, resolved by reading the code.
@@ -420,6 +433,11 @@ class Walk:
             if isinstance(v, dict):
                 self.keys("Budget", v)
                 self.source(v.get("source"))
+                self.supervise(v.get("supervise"))
+
+    def supervise(self, s):
+        if isinstance(s, dict):
+            self.keys("Supervise", s)
 
     def source(self, s):
         if isinstance(s, dict):
@@ -438,6 +456,10 @@ class Walk:
 
     def manifest(self, d):
         self.keys("Manifest", d)
+        if isinstance(d.get("policy"), dict):
+            self.keys("Policy", d["policy"])
+        if isinstance(d.get("supervision"), dict):
+            self.keys("Supervision", d["supervision"])
         for a in vals(d.get("args")):
             if isinstance(a, dict):
                 self.keys("Arg", a)
@@ -535,6 +557,9 @@ class Walk:
             if isinstance(tm, dict):
                 self.keys("TriggerTimer", tm)
                 self.budgets("TriggerTimer", tm)
+                if isinstance(tm.get("rate_hz"), dict):
+                    self.keys("TimerRate", tm["rate_hz"])
+                    self.source(tm["rate_hz"].get("source"))
         if isinstance(p.get("sync"), dict):
             self.keys("Sync", p["sync"])
         if isinstance(p.get("miss"), dict):
@@ -546,6 +571,8 @@ class Walk:
             if isinstance(st, dict):
                 self.keys("Settle", st)
                 self.budgets("Settle", st)
+                self.source(st.get("source"))
+                self.supervise(st.get("supervise"))
 
 
 def names(d, kind, acc=None):

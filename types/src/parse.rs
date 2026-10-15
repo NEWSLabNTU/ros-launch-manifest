@@ -184,8 +184,67 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         severity_levels: yaml_string_list(doc, "severity_levels", ctx)?,
         functions: parse_functions(doc, ctx)?,
         modes: parse_modes(doc, ctx)?,
+        policy: parse_policy(doc, ctx)?,
+        supervision: parse_supervision_platform(doc, ctx)?,
     };
     Ok(manifest)
+}
+
+/// `policy:` (phase 93): `{ unsupervised_measured: warn | error }`.
+fn parse_policy(doc: &Yaml, ctx: &str) -> Result<Option<Policy>, ParseError> {
+    let section = &doc["policy"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let pctx = &format_path(ctx, "policy");
+    if !section.is_hash() {
+        return Err(type_err(
+            ctx,
+            "policy",
+            "`{ unsupervised_measured: warn | error }`",
+            section,
+        ));
+    }
+    reject_unknown_keys(section, pctx, Context::Policy)?;
+    let unsupervised_measured =
+        match yaml_string(section, "unsupervised_measured", pctx)?.as_deref() {
+            None => None,
+            Some("warn") => Some(PolicySeverity::Warn),
+            Some("error") => Some(PolicySeverity::Error),
+            Some(other) => {
+                return Err(field_err(
+                    pctx,
+                    "unsupervised_measured",
+                    &format!("`{other}` is not a severity -- accepted: warn, error"),
+                ));
+            }
+        };
+    Ok(Some(Policy {
+        unsupervised_measured,
+    }))
+}
+
+/// `supervision:` (phase 93): `{ tick, switch }`, the platform terms of a
+/// supervision's detection delay.
+fn parse_supervision_platform(
+    doc: &Yaml,
+    ctx: &str,
+) -> Result<Option<SupervisionPlatform>, ParseError> {
+    let section = &doc["supervision"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let sctx = &format_path(ctx, "supervision");
+    if !section.is_hash() {
+        return Err(type_err(ctx, "supervision", "`{ tick, switch }`", section));
+    }
+    reject_unknown_keys(section, sctx, Context::Supervision)?;
+    let tick = yaml_duration(section, "tick").map_err(|e| reframe(e, sctx))?;
+    let switch = yaml_duration(section, "switch").map_err(|e| reframe(e, sctx))?;
+    if tick.is_some_and(|t| t.as_millis_f64() <= 0.0) {
+        return Err(field_err(sctx, "tick", "must be positive"));
+    }
+    Ok(Some(SupervisionPlatform { tick, switch }))
 }
 
 /// A duration bound (phase 90 G2): the key `key` of `context`, read into
@@ -237,7 +296,71 @@ fn yaml_bound(
     if !v["source"].is_badvalue() {
         b.source = Some(parse_source(&v["source"], bctx)?);
     }
+    b.supervise = parse_supervise(v, bctx)?;
     Ok(Some(b))
+}
+
+/// `supervise:` in a budget's map form (phase 93): `{ reaction: <path> |
+/// enters: <mode>, mechanism: executor | timer }`. `None` when absent.
+fn parse_supervise(v: &Yaml, ctx: &str) -> Result<Option<Supervision>, ParseError> {
+    let section = &v["supervise"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let sctx = &format_path(ctx, "supervise");
+    let Yaml::Hash(_) = section else {
+        return Err(type_err(
+            ctx,
+            "supervise",
+            "`{ reaction: <path>, mechanism: executor | timer }`",
+            section,
+        ));
+    };
+    reject_unknown_keys(section, sctx, Context::Supervise)?;
+    let reaction = yaml_string(section, "reaction", sctx)?;
+    let enters = yaml_string(section, "enters", sctx)?;
+    let reaction = match (reaction, enters) {
+        (Some(r), None) => SuperviseReaction::Reaction(r),
+        (None, Some(m)) => SuperviseReaction::Enters(m),
+        (Some(_), Some(_)) => {
+            return Err(field_err(
+                sctx,
+                "enters",
+                "a miss either starts a path (`reaction: <path>`) or enters a mode (`enters:                  <mode>`), not both -- keep one",
+            ));
+        }
+        (None, None) => {
+            return Err(field_err(
+                sctx,
+                "reaction",
+                "required: what a miss starts -- a path of this node or a scope path                  (`reaction: <path>`), or a mode (`enters: <mode>`)",
+            ));
+        }
+    };
+    let mechanism = match yaml_string(section, "mechanism", sctx)?.as_deref() {
+        Some("executor") => SuperviseMechanism::Executor,
+        Some("timer") => SuperviseMechanism::Timer,
+        Some(other) => {
+            return Err(field_err(
+                sctx,
+                "mechanism",
+                &format!(
+                    "`{other}` is not a supervision mechanism -- accepted: executor (checked in                      the spin loop: catches slowness, not a stuck callback), timer (an                      independent timer and thread: catches both)"
+                ),
+            ));
+        }
+        None => {
+            return Err(field_err(
+                sctx,
+                "mechanism",
+                "required: what checks the budget -- `executor` or `timer`",
+            ));
+        }
+    };
+    Ok(Some(Supervision {
+        reaction,
+        mechanism,
+    }))
 }
 
 /// A rate bound (phase 90 G2): a number of Hz under `key` of `context`.
@@ -650,6 +773,13 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
             } else {
                 Some(parse_source(&section["source"], wctx)?)
             };
+            if !section["supervise"].is_badvalue() {
+                return Err(field_err(
+                    wctx,
+                    "supervise",
+                    "a window is a least time the rung lasts, not a budget something can                      overrun: there is nothing to supervise",
+                ));
+            }
             let mut b = window(positive(d, "window.duration")?);
             b.param = param.map(ParamBinding::Node);
             b.source = source;
@@ -847,6 +977,13 @@ fn parse_fault_kind(raw: &str, ctx: &str, key: &str) -> Result<FaultKind, ParseE
         "late" => Ok(FaultKind::Late),
         "loss" => Ok(FaultKind::Loss),
         "reported" => Ok(FaultKind::Reported),
+        "overrun" => Err(field_err(
+            ctx,
+            key,
+            "`overrun` is what a supervised budget detects, not a class a subscriber or a \
+             guard observes: state it as `supervise: { reaction, mechanism }` in the budget's \
+             map form",
+        )),
         other => Err(field_err(
             ctx,
             key,
@@ -1048,6 +1185,16 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
                     ));
                 };
                 b.source = Some(parse_source(&map["source"], sctx)?);
+            }
+            if !map["supervise"].is_badvalue() {
+                let Some(b) = literal.as_mut() else {
+                    return Err(field_err(
+                        sctx,
+                        "supervise",
+                        "supervises a written `duration`, and none is written. A supervised                          `response` states it in its own map form, `response: { duration,                          supervise }`",
+                    ));
+                };
+                b.supervise = parse_supervise(map, sctx)?;
             }
             let response = yaml_bound(map, "response", sctx, Context::Settle)?;
             (literal, profile, response, true)
@@ -1811,6 +1958,10 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         miss: parse_miss_spec(yaml, ctx)?,
         safe_state: parse_safe_state(yaml, ctx)?,
         timer_param: parse_timer_param(yaml, ctx)?,
+        timer_rate_source: match &yaml["trigger"]["timer"] {
+            t @ Yaml::Hash(_) => timer_rate(t, ctx)?.and_then(|(_, src)| src),
+            _ => None,
+        },
     };
 
     // Vocabulary v2 §2: sync only meaningful with an input trigger with
@@ -1875,7 +2026,8 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     match key.as_str() {
         "timer" => {
             reject_unknown_keys(v, ctx, Context::TriggerTimer)?;
-            let rate_hz = yaml_f64(v, "rate_hz", ctx)?
+            let rate_hz = timer_rate(v, ctx)?
+                .map(|(hz, _)| hz)
                 .ok_or_else(|| field_err(ctx, "trigger.timer", "requires 'rate_hz'"))?;
             if rate_hz <= 0.0 {
                 return Err(field_err(ctx, "trigger.timer.rate_hz", "must be > 0"));
@@ -1916,6 +2068,32 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
 
 /// `trigger: { timer: { param | period_param } }` (phase 10 B1): the
 /// parameter of the path's node that sets the timer's period.
+/// A timer's `rate_hz` (phase 93): the bare number, or the map form `{
+/// value, source }` so the rate can say where it comes from (`source:
+/// allocated`: chosen inside the range the consumer derives). `timer` is the
+/// map under `trigger: { timer }`.
+fn timer_rate(timer: &Yaml, ctx: &str) -> Result<Option<(f64, Option<BudgetSource>)>, ParseError> {
+    let v = &timer["rate_hz"];
+    let Yaml::Hash(_) = v else {
+        return Ok(yaml_f64(timer, "rate_hz", ctx)?.map(|hz| (hz, None)));
+    };
+    let rctx = &format_path(ctx, "trigger.timer.rate_hz");
+    reject_unknown_keys(v, rctx, Context::TimerRate)?;
+    let hz = yaml_f64(v, "value", rctx)?.ok_or_else(|| {
+        field_err(
+            rctx,
+            "value",
+            "required: the rate itself, Hz (`rate_hz: { value: 10 }`)",
+        )
+    })?;
+    let source = if v["source"].is_badvalue() {
+        None
+    } else {
+        Some(parse_source(&v["source"], rctx)?)
+    };
+    Ok(Some((hz, source)))
+}
+
 fn parse_timer_param(doc: &Yaml, ctx: &str) -> Result<Option<TimerParam>, ParseError> {
     let timer = &doc["trigger"]["timer"];
     if !timer.is_hash() {
@@ -4329,5 +4507,142 @@ nodes:
         .unwrap();
         assert!(m.budget_sources().is_empty());
         assert_eq!(m.nodes["n"].paths["p"].timer_param, None);
+    }
+
+    /// Phase 93: `supervise:` beside `source:` in a budget's map form, the
+    /// derived level, `policy:`, `supervision:`, `allocated` and the map
+    /// form of a timer's `rate_hz`.
+    #[test]
+    fn supervision_keys_parse_and_round_trip() {
+        let yaml = "policy: { unsupervised_measured: error }\n\
+                    supervision: { tick: 1ms, switch: 0.05ms }\n\
+                    nodes:\n  n:\n    paths:\n      p:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency:\n          duration: 149ms\n          source: { measured: { margin: 0.2, terms: { tick: { period: 100ms, max: 14.84ms }, work: { max: 25.04ms } } } }\n          supervise: { reaction: brake, mechanism: timer }\n      brake:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency: { duration: 5ms, source: analysed, supervise: { enters: safe, mechanism: executor } }\n      q:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency: { duration: 9ms, source: { measured: { max: 7ms, margin: 0.2 } } }\n      t:\n        trigger: { timer: { rate_hz: { value: 10, source: allocated } } }\n        output: [o]\n";
+        let m = super::parse_manifest_str(yaml).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            m.policy,
+            Some(Policy {
+                unsupervised_measured: Some(PolicySeverity::Error)
+            })
+        );
+        let sv = m.supervision.as_ref().unwrap();
+        assert_eq!(sv.tick.map(|d| d.as_millis_f64()), Some(1.0));
+        assert_eq!(sv.switch.map(|d| d.as_millis_f64()), Some(0.05));
+        let paths = &m.nodes["n"].paths;
+        let p = paths["p"].max_latency.as_ref().unwrap();
+        assert_eq!(
+            p.supervise,
+            Some(Supervision {
+                reaction: SuperviseReaction::Reaction("brake".into()),
+                mechanism: SuperviseMechanism::Timer,
+            })
+        );
+        assert_eq!(p.level(), Some(BudgetLevel::Supervised));
+        let brake = paths["brake"].max_latency.as_ref().unwrap();
+        assert_eq!(
+            brake.supervise.as_ref().unwrap().reaction,
+            SuperviseReaction::Enters("safe".into())
+        );
+        assert_eq!(brake.level(), Some(BudgetLevel::Bound));
+        assert_eq!(
+            paths["q"].max_latency.as_ref().unwrap().level(),
+            Some(BudgetLevel::Unsupervised)
+        );
+        assert!(matches!(
+            paths["t"].trigger,
+            Some(Trigger::Timer { rate_hz, .. }) if rate_hz == 10.0
+        ));
+        let srcs = m.budget_sources();
+        assert_eq!(
+            srcs["nodes.n.paths.t.trigger.timer.rate_hz"].kind,
+            SourceKind::Allocated
+        );
+        assert_eq!(m.supervised().len(), 2);
+        // Round trip: the serialized bound carries `supervise`, and the
+        // serialized manifest parses back to the same supervision.
+        let v = serde_json::to_value(p).unwrap();
+        assert_eq!(v["supervise"]["reaction"], "brake");
+        assert_eq!(v["supervise"]["mechanism"], "timer");
+        let v = serde_json::to_value(brake).unwrap();
+        assert_eq!(v["supervise"]["enters"], "safe");
+        let back = serde_json::to_string(&m).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(back["policy"]["unsupervised_measured"], "error");
+        // The bare rate stays a number and states no source.
+        let m = super::parse_manifest_str(
+            "nodes:\n  n:\n    paths:\n      t:\n        trigger: { timer: { rate_hz: 10 } }\n        output: [o]\n",
+        )
+        .unwrap();
+        assert_eq!(m.nodes["n"].paths["t"].timer_rate_source, None);
+    }
+
+    /// Phase 93: what the supervision keys refuse.
+    #[test]
+    fn supervision_keys_refuse_what_cannot_act() {
+        let node = |extra: &str| {
+            super::parse_manifest_str(&format!(
+                "nodes:\n  n:\n    paths:\n      p:\n        trigger: {{ input: [a] }}\n        output: [o]\n{extra}"
+            ))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        for (extra, needle) in [
+            (
+                "        max_latency: { duration: 5ms, supervise: { mechanism: timer } }\n",
+                "required: what a miss starts",
+            ),
+            (
+                "        max_latency: { duration: 5ms, supervise: { reaction: r, enters: m, mechanism: timer } }\n",
+                "not both",
+            ),
+            (
+                "        max_latency: { duration: 5ms, supervise: { reaction: r } }\n",
+                "required: what checks the budget",
+            ),
+            (
+                "        max_latency: { duration: 5ms, supervise: { reaction: r, mechanism: thread } }\n",
+                "not a supervision mechanism",
+            ),
+            (
+                "        max_latency: { duration: 5ms, supervise: { reaction: r, mechanism: timer, within: 1ms } }\n",
+                "unknown key",
+            ),
+            (
+                "        max_latency: { duration: 5ms, supervise: r }\n",
+                "supervise",
+            ),
+        ] {
+            let e = node(extra).unwrap_err();
+            assert!(e.contains(needle), "{extra}: {e}");
+        }
+        // `overrun` is the supervision's verdict, not a class to watch for.
+        let e = super::parse_manifest_str("hazards:\n  h: { guards: [/a], on: overrun }\n")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("supervise:"), "{e}");
+        // A window is a least time.
+        let e = super::parse_manifest_str(
+            "modes:\n  m: { requires: [/a], window: { duration: 10s, supervise: { reaction: r, mechanism: timer } } }\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("least time"), "{e}");
+        for (yaml, needle) in [
+            (
+                "policy: { unsupervised_measured: loud }\n",
+                "not a severity",
+            ),
+            ("policy: error\n", "unsupervised_measured"),
+            ("supervision: { tick: 0ms }\n", "positive"),
+            ("supervision: { tik: 1ms }\n", "did you mean `tick`"),
+        ] {
+            let e = super::parse_manifest_str(yaml).unwrap_err().to_string();
+            assert!(e.contains(needle), "{yaml}: {e}");
+        }
+        let e = super::parse_manifest_str(
+            "nodes:\n  n:\n    paths:\n      t:\n        trigger: { timer: { rate_hz: { source: allocated } } }\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("value"), "{e}");
     }
 }

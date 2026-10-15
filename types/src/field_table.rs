@@ -110,6 +110,14 @@ pub enum Context {
     Measured,
     /// One entry of `source: { measured: { terms: ... } }` (phase 10).
     MeasuredTerm,
+    /// `supervise:` in a budget's map form (phase 93).
+    Supervise,
+    /// `policy:` at a manifest's top (phase 93).
+    Policy,
+    /// `supervision:` at a manifest's top (phase 93).
+    Supervision,
+    /// The map form of a timer's `rate_hz` (phase 93).
+    TimerRate,
 }
 
 impl Context {
@@ -147,6 +155,10 @@ impl Context {
             Context::Budget => "<budget> (map form)",
             Context::Measured => "source.measured",
             Context::MeasuredTerm => "source.measured.terms.<name>",
+            Context::Supervise => "<budget>.supervise",
+            Context::Policy => "policy",
+            Context::Supervision => "supervision",
+            Context::TimerRate => "trigger.timer.rate_hz (map form)",
         }
     }
 }
@@ -375,6 +387,18 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         Kind::Meta,
         "Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest.",
+    ),
+    live(
+        "policy",
+        Context::Manifest,
+        Kind::Meta,
+        "Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults.",
+    ),
+    live(
+        "supervision",
+        Context::Manifest,
+        Kind::Fact,
+        "The platform terms of a supervised budget's detection delay, stated once: `{ tick, switch }`. Read by the consumer's overrun case (`supervised-fit`); required once any budget states `supervise:`.",
     ),
     // ── nodes.<name> ──
     live(
@@ -822,7 +846,7 @@ pub const FIELDS: &[Field] = &[
         "rate_hz",
         Context::TriggerTimer,
         Kind::Fact,
-        "Timer rate. Required, and must be greater than zero.",
+        "Timer rate, Hz. Required, and must be greater than zero. A bare number, or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives.",
     ),
     live(
         "jitter",
@@ -1210,6 +1234,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Where the written `duration` comes from, as a budget's `source:` (phase 10). Requires `duration`: a profile's settle is derived from its parameters.",
     ),
+    live(
+        "supervise",
+        Context::Settle,
+        Kind::Requirement,
+        "The runtime supervision of the written `duration`, as a budget's `supervise:` (phase 93). Requires `duration`.",
+    ),
     // -- the map form of a budget (phase 10) --
     live(
         "duration",
@@ -1227,7 +1257,13 @@ pub const FIELDS: &[Field] = &[
         "source",
         Context::Budget,
         Kind::Meta,
-        "Where the budget comes from: `requirement` (chosen: a hazard analysis, a decision, a configured value), `measured` (an observed maximum plus a margin: NOT a bound), `derived` (computed from other numbers of the contract or the image's parameters) or `analysed` (an upper bound from an analysis). `{ measured: { max, n, margin } }` states the observations, and the consumer checks that `max x (1 + margin)`, rounded up to the next ms, reproduces `duration` (`budget-rule`).",
+        "Where the budget comes from: `requirement` (chosen: a hazard analysis, a decision, a configured value), `measured` (an observed maximum plus a margin: NOT a bound), `derived` (computed from other numbers of the contract or the image's parameters) or `analysed` (an upper bound from an analysis). `{ measured: { max, n, margin } }` states the observations, and the consumer checks that `max x (1 + margin)`, rounded up to the next ms, reproduces `duration` (`budget-rule`). `allocated` (since v0.1.61): chosen inside a range the consumer derives.",
+    ),
+    live(
+        "supervise",
+        Context::Budget,
+        Kind::Requirement,
+        "The runtime checks the budget while the system runs and a miss starts a fallback: `{ reaction: <path> | enters: <mode>, mechanism: executor | timer }`. The consumer derives the detection delay and checks that the overrun case (the budget + the detection + the fallback's route and settle) fits the hazard's FTTI. A budget's level is derived from this and `source`: analysed -> bound; supervised; measured alone -> unsupervised. Not on a `window` (a least time).",
     ),
     // -- source: { measured: ... } --
     live(
@@ -1277,6 +1313,58 @@ pub const FIELDS: &[Field] = &[
         Context::MeasuredTerm,
         Kind::Fact,
         "A timer tick's period, charged without margin.",
+    ),
+    // -- <budget>.supervise (phase 93) --
+    live(
+        "reaction",
+        Context::Supervise,
+        Kind::Fact,
+        "The path a miss starts: a path of the budget's own node (as `on_violation.reaction`), else a scope path of the manifest. Exactly one of `reaction` and `enters`.",
+    ),
+    live(
+        "enters",
+        Context::Supervise,
+        Kind::Fact,
+        "The mode a miss enters; its `reaction:` scope path is what runs. Exactly one of `reaction` and `enters`.",
+    ),
+    live(
+        "mechanism",
+        Context::Supervise,
+        Kind::Fact,
+        "What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`).",
+    ),
+    // -- policy (phase 93) --
+    live(
+        "unsupervised_measured",
+        Context::Policy,
+        Kind::Requirement,
+        "The severity of a measured budget nothing supervises (`measured-unsupervised`): `warn` (the default) or `error`.",
+    ),
+    // -- supervision (phase 93) --
+    live(
+        "tick",
+        Context::Supervision,
+        Kind::Fact,
+        "The period the monitor's clock is read at: the executor's tick, the supervision timer's resolution (a duration, positive). Part of every supervised budget's detection delay.",
+    ),
+    live(
+        "switch",
+        Context::Supervision,
+        Kind::Fact,
+        "The interrupt plus the thread switch before a `timer` mechanism's reaction runs (a duration). Required by a `mechanism: timer` supervision.",
+    ),
+    // -- trigger.timer.rate_hz, map form (phase 93) --
+    live(
+        "value",
+        Context::TimerRate,
+        Kind::Fact,
+        "The rate, Hz. Required; greater than zero.",
+    ),
+    live(
+        "source",
+        Context::TimerRate,
+        Kind::Meta,
+        "Where the rate comes from, as a budget's `source:`. `allocated`: chosen inside the range the consumer derives, which refuses a period outside it.",
     ),
 ];
 
@@ -1414,6 +1502,18 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Hazard, "enters", "0.1.59"),
     (Context::Exit, "holds", "0.1.59"),
     (Context::Settle, "source", "0.1.60"),
+    (Context::Manifest, "policy", "0.1.61"),
+    (Context::Manifest, "supervision", "0.1.61"),
+    (Context::Settle, "supervise", "0.1.61"),
+    (Context::Budget, "supervise", "0.1.61"),
+    (Context::Supervise, "reaction", "0.1.61"),
+    (Context::Supervise, "enters", "0.1.61"),
+    (Context::Supervise, "mechanism", "0.1.61"),
+    (Context::Policy, "unsupervised_measured", "0.1.61"),
+    (Context::Supervision, "tick", "0.1.61"),
+    (Context::Supervision, "switch", "0.1.61"),
+    (Context::TimerRate, "value", "0.1.61"),
+    (Context::TimerRate, "source", "0.1.61"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

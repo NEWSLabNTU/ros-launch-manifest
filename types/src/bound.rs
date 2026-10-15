@@ -16,7 +16,7 @@
 
 use crate::duration::Duration;
 use crate::field_table::Context;
-use crate::types::{BudgetSource, DropCount, ParamRef};
+use crate::types::{BudgetLevel, BudgetSource, DropCount, ParamRef, Supervision};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
 /// What a bound limits.
@@ -192,6 +192,9 @@ pub struct Bound {
     pub source: Option<BudgetSource>,
     /// The parameter that must carry the value (`param:` in the map form).
     pub param: Option<ParamBinding>,
+    /// The runtime supervision of the value (`supervise:` in the map form,
+    /// phase 93); `None` when the contract states none.
+    pub supervise: Option<Supervision>,
 }
 
 impl Bound {
@@ -204,7 +207,14 @@ impl Bound {
             value,
             source: None,
             param: None,
+            supervise: None,
         }
+    }
+
+    /// What the budget's evidence amounts to (phase 93): see
+    /// [`BudgetLevel::of`].
+    pub fn level(&self) -> Option<BudgetLevel> {
+        BudgetLevel::of(self.source.as_ref(), self.supervise.as_ref())
     }
 
     /// The value, when it is a duration.
@@ -246,10 +256,11 @@ impl Bound {
 }
 
 /// A bound serializes as its contract spelling: the bare value, or the map
-/// form `{ duration, param, source }` when it states more than the value.
+/// form `{ duration, param, source, supervise }` when it states more than
+/// the value.
 impl Serialize for Bound {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        if self.source.is_none() && self.param.is_none() {
+        if self.source.is_none() && self.param.is_none() && self.supervise.is_none() {
             return self.value.serialize(s);
         }
         let mut m = s.serialize_map(None)?;
@@ -259,6 +270,9 @@ impl Serialize for Bound {
         }
         if let Some(src) = &self.source {
             m.serialize_entry("source", src)?;
+        }
+        if let Some(sv) = &self.supervise {
+            m.serialize_entry("supervise", sv)?;
         }
         m.end()
     }
@@ -280,6 +294,8 @@ pub trait OptBound {
     fn source(&self) -> Option<&BudgetSource>;
     /// The parameter binding, when the bound is stated and states one.
     fn param(&self) -> Option<&ParamBinding>;
+    /// The supervision, when the bound is stated and states one (phase 93).
+    fn supervise(&self) -> Option<&Supervision>;
 }
 
 impl OptBound for Option<Bound> {
@@ -304,6 +320,9 @@ impl OptBound for Option<Bound> {
     fn param(&self) -> Option<&ParamBinding> {
         self.as_ref().and_then(|b| b.param.as_ref())
     }
+    fn supervise(&self) -> Option<&Supervision> {
+        self.as_ref().and_then(|b| b.supervise.as_ref())
+    }
 }
 
 /// What a bound key accepts beyond its bare value.
@@ -311,9 +330,10 @@ impl OptBound for Option<Bound> {
 pub enum Form {
     /// The bare value only.
     Bare,
-    /// The bare value, or the map form `{ duration, source }`.
+    /// The bare value, or the map form `{ duration, source, supervise }`.
     Map,
-    /// The bare value, or the map form `{ duration, source, param }`.
+    /// The bare value, or the map form `{ duration, source, supervise,
+    /// param }`.
     MapParam,
     /// A settle (phase 90 G6): the bare duration is shorthand for `{
     /// duration }`, and the map is `{ duration | decel, jerk ; response ;
@@ -676,10 +696,39 @@ impl crate::types::Manifest {
     /// written as a bare value states no source and has no entry.
     ///
     /// [`Manifest::bounds`]: crate::types::Manifest::bounds
+    ///
+    /// A timer's `rate_hz` written in its map form (`rate_hz: { value,
+    /// source }`, phase 93) is listed too, as `...trigger.timer.rate_hz`:
+    /// it is not a bound, but its source is stated the same way.
     pub fn budget_sources(&self) -> std::collections::BTreeMap<String, &BudgetSource> {
-        self.bounds()
+        let mut out: std::collections::BTreeMap<String, &BudgetSource> = self
+            .bounds()
             .into_iter()
             .filter_map(|(k, b)| b.source.as_ref().map(|s| (k, s)))
+            .collect();
+        for (n, nd) in &self.nodes {
+            for (p, pd) in &nd.paths {
+                if let Some(s) = &pd.timer_rate_source {
+                    out.insert(format!("nodes.{n}.paths.{p}.trigger.timer.rate_hz"), s);
+                }
+            }
+        }
+        for (p, pd) in &self.paths {
+            if let Some(s) = &pd.timer_rate_source {
+                out.insert(format!("paths.{p}.trigger.timer.rate_hz"), s);
+            }
+        }
+        out
+    }
+
+    /// Every supervised bound (phase 93), keyed as [`Manifest::bounds`]
+    /// keys it.
+    ///
+    /// [`Manifest::bounds`]: crate::types::Manifest::bounds
+    pub fn supervised(&self) -> Vec<(String, &Bound, &Supervision)> {
+        self.bounds()
+            .into_iter()
+            .filter_map(|(k, b)| b.supervise.as_ref().map(|s| (k, b, s)))
             .collect()
     }
 }

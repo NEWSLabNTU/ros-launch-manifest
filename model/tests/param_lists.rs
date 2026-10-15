@@ -57,8 +57,7 @@ fn an_element_flow_syntax_would_reshape_is_quoted() {
     else {
         unreachable!()
     };
-    let back: Vec<String> =
-        serde_yaml_ng::from_str(&format!("[{}]", items.join(", "))).unwrap();
+    let back: Vec<String> = serde_yaml_ng::from_str(&format!("[{}]", items.join(", "))).unwrap();
     assert_eq!(back, ["mon: map_status", "a, b", "plain"]);
 }
 

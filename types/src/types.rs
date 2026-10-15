@@ -80,6 +80,15 @@ pub struct Manifest {
     /// ladder to fall to when it is lost.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, ModeDecl>,
+    /// Project policy (phase 93): how the consumer treats a measured budget
+    /// nothing supervises. `None` when the file states none (the default:
+    /// a warning).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<Policy>,
+    /// The platform terms of a supervision's detection delay (phase 93),
+    /// stated once per contract. `None` when the file states none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supervision: Option<SupervisionPlatform>,
     // Where each budget comes from (phase 10 B7) is the `source` of its
     // [`crate::Bound`] (phase 90 G2); [`Manifest::budget_sources`] lists
     // them by dotted contract path.
@@ -99,7 +108,7 @@ pub struct BudgetSource {
     pub measured: Option<Measurement>,
 }
 
-/// The four provenances a budget can have.
+/// The provenances a budget can have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
@@ -111,14 +120,20 @@ pub enum SourceKind {
     Derived,
     /// An upper bound from an analysis (WCET, response time, link schedule).
     Analysed,
+    /// Chosen inside a range the consumer derives from the rest of the
+    /// contract (phase 93): a timer's period between what its executor can
+    /// carry and what the hazards' intervals allow. The consumer refuses a
+    /// value outside the range.
+    Allocated,
 }
 
 impl SourceKind {
-    pub const ALL: [SourceKind; 4] = [
+    pub const ALL: [SourceKind; 5] = [
         SourceKind::Requirement,
         SourceKind::Measured,
         SourceKind::Derived,
         SourceKind::Analysed,
+        SourceKind::Allocated,
     ];
 
     /// The contract spelling.
@@ -128,8 +143,149 @@ impl SourceKind {
             SourceKind::Measured => "measured",
             SourceKind::Derived => "derived",
             SourceKind::Analysed => "analysed",
+            SourceKind::Allocated => "allocated",
         }
     }
+}
+
+/// `supervise:` on a budget (phase 93): the runtime checks the budget while
+/// the system runs, and a miss starts a fallback. The user states the
+/// expectation and the fallback; the consumer derives the detection delay
+/// and checks that the overrun case still fits the hazard's interval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Supervision {
+    /// What a miss starts.
+    #[serde(flatten)]
+    pub reaction: SuperviseReaction,
+    /// What checks the budget.
+    pub mechanism: SuperviseMechanism,
+}
+
+/// What a supervised budget's miss starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuperviseReaction {
+    /// `reaction: <path>`: a path of the budget's own node (as
+    /// `on_violation.reaction` names one), else a scope path of the manifest.
+    /// The consumer resolves which.
+    Reaction(String),
+    /// `enters: <mode>`: the mode's `reaction:` scope path runs.
+    Enters(String),
+}
+
+impl SuperviseReaction {
+    /// The name written, path or mode.
+    pub fn name(&self) -> &str {
+        match self {
+            SuperviseReaction::Reaction(n) | SuperviseReaction::Enters(n) => n,
+        }
+    }
+}
+
+/// What checks a supervised budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuperviseMechanism {
+    /// Checked in the executor's spin loop: catches a slow callback once it
+    /// returns, not one that never does.
+    Executor,
+    /// An independent timer and thread: catches a slow callback and a stuck
+    /// one.
+    Timer,
+}
+
+impl SuperviseMechanism {
+    pub const ALL: [SuperviseMechanism; 2] =
+        [SuperviseMechanism::Executor, SuperviseMechanism::Timer];
+
+    /// The contract spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SuperviseMechanism::Executor => "executor",
+            SuperviseMechanism::Timer => "timer",
+        }
+    }
+}
+
+impl std::fmt::Display for SuperviseMechanism {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What a budget's evidence amounts to (phase 93). Derived from its
+/// `source:` and `supervise:`, never written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BudgetLevel {
+    /// A measured budget nothing supervises: an observation, not a bound.
+    Unsupervised,
+    /// The runtime checks the budget and a miss starts a fallback.
+    Supervised,
+    /// An analysed upper bound.
+    Bound,
+}
+
+impl BudgetLevel {
+    /// `source: analysed` -> bound; `supervise:` stated -> supervised;
+    /// `source: measured` alone -> unsupervised; anything else (a
+    /// requirement, a derived or allocated value, no source) -> `None`: not
+    /// evidence about the implementation.
+    pub fn of(source: Option<&BudgetSource>, supervise: Option<&Supervision>) -> Option<Self> {
+        match (source.map(|s| s.kind), supervise) {
+            (Some(SourceKind::Analysed), _) => Some(BudgetLevel::Bound),
+            (_, Some(_)) => Some(BudgetLevel::Supervised),
+            (Some(SourceKind::Measured), None) => Some(BudgetLevel::Unsupervised),
+            _ => None,
+        }
+    }
+
+    /// The name `--explain` prints.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BudgetLevel::Unsupervised => "unsupervised",
+            BudgetLevel::Supervised => "supervised",
+            BudgetLevel::Bound => "bound",
+        }
+    }
+}
+
+impl std::fmt::Display for BudgetLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// `policy:` (phase 93): project policy for the consumer's rules.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Policy {
+    /// The severity of a measured budget nothing supervises
+    /// (`measured-unsupervised`). `None`: the default, a warning.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsupervised_measured: Option<PolicySeverity>,
+}
+
+/// A severity a policy sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicySeverity {
+    #[default]
+    Warn,
+    Error,
+}
+
+/// `supervision:` (phase 93): the platform terms of a supervision's
+/// detection delay, until platform profiles carry them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct SupervisionPlatform {
+    /// The period the monitor's clock is read at: the executor's tick, the
+    /// supervision timer's resolution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tick: Option<crate::duration::Duration>,
+    /// The interrupt plus the thread switch a `timer` mechanism adds before
+    /// its reaction runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub switch: Option<crate::duration::Duration>,
 }
 
 impl std::fmt::Display for SourceKind {
@@ -559,6 +715,9 @@ pub enum FaultKind {
     /// An application detector published on the guarded topic; the fault is
     /// whatever it checks (covariance, plausibility, a value out of range).
     Reported,
+    /// A supervised budget was overrun (phase 93): what a `supervise:`
+    /// detects, for traces and verdicts. Not written in an `on:` list.
+    Overrun,
 }
 
 /// Where the runtime observer reads a violation.
@@ -1232,6 +1391,11 @@ pub struct PathDecl {
     /// (`timer-param` in the consumer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer_param: Option<TimerParam>,
+    /// Where the timer's `rate_hz` comes from (phase 93), written in its
+    /// map form `rate_hz: { value, source }` and kept here for the same
+    /// reason as [`Self::timer_param`]. `None` for the bare number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_rate_source: Option<BudgetSource>,
 }
 
 impl PathDecl {

@@ -28,6 +28,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
 | `unless` | meta |  | Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest. |
+| `policy` | meta | since v0.1.61 | Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults. |
+| `supervision` | fact | since v0.1.61 | The platform terms of a supervised budget's detection delay, stated once: `{ tick, switch }`. Read by the consumer's overrun case (`supervised-fit`); required once any budget states `supervise:`. |
 
 ## `nodes.<name>`
 
@@ -164,7 +166,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `rate_hz` | fact |  | Timer rate. Required, and must be greater than zero. |
+| `rate_hz` | fact |  | Timer rate, Hz. Required, and must be greater than zero. A bare number, or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. |
 | `jitter` | fact | since v0.1.49 | Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. A budget: the map form `{ duration, source }` applies. |
 | `param` | fact | since v0.1.58 | The parameter of this path's node that holds the timer's RATE, Hz (`update_rate`). Its resolved launch value must equal `rate_hz` (`timer-param`). At most one of `param` and `period_param`. |
 | `period_param` | fact | since v0.1.58 | The parameter of this path's node that holds the timer's PERIOD, seconds. Its resolved launch value must equal `1 / rate_hz` (`timer-param`). |
@@ -305,6 +307,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `duration` | fact |  | The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside a profile, the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). Required when no profile is written. |
 | `response` | fact | since v0.1.58 | The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived profile alike: `settle = duration + response`, or `response + a/j + (v0 - v_r)/a` (`settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies. |
 | `source` | meta | since v0.1.60 | Where the written `duration` comes from, as a budget's `source:` (phase 10). Requires `duration`: a profile's settle is derived from its parameters. |
+| `supervise` | requirement | since v0.1.61 | The runtime supervision of the written `duration`, as a budget's `supervise:` (phase 93). Requires `duration`. |
 
 ## `<budget> (map form)`
 
@@ -312,7 +315,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `duration` | requirement | since v0.1.58 | The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter`, a settle's `response` and a mode's `window` (where it is the least time the rung lasts while it stays available: the rung below starts no sooner; positive). See Bounds below. |
 | `param` | fact | since v0.1.58 | The parameter whose resolved launch value, in seconds, must equal `duration`. On `max_age`: a parameter of this subscriber's node (`max-age-param`). On a mode's `window`: `<node>.<parameter>` (`window-param`). No other bound takes one. |
-| `source` | meta | since v0.1.58 | Where the budget comes from: `requirement` (chosen: a hazard analysis, a decision, a configured value), `measured` (an observed maximum plus a margin: NOT a bound), `derived` (computed from other numbers of the contract or the image's parameters) or `analysed` (an upper bound from an analysis). `{ measured: { max, n, margin } }` states the observations, and the consumer checks that `max x (1 + margin)`, rounded up to the next ms, reproduces `duration` (`budget-rule`). |
+| `source` | meta | since v0.1.58 | Where the budget comes from: `requirement` (chosen: a hazard analysis, a decision, a configured value), `measured` (an observed maximum plus a margin: NOT a bound), `derived` (computed from other numbers of the contract or the image's parameters) or `analysed` (an upper bound from an analysis). `{ measured: { max, n, margin } }` states the observations, and the consumer checks that `max x (1 + margin)`, rounded up to the next ms, reproduces `duration` (`budget-rule`). `allocated` (since v0.1.61): chosen inside a range the consumer derives. |
+| `supervise` | requirement | since v0.1.61 | The runtime checks the budget while the system runs and a miss starts a fallback: `{ reaction: <path> | enters: <mode>, mechanism: executor | timer }`. The consumer derives the detection delay and checks that the overrun case (the budget + the detection + the fallback's route and settle) fits the hazard's FTTI. A budget's level is derived from this and `source`: analysed -> bound; supervised; measured alone -> unsupervised. Not on a `window` (a least time). |
 
 ## `source.measured`
 
@@ -331,6 +335,34 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `max` | fact | since v0.1.58 | The largest value observed for this term (a duration). Required. |
 | `n` | fact | since v0.1.58 | How many samples the maximum is over. |
 | `period` | fact | since v0.1.58 | A timer tick's period, charged without margin. |
+
+## `<budget>.supervise`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `reaction` | fact | since v0.1.61 | The path a miss starts: a path of the budget's own node (as `on_violation.reaction`), else a scope path of the manifest. Exactly one of `reaction` and `enters`. |
+| `enters` | fact | since v0.1.61 | The mode a miss enters; its `reaction:` scope path is what runs. Exactly one of `reaction` and `enters`. |
+| `mechanism` | fact | since v0.1.61 | What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`). |
+
+## `policy`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `unsupervised_measured` | requirement | since v0.1.61 | The severity of a measured budget nothing supervises (`measured-unsupervised`): `warn` (the default) or `error`. |
+
+## `supervision`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `tick` | fact | since v0.1.61 | The period the monitor's clock is read at: the executor's tick, the supervision timer's resolution (a duration, positive). Part of every supervised budget's detection delay. |
+| `switch` | fact | since v0.1.61 | The interrupt plus the thread switch before a `timer` mechanism's reaction runs (a duration). Required by a `mechanism: timer` supervision. |
+
+## `trigger.timer.rate_hz (map form)`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `value` | fact | since v0.1.61 | The rate, Hz. Required; greater than zero. |
+| `source` | meta | since v0.1.61 | Where the rate comes from, as a budget's `source:`. `allocated`: chosen inside the range the consumer derives, which refuses a period outside it. |
 
 ## Bounds
 

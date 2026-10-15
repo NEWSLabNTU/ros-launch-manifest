@@ -6,6 +6,44 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+Phase 93 S1 (play_launch `docs/roadmap/phase-93-supervised-budgets.md`):
+supervised budgets. All additive: every contract that parsed still parses
+to the same values. GRAMMAR_VERSION 0.1.61.
+
+### Added
+
+- `supervise: { reaction: <path> | enters: <mode>, mechanism: executor |
+  timer }` beside `source:` in the map form of every budget key (and of a
+  settle's written `duration`); refused on a mode's `window`, a least time.
+  `Bound.supervise`, `OptBound::supervise`, `Manifest::supervised()`.
+- `BudgetLevel` (bound, supervised, unsupervised), derived by
+  `BudgetLevel::of` / `Bound::level()`: analysed -> bound; supervised;
+  measured alone -> unsupervised; any other source -> none.
+- `FaultKind::Overrun` (types and model): the verdict of a supervision.
+  Refused in an `on:` list with a pointer to `supervise:`.
+- Top-level `policy: { unsupervised_measured: warn | error }` (`Policy`)
+  and `supervision: { tick, switch }` (`SupervisionPlatform`): the severity
+  of the consumer's `measured-unsupervised` rule, and the platform terms of
+  a supervision's detection delay.
+- `SourceKind::Allocated` (`source: allocated`): a value chosen inside a
+  range the consumer derives.
+- A timer's `rate_hz` takes the map form `{ value, source }`; the source is
+  `PathDecl.timer_rate_source` and `Manifest::budget_sources()` lists it as
+  `...trigger.timer.rate_hz`.
+- Model: `PathContract.supervise` (`SuperviseContract { route_deadline_ms,
+  reaction, mechanism }`), the lowering a realizer's route monitor reads.
+
+### Changed (API)
+
+- `Bound` has a `supervise` field, `Manifest` `policy` and `supervision`,
+  `PathDecl` `timer_rate_source`, `model::PathContract` `supervise`: a
+  struct literal without `..Default::default()` needs them.
+  `SourceKind`, `FaultKind` (types and model) have a new variant: an
+  exhaustive match needs an arm. The release moves the workspace Cargo
+  version (0.1.13 -> 0.1.14).
+
 ## v0.1.60 - 2026-10-15
 
 Phase 90 G3 (its bound part) and G6, on G2's one `Bound`. Every contract

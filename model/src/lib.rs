@@ -1077,6 +1077,36 @@ pub enum FaultKind {
     Late,
     Loss,
     Reported,
+    /// A supervised budget overran (phase 93): the verdict of a
+    /// `supervise:`'s monitor, never a subscriber's `on:`.
+    Overrun,
+}
+
+/// A supervised budget lowered to a route monitor (phase 93): the budget
+/// the monitor arms a deadline with, the reaction a miss starts and what
+/// checks it. On a node path whose `max_latency` states `supervise:` and is
+/// input-triggered, so the route monitor stamps the take of its first input.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SuperviseContract {
+    /// The supervised budget, ms: due = take + this.
+    pub route_deadline_ms: f64,
+    /// The path a miss starts, by its key in this model: a node path's key
+    /// in `contracts.node_paths`, or a scope path's in
+    /// `contracts.scope_paths` (an `enters:` mode lowers to its reaction
+    /// scope path).
+    pub reaction: String,
+    /// What checks the budget.
+    pub mechanism: SuperviseMechanism,
+}
+
+/// What checks a supervised budget (phase 93).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuperviseMechanism {
+    /// The executor's spin loop: slowness, not a stuck callback.
+    Executor,
+    /// An independent timer and thread: both.
+    Timer,
 }
 
 /// `HazardContract.on` on the wire: one kind as a scalar (the pre-v0.1.43
@@ -1546,6 +1576,11 @@ pub struct PathContract {
     /// What this path produces when it is a reaction (phase 71).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe_state: Option<SafeStateContract>,
+    /// The supervision of `max_latency_ms` (phase 93), when the contract
+    /// states one and the producer lowered it to a route monitor. Node
+    /// paths only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervise: Option<SuperviseContract>,
 }
 
 impl PathContract {
