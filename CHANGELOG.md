@@ -60,6 +60,9 @@ are deprecated, reported by the consumer, and rewritten by
   input }` as in `input:`, so the two spellings check and resolve alike
   (before, a `trigger: { input }` path's inputs were not wiring-checked and
   not substituted).
+- `filter_manifest` keeps a topic with no endpoints that marks an
+  `external:` side (it dropped every endpoint-less topic, which silently
+  deleted the mark), so a moved `external_topics:` entry keeps its effect.
 
 ### Removed
 

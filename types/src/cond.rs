@@ -183,10 +183,13 @@ fn cleanup_dangling_refs(
         cleanup_ref_list(&mut act.client, &node_names, conditional_nodes);
     }
 
-    // Remove empty entities (both pub and sub / both server and client gone)
-    manifest
-        .topics
-        .retain(|_, t| !t.publishers.is_empty() || !t.subscribers.is_empty());
+    // Remove empty entities (both pub and sub / both server and client gone).
+    // A topic that marks an external side stays: the mark is its content
+    // (phase 90 G3 made `topics.<n>.external` the one place for what an
+    // `external_topics:` entry said, and that entry was never dropped).
+    manifest.topics.retain(|_, t| {
+        !t.publishers.is_empty() || !t.subscribers.is_empty() || t.external.is_some()
+    });
     manifest
         .services
         .retain(|_, s| !s.server.is_empty() || !s.client.is_empty());
@@ -762,6 +765,30 @@ topics:
             m.topics["data"].subscribers,
             vec!["perception/points_in".to_string()]
         );
+    }
+
+    /// Phase 90 G3: a topic with no endpoints that marks an external side is
+    /// kept, as the `external_topics:` entry it replaces always was; one with
+    /// neither endpoints nor a mark is dropped as before.
+    #[test]
+    fn test_an_external_topic_without_endpoints_is_kept() {
+        let yaml = r#"
+version: 1
+topics:
+  /sensing/points:
+    type: std_msgs/msg/String
+    external: pub
+  /unused:
+    type: std_msgs/msg/String
+external_topics:
+  /tf:
+    side: pub
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+        assert!(m.topics.contains_key("/sensing/points"));
+        assert!(!m.topics.contains_key("/unused"));
+        assert!(m.external_topics.contains_key("/tf"));
     }
 
     #[test]
