@@ -6,12 +6,13 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.1.60 - 2026-10-15
 
 Phase 90 G3 (its bound part) and G6, on G2's one `Bound`. Every contract
 that parsed still parses to the same values except a node path's `drop:`,
 which nothing read and which is now refused; `migrate` rewrites both G3
-spellings. **Types API break**: `SettleProfile.response` is
+spellings. GRAMMAR_VERSION 0.1.60. **Workspace Cargo version `0.1.12` ->
+`0.1.13`** (types API break): `SettleProfile.response` is
 `SafeState.settle_response`.
 
 ### Added
