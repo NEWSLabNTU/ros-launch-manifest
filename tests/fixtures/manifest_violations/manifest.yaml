@@ -17,7 +17,7 @@ nodes:
         min_rate_hz: 5
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [sensor]
         max_latency: 40ms
 
@@ -29,7 +29,7 @@ nodes:
       to_b: {}
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [to_b]
         max_latency: 25ms
         drop:
@@ -44,7 +44,7 @@ nodes:
       output: {}
     paths:
       main:
-        input: from_a
+        trigger: { input: [from_a] }
         output: [to_a, output]
         max_latency: 25ms
         drop:
@@ -57,7 +57,7 @@ nodes:
         min_rate_hz: 15
     paths:
       main:
-        input: data
+        trigger: { input: [data] }
         output: []
         max_latency: 10ms
 
@@ -66,7 +66,7 @@ nodes:
     pub: [lonely_output]
     paths:
       dangling:
-        input: lonely_input
+        trigger: { input: [lonely_input] }
         output: [lonely_output]
         max_latency: 10ms
 
@@ -108,7 +108,7 @@ services:
 
 paths:
   main:
-    input: raw
+    trigger: { input: [raw] }
     output: [results]
     max_latency: 100ms
     drop:

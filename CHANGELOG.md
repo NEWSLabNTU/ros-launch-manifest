@@ -9,10 +9,12 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 ## Unreleased (v0.1.59)
 
 Phase 90 G4 and G5: one meaning per key for `reaction` and `on`, and the
-severity-to-criticality map stated in the grammar. Every contract that
-parsed still parses to the same values; the old spellings are deprecated,
-reported by the consumer, and rewritten by `ros_launch_manifest_types::
-migrate` (play_launch's `migrate` verb).
+severity-to-criticality map stated in the grammar. G3 (its non-bound part):
+one place per fact for a topic's external side and a path's input trigger.
+G7: two dead keys removed. Every contract that parsed still parses to the
+same values, except the G7 keys, which nothing writes; the old spellings
+are deprecated, reported by the consumer, and rewritten by
+`ros_launch_manifest_types::migrate` (play_launch's `migrate` verb).
 
 ### Added
 
@@ -29,7 +31,12 @@ migrate` (play_launch's `migrate` verb).
   "Severity to criticality". `sched::Criticality::from_severity` wraps it.
 - **`migrate` module**: `migrate_str` rewrites deprecated spellings as
   minimal textual edits (comments and layout kept), from the `REWRITES`
-  table: `hazard-reaction-enters` and `exit-on-holds`.
+  table: `hazard-reaction-enters` and `exit-on-holds` (G4),
+  `path-input-trigger` and `external-topics-to-topics` (G3),
+  `guard-all-of-function` (G7).
+- `field_table::Status::Deprecated`: a key that parses for one release
+  whose fact now has its one place elsewhere (not a same-context rename);
+  `canonical` names the replacement as written.
 
 ### Changed
 
@@ -40,6 +47,30 @@ migrate` (play_launch's `migrate` verb).
   one release.
 - A written `nodes.<n>.criticality` on a node a hazard reaches is an error in
   the consumer (was info or warning); the field table says so.
+- G3: the `external_topics:` section is deprecated (parses for one release,
+  removed in the next): `topics.<n>.external` is the one place. `migrate`
+  moves each entry under `topics:` (`side:` becomes `external:`; an entry
+  whose topic is declared adds `external:` to it; an entry with no `type:`,
+  or one that disagrees with the declared topic, is left for a hand edit).
+- G3: a path's legacy `input:` list is deprecated for `trigger: { input:
+  [...] }` (parses for one release, read as that trigger when no `trigger:`
+  is written). `migrate` rewrites it, and deletes it beside a `trigger:`.
+- The `wiring` rule reads a path's inputs from either spelling
+  (`effective_trigger`), and `$(var ...)` is substituted in `trigger: {
+  input }` as in `input:`, so the two spellings check and resolve alike
+  (before, a `trigger: { input }` path's inputs were not wiring-checked and
+  not substituted).
+
+### Removed
+
+- G7: `includes.<n>: { manifest: <file> }`, the file-reference include, and
+  its `if`/`unless` rows: nothing loaded the file, so it declared nothing.
+  A parse error naming the inline form. `IncludeKind::External` and
+  `IncludeDecl::external()` are gone (types API break; `IncludeKind` has the
+  one `Inline` variant).
+- G7: the inline `{ all_of: [...] }` guard in `hazards.<h>.guards`: a parse
+  error naming `functions.<f>: { all_of: [...] }` guarded by name, which
+  `migrate` writes (`guard-all-of-function`). The function form stays.
 
 ## v0.1.58 - 2026-10-15
 

@@ -40,7 +40,7 @@ includes:
             min_rate_hz: 10
         paths:
           main:
-            input: input
+            trigger: { input: [input] }
             output: [cropped]
             max_latency: 5ms
 
@@ -53,7 +53,7 @@ includes:
             min_rate_hz: 10
         paths:
           main:
-            input: points
+            trigger: { input: [points] }
             output: [objects]
             max_latency: 30ms
 
@@ -66,7 +66,7 @@ includes:
 
     paths:
       detect:
-        input: input
+        trigger: { input: [input] }
         output: [objects]
         max_latency: 40ms
 
@@ -85,7 +85,7 @@ includes:
             min_rate_hz: 10
         paths:
           main:
-            input: obstacles
+            trigger: { input: [obstacles] }
             output: [trajectory]
             max_latency: 20ms
 
@@ -100,12 +100,12 @@ includes:
 
     paths:
       plan:
-        input: obstacles
+        trigger: { input: [obstacles] }
         output: [trajectory]
         max_latency: 25ms
 
 paths:
   end_to_end:
-    input: sensor_data
+    trigger: { input: [sensor_data] }
     output: [trajectory]
     max_latency: 80ms

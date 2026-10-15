@@ -652,7 +652,7 @@ nodes:
       output: { min_rate_hz: 10 }       # guarantee: 10 Hz output
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [output]
         max_latency: 15ms              # guarantee: 15ms processing
 ```
@@ -674,7 +674,7 @@ budget across a subtree of nodes:
 ```yaml
 paths:
   perception:
-    input: /sensing/pointcloud
+    trigger: { input: [/sensing/pointcloud] }
     output: [/perception/objects]
     max_latency: 85ms                  # E2E budget for the whole pipeline
     drop: 2 / 25                       # at most 2 of every 25 messages lost
@@ -735,7 +735,7 @@ topics:
 
 paths:
   perception:
-    input: /sensing/pointcloud
+    trigger: { input: [/sensing/pointcloud] }
     output: [/perception/objects]
     max_latency: 85ms
     drop:
@@ -1073,16 +1073,12 @@ topics:
 # tier4_perception_launch/perception.contract.yaml
 # scope ns (from launch tree): /perception/object_recognition
 version: 1
-
-includes:
-  tracking:
-    manifest: tier4_perception_launch/tracking.contract.yaml
-  prediction:
-    manifest: tier4_perception_launch/prediction.contract.yaml
+# The child scopes (tracking, prediction) come from the launch tree's
+# <include>s; each has its own contract file beside its launch file.
 
 paths:
   main:
-    input: /perception/obstacle_segmentation/pointcloud
+    trigger: { input: [/perception/obstacle_segmentation/pointcloud] }
     output: [prediction/objects]       # relative → /perception/object_recognition/prediction/objects
     max_latency: 50ms
     drop: 5 / 100
@@ -1128,7 +1124,7 @@ nodes:
         min_rate_hz: 30
     paths:
       main:
-        input: trajectory
+        trigger: { input: [trajectory] }
         output: [control_cmd]
         max_latency: 10ms
 
@@ -1158,7 +1154,7 @@ topics:
 
 paths:
   control:
-    input: /planning/trajectory
+    trigger: { input: [/planning/trajectory] }
     output: [command/control_cmd]   # relative → /control/command/control_cmd
     max_latency: 15ms
 ```
@@ -1335,7 +1331,7 @@ nodes:
       operate: {}
     paths:
       main:
-        input: trajectory
+        trigger: { input: [trajectory] }
         output: [cmd]
         max_latency: 10ms
 
@@ -1598,26 +1594,19 @@ actions:
 
 ### Includes
 
-Child scopes. The name is the ROS namespace.
+Child scopes declared in the same file. The name is the ROS namespace.
 
-```yaml
-includes:
-  tracking:
-    manifest: tier4_perception_launch/tracking.contract.yaml
-  prediction:
-    manifest: tier4_perception_launch/prediction.contract.yaml
-```
+A child contract *file* is never named here: the launch tree's own
+`<include>` structure determines the child scopes, and each child's
+contract file is resolved per launch file through the overlay/provider
+channels (see [Directory Structure](#directory-structure)). The
+file-reference form `includes.<name>: { manifest: <file> }` was removed
+in v0.1.59 (phase 90 G7): nothing ever loaded the file it named, so it
+declared nothing, and it is now a parse error naming the inline form.
 
-The `manifest:` value is **informational** — child contract files are
-not loaded through it. The launch tree's own `<include>` structure
-determines the child scopes, and each child's contract file is resolved
-per launch file through the overlay/provider channels (see
-[Directory Structure](#directory-structure)). The include entry exists
-to name the scope for budget checks.
-
-Inline includes (for `<group>` blocks) embed the manifest structure
-directly instead of referencing a file. The value is then a whole
-manifest, and takes manifest-level keys only:
+An include (for a `<group>` block) embeds the manifest structure
+directly. The value is a whole manifest, and takes manifest-level keys
+only:
 
 ```yaml
 includes:
@@ -1634,22 +1623,11 @@ includes:
 #### Conditions on an include
 
 An include carries `if:` / `unless:` like every other declaration here.
-The contract mirrors the launch file's structure: a `<group>` or an
-`<include>` with an `if=` on it produces a child scope only on one
-branch, and the contract has to be able to say so.
+The contract mirrors the launch file's structure: a `<group>` with an
+`if=` on it produces a child scope only on one branch, and the contract
+has to be able to say so.
 
-The two forms differ only in *where* the condition is written, and that
-follows from the shape each form already has. The file-reference form is
-a fixed-key mapping, so the condition sits beside `manifest:`:
-
-```yaml
-includes:
-  tracking:
-    manifest: tier4_perception_launch/tracking.contract.yaml
-    if: use_tracking
-```
-
-The inline form **is** a nested manifest, so the condition sits at that
+An include **is** a nested manifest, so the condition sits at that
 manifest's root, beside `nodes:` and `topics:`:
 
 ```yaml
@@ -1697,7 +1675,7 @@ nodes:
 # only nodes within this scope's subtree (from includes: tree)
 paths:
   perception:
-    input: /perception/obstacle_segmentation/pointcloud
+    trigger: { input: [/perception/obstacle_segmentation/pointcloud] }
     output: [/perception/object_recognition/prediction/objects]
     max_latency: 85ms
     drop:
@@ -1713,7 +1691,7 @@ topic names on a scope. The fields below are the common ones:
 | Field          | Meaning | If omitted |
 |----------------|---------|------------|
 | `trigger`      | What causes the output: `{ timer: { rate_hz } }`, `{ input: [...] }`, `once`, `spontaneous` | Derived from `input:`; see below |
-| `input`        | Legacy trigger spelling — prefer `trigger: { input: [...] }` | See `trigger` |
+| `input`        | Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`; the checker warns (`deprecated-spelling`) and `play_launch migrate` rewrites it | See `trigger` |
 | `output`       | Result endpoint(s) or topic(s) | Required |
 | `max_latency`  | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
 | `min_latency`  | Best-case latency. Exists so `max_jitter` is falsifiable — usually measured, not authored | `max_jitter` reported unverifiable |
@@ -1750,42 +1728,7 @@ sources, rviz consumers) cannot be expressed by `topics:` alone —
 declaring them there would leave one side empty and trip
 `dangling-entity`.
 
-Two ways to mark a topic as external:
-
-**1. Top-level `external_topics:` block** — manifest-wide list, useful
-at the top of the launch tree where the boundary is known:
-
-```yaml
-external_topics:
-  /tf:
-    side: pub                      # external producer (we may sub)
-    type: tf2_msgs/msg/TFMessage
-  /vehicle/engage:
-    side: pub
-    type: autoware_vehicle_msgs/msg/Engage
-  /visualization:
-    side: sub                      # external consumer (we pub)
-  /passthrough/relay:
-    side: both                     # passthrough we don't model
-    type: std_msgs/msg/String
-    qos: { reliability: best_effort }
-```
-
-An entry takes exactly three keys: `side:` (required), `type:` and `qos:`.
-`type:` is cross-checked against any internal `topics:` declaration of the
-same FQN by `consistency`; `qos:` is the profile the external side uses,
-and participates in `qos-match` like any other endpoint's.
-
-> The side selector is also spelled `external:`, which is what
-> `external_topics:` accepted first and what the field table marks
-> **deprecated**. Both parse, `side:` wins when both are present
-> (`types/src/parse.rs::parse_external_topics`), and `side:` is the
-> spelling to write. Inside a `topics:` entry the key is `external:` and
-> always was — the two blocks do not share a name for the same idea, which
-> is the whole reason `side:` exists.
-
-**2. Per-topic `external:` flag** — inline on a `topics:` entry, useful
-for one-off cases inside a leaf manifest:
+Mark the external side on the topic's own entry, with `external:`:
 
 ```yaml
 topics:
@@ -1793,7 +1736,23 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     external: pub                  # consumed by us, external producer
     sub: [lidar_processor/input]
+  /tf:
+    type: tf2_msgs/msg/TFMessage
+    external: pub                  # nothing here publishes or subscribes yet
+  /passthrough/relay:
+    type: std_msgs/msg/String
+    external: both                 # passthrough we don't model
+    qos: { reliability: best_effort }
 ```
+
+> The top-level `external_topics:` block (`<name>: { side, type, qos }`)
+> was the second place for the same fact. It is **deprecated** in v0.1.59
+> (phase 90 G3): it still parses for one release, with a
+> `deprecated-spelling` warning, and is removed in the next.
+> `play_launch migrate` moves each entry under `topics:` (`side:` becomes
+> `external:`; an entry whose topic is already declared adds `external:`
+> to it). An entry with no `type:` is left for a hand edit, because a
+> topic needs one.
 
 **Semantics:**
 
@@ -1806,23 +1765,22 @@ topics:
 
 **Override and merge:**
 
-- Multiple `external_topics:` entries for the same FQN across scopes
-  merge by taking the more permissive side (`Both` ≥ either single).
+- Several `external:` marks for the same FQN across scopes merge by
+  taking the more permissive side (`Both` ≥ either single).
 - An internal `pub:`/`sub:` declaration anywhere in the merged tree
   takes precedence over the external mark on that same side — when a
   team adds the missing producer manifest later, the external mark
   becomes a no-op automatically.
-- `type:` in `external_topics:` is cross-checked against any internal
-  `topics:` declaration of the same FQN by the `consistency` rule.
-  Mismatches are reported as errors.
+- The `type:` of every scope's entry for the same FQN must agree
+  (`consistency`); mismatches are reported as errors.
 
 **When to put it where:**
 
-| Boundary | Put `external_topics:` here |
-|----------|----------------------------|
+| Boundary | Put the `external:` mark here |
+|----------|-------------------------------|
 | Repo edge (e.g. truly external to your contract repo) | Top-level manifest of the launch tree |
 | Subsystem edge (e.g. perception's sensor inputs) | Subsystem manifest |
-| One-off case in a single leaf | Per-topic `external:` flag on the topic |
+| One-off case in a single leaf | That leaf's manifest |
 
 For a typical autonomous-vehicle launch tree, ~10–50 entries at the
 top-level manifest cover the entire repo. Per-leaf duplication is not
@@ -2071,12 +2029,15 @@ one requirement on a hazard, one reaction edge on the subscriber that
 detects, one fact on the reaction path. FDTI and FRTI are derived.
 
 ```yaml
+functions:
+  pose_estimation: { all_of: [/loc/ndt, /loc/gnss] }   # a redundant set
+
 hazards:
   drive_blind:
     severity: ASIL_D                      # from the HARA; consumed, never computed
     guards:
       - /safety/scan                      # any guard faulting is the hazard …
-      - all_of: [/loc/ndt, /loc/gnss]     # … except a redundant set, which faults when ALL do
+      - pose_estimation                   # … a function by name: this one faults when ALL its members do
     on: omission                          # omission | late | loss | reported, or a list of them
     ftti: 500ms                           # physics: fault → hazardous event, absent reaction
     reaction: safety.stop                 # the scope path whose route reaches the safe state
@@ -2156,7 +2117,7 @@ that [Derived Rates](#derived-rates) computes.
 > interval made a 50 Hz floor "detect" a dead lidar in 20ms while the real
 > lease was 100ms.
 
-Across a guard **group**: a bare topic is one member; an `all_of:` set
+Across a guard **group**: a bare topic is one member; an `all_of:` function
 faults only when every member does, so it is detected when the **last**
 one is noticed gone — the **max** over members. Across a hazard's several
 guard groups, FDTI is again the **max**, because the hazard must cover

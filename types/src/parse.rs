@@ -387,7 +387,9 @@ fn parse_source(v: &Yaml, ctx: &str) -> Result<BudgetSource, ParseError> {
 
 /// A guard group in the two shapes phase 71 established: a bare list is
 /// any-of (losing any member is the fault), `{ all_of: [...] }` is a
-/// redundant set (lost only when every member is).
+/// redundant set (lost only when every member is). The redundant set is a
+/// function's shape only: inline in `hazards.<h>.guards` it was removed in
+/// v0.1.59 (phase 90 G7), and [`parse_hazard_guard`] refuses it.
 fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, ParseError> {
     match v {
         Yaml::String(t) => Ok(GuardGroup {
@@ -399,7 +401,7 @@ fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, Parse
             all_of: false,
         }),
         Yaml::Hash(_) => {
-            reject_unknown_keys(v, ctx, Context::HazardGuard)?;
+            reject_unknown_keys(v, ctx, Context::Function)?;
             let members = yaml_string_list(v, "all_of", ctx)?;
             if members.len() < 2 {
                 return Err(field_err(
@@ -421,6 +423,23 @@ fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, Parse
             other,
         )),
     }
+}
+
+/// One `hazards.<h>.guards[i]`: a topic, a list of them, or a function's
+/// name. A mapping is refused: its only key was the inline `all_of`, removed
+/// in v0.1.59 (phase 90 G7) for the same group named in `functions:`, and the
+/// removed row's message says so.
+fn parse_hazard_guard(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, ParseError> {
+    if let Yaml::Hash(_) = v {
+        reject_unknown_keys(v, ctx, Context::HazardGuard)?;
+        return Err(type_err(
+            ctx,
+            key,
+            "a topic name, a list of them, or the name of a function",
+            v,
+        ));
+    }
+    parse_guard_group(v, ctx, key)
 }
 
 fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, FunctionDecl>, ParseError> {
@@ -874,7 +893,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
             Yaml::Array(items) => {
                 for (i, item) in items.iter().enumerate() {
                     let gctx = format_path(&hctx, &format!("guards[{i}]"));
-                    guards.push(parse_guard_group(item, &gctx, &format!("guards[{i}]"))?);
+                    guards.push(parse_hazard_guard(item, &gctx, &format!("guards[{i}]"))?);
                 }
             }
             other => return Err(type_err(&hctx, "guards", "a list", other)),
@@ -1607,22 +1626,17 @@ fn parse_includes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, IncludeDecl>
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         let path = format_path(ctx, &format!("includes.{name}"));
-        // Both forms carry `if:`/`unless:` (issue #0043). They sit in
-        // different places only because the two forms have different shapes:
-        // the external form is a fixed-key mapping, so the condition is one
-        // of its keys; the inline form IS a nested manifest, so the condition
-        // is at that manifest's root.
+        // The file-reference form `{ manifest: <file> }` was removed in
+        // v0.1.59 (phase 90 G7): the removal message names the inline form.
+        if !v["manifest"].is_badvalue() {
+            let removed = field_table::lookup(Context::IncludeExternal, "manifest")
+                .expect("the removed row is in the table");
+            return Err(field_err(&path, "manifest", removed.doc));
+        }
+        // `if:`/`unless:` (issue #0043) sit at the inline manifest's root.
         let if_condition = yaml_string(v, "if", &path)?;
         let unless_condition = yaml_string(v, "unless", &path)?;
-        let kind = if let Some(manifest_path) = yaml_string(v, "manifest", ctx)? {
-            reject_unknown_keys(v, &path, Context::IncludeExternal)?;
-            IncludeKind::External {
-                manifest: manifest_path,
-            }
-        } else {
-            // Inline scope
-            IncludeKind::Inline(Box::new(parse_manifest_yaml(v, &path)?))
-        };
+        let kind = IncludeKind::Inline(Box::new(parse_manifest_yaml(v, &path)?));
         out.insert(
             name,
             IncludeDecl {
@@ -2759,7 +2773,7 @@ hazards:
     description: vehicle continues with no obstacle data
     guards:
       - /safety/scan
-      - all_of: [/loc/ndt, /loc/gnss]
+      - pose
     on: omission
     ftti: 500ms
     reaction: safety.stop
@@ -2786,7 +2800,8 @@ nodes:
         let h = &m.hazards["drive_blind"];
         assert_eq!(h.guards.len(), 2);
         assert!(!h.guards[0].all_of && h.guards[0].members == vec!["/safety/scan"]);
-        assert!(h.guards[1].all_of && h.guards[1].members.len() == 2);
+        // A redundant set is a function, guarded by name (phase 90 G7).
+        assert!(!h.guards[1].all_of && h.guards[1].members == vec!["pose"]);
         assert_eq!(h.on, vec![FaultKind::Omission]);
         assert_eq!(h.ftti.unwrap().as_millis_f64(), 500.0);
         assert_eq!(h.reaction.as_deref(), Some("safety.stop"));
@@ -2860,8 +2875,12 @@ nodes:
                 "required",
             ),
             (
-                "hazards:\n  h:\n    guards: [{ all_of: [/one] }]\n",
-                "at least two",
+                "hazards:\n  h:\n    guards: [{ all_of: [/a, /b] }]\n",
+                "Removed in v0.1.59",
+            ),
+            (
+                "hazards:\n  h:\n    guards: [{ any: [/a] }]\n",
+                "unknown key",
             ),
             ("hazards:\n  h:\n    fttii: 5ms\n", "did you mean `ftti`"),
             (
@@ -3138,8 +3157,6 @@ topics:
         let yaml = r#"
 version: 1
 includes:
-  lidar:
-    manifest: tier4_perception_launch/lidar_perception.launch.yaml
   safety:
     nodes:
       emergency_stop:
@@ -3147,12 +3164,7 @@ includes:
         sub: [diagnostics]
 "#;
         let m = parse_manifest_str(yaml).unwrap();
-        assert_eq!(m.includes.len(), 2);
-
-        assert_eq!(
-            m.includes["lidar"].external(),
-            Some("tier4_perception_launch/lidar_perception.launch.yaml")
-        );
+        assert_eq!(m.includes.len(), 1);
         assert!(
             m.includes["safety"]
                 .inline()
@@ -3162,17 +3174,35 @@ includes:
         );
     }
 
+    /// Phase 90 G7: the file-reference include is removed, and its key
+    /// reaches the removal message, which names the inline form.
+    #[test]
+    fn test_include_file_reference_is_removed() {
+        for yaml in [
+            "version: 1\nincludes:\n  lidar:\n    manifest: lidar.yaml\n",
+            "version: 1\nincludes:\n  lidar:\n    manifest: lidar.yaml\n    if: use_lidar\n",
+        ] {
+            let e = parse_manifest_str(yaml).unwrap_err().to_string();
+            assert!(e.contains("includes.lidar.manifest"), "{e}");
+            assert!(
+                e.contains("Removed in v0.1.59") && e.contains("inline"),
+                "{e}"
+            );
+        }
+    }
+
     #[test]
     fn test_includes_carry_conditions() {
-        // Issue #0043: both spellings. The external form is a fixed-key
-        // mapping, so the condition is a key beside `manifest:`; the inline
-        // form IS a nested manifest, so the condition is at its root.
+        // Issue #0043: the inline form IS a nested manifest, so the
+        // condition is at its root.
         let yaml = r#"
 version: 1
 includes:
   lidar:
-    manifest: perception/lidar.launch.yaml
     if: use_lidar
+    nodes:
+      cloud:
+        pub: [points]
   safety:
     unless: "false"
     nodes:
@@ -3185,7 +3215,7 @@ includes:
         let lidar = &m.includes["lidar"];
         assert_eq!(lidar.if_condition.as_deref(), Some("use_lidar"));
         assert_eq!(lidar.unless_condition, None);
-        assert_eq!(lidar.external(), Some("perception/lidar.launch.yaml"));
+        assert!(lidar.inline().is_some());
 
         let safety = &m.includes["safety"];
         assert_eq!(safety.if_condition, None);

@@ -929,7 +929,8 @@ pub struct TopicDecl {
     /// Per-topic external override. When set, the matching side
     /// (`pub`/`sub`/`both`) is treated as expected-external — the
     /// `dangling-entity` rule skips it. Equivalent to a
-    /// per-topic-scoped entry in the manifest's `external_topics:` block.
+    /// per-topic-scoped entry in the manifest's deprecated `external_topics:`
+    /// block (phase 90 G3: this is the one place).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalSide>,
 }
@@ -973,6 +974,11 @@ pub enum ExternalEndpointSide {
 
 /// External-topic declaration (Issue #51). Marks an FQN as
 /// expected-external from the declaring scope's subtree.
+///
+/// Deprecated in v0.1.59 (phase 90 G3): the `external_topics:` section is the
+/// second place for what `topics.<name>.external` states. It still parses for
+/// one release; the checker warns and `migrate` moves each entry under
+/// `topics:`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExternalTopicDecl {
     /// Side that is externally provided. Required.
@@ -1034,21 +1040,19 @@ pub struct ActionDecl {
     pub external: Option<ExternalEndpointSide>,
 }
 
-/// Include declaration (external manifest or inline scope).
+/// Include declaration: an inline scope.
 ///
 /// Carries its own condition, like every other declaration in this grammar
 /// (issue #0043): a launch file puts `if=` on the `<group>` an inline include
-/// comes from and on the `<include>` an external one comes from, so the
-/// contract has to be able to say the same thing. [`crate::filter_manifest`]
-/// drops a whole include whose condition is false, and the refs pointing into
-/// it, the way it drops a node.
+/// comes from, so the contract has to be able to say the same thing.
+/// [`crate::filter_manifest`] drops a whole include whose condition is false,
+/// and the refs pointing into it, the way it drops a node.
 ///
-/// The two spellings differ only in where the author writes the condition,
-/// which follows from where the grammar puts the rest of the entry: the
-/// external form is a fixed-key mapping, so `if:` sits beside `manifest:`;
-/// the inline form IS a nested manifest, so `if:` sits at that manifest's
+/// The inline form IS a nested manifest, so `if:` sits at that manifest's
 /// root. A root condition on a *standalone* manifest is refused by the parser
-/// — there is no include entry there for it to belong to.
+/// — there is no include entry there for it to belong to. The file-reference
+/// form (`includes.<name>: { manifest: <file> }`) was removed in v0.1.59
+/// (phase 90 G7): nothing loaded the file, so it declared nothing.
 #[derive(Debug, Clone, Serialize)]
 pub struct IncludeDecl {
     #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
@@ -1069,32 +1073,23 @@ impl IncludeDecl {
         }
     }
 
-    /// The inline manifest, if this is the inline form.
+    /// The inline manifest. An `Option` because the include had two forms
+    /// before v0.1.59; it is always `Some` now.
     pub fn inline(&self) -> Option<&Manifest> {
         match &self.kind {
             IncludeKind::Inline(inner) => Some(inner),
-            IncludeKind::External { .. } => None,
-        }
-    }
-
-    /// The referenced file, if this is the external form.
-    pub fn external(&self) -> Option<&str> {
-        match &self.kind {
-            IncludeKind::External { manifest } => Some(manifest),
-            IncludeKind::Inline(_) => None,
         }
     }
 }
 
-/// Which of the two include forms an [`IncludeDecl`] is.
+/// The form of an [`IncludeDecl`]: since v0.1.59 only the inline one (the
+/// file-reference form `External { manifest }` was removed, phase 90 G7).
 ///
 /// Serialized untagged, and flattened into the entry by [`IncludeDecl`], so
 /// the serialized shape is the shape the parser reads back.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum IncludeKind {
-    /// External: loaded from separate manifest file.
-    External { manifest: String },
     /// Inline: embedded manifest (from <group> block).
     Inline(Box<Manifest>),
 }
@@ -1176,7 +1171,10 @@ pub struct PathDecl {
     pub if_condition: Option<String>,
     #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
     pub unless_condition: Option<String>,
-    /// Node paths: endpoint names. Scope paths: topic names (relative/absolute).
+    /// The legacy `input:` list, deprecated in v0.1.59 (phase 90 G3) for
+    /// `trigger: { input: [...] }`; read through
+    /// [`PathDecl::effective_trigger`]. Node paths: endpoint names. Scope
+    /// paths: topic names (relative/absolute).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<String>,
     /// Node paths: endpoint names. Scope paths: topic names (relative/absolute).

@@ -205,7 +205,9 @@ topics:
 version: 1
 includes:
   lidar:
-    manifest: tier4/lidar.launch.yaml
+    nodes:
+      detector:
+        pub: [output]
 nodes:
   fusion:
     sub: [lidar_objects]

@@ -18,13 +18,13 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `topics` | meta |  | Topic declarations, keyed by topic name. |
 | `services` | meta |  | Service declarations, keyed by service name. |
 | `actions` | meta |  | Action declarations, keyed by action name. |
-| `includes` | meta |  | Child manifests, either a file reference or an inline manifest. |
+| `includes` | meta |  | Child scopes, each an inline manifest (the file-reference form was removed in v0.1.59). |
 | `paths` | meta |  | Scope paths: end-to-end requirements naming two topics and a budget. |
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
 | `modes` | meta |  | Operational modes: what each requires, and the ordered ladder to fall to when it is lost. |
 | `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. |
-| `external_topics` | meta |  | Topics produced or consumed outside the loaded manifest tree. |
+| `external_topics` |  | deprecated — use `topics.<name>.external` | Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
 | `unless` | meta |  | Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest. |
@@ -122,9 +122,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `manifest` | meta |  | Path to the included manifest file. |
-| `if` | meta |  | Include this child manifest only when the condition holds. |
-| `unless` | meta |  | Include this child manifest unless the condition holds. |
+| `manifest` |  | **removed** | Removed in v0.1.59 (phase 90 G7) -- nothing ever loaded the named file, so the include declared nothing. Write the child contract inline as `includes.<name>: { nodes: ..., ... }` (its `if`/`unless` at that inline manifest's root), or delete the entry; a launch include's own contract is found next to its launch file. |
 
 ## `args.<name>`
 
@@ -139,7 +137,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `if` | meta |  | Declare this path only when the condition holds. |
 | `unless` | meta |  | Declare this path unless the condition holds. |
-| `input` | fact |  | Legacy trigger spelling. Prefer `trigger: { input: [...] }`. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified. |
+| `input` |  | deprecated — use `trigger: { input: [...] }` | Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`, read as that trigger when no `trigger:` is written; `play_launch migrate` rewrites it. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified. Removed in the next grammar release. |
 | `output` | fact |  | Endpoints (node path) or topics (scope path) this path produces. |
 | `max_latency` | requirement |  | Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; an embedded realizer may ALSO turn it into a derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a SCOPE path: the NOMINAL end-to-end traversal of the subtree, checked by `scope-budget`; a hazard's fault route is derived separately by walking the reactions, and does not read it. |
 | `max_latency_ms` |  | **removed** | Removed in phase 70 — write `max_latency: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
@@ -228,7 +226,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `severity` | requirement |  | Severity label from the HARA (`ASIL_D`, `SIL_3`, …). Consumed, never computed. |
 | `description` | meta |  | What the hazardous event is. |
-| `guards` | meta |  | Topics watched for the fault. A bare name is one guard; `{ all_of: [...] }` is a redundant set that faults only when every member does. |
+| `guards` | meta |  | Topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
 | `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
 | `enters` | meta | since v0.1.59 | The mode the hazard enters: the top of the `fallback:` ladder it walks to a safe state, each rung checked in its own right (`ladder-rung-budget`) and the floor against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
@@ -252,7 +250,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `all_of` | meta |  | Members of a redundant guard set. |
+| `all_of` |  | **removed** | Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and guard it by name: `guards: [<f>]`; `play_launch migrate` does it. |
 
 ## `on_violation`
 

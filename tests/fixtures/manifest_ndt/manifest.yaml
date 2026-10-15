@@ -13,7 +13,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: raw_points
+        trigger: { input: [raw_points] }
         output: [downsampled]
         max_latency: 3ms
 
@@ -32,7 +32,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: input_points
+        trigger: { input: [input_points] }
         output: [ndt_pose]
         max_latency: 30ms
     # The service type is declared once, on `services.trigger_ndt.type`.
@@ -53,11 +53,11 @@ nodes:
         min_rate_hz: 50
     paths:
       main:
-        input: ndt_pose
+        trigger: { input: [ndt_pose] }
         output: [ekf_pose]
         max_latency: 5ms
       imu_update:
-        input: imu
+        trigger: { input: [imu] }
         output: [ekf_pose]
         max_latency: 2ms
 
@@ -118,6 +118,6 @@ services:
 
 paths:
   localization:
-    input: /sensing/lidar/pointcloud
+    trigger: { input: [/sensing/lidar/pointcloud] }
     output: [ekf_initial_pose]
     max_latency: 50ms

@@ -36,7 +36,7 @@ nodes:
         min_rate_hz: 30
     paths:
       main:
-        input: trajectory
+        trigger: { input: [trajectory] }
         output: [control_cmd]
         max_latency: 10ms
 
@@ -108,6 +108,6 @@ topics:
 
 paths:
   control:
-    input: trajectory
+    trigger: { input: [trajectory] }
     output: [control_cmd]
     max_latency: 15ms

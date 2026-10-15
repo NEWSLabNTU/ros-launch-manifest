@@ -34,7 +34,14 @@ impl ValidationRule for WiringRule {
         // Check that every path input/output endpoint is wired
         for (node_name, node) in &manifest.nodes {
             for (path_name, path) in &node.paths {
-                for input_ep in &path.input {
+                // The inputs the path is triggered by, in either spelling:
+                // `trigger: { input }` or the legacy `input:` (deprecated in
+                // v0.1.59), so `migrate` changes no verdict.
+                let inputs = match path.effective_trigger() {
+                    ros_launch_manifest_types::EffectiveTrigger::Input(v) => v,
+                    _ => Vec::new(),
+                };
+                for input_ep in &inputs {
                     let full_ref = format!("{node_name}/{input_ep}");
                     if !wired_endpoints.contains(&full_ref) {
                         ctx.warning(

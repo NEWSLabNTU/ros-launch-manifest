@@ -95,6 +95,18 @@ pub fn substitute_vec(
     v.iter().map(|s| substitute_str(s, args)).collect()
 }
 
+/// Substitute in `trigger: { input: [...] }`, as in the legacy `input:` it
+/// replaces (phase 90 G3), so the two spellings resolve alike.
+fn substitute_trigger(
+    path: &mut crate::types::PathDecl,
+    args: &HashMap<String, String>,
+) -> Result<(), SubstError> {
+    if let Some(crate::types::Trigger::Input(eps)) = &mut path.trigger {
+        *eps = substitute_vec(eps, args)?;
+    }
+    Ok(())
+}
+
 /// Substitute all `$(var ...)` in an Option<String>.
 pub fn substitute_opt(
     o: &Option<String>,
@@ -126,6 +138,7 @@ pub fn substitute_manifest(
             path.unless_condition = substitute_opt(&path.unless_condition, args)?;
             path.input = substitute_vec(&path.input, args)?;
             path.output = substitute_vec(&path.output, args)?;
+            substitute_trigger(path, args)?;
         }
     }
 
@@ -162,6 +175,7 @@ pub fn substitute_manifest(
         path.unless_condition = substitute_opt(&path.unless_condition, args)?;
         path.input = substitute_vec(&path.input, args)?;
         path.output = substitute_vec(&path.output, args)?;
+        substitute_trigger(path, args)?;
     }
 
     // Functions and modes (phase 75): guard members and the names a mode
@@ -181,13 +195,6 @@ pub fn substitute_manifest(
             g.members = substitute_vec(&g.members, args)?;
         }
         h.reaction = substitute_opt(&h.reaction, args)?;
-    }
-
-    // Includes: external manifest path
-    for include in m.includes.values_mut() {
-        if let crate::IncludeKind::External { manifest } = &mut include.kind {
-            *manifest = substitute_str(manifest, args)?;
-        }
     }
 
     // External topics: type field

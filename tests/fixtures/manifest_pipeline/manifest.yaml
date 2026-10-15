@@ -17,7 +17,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: raw_points
+        trigger: { input: [raw_points] }
         output: [cropped_points]
         max_latency: 5ms
 
@@ -32,7 +32,7 @@ nodes:
         min_rate_hz: 10
     paths:
       filter:
-        input: input_points
+        trigger: { input: [input_points] }
         output: [no_ground, ground]
         max_latency: 15ms
 
@@ -48,7 +48,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: lidar_objects
+        trigger: { input: [lidar_objects] }
         output: [fused_objects]
         max_latency: 10ms
 
@@ -61,7 +61,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: detected_objects
+        trigger: { input: [detected_objects] }
         output: [tracked_objects]
         max_latency: 20ms
         drop: 2 / 100
@@ -114,7 +114,7 @@ topics:
 
 paths:
   perception:
-    input: /sensing/lidar/pointcloud
+    trigger: { input: [/sensing/lidar/pointcloud] }
     output: [tracked_objects]
     max_latency: 60ms
     drop: 4 / 100

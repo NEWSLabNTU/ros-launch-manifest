@@ -101,11 +101,11 @@ nodes:
       clear_external_emergency_stop: {}
     paths:
       command:
-        input: auto_control_cmd
+        trigger: { input: [auto_control_cmd] }
         output: [control_cmd]
         max_latency: 10ms                       # filter + publish at controller rate
       gate_status:
-        input: gate_mode
+        trigger: { input: [gate_mode] }
         output: [gate_mode_out]
         max_latency: 50ms                       # status timer ~ update_rate (10 Hz default)
 

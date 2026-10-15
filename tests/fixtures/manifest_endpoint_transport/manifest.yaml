@@ -95,10 +95,10 @@ topics:
 
 paths:
   collocated_route:
-    input: /sensor/raw
+    trigger: { input: [/sensor/raw] }
     output: [/perception/fast]
     max_latency: 30ms    # 10 + 0 (the endpoint override) + 20
   remote_route:
-    input: /sensor/raw
+    trigger: { input: [/sensor/raw] }
     output: [/perception/slow]
     max_latency: 25ms    # 10 + 10 (the topic default) + 5

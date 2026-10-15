@@ -54,8 +54,9 @@ pub enum Context {
     Service,
     /// A value under `actions:`.
     Action,
-    /// A value under `includes:` that names another manifest file. An include
-    /// WITHOUT `manifest:` is a nested [`Context::Manifest`], not this.
+    /// A value under `includes:` that names another manifest file: the form
+    /// removed in v0.1.59 (phase 90 G7), kept so its key reaches the removal
+    /// message. An include is a nested [`Context::Manifest`].
     IncludeExternal,
     /// A value under `args:`.
     Arg,
@@ -83,7 +84,8 @@ pub enum Context {
     Mode,
     /// `hazards.<name>` (phase 71).
     Hazard,
-    /// One `{ all_of: [...] }` guard group.
+    /// One `hazards.<name>.guards[i]` mapping: the inline `{ all_of: [...] }`
+    /// group, removed in v0.1.59 (phase 90 G7); kept for its removal message.
     HazardGuard,
     /// `on_violation` on a subscriber.
     OnViolation,
@@ -157,6 +159,11 @@ pub enum Status {
     /// An older spelling that still parses. The `canonical` field of
     /// [`Field`] names what replaced it.
     DeprecatedAlias,
+    /// A key that still parses for one release, but whose fact now has its
+    /// one place elsewhere (phase 90 G3): not a rename in the same context,
+    /// so `canonical` names the replacement as a contract writes it. The
+    /// checker warns (`deprecated-spelling`) and `migrate` rewrites it.
+    Deprecated,
     /// Removed from the language, and kept here ONLY so that the
     /// unknown-key check defers to the dedicated error, which explains the
     /// replacement. Without these rows a retired key would get a bare "not a
@@ -173,8 +180,8 @@ pub struct Field {
     /// What sort of statement a live key makes — the `contract-primitives.md`
     /// rule made mechanical. See [`Kind`].
     pub kind: Kind,
-    /// For [`Status::DeprecatedAlias`], the key that replaced it. Empty
-    /// otherwise.
+    /// For [`Status::DeprecatedAlias`], the key that replaced it; for
+    /// [`Status::Deprecated`], the replacement as written. Empty otherwise.
     pub canonical: &'static str,
     /// One line, used to generate the Format Reference.
     pub doc: &'static str,
@@ -229,6 +236,22 @@ const fn alias(key: &'static str, context: Context, canonical: &'static str) -> 
         kind: Kind::Meta,
         canonical,
         doc: "Deprecated spelling.",
+    }
+}
+
+const fn deprecated(
+    key: &'static str,
+    context: Context,
+    replacement: &'static str,
+    doc: &'static str,
+) -> Field {
+    Field {
+        key,
+        context,
+        status: Status::Deprecated,
+        kind: Kind::Meta,
+        canonical: replacement,
+        doc,
     }
 }
 
@@ -298,7 +321,7 @@ pub const FIELDS: &[Field] = &[
         "includes",
         Context::Manifest,
         Kind::Meta,
-        "Child manifests, either a file reference or an inline manifest.",
+        "Child scopes, each an inline manifest (the file-reference form was removed in v0.1.59).",
     ),
     live(
         "paths",
@@ -330,11 +353,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader.",
     ),
-    live(
+    deprecated(
         "external_topics",
         Context::Manifest,
-        Kind::Meta,
-        "Topics produced or consumed outside the loaded manifest tree.",
+        "topics.<name>.external",
+        "Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release.",
     ),
     removed(
         "chains",
@@ -663,24 +686,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Mark one side of this action as provided by an external system: server | client | both.",
     ),
-    // ── includes.<name>, file-reference form ──
-    live(
+    // ── includes.<name>, the retired file-reference form ──
+    removed(
         "manifest",
         Context::IncludeExternal,
-        Kind::Meta,
-        "Path to the included manifest file.",
-    ),
-    live(
-        "if",
-        Context::IncludeExternal,
-        Kind::Meta,
-        "Include this child manifest only when the condition holds.",
-    ),
-    live(
-        "unless",
-        Context::IncludeExternal,
-        Kind::Meta,
-        "Include this child manifest unless the condition holds.",
+        "Removed in v0.1.59 (phase 90 G7) -- nothing ever loaded the named file, so the include declared nothing. Write the child contract inline as `includes.<name>: { nodes: ..., ... }` (its `if`/`unless` at that inline manifest's root), or delete the entry; a launch include's own contract is found next to its launch file.",
     ),
     // ── args.<name> ──
     live(
@@ -708,11 +718,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Declare this path unless the condition holds.",
     ),
-    live(
+    deprecated(
         "input",
         Context::Path,
-        Kind::Fact,
-        "Legacy trigger spelling. Prefer `trigger: { input: [...] }`. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified.",
+        "trigger: { input: [...] }",
+        "Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`, read as that trigger when no `trigger:` is written; `play_launch migrate` rewrites it. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified. Removed in the next grammar release.",
     ),
     live(
         "output",
@@ -968,7 +978,7 @@ pub const FIELDS: &[Field] = &[
         "guards",
         Context::Hazard,
         Kind::Meta,
-        "Topics watched for the fault. A bare name is one guard; `{ all_of: [...] }` is a redundant set that faults only when every member does.",
+        "Topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is.",
     ),
     live(
         "on",
@@ -1050,11 +1060,10 @@ pub const FIELDS: &[Field] = &[
         "`{ holds: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list.",
     ),
     // ── hazards.<name>.guards[] ──
-    live(
+    removed(
         "all_of",
         Context::HazardGuard,
-        Kind::Meta,
-        "Members of a redundant guard set.",
+        "Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and guard it by name: `guards: [<f>]`; `play_launch migrate` does it.",
     ),
     // ── on_violation ──
     live(
@@ -1321,11 +1330,13 @@ pub fn render_markdown() -> String {
         for f in allowed(context) {
             let status = match f.status {
                 Status::Live => "".to_string(),
-                Status::DeprecatedAlias => format!("deprecated — use `{}`", f.canonical),
+                Status::DeprecatedAlias | Status::Deprecated => {
+                    format!("deprecated — use `{}`", f.canonical)
+                }
                 Status::Removed => "**removed**".to_string(),
             };
             let kind = match (f.status, f.kind) {
-                (Status::Removed | Status::DeprecatedAlias, _) => "",
+                (Status::Removed | Status::DeprecatedAlias | Status::Deprecated, _) => "",
                 (_, Kind::Meta) => "meta",
                 (_, Kind::Fact) => "fact",
                 (_, Kind::Requirement) => "requirement",

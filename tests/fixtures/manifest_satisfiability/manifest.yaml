@@ -29,7 +29,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: pointcloud
+        trigger: { input: [pointcloud] }
         output: [pose]
         max_latency: 30ms
 
@@ -44,7 +44,7 @@ nodes:
       twist: {}
     paths:
       main:
-        input: gnss_fix
+        trigger: { input: [gnss_fix] }
         output: [pose]
         max_latency: 15ms
 
@@ -57,7 +57,7 @@ nodes:
         min_rate_hz: 5
     paths:
       main:
-        input: gnss_fix
+        trigger: { input: [gnss_fix] }
         output: [pose]
         max_latency: 5ms
 
@@ -78,7 +78,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: pose_input
+        trigger: { input: [pose_input] }
         output: [ekf_pose]
         max_latency: 5ms
 
@@ -100,6 +100,6 @@ topics:
 
 paths:
   localization:
-    input: pointcloud
+    trigger: { input: [pointcloud] }
     output: [pose_output]
     max_latency: 40ms

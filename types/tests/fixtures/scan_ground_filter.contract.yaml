@@ -26,7 +26,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [no_ground_pointcloud]
         max_latency: 30ms
 

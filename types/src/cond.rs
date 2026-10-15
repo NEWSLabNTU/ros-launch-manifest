@@ -146,9 +146,8 @@ pub fn filter_manifest(manifest: &mut crate::Manifest) {
     // never walked, and each nested manifest gets its own ref cleanup against
     // its own node set.
     for inc in manifest.includes.values_mut() {
-        if let crate::types::IncludeKind::Inline(inner) = &mut inc.kind {
-            filter_manifest(inner);
-        }
+        let crate::types::IncludeKind::Inline(inner) = &mut inc.kind;
+        filter_manifest(inner);
     }
 
     // Clean up dangling endpoint references
@@ -679,8 +678,10 @@ nodes:
     sub: [feedback]
 includes:
   perception:
-    manifest: perception.yaml
     if: "false"
+    nodes:
+      lidar:
+        sub: [points_in]
   planning:
     unless: "true"
     nodes:
@@ -728,8 +729,10 @@ nodes:
     pub: [output]
 includes:
   perception:
-    manifest: perception.yaml
     if: "true"
+    nodes:
+      lidar:
+        sub: [points_in]
   planning:
     unless: "false"
     nodes:
@@ -752,11 +755,7 @@ topics:
                 "condition on surviving include {name} should be cleared"
             );
         }
-        assert_eq!(
-            m.includes["perception"].external(),
-            Some("perception.yaml"),
-            "the external form keeps its target"
-        );
+        assert!(m.includes["perception"].inline().is_some());
         assert!(m.includes["planning"].inline().is_some());
         // Ref into a surviving include is kept.
         assert_eq!(
@@ -776,7 +775,9 @@ nodes:
     pub: [output]
 includes:
   perception:
-    manifest: perception.yaml
+    nodes:
+      lidar:
+        sub: [points_in]
 topics:
   data:
     type: std_msgs/msg/String

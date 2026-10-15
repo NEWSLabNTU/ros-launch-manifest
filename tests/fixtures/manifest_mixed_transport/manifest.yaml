@@ -31,7 +31,7 @@ nodes:
       out: { min_rate_hz: 10 }
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [out]
         max_latency: 50ms
 
@@ -42,7 +42,7 @@ nodes:
       out: { min_rate_hz: 10 }
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [out]
         max_latency: 30ms
 
@@ -58,7 +58,7 @@ nodes:
       out: { min_rate_hz: 10 }
     paths:
       main:
-        input: [lidar, camera]
+        trigger: { input: [lidar, camera] }
         output: [out]
         tolerance: 50ms
         max_latency: 20ms
@@ -90,6 +90,6 @@ topics:
 
 paths:
   pipeline:
-    input: /sensor/raw
+    trigger: { input: [/sensor/raw] }
     output: [/perception/fused_objects]
     max_latency: 70ms

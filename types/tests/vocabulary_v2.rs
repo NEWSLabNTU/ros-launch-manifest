@@ -255,11 +255,11 @@ nodes:
 }
 
 /// Real-world regression: real autoware-contract files (vehicle_cmd_gate,
-/// scan_ground_filter, map_based_prediction — all pre-Vocabulary-v2,
-/// legacy `input:` style) must parse identically under the new code,
-/// with effective-trigger deriving input-triggered for every `paths:`
-/// entry that declares a legacy `input:`. (The files were migrated off the
-/// `_ms` spellings in phase 70; the trigger form is still the legacy one.)
+/// scan_ground_filter, map_based_prediction) give every `paths:` entry the
+/// input trigger it always had. They were written in the legacy `input:`
+/// style and migrated off the `_ms` spellings in phase 70, and off `input:`
+/// by `migrate` in phase 90 G3; each file is checked as it is now and with
+/// the legacy spelling restored, and both must read the same trigger.
 #[test]
 fn real_autoware_contracts_parse_with_legacy_trigger_derivation() {
     type Expectation<'a> = (&'a str, &'a str, &'a [&'a str]);
@@ -288,21 +288,33 @@ fn real_autoware_contracts_parse_with_legacy_trigger_derivation() {
             .unwrap_or_else(|e| panic!("failed to read fixture {full_path}: {e}"));
         let m = parse_manifest_str(&src)
             .unwrap_or_else(|e| panic!("fixture {file} failed to parse: {e}"));
+        // The legacy spelling, restored: `trigger: { input: [x] }` -> `input: [x]`.
+        let legacy_src = src
+            .replace("trigger: { input: ", "input: ")
+            .replace("] }", "]");
+        assert_ne!(legacy_src, src, "fixture {file} has no trigger to restore");
+        let legacy = parse_manifest_str(&legacy_src)
+            .unwrap_or_else(|e| panic!("fixture {file} (legacy) failed to parse: {e}"));
 
         for (node, path_name, expected_inputs) in *expectations {
             let path = m.nodes[*node].paths.get(*path_name).unwrap_or_else(|| {
                 panic!("fixture {file}: node '{node}' has no path '{path_name}'")
             });
-            // No explicit trigger in these legacy files.
-            assert_eq!(
-                path.trigger, None,
-                "fixture {file}: path '{path_name}' unexpectedly has an explicit trigger"
-            );
             let expected: Vec<String> = expected_inputs.iter().map(|s| s.to_string()).collect();
             assert_eq!(
                 path.effective_trigger(),
-                EffectiveTrigger::Input(expected),
+                EffectiveTrigger::Input(expected.clone()),
                 "fixture {file}: path '{path_name}' effective trigger mismatch"
+            );
+            let old = &legacy.nodes[*node].paths[*path_name];
+            assert_eq!(
+                old.trigger, None,
+                "fixture {file}: '{path_name}' legacy form"
+            );
+            assert_eq!(
+                old.effective_trigger(),
+                EffectiveTrigger::Input(expected),
+                "fixture {file}: path '{path_name}' legacy effective trigger mismatch"
             );
         }
     }

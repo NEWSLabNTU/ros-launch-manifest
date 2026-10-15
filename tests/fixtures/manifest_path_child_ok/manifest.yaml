@@ -3,6 +3,6 @@ version: 1
 
 paths:
   pipeline:
-    input: /sensor/raw
+    trigger: { input: [/sensor/raw] }
     output: [/perception/objects]
     max_latency: 50ms
