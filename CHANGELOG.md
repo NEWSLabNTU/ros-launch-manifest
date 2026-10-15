@@ -6,7 +6,7 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.1.61 - 2026-10-16
 
 Phase 93 S1 (play_launch `docs/roadmap/phase-93-supervised-budgets.md`):
 supervised budgets. All additive: every contract that parsed still parses
@@ -41,8 +41,8 @@ to the same values. GRAMMAR_VERSION 0.1.61.
   `PathDecl` `timer_rate_source`, `model::PathContract` `supervise`: a
   struct literal without `..Default::default()` needs them.
   `SourceKind`, `FaultKind` (types and model) have a new variant: an
-  exhaustive match needs an arm. The release moves the workspace Cargo
-  version (0.1.13 -> 0.1.14).
+  exhaustive match needs an arm. **Workspace Cargo version `0.1.13` ->
+  `0.1.14`**.
 
 ## v0.1.60 - 2026-10-15
 
