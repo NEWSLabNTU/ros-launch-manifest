@@ -1,0 +1,58 @@
+# Phase 90 G3: `drop-tightness`, the scope-vs-topic drop check
+# (contract-theory.md, Drop Budgets). A scope path's `drop.max_count` bounds
+# the loss of its whole route; a topic on the route bounds one hop. A hop
+# that may lose more than the whole is a part larger than its whole.
+#
+#   /sensor/raw --> filter --(filtered, 1 / 100)--> tracker --(tracks, 8 / 100)
+#
+# e2e permits 5 / 100 (5%): `filtered` (1%) fits, `tracks` (8%) does not.
+# `side` permits 20 / 100 but is not on the route, so it is not compared.
+version: 1
+
+nodes:
+  filter:
+    sub:
+      raw: {}
+    pub:
+      filtered: {}
+      side: {}
+    paths:
+      main:
+        trigger: { input: [raw] }
+        output: [filtered, side]
+        max_latency: 10ms
+  tracker:
+    sub:
+      filtered: {}
+    pub:
+      tracks: {}
+    paths:
+      main:
+        trigger: { input: [filtered] }
+        output: [tracks]
+        max_latency: 20ms
+
+topics:
+  /sensor/raw:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [filter/raw]
+  filtered:
+    type: std_msgs/msg/String
+    pub: [filter/filtered]
+    sub: [tracker/filtered]
+    drop: 1 / 100
+  side:
+    type: std_msgs/msg/String
+    pub: [filter/side]
+    drop: 20 / 100
+  tracks:
+    type: std_msgs/msg/String
+    pub: [tracker/tracks]
+    drop: 8 / 100
+
+paths:
+  e2e:
+    trigger: { input: [/sensor/raw] }
+    output: [tracks]
+    max_latency: 100ms
+    drop: 5 / 100

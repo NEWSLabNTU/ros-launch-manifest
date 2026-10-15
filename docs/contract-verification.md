@@ -77,11 +77,11 @@ output.
 
 ## Rule Registry
 
-19 rules, in registration order (`check/src/rules/mod.rs::default_rules`).
+20 rules, in registration order (`check/src/rules/mod.rs::default_rules`).
 Severity is what the rule emits; several rules emit at more than one
 severity.
 
-The registry is exactly these 19. **`consistency` is deliberately not one
+The registry is exactly these 20. **`consistency` is deliberately not one
 of them**: the id is live, but it belongs to the cross-scope rule the
 consumer emits ([below](#division-of-labor-with-the-consumer)), and
 `--rule consistency` filters those diagnostics. What used to sit here was a
@@ -97,9 +97,9 @@ in `default_rules()`.
 | 3 | `qos-compat` | Error | Invalid QoS value token (`reliability`, `durability`, `history`, `liveliness`) at topic or endpoint level |
 | 4 | `qos-match` | Error / Warning | Structural: `depth: 0` (E), `keep_all` with depth (W), `best_effort` + `transient_local` (W). DDS pub/sub compatibility on `reliability`, `durability`, `liveliness` and `lease_duration` (E) — offered ≥ requested, checked only when both sides specify (no implicit ROS defaults) |
 | 5 | `rate-hierarchy` | Error | `pub.min_rate_hz < topic.rate_hz`; `topic.rate_hz < sub.min_rate_hz`; and since phase 70 the upper bounds `topic.rate_hz > pub.max_rate_hz` and `topic.rate_hz > sub.max_rate_hz` |
-| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency` < Σ node latencies + declared topic `max_transport`, each node contributing the **max** over its declared paths. Per-manifest fallback — the topology-aware critical path is the consumer's cross-scope diagnostic, which deletes this warning for every scope path it resolves a route for |
+| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency` < Σ node latencies + declared topic `max_transport` (the deprecated topic-level value only; subscriber transports are read by the consumer's route), each node contributing the **max** over its declared paths. Per-manifest fallback — the topology-aware critical path is the consumer's cross-scope diagnostic, which deletes this warning for every scope path it resolves a route for |
 | 7 | `causal-dag` | Error | Cycle in the causal dataflow graph (`state: true` on feedback endpoints breaks it) |
-| 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; a `drop.max_count` rate outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0`. Checked on topics, scope paths and node paths |
+| 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; a `drop.max_count` rate outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0`. Checked on topics and scope paths (a node path's `drop:` is a parse error since v0.1.60) |
 | 9 | `service-wiring` | Warning | Service client with no matching server |
 | 10 | `service-type` | Error / Warning | Service without `type` (E); server/client ref not declared on its node (W) |
 | 11 | `dangling-entity` | Warning / Error | Topic with 0 pubs or 0 subs (W); service/action with 0 servers (E) — unless that side is declared `external:` |
@@ -111,6 +111,7 @@ in `default_rules()`.
 | 17 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
 | 18 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
 | 19 | `jitter-range` | Error / Info | `min_latency` above `max_latency` (E); `max_latency - min_latency > max_jitter` when both bounds are declared (E); `max_jitter` declared with no `min_latency`, so the bound cannot be checked (Info — an absent floor is unknown, not zero). A `max_latency` at or below `max_jitter` is clean without a floor: whatever it is, the spread cannot exceed the ceiling |
+| 20 | `drop-tightness` | Warning | A topic on a scope path's route, within the path's own manifest, permits a larger drop rate (`max_count`, `n / w`) than the scope path's end-to-end `drop` (phase 90 G3, contract-theory's tightness check). The consumer checks the same on the global route, across scopes |
 
 Shared helper: `rules/endpoint_topic.rs` resolves `node/endpoint`
 references to their declaring topic (used by `once-durability`,

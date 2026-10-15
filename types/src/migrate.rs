@@ -84,6 +84,24 @@ pub const REWRITES: &[Rewrite] = &[
         find: external_topics_to_topics,
     },
     Rewrite {
+        id: "topic-max-transport-subscribers",
+        unit: "G3",
+        since: "0.1.60",
+        from: "topics.<t>.max_transport: <d>",
+        to: "nodes.<n>.sub.<ep>.max_transport: <d> on each subscriber listed in `topics.<t>.sub` that states none",
+        when: "every listed subscriber is declared in the same file (a subscriber that states its own keeps it); a topic with no listed subscriber, or one declared in another contract, is left for a hand edit",
+        find: topic_max_transport_subscribers,
+    },
+    Rewrite {
+        id: "node-path-drop-topic",
+        unit: "G3",
+        since: "0.1.60",
+        from: "nodes.<n>.paths.<p>.drop: <spec>",
+        to: "topics.<t>.drop: <spec>, <t> the topic whose `pub:` lists the path's one output",
+        when: "the path has exactly one output and one topic of the same file publishes it, with no drop of its own or the same one; several outputs are left for a hand edit (which topic loses the messages is the author's call)",
+        find: node_path_drop_topic,
+    },
+    Rewrite {
         id: "guard-all-of-function",
         unit: "G7",
         since: "0.1.59",
@@ -876,6 +894,263 @@ fn external_topics_to_topics(doc: &Doc) -> Vec<Edit> {
     out
 }
 
+impl Doc<'_> {
+    /// The value text of the key at `path` when it is written on the key's
+    /// line (a scalar or a flow collection).
+    fn inline_value(&self, path: &[String]) -> Option<String> {
+        let r = self.key(path)?;
+        let vs = self.value_start(&r);
+        let ve = self.inline_value_end(vs, self.flow.contains(path));
+        (ve > vs).then(|| self.src[vs..ve].to_string())
+    }
+
+    /// An insertion that adds `entry` (`key: value`) to the mapping whose
+    /// key is at `path`: before the closing brace of a flow mapping, or as
+    /// a new last line of a block mapping. `None` when the value has
+    /// neither shape (a null value, a block mapping with no entries).
+    fn add_entry(&self, path: &[String], entry: &str) -> Option<(usize, String)> {
+        let r = self.key(path)?;
+        let vs = self.value_start(&r);
+        let b = self.src.as_bytes();
+        if b.get(vs) == Some(&b'{') {
+            let ve = self.inline_value_end(vs, true);
+            let mut j = ve - 1; // the closing brace
+            while j > vs + 1 && matches!(b[j - 1], b' ' | b'\t' | b'\n') {
+                j -= 1;
+            }
+            return Some(if j == vs + 1 {
+                (vs + 1, format!(" {entry} "))
+            } else {
+                (j, format!(", {entry}"))
+            });
+        }
+        if vs < b.len() && b[vs] != b'\n' && b[vs] != b'#' {
+            return None; // a scalar
+        }
+        if !self.starts_line(&r) {
+            return None;
+        }
+        let ci = self.child_indent(&r)?;
+        let at = self.block_end(&r);
+        let mut text = format!("{}{entry}\n", " ".repeat(ci));
+        if at > 0 && b[at - 1] != b'\n' {
+            text.insert(0, '\n');
+        }
+        Some((at, text))
+    }
+}
+
+/// A YAML value in flow style: what a moved block value is written as.
+fn flow_value(v: &Yaml) -> Option<String> {
+    match v {
+        Yaml::Hash(h) => {
+            let mut parts = Vec::new();
+            for (k, v) in h {
+                parts.push(format!("{}: {}", flow_scalar(&key_str(k)?), flow_value(v)?));
+            }
+            Some(format!("{{ {} }}", parts.join(", ")))
+        }
+        Yaml::Array(a) => Some(format!(
+            "[{}]",
+            a.iter()
+                .map(flow_value)
+                .collect::<Option<Vec<_>>>()?
+                .join(", ")
+        )),
+        Yaml::String(s) => Some(flow_scalar(s)),
+        other => key_str(other),
+    }
+}
+
+/// G3: a topic's `max_transport:` moves onto each subscriber the topic
+/// lists that states none of its own: exactly what the topic-level value
+/// meant (a subscriber's own value wins, the topic's applies otherwise).
+/// Every listed subscriber must be declared in the same file, or the topic
+/// is left for a hand edit: the value would otherwise be lost for the
+/// subscribers this file cannot see.
+fn topic_max_transport_subscribers(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "topic-max-transport-subscribers";
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let Some(topics) = y["topics"].as_hash() else {
+            continue;
+        };
+        for (k, t) in topics {
+            let Some(tname) = key_str(k) else { continue };
+            if t["max_transport"].is_badvalue() {
+                continue;
+            }
+            let kpath = with(&level, &["topics", &tname, "max_transport"]);
+            let dotted = kpath.join(".");
+            let Some(value) = doc.inline_value(&kpath) else {
+                doc.skip(ID, &dotted, "a block-form value: move it by hand");
+                continue;
+            };
+            let subs = yaml_strings(&t["sub"]).unwrap_or_default();
+            if subs.is_empty() {
+                doc.skip(
+                    ID,
+                    &dotted,
+                    &format!(
+                        "`{tname}` lists no subscriber in this file: the value applies to \
+                         subscribers declared in another contract of the launch (or to none). \
+                         State `max_transport: {value}` on each of them, then delete this key"
+                    ),
+                );
+                continue;
+            }
+            let mut edits = Vec::new();
+            let mut why: Option<String> = None;
+            for sref in &subs {
+                let Some((node, ep)) = sref.rsplit_once('/') else {
+                    why = Some(format!("`{sref}` is not `<node>/<endpoint>`"));
+                    break;
+                };
+                let props = &y["nodes"][node]["sub"][ep];
+                if y["nodes"][node]["sub"].as_hash().is_none() || props.is_badvalue() {
+                    why = Some(format!(
+                        "subscriber `{sref}` is not declared under `nodes.{node}.sub` in this \
+                         file (another contract, or a list-form `sub:`)"
+                    ));
+                    break;
+                }
+                if !props["max_transport"].is_badvalue() {
+                    continue; // its own value wins, as it did
+                }
+                let epath = with(&level, &["nodes", node, "sub", ep]);
+                match doc.add_entry(&epath, &format!("max_transport: {value}")) {
+                    Some((at, text)) => edits.push(doc.edit(ID, &dotted, at..at, text)),
+                    None => {
+                        why = Some(format!(
+                            "subscriber `{sref}` has no mapping to add the key to (a null \
+                             value): write it as `{ep}: {{ max_transport: {value} }}`"
+                        ));
+                        break;
+                    }
+                }
+            }
+            if let Some(why) = why {
+                doc.skip(ID, &dotted, &why);
+                continue;
+            }
+            let Some(del) = doc.entry_range(&kpath) else {
+                doc.skip(ID, &dotted, "cannot delete the topic's key");
+                continue;
+            };
+            edits.push(doc.edit(ID, &dotted, del, String::new()));
+            out.extend(edits);
+        }
+    }
+    out
+}
+
+/// G3: a node path's `drop:` (read by nothing) moves to the topic its one
+/// output publishes, where the rate rule, the loss detector and the
+/// runtime drop monitor read it.
+fn node_path_drop_topic(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "node-path-drop-topic";
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let Some(nodes) = y["nodes"].as_hash() else {
+            continue;
+        };
+        for (nk, nv) in nodes {
+            let Some(node) = key_str(nk) else { continue };
+            let Some(paths) = nv["paths"].as_hash() else {
+                continue;
+            };
+            for (pk, p) in paths {
+                let Some(pname) = key_str(pk) else { continue };
+                if p["drop"].is_badvalue() {
+                    continue;
+                }
+                let kpath = with(&level, &["nodes", &node, "paths", &pname, "drop"]);
+                let dotted = kpath.join(".");
+                let outputs = yaml_strings(&p["output"]).unwrap_or_default();
+                if outputs.len() != 1 {
+                    doc.skip(
+                        ID,
+                        &dotted,
+                        &if outputs.is_empty() {
+                            "the path has no output: delete it, or state the loss on the topic \
+                             that drops by hand"
+                                .to_string()
+                        } else {
+                            format!(
+                                "the path has {} outputs ({}): state the loss on the topic of \
+                                 the output that drops (`topics.<t>.drop`) by hand",
+                                outputs.len(),
+                                outputs.join(", ")
+                            )
+                        },
+                    );
+                    continue;
+                }
+                let ep_ref = format!("{node}/{}", outputs[0]);
+                let carriers: Vec<String> = y["topics"]
+                    .as_hash()
+                    .map(|th| {
+                        th.iter()
+                            .filter(|(_, tv)| {
+                                yaml_strings(&tv["pub"]).is_some_and(|ps| ps.contains(&ep_ref))
+                            })
+                            .filter_map(|(tk, _)| key_str(tk))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let [topic] = carriers.as_slice() else {
+                    doc.skip(
+                        ID,
+                        &dotted,
+                        &format!(
+                            "{} topic(s) of this file list `{ep_ref}` under `pub:`: state the \
+                             loss on the topic it publishes by hand",
+                            carriers.len()
+                        ),
+                    );
+                    continue;
+                };
+                let tv = &y["topics"][topic.as_str()];
+                let Some(del) = doc.entry_range(&kpath) else {
+                    doc.skip(ID, &dotted, "cannot delete the path's key");
+                    continue;
+                };
+                if !tv["drop"].is_badvalue() {
+                    if tv["drop"] == p["drop"] {
+                        out.push(doc.edit(ID, &dotted, del, String::new()));
+                    } else {
+                        doc.skip(
+                            ID,
+                            &dotted,
+                            &format!(
+                                "topic `{topic}` states a different `drop:`: reconcile by hand"
+                            ),
+                        );
+                    }
+                    continue;
+                }
+                let Some(value) = doc.inline_value(&kpath).or_else(|| flow_value(&p["drop"]))
+                else {
+                    doc.skip(ID, &dotted, "a value the textual edit cannot carry");
+                    continue;
+                };
+                let tpath = with(&level, &["topics", topic]);
+                let Some((at, text)) = doc.add_entry(&tpath, &format!("drop: {value}")) else {
+                    doc.skip(
+                        ID,
+                        &dotted,
+                        &format!("topic `{topic}` is not a mapping to add to"),
+                    );
+                    continue;
+                };
+                out.push(doc.edit(ID, &dotted, at..at, text));
+                out.push(doc.edit(ID, &dotted, del, String::new()));
+            }
+        }
+    }
+    out
+}
+
 /// G7: an inline `{ all_of: [...] }` guard becomes a function of the scope,
 /// guarded by name. The function is named `<hazard>_all_of` (`_2`, `_3`, ...
 /// for a second group, or when the name is taken), appended to the
@@ -1520,6 +1795,173 @@ hazards:
     reaction: s.stop
 "
         );
+    }
+
+    const TRANSPORT: &str = "\
+version: 1
+nodes:
+  near:
+    sub:
+      objects: { max_transport: 0ms }   # its own wins
+  far:
+    sub:
+      objects: { min_rate_hz: 10 }
+  empty:
+    sub:
+      objects: {}
+  block:
+    sub:
+      objects:
+        min_rate_hz: 10
+        # a comment inside stays
+topics:
+  /objects:
+    type: T
+    sub: [near/objects, far/objects, empty/objects, block/objects]
+    max_transport: { duration: 10ms, source: requirement }
+  /flow: { type: T, max_transport: 3ms }
+";
+
+    #[test]
+    fn g3b_a_topic_transport_moves_onto_each_subscriber_that_states_none() {
+        let m = migrate_str(TRANSPORT).unwrap();
+        assert!(
+            ids(&m)
+                .iter()
+                .all(|i| *i == "topic-max-transport-subscribers")
+        );
+        let want = "\
+version: 1
+nodes:
+  near:
+    sub:
+      objects: { max_transport: 0ms }   # its own wins
+  far:
+    sub:
+      objects: { min_rate_hz: 10, max_transport: { duration: 10ms, source: requirement } }
+  empty:
+    sub:
+      objects: { max_transport: { duration: 10ms, source: requirement } }
+  block:
+    sub:
+      objects:
+        min_rate_hz: 10
+        max_transport: { duration: 10ms, source: requirement }
+        # a comment inside stays
+topics:
+  /objects:
+    type: T
+    sub: [near/objects, far/objects, empty/objects, block/objects]
+  /flow: { type: T, max_transport: 3ms }
+";
+        assert_eq!(m.output, want);
+        // `/flow` lists no subscriber here: the value may belong to another
+        // contract's subscribers, so it is left, and said so.
+        assert_eq!(m.skipped.len(), 1, "{:?}", m.skipped);
+        assert!(m.skipped[0].contains("/flow") && m.skipped[0].contains("lists no subscriber"));
+        let before = crate::parse_manifest_str(TRANSPORT).unwrap();
+        let after = crate::parse_manifest_str(&m.output).unwrap();
+        for n in ["near", "far", "empty", "block"] {
+            let own = after.nodes[n].subscribers["objects"].max_transport.as_ref();
+            let was = before.nodes[n].subscribers["objects"]
+                .max_transport
+                .as_ref()
+                .or(before.topics["/objects"].max_transport.as_ref());
+            assert_eq!(own, was, "{n}: the transport it paid is the one it states");
+        }
+    }
+
+    #[test]
+    fn g3b_a_subscriber_in_another_file_leaves_the_topic_alone() {
+        let src = "version: 1\ntopics:\n  /t:\n    type: T\n    sub: [elsewhere/in]\n    max_transport: 5ms\n";
+        let m = migrate_str(src).unwrap();
+        assert!(!m.changed());
+        assert!(m.skipped[0].contains("elsewhere/in"), "{:?}", m.skipped);
+    }
+
+    const NODE_DROP: &str = "\
+version: 1
+nodes:
+  a:
+    pub:
+      out: {}
+    paths:
+      main:
+        output: [out]
+        drop:
+          max_count: 5 / 100
+          max_consecutive: 3
+  b:
+    pub:
+      x: {}
+      y: {}
+    paths:
+      main:
+        output: [x, y]
+        drop: 1 / 10
+  c:
+    pub:
+      z: {}
+    paths:
+      main: { output: [z], drop: 2 / 100 }
+topics:
+  a_out:
+    type: T
+    pub: [a/out]
+  c_z: { type: T, pub: [c/z] }
+paths:
+  e2e:
+    output: [a_out]
+    drop: 1 / 10
+";
+
+    #[test]
+    fn g3b_a_node_path_drop_moves_to_its_one_output_topic() {
+        let m = migrate_str(NODE_DROP).unwrap();
+        assert!(ids(&m).iter().all(|i| *i == "node-path-drop-topic"));
+        let want = "\
+version: 1
+nodes:
+  a:
+    pub:
+      out: {}
+    paths:
+      main:
+        output: [out]
+  b:
+    pub:
+      x: {}
+      y: {}
+    paths:
+      main:
+        output: [x, y]
+        drop: 1 / 10
+  c:
+    pub:
+      z: {}
+    paths:
+      main: { output: [z] }
+topics:
+  a_out:
+    type: T
+    pub: [a/out]
+    drop: { max_count: 5 / 100, max_consecutive: 3 }
+  c_z: { type: T, pub: [c/z], drop: 2 / 100 }
+paths:
+  e2e:
+    output: [a_out]
+    drop: 1 / 10
+";
+        assert_eq!(m.output, want);
+        assert_eq!(m.skipped.len(), 1, "{:?}", m.skipped);
+        assert!(m.skipped[0].contains("2 outputs (x, y)"), "{:?}", m.skipped);
+        // The input does not parse (a node-path drop is refused); the output
+        // would, but for `b`, which is a hand edit.
+        assert!(crate::parse_manifest_str(NODE_DROP).is_err());
+        let fixed = m.output.replace("        drop: 1 / 10\n  c:", "  c:");
+        let after = crate::parse_manifest_str(&fixed).unwrap();
+        assert!(after.topics["a_out"].drop.is_some());
+        assert!(after.topics["c_z"].drop.is_some());
     }
 
     #[test]

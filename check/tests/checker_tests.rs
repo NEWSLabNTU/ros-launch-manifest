@@ -461,9 +461,13 @@ nodes:
       main:
         input: x
         output: [y]
-        drop:
-          max_count: 5 / 100
-          max_consecutive: 0
+topics:
+  y:
+    type: String
+    pub: [a/y]
+    drop:
+      max_count: 5 / 100
+      max_consecutive: 0
 "#;
     let errs = errors(yaml);
     assert!(
@@ -482,9 +486,13 @@ nodes:
       main:
         input: x
         output: [y]
-        drop:
-          max_count: 2 / 100
-          max_consecutive: 3
+topics:
+  y:
+    type: String
+    pub: [a/y]
+    drop:
+      max_count: 2 / 100
+      max_consecutive: 3
 paths:
   main:
     input: raw
@@ -580,8 +588,11 @@ nodes:
         input: pointcloud
         output: [objects]
         max_latency: 30ms
-        drop: 5 / 100
 topics:
+  objects:
+    type: DetectedObjects
+    pub: [centerpoint/objects]
+    drop: 5 / 100
   cropped:
     type: PointCloud2
     pub: [cropbox/output]
@@ -2684,7 +2695,7 @@ fn test_registry_has_no_placeholder_rules() {
         !ids.iter().any(|id| id == "consistency"),
         "the no-op `consistency` rule must not be registered: {ids:?}"
     );
-    assert_eq!(ids.len(), 19, "registered rules: {ids:?}");
+    assert_eq!(ids.len(), 20, "registered rules: {ids:?}");
     let mut sorted = ids.clone();
     sorted.sort();
     sorted.dedup();

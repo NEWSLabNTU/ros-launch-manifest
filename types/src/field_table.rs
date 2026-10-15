@@ -98,7 +98,9 @@ pub enum Context {
     Predicate,
     /// `modes.<name>.exit` (v0.1.46).
     Exit,
-    /// The map form of `safe_state.settle`: a braking profile (v0.1.46).
+    /// The map form of `safe_state.settle` (phase 90 G6): `{ duration |
+    /// decel, jerk ; response ; source }`, a written duration or a braking
+    /// profile (v0.1.46).
     Settle,
     /// The map form of a budget (phase 10): `{ duration, source }`, and on
     /// `max_age` and a mode's `window` also `param` (phase 90 G2: the
@@ -577,11 +579,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Consequence,
         "Publication rate. Derivable from the timers that drive it — see `derivable-rate`.",
     ),
-    live(
+    deprecated(
         "max_transport",
         Context::Topic,
-        Kind::Requirement,
-        "Transport latency budget for every subscriber of this topic that states none of its own. Charged as the subscriber's `max_transport` is: path and chain latencies, and a reaction route's guard edge.",
+        "nodes.<n>.sub.<ep>.max_transport",
+        "Deprecated in v0.1.60 (phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber's endpoint. Still read for one release as the `max_transport` of every subscriber of this topic that states none of its own (charged as the subscriber's is: path and chain latencies, and a reaction route's guard edge). `play_launch migrate` copies the value onto each such subscriber declared in the same file and deletes this key. Removed in the next grammar release.",
     ),
     removed(
         "max_transport_ms",
@@ -759,7 +761,7 @@ pub const FIELDS: &[Field] = &[
         "drop",
         Context::Path,
         Kind::Requirement,
-        "Permitted message loss along this path.",
+        "Scope path only: the end-to-end loss budget, `max_count: N / W` and `max_consecutive: K` (or the bare `N / W`). No topic on the path's route may permit more loss than the whole (`drop-tightness`). On a node path it is refused since v0.1.60 (phase 90 G3): nothing read it there; the loss belongs on the topic the path outputs (`topics.<t>.drop`), where `play_launch migrate` moves it.",
     ),
     live(
         "trigger",
@@ -1099,7 +1101,7 @@ pub const FIELDS: &[Field] = &[
         "settle",
         Context::SafeState,
         Kind::Fact,
-        "How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic).",
+        "How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration | decel, jerk ; response ; source }`: a written (measured) duration, or `decel` and `jerk`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic). `response` is added to either (omitted: 0). Both a duration and a profile: the profile is charged and the two compared (`settle-conflict`).",
     ),
     // -- functions.<name> (map form) --
     live(
@@ -1194,13 +1196,19 @@ pub const FIELDS: &[Field] = &[
         "duration",
         Context::Settle,
         Kind::Fact,
-        "A measured settle beside the profile: the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`).",
+        "The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside a profile, the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). Required when no profile is written.",
     ),
     live(
         "response",
         Context::Settle,
-        Kind::Requirement,
-        "The vehicle's response: from the braking command to the deceleration the profile assumes (a duration). Added to the derived profile time, `settle = response + a/j + (v0 - v_r)/a` (`settle-derived` prints both parts). A budget: the map form `{ duration, source }` applies.",
+        Kind::Fact,
+        "The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived profile alike: `settle = duration + response`, or `response + a/j + (v0 - v_r)/a` (`settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies.",
+    ),
+    live(
+        "source",
+        Context::Settle,
+        Kind::Meta,
+        "Where the written `duration` comes from, as a budget's `source:` (phase 10). Requires `duration`: a profile's settle is derived from its parameters.",
     ),
     // -- the map form of a budget (phase 10) --
     live(
@@ -1359,6 +1367,13 @@ fn render_bounds() -> String {
             Form::Bare => "".to_string(),
             Form::Map => "`{ duration, source }`".to_string(),
             Form::MapParam => format!("`{{ duration, source, param }}`; `param`: {}", b.param),
+            Form::Settle => "`{ duration | decel, jerk ; response ; source }` (`settle: <d>` is `{ duration: <d> }`)".to_string(),
+        };
+        let deprecated = lookup(b.context, b.key).is_some_and(|f| f.status == Status::Deprecated);
+        let form = if deprecated {
+            format!("{form} **deprecated** (phase 90 G3)")
+        } else {
+            form
         };
         out.push_str(&format!(
             "| `{}` | `{}` | {} | {} | {} | {} |\n",
@@ -1398,6 +1413,7 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::MeasuredTerm, "period", "0.1.58"),
     (Context::Hazard, "enters", "0.1.59"),
     (Context::Exit, "holds", "0.1.59"),
+    (Context::Settle, "source", "0.1.60"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

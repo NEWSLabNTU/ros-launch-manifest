@@ -315,6 +315,12 @@ pub enum Form {
     Map,
     /// The bare value, or the map form `{ duration, source, param }`.
     MapParam,
+    /// A settle (phase 90 G6): the bare duration is shorthand for `{
+    /// duration }`, and the map is `{ duration | decel, jerk ; response ;
+    /// source }`: a written duration or a braking profile it is derived
+    /// from (or both, compared by `settle-conflict`), the vehicle's response
+    /// added to either, and where the written duration comes from.
+    Settle,
 }
 
 /// One spelling of a bound: a key in one context, and what it parses to.
@@ -470,7 +476,7 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         BoundKind::Response,
         Limit::Max,
         "duration",
-        Form::Bare,
+        Form::Settle,
     ),
     bk(
         "duration",
@@ -605,12 +611,11 @@ impl crate::types::Manifest {
                 put(out, at, "miss.consecutive", &m.consecutive);
             }
             if let Some(ss) = &p.safe_state {
-                match &ss.settle_profile {
-                    Some(prof) => {
-                        put(out, at, "safe_state.settle.duration", &ss.settle);
-                        put(out, at, "safe_state.settle.response", &prof.response);
-                    }
-                    None => put(out, at, "safe_state.settle", &ss.settle),
+                if ss.settle_map {
+                    put(out, at, "safe_state.settle.duration", &ss.settle);
+                    put(out, at, "safe_state.settle.response", &ss.settle_response);
+                } else {
+                    put(out, at, "safe_state.settle", &ss.settle);
                 }
             }
         }

@@ -326,11 +326,11 @@ periodic node) is checked independently.
 
 Drops are declared in a `drop:` block — `max_count: N / W`, from which
 the drop rate $d = n/w$ is computed, and `max_consecutive: K`. It sits
-on **topics** (transport drops) and **scope paths** (E2E drops). The
-shared path schema accepts it on node paths too; it is range-validated
-like any other, but plays no role in composition — if a node internally
-drops messages, model the effect as a lower `pub.min_rate_hz` on its
-output.
+on **topics** (transport drops) and **scope paths** (E2E drops). A node
+path's `drop:` is refused (v0.1.60, phase 90 G3): it played no role in
+composition and nothing read it. If a node internally drops messages,
+state the loss on the topic it outputs, or model the effect as a lower
+`pub.min_rate_hz` on its output.
 
 **Static checking** (`drop-sanity`) validates local consistency only:
 
@@ -343,10 +343,14 @@ $$f_{\text{topic}} \cdot (1 - d_{\text{topic}}) \geq f_{\min}(\text{sub})$$
 
 Cross-scope, two scopes declaring the same topic must agree on its drop
 budget — the `consistency` rule, which runs in the consumer's merge layer
-(`resolve/src/ros/manifest_loader.rs`), not in this crate's registry. A
-scope-vs-topic tightness check (a scope's
-`drop.max_count` must not be tighter than a topic's on its path — part >
-whole) is part of the design but not currently implemented.
+(`resolve/src/ros/manifest_loader.rs`), not in this crate's registry. The
+scope-vs-topic tightness check (a scope's `drop.max_count` must not be
+tighter than a topic's on its route — part > whole) is `drop-tightness`
+(phase 90 G3, a warning): this crate checks the topics of the scope
+path's own manifest, and a consumer that merges the launch tree checks
+the route on the global graph, across scopes. Only `max_count` is
+compared: consecutive runs reset at periodic nodes, so `max_consecutive`
+does not compose this way.
 
 **Runtime monitoring** handles composition — it depends on actual
 transport conditions (burstiness, congestion) that cannot be proven
@@ -505,8 +509,8 @@ If E later gets a budget of 25ms: 50 + 30 + 25 = 105 > 100. Warning.
 
 Drop budgets are checked statically for local consistency (sanity) and
 at runtime for actual behavior. Composition is defined over **topics**
-(transport) and **scope paths** (E2E); a node path's own `drop:` is
-range-validated but composes nothing.
+(transport) and **scope paths** (E2E); a node path's `drop:` is refused
+(v0.1.60).
 
 ```
 scope S path: drop: { max_count: 10 / 100 }   → d = 0.10
@@ -515,8 +519,9 @@ scope S path: drop: { max_count: 10 / 100 }   → d = 0.10
   topic T3:   (no drop budget)                            (C → D transport)
 ```
 
-**Sanity check**: T1 drop (3%) < S drop (10%). T2 (3%) < 10%. OK.
-No topic has a tighter drop budget than the scope.
+**Tightness check** (`drop-tightness`): T1 drop (3%) <= S drop (10%).
+T2 (3%) <= 10%. OK: no topic on the route permits more loss than the
+scope path.
 
 **Rate-drop check**: if T1 has `rate_hz: 10` and subscriber B has
 `min_rate_hz: 9`: effective delivery = $10 \times (1 - 0.03) = 9.7$ Hz ≥ 9. Passes.

@@ -32,9 +32,6 @@ nodes:
         trigger: { input: [input] }
         output: [to_b]
         max_latency: 25ms
-        drop:
-          max_count: 5 / 100
-          max_consecutive: 5
 
   node_b:
     sub:
@@ -47,9 +44,6 @@ nodes:
         trigger: { input: [from_a] }
         output: [to_a, output]
         max_latency: 25ms
-        drop:
-          max_count: 5 / 100
-          max_consecutive: 4
 
   greedy_consumer:
     sub:
@@ -89,11 +83,15 @@ topics:
     type: std_msgs/msg/String
     pub: [node_a/to_b]
     sub: [node_b/from_a]
+    drop: { max_count: 5 / 100, max_consecutive: 5 }
 
   b_to_a:
     type: std_msgs/msg/String
     pub: [node_b/to_a]
     sub: [node_a/from_b]
+    drop:
+      max_count: 5 / 100
+      max_consecutive: 4
 
   output_topic:
     type: std_msgs/msg/Float64

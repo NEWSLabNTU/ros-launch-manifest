@@ -5,8 +5,9 @@
 #  in →   │                                                ├→ fusion (20ms) → out
 #         └→ camera_detector (30ms) ──[network: 10ms]──────┘
 #
-# Topic-level max_transport_ms: 10ms (worst-case default).
-# Override on fusion/lidar: 0ms (intra-process collocation).
+# Transport per subscriber (phase 90 G3: a transport is the hop into one
+# subscriber): fusion/camera 10ms (the network), fusion/lidar 0ms
+# (intra-process collocation).
 #
 # Critical path with override:
 #   lidar branch:  50 + 0  + 20 = 70
@@ -53,7 +54,7 @@ nodes:
         max_transport: 0ms     # intra-process from lidar_detector
       camera:
         min_rate_hz: 10
-        # Inherits topic default (10ms) — cross-network bridge
+        max_transport: 10ms    # cross-network bridge
     pub:
       out: { min_rate_hz: 10 }
     paths:
@@ -74,14 +75,12 @@ topics:
     pub: [lidar_detector/out]
     sub: [fusion/lidar]
     rate_hz: 10
-    max_transport: 10ms
 
   /perception/camera_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [camera_detector/out]
     sub: [fusion/camera]
     rate_hz: 10
-    max_transport: 10ms
 
   /perception/fused_objects:
     type: autoware_perception_msgs/msg/DetectedObjects

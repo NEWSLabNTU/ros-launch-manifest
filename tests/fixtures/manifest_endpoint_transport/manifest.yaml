@@ -1,24 +1,24 @@
 # One topic, two subscribers, one transport each (play_launch issue #0042,
 # design issue #55).
 #
-# `max_transport` is declarable on a topic AND on a subscriber endpoint, and
-# the endpoint wins where it is declared. The reason is placement: the same
-# ROS topic reaching a subscriber in the publisher's own process is a pointer
-# handoff, and reaching one on another machine is the network. One number per
-# topic cannot say both.
+# `max_transport` is stated on each subscriber endpoint (phase 90 G3; the
+# topic-level form, read as every subscriber's default, is deprecated). The
+# reason is placement: the same ROS topic reaching a subscriber in the
+# publisher's own process is a pointer handoff, and reaching one on another
+# machine is the network. One number per topic cannot say both.
 #
 # Topology — producer fans out to two consumers over ONE topic:
 #
-#                             /perception/objects   (topic default 10ms)
+#                             /perception/objects
 #                            ╱                    ╲
 #   /sensor/raw → producer (10ms)                  ├→ collocated (20ms) → /perception/fast
-#                            ╲   [0ms override]   ╱
-#                             ╲  [10ms default]  ─┴→ remote (5ms) → /perception/slow
+#                            ╲   [0ms]            ╱
+#                             ╲  [10ms]          ─┴→ remote (5ms) → /perception/slow
 #
 # Two scope paths, one per branch, so each value is asserted on its own:
 #
 #   collocated_route:  10 + 0  + 20 = 30ms   (the endpoint override)
-#   remote_route:      10 + 10 +  5 = 25ms   (the topic default)
+#   remote_route:      10 + 10 +  5 = 25ms   (the remote subscriber's)
 #
 # Both numbers move if the precedence is wrong, and they move in opposite
 # directions, which is what makes the pair a test rather than a coincidence:
@@ -57,11 +57,11 @@ nodes:
         output: [out]
         max_latency: 20ms
 
-  # On another machine, so it inherits the topic's 10ms — which, per design
-  # issue #55, is an assumption about the network rather than a promise.
+  # On another machine, so 10ms — which, per design issue #55, is an
+  # assumption about the network rather than a promise.
   remote:
     sub:
-      objects: { min_rate_hz: 10 }
+      objects: { min_rate_hz: 10, max_transport: 10ms }
     pub:
       out: { min_rate_hz: 10 }
     paths:
@@ -81,7 +81,6 @@ topics:
     pub: [producer/objects]
     sub: [collocated/objects, remote/objects]
     rate_hz: 10
-    max_transport: 10ms
 
   /perception/fast:
     type: autoware_perception_msgs/msg/DetectedObjects
@@ -101,4 +100,4 @@ paths:
   remote_route:
     trigger: { input: [/sensor/raw] }
     output: [/perception/slow]
-    max_latency: 25ms    # 10 + 10 (the topic default) + 5
+    max_latency: 25ms    # 10 + 10 (the remote subscriber's) + 5

@@ -941,15 +941,17 @@ fn fixture_qos_match_canonical_vector_map_clean() {
 // ── manifest_endpoint_transport: per-subscriber transport override ──
 
 /// The declaration side of play_launch issue #0042: one topic, two
-/// subscribers, one of them stating its own `max_transport`. The derivation
-/// asserts what the two values do to a route
+/// subscribers, each stating its own `max_transport` (phase 90 G3: the
+/// topic-level default the remote one used to inherit is deprecated, and
+/// `migrate` copied it onto that subscriber). The derivation asserts what
+/// the two values do to a route
 /// (`derive::tests::a_subscriber_transport_beats_the_topic_on_its_own_edge`);
 /// this asserts the grammar carries them, which is where the value starts.
 #[test]
 fn fixture_endpoint_transport_declares_both_values() {
     let m = parse_manifest(&fixture_path("manifest_endpoint_transport")).unwrap();
     let topic = &m.topics["/perception/objects"];
-    assert_eq!(topic.max_transport.ms(), Some(10.0), "the topic's default");
+    assert_eq!(topic.max_transport, None, "no topic-level default");
     assert_eq!(
         m.nodes["collocated"].subscribers["objects"]
             .max_transport
@@ -958,19 +960,21 @@ fn fixture_endpoint_transport_declares_both_values() {
         "the collocated subscriber's own"
     );
     assert_eq!(
-        m.nodes["remote"].subscribers["objects"].max_transport, None,
-        "the remote subscriber declares none and inherits"
+        m.nodes["remote"].subscribers["objects"].max_transport.ms(),
+        Some(10.0),
+        "the remote subscriber's own"
     );
 }
 
 /// No ERRORS on the fixture. It does carry `scope-budget` warnings, and
 /// that is the third reader design issue #55 left undecided: the
 /// per-manifest rule is a flat sum over every node and every topic in the
-/// scope, with no route and no notion of an endpoint override, so it
-/// reports 45ms against both budgets (10 + 20 + 5 nodes + 10 topic
-/// transport) where the routes are 30 and 25. Deliberately pinned: when
-/// that rule converges on the shared derivation, this assertion is the one
-/// that says so.
+/// scope, with no route, reading only the deprecated topic-level transport
+/// (phase 90 G3 moved this fixture's onto its subscribers, so the sum now
+/// carries none): it reports 35ms (10 + 20 + 5 nodes) against both budgets
+/// where the routes are 30 and 25. Deliberately pinned: when that rule
+/// converges on the shared derivation, this assertion is the one that says
+/// so.
 #[test]
 fn fixture_endpoint_transport_has_no_errors_and_the_flat_sum_is_pessimistic() {
     let m = parse_manifest(&fixture_path("manifest_endpoint_transport")).unwrap();
@@ -992,9 +996,52 @@ fn fixture_endpoint_transport_has_no_errors_and_the_flat_sum_is_pessimistic() {
     );
     assert!(
         budget.iter().all(|d| d.severity == Severity::Warning
-            && d.message.contains("45")
-            && d.message.contains("declared topic transport (10)")),
-        "the flat sum reads the topic only: {budget:?}"
+            && d.message.contains("sum of node latencies (35)")
+            && d.message.contains("= 35.")),
+        "the flat sum reads the topic level only: {budget:?}"
+    );
+}
+
+// ── manifest_drop_tightness: a hop looser than its scope path (phase 90 G3) ──
+
+#[test]
+fn fixture_drop_tightness_names_the_one_looser_hop() {
+    let m = parse_manifest(&fixture_path("manifest_drop_tightness")).unwrap();
+    let result = run_checks(&m);
+    let hits: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "drop-tightness")
+        .collect();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    let d = hits[0];
+    assert_eq!(d.severity, Severity::Warning);
+    assert_eq!(d.path, "paths.e2e.drop");
+    assert!(
+        d.message.contains("topic 'tracks'") && d.message.contains("8 / 100"),
+        "{}",
+        d.message
+    );
+    assert!(
+        !result.has_errors(),
+        "{:?}",
+        result.errors().collect::<Vec<_>>()
+    );
+}
+
+/// The migrated pipeline: the tracker's drop now sits on its output topic
+/// (2 / 100), inside the scope path's 4 / 100, so nothing is reported.
+#[test]
+fn fixture_pipeline_drop_fits_its_scope_path() {
+    let m = parse_manifest(&fixture_path("manifest_pipeline")).unwrap();
+    let result = run_checks(&m);
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.rule_id == "drop-tightness"),
+        "{:?}",
+        result.diagnostics
     );
 }
 
@@ -1018,6 +1065,7 @@ fn all_fixtures_round_trip() {
         "manifest_qos_match",
         "manifest_parallel_pipeline",
         "manifest_endpoint_transport",
+        "manifest_drop_tightness",
     ];
     for name in fixtures {
         let path = fixture_path(name);

@@ -52,7 +52,7 @@ Five workspace members:
 | Crate     | Description                                                                  |
 |-----------|------------------------------------------------------------------------------|
 | `types/`  | Manifest data types, span-tracking YAML parser, substitution, condition filtering. The grammar is the field table (`types/src/field_table.rs`); an unknown key is a parse error |
-| `check/`  | Single-manifest static validation (**19 rules**, incl. Z3 satisfiability), diagnostic emitters |
+| `check/`  | Single-manifest static validation (**20 rules**, incl. Z3 satisfiability), diagnostic emitters |
 | `sched/`  | Portable scheduling spec: platform files, the mapper registry, chain-aware ranking, the POSIX realizer, legacy TOML bridge |
 | `model/`  | SystemModel system-config types (`execution.tiers` reuses `sched::TierDef`)  |
 | `derive/` | The ONE derivation of the mapper's input from a resolved model — `mapper_input_from_model`, `resolve_chains`, `DeriveFacts`, `DeriveReport`. Both consumers call it; neither reimplements it (design issue #52, shipped in v0.1.37) |

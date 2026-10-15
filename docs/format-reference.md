@@ -82,7 +82,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `sub` | meta |  | Subscribing endpoints, as `node/endpoint`. |
 | `qos` | fact |  | Topic-level QoS, overridable per endpoint. |
 | `rate_hz` | **consequence** |  | Publication rate. Derivable from the timers that drive it — see `derivable-rate`. |
-| `max_transport` | requirement |  | Transport latency budget for every subscriber of this topic that states none of its own. Charged as the subscriber's `max_transport` is: path and chain latencies, and a reaction route's guard edge. |
+| `max_transport` |  | deprecated — use `nodes.<n>.sub.<ep>.max_transport` | Deprecated in v0.1.60 (phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber's endpoint. Still read for one release as the `max_transport` of every subscriber of this topic that states none of its own (charged as the subscriber's is: path and chain latencies, and a reaction route's guard edge). `play_launch migrate` copies the value onto each such subscriber declared in the same file and deletes this key. Removed in the next grammar release. |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `drop` | requirement |  | Permitted message loss on this topic. |
 | `external` | meta |  | Mark one side of this topic as provided by an external system. |
@@ -144,7 +144,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `correlation` |  | **removed** | Removed in phase 70 — nothing ever read it. State fan-in policy with `sync:`. |
 | `tolerance` | fact |  | Max `header.stamp` spread between a fan-in path's inputs still treated as one set. |
 | `tolerance_ms` |  | **removed** | Removed in phase 70 — write `tolerance: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
-| `drop` | requirement |  | Permitted message loss along this path. |
+| `drop` | requirement |  | Scope path only: the end-to-end loss budget, `max_count: N / W` and `max_consecutive: K` (or the bare `N / W`). No topic on the path's route may permit more loss than the whole (`drop-tightness`). On a node path it is refused since v0.1.60 (phase 90 G3): nothing read it there; the loss belongs on the topic the path outputs (`topics.<t>.drop`), where `play_launch migrate` moves it. |
 | `trigger` | fact |  | What causes this path's output: timer | input | once | spontaneous. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick. |
 | `sync` | fact |  | Fan-in synchronization policy for an input trigger with two or more endpoints. |
 | `max_jitter` | requirement |  | Permitted variation in this path's latency. |
@@ -266,7 +266,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `emits` | fact |  | The endpoint this reaction commands the safe state on. |
-| `settle` | fact |  | How long the plant takes to reach the safe state once commanded: a measured duration, or `{ decel: <param>, jerk: <param> }`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic). |
+| `settle` | fact |  | How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration | decel, jerk ; response ; source }`: a written (measured) duration, or `decel` and `jerk`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic). `response` is added to either (omitted: 0). Both a duration and a profile: the profile is charged and the two compared (`settle-conflict`). |
 
 ## `functions.<name>`
 
@@ -302,8 +302,9 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `decel` | fact |  | The parameter on this path's node holding the deceleration, m/s^2, read as a magnitude. |
 | `jerk` | fact |  | The parameter on this path's node holding the jerk the deceleration ramps at, m/s^3, read as a magnitude. |
-| `duration` | fact |  | A measured settle beside the profile: the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). |
-| `response` | requirement | since v0.1.58 | The vehicle's response: from the braking command to the deceleration the profile assumes (a duration). Added to the derived profile time, `settle = response + a/j + (v0 - v_r)/a` (`settle-derived` prints both parts). A budget: the map form `{ duration, source }` applies. |
+| `duration` | fact |  | The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside a profile, the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). Required when no profile is written. |
+| `response` | fact | since v0.1.58 | The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived profile alike: `settle = duration + response`, or `response + a/j + (v0 - v_r)/a` (`settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies. |
+| `source` | meta | since v0.1.60 | Where the written `duration` comes from, as a budget's `source:` (phase 10). Requires `duration`: a profile's settle is derived from its parameters. |
 
 ## `<budget> (map form)`
 
@@ -345,12 +346,12 @@ Every key below is a spelling of one bound: a value with a unit, what it limits 
 | `max_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at most | Hz |  |
 | `max_age` | `pub/sub/cli.<endpoint>` | age | at most | duration | `{ duration, source, param }`; `param`: a parameter of the subscriber's node, seconds (`max-age-param`) |
 | `max_transport` | `pub/sub/cli.<endpoint>` | transport | at most | duration | `{ duration, source }` |
-| `max_transport` | `topics.<name>` | transport | at most | duration | `{ duration, source }` |
+| `max_transport` | `topics.<name>` | transport | at most | duration | `{ duration, source }` **deprecated** (phase 90 G3) |
 | `max_response` | `srv.<endpoint>` | response | at most | duration | `{ duration, source }` |
 | `within` | `on_violation` | deadline | at most | duration | `{ duration, source }` |
 | `ftti` | `hazards.<name>` | deadline | at most | duration | `{ duration, source }` |
 | `window` | `modes.<name>` | least time | at least | duration | `{ duration, source, param }`; `param`: `<node>.<parameter>`, seconds (`window-param`) |
-| `settle` | `safe_state` | response | at most | duration |  |
+| `settle` | `safe_state` | response | at most | duration | `{ duration | decel, jerk ; response ; source }` (`settle: <d>` is `{ duration: <d> }`) |
 | `duration` | `safe_state.settle` | response | at most | duration |  |
 | `response` | `safe_state.settle` | response | at most | duration | `{ duration, source }` |
 | `max_count` | `drop` | count | at most | count / window |  |

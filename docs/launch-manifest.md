@@ -537,14 +537,19 @@ parallel branches; the consumer's topology-aware check compares it
 against the critical path, where two branches contribute `max`, not their
 sum. Where a route can be traced the second supersedes the first (see
 [The derived route](#the-derived-route-and-what-it-costs)). Transport
-latency can be declared per topic via `max_transport` (default for
-all subscribers) and overridden per subscriber via the same field on
-a `sub:` endpoint — a single ROS topic can have heterogeneous transport
-(intra-process ~0ms, SHM <1ms, network 5-10ms) so per-subscriber
-override is necessary for accurate critical-path computation. Topics
-without `max_transport` (and no per-sub override) contribute 0 to
-the budget sum — the undeclared transport is absorbed into the scope's
-residual headroom.
+latency is declared per subscriber, `max_transport` on a `sub:`
+endpoint — a single ROS topic can have heterogeneous transport
+(intra-process ~0ms, SHM <1ms, network 5-10ms), so the hop into each
+subscriber has its own number. (The topic-level `max_transport`, read as
+the default of every subscriber that states none, is deprecated since
+v0.1.60, phase 90 G3; `play_launch migrate` copies it onto those
+subscribers.) The per-manifest flat sum reads only that topic-level
+value, so once it is moved onto the subscribers the flat sum carries no
+transport; the topology-aware check reads each subscriber's (converging
+the flat sum on it is design issue #55's third reader, and would change
+the warnings of contracts that state subscriber transports today).
+Hops without `max_transport` contribute 0 to the budget sum — the
+undeclared transport is absorbed into the scope's residual headroom.
 
 **`max_age`** — the maximum acceptable age of data when a subscriber
 receives it. Declared on **subscriber endpoints**, not on paths.
@@ -595,14 +600,13 @@ full composition and checking rules.
 have subscribers with very different transport latency: an
 intra-process subscriber sees ~0ms, a same-machine SHM subscriber sees
 < 1ms, and a cross-network subscriber sees 5–10ms. To express this,
-`max_transport` can be declared **on the subscriber endpoint** to
-override the topic-level default. The checker uses the per-subscriber
-value as the edge weight from the publisher to that subscriber in
+`max_transport` is declared **on the subscriber endpoint**. The checker
+uses it as the edge weight from the publisher to that subscriber in
 critical-path computation:
 
 ```
 edge[pub → sub].transport = sub.max_transport
-                         ?? topic.max_transport
+                         ?? topic.max_transport   # deprecated (v0.1.60)
                          ?? 0
 ```
 
@@ -616,7 +620,6 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     pub: [lidar/output]
     sub: [perception/input, debug_recorder/input, remote_viz/input]
-    max_transport: 10ms                # default (worst-case fallback)
 
 nodes:
   perception:
@@ -629,10 +632,11 @@ nodes:
         max_transport: 1ms             # same-machine SHM
   remote_viz:
     sub:
-      input: {}                         # inherits topic default → 10ms
+      input:
+        max_transport: 10ms            # the network
 ```
 
-The override is sub-side only — a publisher does not know which
+The transport is sub-side only — a publisher does not know which
 subscriber receives data over which transport, but a subscriber knows
 how it consumes. Pub-side `max_transport` is not part of the format.
 
@@ -708,8 +712,11 @@ network congestion, or QoS mismatch. The manifest lets you declare how
 much loss is acceptable.
 
 Loss is declared in a **`drop:`** block, on **topics** (transport
-drops), on **scope paths** (E2E drops) and on **node paths** (messages
-the node itself skips). It has two keys, and there is no third:
+drops) and on **scope paths** (E2E drops). It has two keys, and there is
+no third. (A node path's `drop:` is refused since v0.1.60, phase 90 G3:
+nothing read it there. A node that skips messages states the loss on the
+topic it outputs; `play_launch migrate` moves it when the path has one
+output.)
 
 **`max_count: N / W`** — at most N of every W messages may be lost. A
 count over a window, not a fraction: the drop *rate* is the checker's
@@ -750,7 +757,9 @@ checker verifies: `rate_hz * (1 - n/w) >= sub.min_rate_hz`.
 
 **Static vs runtime:** the static checker validates local consistency
 (`n <= w`, a non-zero `max_consecutive`, effective delivery meets
-subscriber demand). Drop **composition** along a route and
+subscriber demand), and that no topic on a scope path's route permits a
+larger drop rate than the scope path itself (`drop-tightness`, a
+warning: a part looser than its whole). Drop **composition** along a route and
 `max_consecutive` enforcement are **runtime-only** — they depend on
 actual transport conditions that can't be proven statically.
 See [Burstiness](contract-theory.md#burstiness) for runtime detection.
@@ -1371,7 +1380,7 @@ for `hazards:`, and the `severity_levels:` scale they draw from.
 | `state`            | Polled (read-latest), not causal              | `false` — causal |
 | `required`         | Must receive at least once before operational | `false` — optional |
 | `qos`              | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
-| `max_transport` | Per-subscriber transport latency override (a duration) — used as the edge weight from publisher to this subscriber in critical-path computation | Inherits topic-level `max_transport` |
+| `max_transport` | Transport latency into this subscriber (a duration) — the edge weight from publisher to this subscriber in critical-path computation | 0, or the deprecated topic-level `max_transport` |
 | `buffer`           | Buffering discipline for a `state: true` subscriber: `latest` \| `queue` | `latest`; a parse error without `state: true` |
 | `on_violation`     | The reaction this subscriber owes when its assumption is violated (see [Fault detection and reaction](#fault-detection-and-reaction)) | This subscriber detects nothing |
 
@@ -1512,7 +1521,6 @@ topics:
     drop:
       max_count: 1 / 100          # 1% transport loss
       max_consecutive: 3
-    max_transport: 5ms            # cross-machine hop
     qos:
       reliability: reliable
       durability: transient_local
@@ -1531,7 +1539,7 @@ topics:
 | `sub`              | no       | Subscriber endpoint refs | Empty list |
 | `rate_hz`          | no       | Negotiated channel rate. A **consequence** — derivable from the timers that drive it (see [Derived Rates](#derived-rates)) | Rate hierarchy not checked against a declared rate; `derived-rate-hierarchy` still checks the derived one |
 | `drop`             | no       | Permitted transport loss: `{ max_count: N / W, max_consecutive: K }`, or the bare `N / W` shorthand | Drop not checked |
-| `max_transport`    | no       | Worst-case transport latency (a duration) — default for every subscriber on this topic; overridable per `sub:` endpoint | 0 — absorbed into scope residual |
+| `max_transport`    | no       | Deprecated (v0.1.60, phase 90 G3): state it on each `sub:` endpoint. Still read for one release as the default of every subscriber of this topic that states none; `play_launch migrate` copies it onto them | 0 — absorbed into scope residual |
 | `qos`              | no       | QoS profile | QoS not validated |
 | `external`         | no       | Mark one side as provided outside the tree: `pub` \| `sub` \| `both` | Both sides expected internally |
 | `if`/`unless`      | no       | Condition | Always included |
@@ -1698,7 +1706,7 @@ topic names on a scope. The fields below are the common ones:
 | `max_jitter`   | Permitted variation in this path's latency | Not checked |
 | `sync`         | Fan-in policy: `exact`, `approximate` or `timeout_any` with its window | Inputs unsynchronised; each fires the callback |
 | `tolerance`    | Max `header.stamp` spread between inputs still treated as one set | Not checked against the budget |
-| `drop`         | Permitted loss along this path: `{ max_count: N / W, max_consecutive: K }` | Drop not checked |
+| `drop`         | Scope path only: the E2E loss budget, `{ max_count: N / W, max_consecutive: K }`; refused on a node path since v0.1.60 (state it on the output topic) | Drop not checked |
 | `miss`         | What a missed deadline costs: `{ tolerate: N / W, consecutive: K, action: continue \| skip_next \| abort }` | Not checked |
 | `safe_state`   | What this path emits when it is a hazard reaction, and the plant's settle time | Path is not a reaction |
 
@@ -1711,9 +1719,10 @@ unclassified path gives the mapper nothing.
 
 Age is declared on **subscriber endpoints** (see
 [Latency and Data Freshness](#latency-and-data-freshness)), not on
-paths. Drops may be declared at all three levels: on a topic (transport
-loss), on a scope path (E2E), and on a node path (messages the node
-itself skips) — `drop-sanity` checks all three.
+paths. Drops are declared on a topic (transport loss) and on a scope path
+(E2E) — `drop-sanity` checks both, and `drop-tightness` checks that no
+topic on a scope path's route permits more than the path. A node path's
+`drop:` is refused (v0.1.60).
 
 The checker traces the dataflow between the input and output topics,
 considering only nodes within this scope's subtree. When a parent scope
@@ -2441,7 +2450,18 @@ a = |decel| and j = |jerk|, the ramp to full deceleration sheds
 j = 1.5 that is 2033.33 ms from 3.0 m/s and 2525.33 ms from 4.23 m/s. A
 measured value may sit beside the profile as `settle: { decel, jerk,
 duration: 2517ms }`: it is the fallback when the hazard states no entry
-speed, and it is compared with the derivation. A safe state commanded
+speed, and it is compared with the derivation.
+
+The settle has one map form (phase 90 G6), `settle: { duration | decel,
+jerk ; response ; source }`, and `settle: 2s` is shorthand for `settle: {
+duration: 2s }`. `response` is the vehicle's response, from the braking
+command to the deceleration it then holds; it is added to the settle
+whether that is a written `duration` or derived from a profile, and
+omitted means 0 (a written duration that already includes the response
+omits it). `source` says where a written `duration` comes from (a budget's
+`source:`); a profile-only settle has none. With both a duration and a
+profile, the comparison (`settle-conflict`) is of the two totals, each
+with the response. A safe state commanded
 upstream of the sink -- a velocity limit the planner then carries to the
 actuator -- keeps its settle unless a hop nearer the sink declares one.
 
@@ -2467,7 +2487,7 @@ The consumer's rules for these keys:
 
 The table below is the rule set registered in this crate's
 `default_rules()` (`check/src/rules/mod.rs`), in registration order —
-**19 rules**, one row each. The cross-scope rules that need the merged
+**20 rules**, one row each. The cross-scope rules that need the merged
 `ManifestIndex` live in the consumer's merge layer and follow in a
 second table.
 
@@ -2480,7 +2500,7 @@ second table.
 | 5 | `rate-hierarchy`    | Lower bounds `pub.min_rate_hz >= rate_hz >= sub.min_rate_hz`, and (phase 70) upper bounds `pub.max_rate_hz >= rate_hz <= sub.max_rate_hz` | Error |
 | 6 | `scope-budget`      | Conservative flat sum: scope budget < Σ node latencies + declared transport (the consumer runs the topology-aware version) | Warning |
 | 7 | `causal-dag`        | Cycles in the dataflow graph (`state:` breaks cycles)          | Error         |
-| 8 | `drop-sanity`       | Effective delivery rate < sub.min_rate_hz; drop values out of range (`n > w`, `max_consecutive: 0`) — on topics, scope paths and node paths alike | Error |
+| 8 | `drop-sanity`       | Effective delivery rate < sub.min_rate_hz; drop values out of range (`n > w`, `max_consecutive: 0`) — on topics and scope paths | Error |
 | 9 | `service-wiring`    | Service client with no matching server across tree             | Warning       |
 | 10 | `service-type`     | Service with no type; server/client not on node                | Error/Warning |
 | 11 | `dangling-entity`  | Topic with 0 publishers or 0 subscribers (warning); service/action with 0 servers (error) — **unless** the missing side is declared `external:`, which for a service is the normal case, a client and its server often being two images | Error/Warning |
@@ -2492,6 +2512,7 @@ second table.
 | 17 | `sync-feasibility` (44.1/44.2) | `sync:` `max_interval`/`timeout` too narrow for the slowest declared input's inter-arrival period | Warning |
 | 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |
 | 19 | `jitter-range` (70 W2) | `min_latency` above `max_latency`; both bounds declared and `max_latency - min_latency > max_jitter` (errors); `max_jitter` with no `min_latency`, so the bound is unverifiable (info — an absent floor is unknown, not zero) | Error/Info |
+| 20 | `drop-tightness` (90 G3) | A topic on a scope path's route (in the same manifest) permits a larger drop rate (`max_count`) than the scope path's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
 
 The cross-scope rules run in the consumer's merge layer
 (`ros-launch-resolve`, invoked by `play_launch check`), which has the

@@ -599,9 +599,11 @@ pub struct OnViolation {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SafeState {
     pub emits: String,
-    /// A literal settle time. With a [`SettleProfile`] beside it, the
-    /// literal is what the consumer falls back to when the hazard states no
-    /// entry speed, and what it compares the derivation against
+    /// A written settle time: `settle: 2s`, shorthand for `settle: {
+    /// duration: 2s }` (phase 90 G6), whose map form may also state its
+    /// `source:`. With a [`SettleProfile`] beside it, the written duration is
+    /// what the consumer falls back to when the hazard states no entry
+    /// speed, and what it compares the derivation against
     /// (`settle-conflict`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settle: Option<crate::bound::Bound>,
@@ -610,6 +612,33 @@ pub struct SafeState {
     /// on this path's node, and the entry speed from the hazard.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settle_profile: Option<SettleProfile>,
+    /// The vehicle's response (phase 10 B2; phase 90 G6 made it the
+    /// settle's, not the profile's): `settle: { ..., response: <d> }`, the
+    /// time from the braking command to the deceleration the plant then
+    /// holds. Added to the settle, whether the settle is a written duration
+    /// or derived from a profile; omitted means 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle_response: Option<crate::bound::Bound>,
+    /// The settle was written in its map form (`settle: { ... }`), so its
+    /// bounds are keyed `settle.duration` and `settle.response`; the scalar
+    /// `settle: 2s` is keyed `settle`.
+    #[serde(skip)]
+    pub settle_map: bool,
+}
+
+impl SafeState {
+    /// The vehicle's response in milliseconds: 0 when not written.
+    pub fn response_ms(&self) -> f64 {
+        use crate::bound::OptBound;
+        self.settle_response.ms().unwrap_or(0.0)
+    }
+
+    /// The written settle in milliseconds, with the response added: what a
+    /// written duration charges (`None` when no duration is written).
+    pub fn written_settle_ms(&self) -> Option<f64> {
+        use crate::bound::OptBound;
+        self.settle.ms().map(|d| d + self.response_ms())
+    }
 }
 
 /// A braking profile named by the parameters that implement it (v0.1.46).
@@ -624,11 +653,6 @@ pub struct SettleProfile {
     pub decel: String,
     /// The parameter holding the jerk the deceleration ramps at, m/s^3.
     pub jerk: String,
-    /// The vehicle's response (phase 10 B2): the time from the braking
-    /// command to the deceleration the profile assumes, written (measured
-    /// or analysed), and added to the derived profile time.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response: Option<crate::bound::Bound>,
 }
 
 impl SettleProfile {

@@ -3,6 +3,7 @@
 mod causal_dag;
 mod dangling_entity;
 mod drop_sanity;
+mod drop_tightness;
 mod endpoint_topic;
 mod endpoint_unique;
 mod explicit_trigger;
@@ -94,5 +95,7 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(queue_drain_rate::QueueDrainRateRule),
         // Phase 70: the rules the consumer census found missing.
         Box::new(jitter_range::JitterRangeRule),
+        // Phase 90 G3: the scope-vs-topic drop check contract-theory designs.
+        Box::new(drop_tightness::DropTightnessRule),
     ]
 }

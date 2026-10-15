@@ -64,7 +64,6 @@ nodes:
         trigger: { input: [detected_objects] }
         output: [tracked_objects]
         max_latency: 20ms
-        drop: 2 / 100
 
 topics:
   # Absolute — raw pointcloud from sensing subsystem (cross-scope input).
@@ -111,6 +110,7 @@ topics:
     pub: [tracker/tracked_objects]
     sub: []
     rate_hz: 10
+    drop: 2 / 100
 
 paths:
   perception:

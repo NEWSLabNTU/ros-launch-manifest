@@ -6,6 +6,49 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+Phase 90 G3 (its bound part) and G6, on G2's one `Bound`. Every contract
+that parsed still parses to the same values except a node path's `drop:`,
+which nothing read and which is now refused; `migrate` rewrites both G3
+spellings. **Types API break**: `SettleProfile.response` is
+`SafeState.settle_response`.
+
+### Added
+
+- `drop-tightness` (check rule 20, warning): a topic on a scope path's
+  route (in the path's manifest) permits a larger drop rate (`max_count`)
+  than the scope path's end-to-end `drop:`, the scope-vs-topic check
+  `contract-theory.md` designed. Fixture `manifest_drop_tightness`.
+- `migrate` rewrites `topic-max-transport-subscribers` (the topic's value
+  onto each listed subscriber of the same file that states none; a topic
+  whose subscribers are not all in the file is left, and named) and
+  `node-path-drop-topic` (a node path's `drop:` onto the topic its one
+  output publishes; several outputs are left for a hand edit).
+- `safe_state.settle.source` (since 0.1.60): where a written `duration`
+  comes from.
+- `SafeState::response_ms()` and `SafeState::written_settle_ms()`.
+
+### Changed
+
+- G3: `topics.<t>.max_transport` is deprecated (parses for one release, read
+  as before: the default of every subscriber that states none); the
+  transport is stated on the subscriber endpoint.
+- G3: `drop:` on a node path is a parse error naming `topics.<t>.drop` and
+  `play_launch migrate`; on a scope path it stays (the end-to-end budget).
+- G3: `scope-budget`'s per-manifest flat sum still reads only the
+  topic-level transport, so a contract migrated off it carries no
+  transport in that sum (the consumer's topology-aware check reads each
+  subscriber's). Its warnings on `manifest_endpoint_transport` and
+  `manifest_mixed_transport` keep firing, with smaller totals.
+- G6: `settle` takes one map form, `{ duration | decel, jerk ; response ;
+  source }`; `settle: 2s` is shorthand for `{ duration: 2s }`. `response`
+  is the settle's (`SafeState.settle_response`), added to a written
+  duration as to a profile; omitted means 0. A settle map with neither a
+  duration nor a profile, or a `source:` with no duration, is an error.
+  `settle.response`'s kind is fact (was requirement). `Form::Settle` in the
+  Bounds table.
+
 ## v0.1.59 - 2026-10-15
 
 Phase 90 G4 and G5: one meaning per key for `reaction` and `on`, and the

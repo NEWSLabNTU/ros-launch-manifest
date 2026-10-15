@@ -178,7 +178,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         services: parse_services(doc, ctx)?,
         actions: parse_actions(doc, ctx)?,
         includes: parse_includes(doc, ctx)?,
-        paths: parse_paths(doc, ctx)?,
+        paths: parse_paths(doc, ctx, false)?,
         external_topics: parse_external_topics(doc, ctx)?,
         hazards: parse_hazards(doc, ctx)?,
         severity_levels: yaml_string_list(doc, "severity_levels", ctx)?,
@@ -1002,44 +1002,69 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
             "required: the endpoint this reaction commands the safe state on",
         )
     })?;
-    let (settle, settle_profile) = match &section["settle"] {
+    // Phase 90 G6: `settle: <d>` is shorthand for `settle: { duration: <d> }`;
+    // the map is `{ duration | decel, jerk ; response ; source }`.
+    let (settle, settle_profile, settle_response, settle_map) = match &section["settle"] {
         Yaml::Hash(_) => {
             let sctx = &format_path(ctx, "settle");
-            let profile = &section["settle"];
-            reject_unknown_keys(profile, sctx, Context::Settle)?;
-            let param = |key: &str| {
-                yaml_string(profile, key, sctx)?.ok_or_else(|| {
-                    field_err(
-                        sctx,
-                        key,
-                        "required: a braking profile names both its deceleration and its jerk \
-                         parameter",
-                    )
-                })
+            let map = &section["settle"];
+            reject_unknown_keys(map, sctx, Context::Settle)?;
+            let profile = if map["decel"].is_badvalue() && map["jerk"].is_badvalue() {
+                None
+            } else {
+                let param = |key: &str| {
+                    yaml_string(map, key, sctx)?.ok_or_else(|| {
+                        field_err(
+                            sctx,
+                            key,
+                            "required: a braking profile names both its deceleration and its \
+                             jerk parameter",
+                        )
+                    })
+                };
+                let decel = param("decel")?;
+                let jerk = param("jerk")?;
+                Some(SettleProfile { decel, jerk })
             };
-            let decel = param("decel")?;
-            let jerk = param("jerk")?;
-            let literal = yaml_bound(profile, "duration", sctx, Context::Settle)
-                .map_err(|e| reframe(e, sctx))?;
-            let response = yaml_bound(profile, "response", sctx, Context::Settle)?;
-            (
-                literal,
-                Some(SettleProfile {
-                    decel,
-                    jerk,
-                    response,
-                }),
-            )
+            let mut literal =
+                yaml_bound(map, "duration", sctx, Context::Settle).map_err(|e| reframe(e, sctx))?;
+            if literal.is_none() && profile.is_none() {
+                return Err(field_err(
+                    sctx,
+                    "duration",
+                    "required: a settle states its duration (`settle: { duration: 2s }`, or \
+                     `settle: 2s`) or a braking profile it is derived from (`decel` and `jerk`)",
+                ));
+            }
+            if !map["source"].is_badvalue() {
+                let Some(b) = literal.as_mut() else {
+                    return Err(field_err(
+                        sctx,
+                        "source",
+                        "says where a written `duration` comes from, and none is written: a \
+                         profile's settle is derived from its parameters. A measured or \
+                         analysed `response` states its source in its own map form, \
+                         `response: { duration, source }`",
+                    ));
+                };
+                b.source = Some(parse_source(&map["source"], sctx)?);
+            }
+            let response = yaml_bound(map, "response", sctx, Context::Settle)?;
+            (literal, profile, response, true)
         }
         _ => (
             yaml_bound(section, "settle", ctx, Context::SafeState)?,
             None,
+            None,
+            false,
         ),
     };
     Ok(Some(SafeState {
         emits,
         settle,
         settle_profile,
+        settle_response,
+        settle_map,
     }))
 }
 
@@ -1078,7 +1103,7 @@ fn parse_node_decl(yaml: &Yaml, ctx: &str) -> Result<NodeDecl, ParseError> {
         subscribers: parse_endpoints(yaml, "sub", ctx)?,
         srv: parse_srv_endpoints(yaml, "srv", ctx)?,
         cli: parse_endpoints(yaml, "cli", ctx)?,
-        paths: parse_paths(yaml, ctx)?,
+        paths: parse_paths(yaml, ctx, true)?,
         criticality: parse_criticality(yaml, ctx)?,
         concurrency: parse_concurrency(yaml, ctx)?,
         params: parse_params(yaml, ctx)?,
@@ -1695,7 +1720,21 @@ fn parse_arg_decl(yaml: &Yaml, ctx: &str) -> Result<ArgDecl, ParseError> {
 
 // ── Paths ──
 
-fn parse_paths(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, PathDecl>, ParseError> {
+/// The message of a node path's `drop:` (removed in v0.1.60, phase 90 G3).
+pub const NODE_PATH_DROP_REMOVED: &str = "Removed in v0.1.60 (phase 90 G3) -- a node path's \
+     `drop:` was read by nothing (no rule, monitor or code generator), while the same loss \
+     stated on the topic is: the rate rule, the loss detector's interval and the runtime drop \
+     monitor read `topics.<t>.drop`. State it on the topic the path outputs, \
+     `topics: { <t>: { drop: ... } }`; `play_launch migrate` moves it when the path has one \
+     output. On a scope path `drop:` stays: the end-to-end loss budget.";
+
+/// `paths:` of a manifest level (`node == false`: scope paths) or of a
+/// node (`node == true`).
+fn parse_paths(
+    doc: &Yaml,
+    ctx: &str,
+    node: bool,
+) -> Result<BTreeMap<String, PathDecl>, ParseError> {
     let mut out = BTreeMap::new();
     let section = &doc["paths"];
     if section.is_badvalue() {
@@ -1707,6 +1746,9 @@ fn parse_paths(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, PathDecl>, Pars
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         let path_ctx = format_path(ctx, &format!("paths.{name}"));
+        if node && !v["drop"].is_badvalue() {
+            return Err(field_err(&path_ctx, "drop", NODE_PATH_DROP_REMOVED));
+        }
         let path = parse_path_decl(v, &path_ctx)?;
         out.insert(name, path);
     }
@@ -2531,7 +2573,7 @@ mod tests {
         let cases: &[(&str, &str)] = &[
             // an integer where a "N / W" string is expected
             (
-                "nodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        drop: { max_count: 5 }\n",
+                "topics:\n  t:\n    type: T\n    drop: { max_count: 5 }\n",
                 "expected a string, got an integer",
             ),
             // a quoted number
@@ -2569,14 +2611,11 @@ mod tests {
     #[test]
     fn a_type_error_carries_its_path() {
         let err = super::parse_manifest_str(
-            "nodes:\n  filter:\n    paths:\n      clean:\n        output: [o]\n        drop: { max_count: 5 }\n",
+            "paths:\n  clean:\n    output: [o]\n    drop: { max_count: 5 }\n",
         )
         .unwrap_err()
         .to_string();
-        assert!(
-            err.contains("nodes.filter.paths.clean.drop.max_count"),
-            "got: {err}"
-        );
+        assert!(err.contains("paths.clean.drop.max_count"), "got: {err}");
     }
 
     /// The one bare scalar that is still accepted: `input:` as a single name.
@@ -3099,12 +3138,16 @@ nodes:
         input: sensor_points
         output: [ndt_pose]
         max_latency: 50ms
-        drop:
-          max_count: 10 / 100
-          max_consecutive: 5
       debug:
         input: sensor_points
         output: [exe_time_ms]
+paths:
+  localization:
+    input: sensor_points
+    output: [ndt_pose]
+    drop:
+      max_count: 10 / 100
+      max_consecutive: 5
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let ndt = &m.nodes["ndt"];
@@ -3114,7 +3157,7 @@ nodes:
         assert_eq!(loc.input, vec!["sensor_points"]);
         assert_eq!(loc.output, vec!["ndt_pose"]);
         assert_eq!(loc.max_latency.ms(), Some(50.0));
-        let drop = loc.drop.as_ref().unwrap();
+        let drop = m.paths["localization"].drop.as_ref().unwrap();
         assert_eq!(drop.max_count.count_per().unwrap().n, 10);
         assert_eq!(drop.max_count.count_per().unwrap().w, 100);
         assert_eq!(drop.max_consecutive.count(), Some(5));
@@ -3745,7 +3788,6 @@ nodes:
             Some(SettleProfile {
                 decel: "target_acceleration".into(),
                 jerk: "target_jerk".into(),
-                response: None,
             })
         );
         let both = m.nodes["op"].paths["measured"].safe_state.as_ref().unwrap();
@@ -3947,6 +3989,111 @@ nodes:
         assert!(e.contains("hazards.h.entry_speed"), "{e}");
     }
 
+    /// Phase 90 G6: `settle: <d>` is `settle: { duration: <d> }`, the map
+    /// takes a response beside a written duration as beside a profile, and
+    /// `source:` says where a written duration comes from.
+    #[test]
+    fn g6_settle_takes_one_map_form() {
+        let ss = |settle: &str| {
+            let m = parse_manifest_str(&format!(
+                "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
+                 safe_state: {{ emits: o, settle: {settle} }}\n"
+            ))
+            .unwrap();
+            m.nodes["n"].paths["p"].safe_state.clone().unwrap()
+        };
+        let bare = ss("2s");
+        let map = ss("{ duration: 2s }");
+        assert_eq!(bare.settle, map.settle);
+        assert_eq!((bare.settle_map, map.settle_map), (false, true));
+        assert_eq!(
+            map.written_settle_ms(),
+            Some(2000.0),
+            "omitted response is 0"
+        );
+        let both = ss("{ duration: 2s, response: 300ms, source: measured }");
+        assert_eq!(both.written_settle_ms(), Some(2300.0));
+        assert_eq!(both.settle_profile, None);
+        assert_eq!(
+            both.settle.source().map(|s| s.kind),
+            Some(crate::SourceKind::Measured)
+        );
+        let prof = ss("{ decel: a, jerk: j, response: 300ms }");
+        assert_eq!(prof.settle, None);
+        assert_eq!(prof.response_ms(), 300.0);
+        assert!(prof.settle_profile.is_some());
+        let keys: Vec<String> = parse_manifest_str(
+            "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
+             safe_state: { emits: o, settle: { duration: 2s, response: 300ms, source: measured } }\n",
+        )
+        .unwrap()
+        .bounds()
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+        assert_eq!(
+            keys,
+            [
+                "nodes.n.paths.p.safe_state.settle.duration",
+                "nodes.n.paths.p.safe_state.settle.response"
+            ]
+        );
+    }
+
+    #[test]
+    fn g6_a_settle_map_states_a_duration_or_a_profile() {
+        let p = |settle: &str| {
+            format!(
+                "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
+                 safe_state: {{ emits: o, settle: {settle} }}\n"
+            )
+        };
+        let e = err_of(&p("{ response: 300ms }"));
+        assert!(
+            e.contains("safe_state.settle.duration") && e.contains("braking profile"),
+            "{e}"
+        );
+        let e = err_of(&p("{ decel: a, jerk: j, source: measured }"));
+        assert!(
+            e.contains("safe_state.settle.source") && e.contains("derived"),
+            "{e}"
+        );
+    }
+
+    /// Phase 90 G3: a node path's `drop:` is refused, naming the topic form;
+    /// a scope path's stays.
+    #[test]
+    fn g3_a_node_path_drop_is_refused() {
+        let e = err_of(
+            "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
+             drop: 1 / 10\n",
+        );
+        assert!(
+            e.contains("nodes.n.paths.p.drop")
+                && e.contains("topics.<t>.drop")
+                && e.contains("play_launch migrate"),
+            "{e}"
+        );
+        let m =
+            parse_manifest_str("version: 1\npaths:\n  e2e:\n    output: [o]\n    drop: 1 / 10\n")
+                .unwrap();
+        assert!(m.paths["e2e"].drop.is_some());
+    }
+
+    /// Phase 90 G3: the topic-level `max_transport` still parses for one
+    /// release (deprecated, not removed).
+    #[test]
+    fn g3_a_topic_max_transport_still_parses() {
+        let m = parse_manifest_str("version: 1\ntopics:\n  /t: { type: T, max_transport: 5ms }\n")
+            .unwrap();
+        assert_eq!(m.topics["/t"].max_transport.ms(), Some(5.0));
+        assert_eq!(
+            crate::field_table::lookup(crate::field_table::Context::Topic, "max_transport")
+                .map(|f| f.status),
+            Some(crate::field_table::Status::Deprecated)
+        );
+    }
+
     #[test]
     fn a_settle_profile_names_both_parameters_and_nothing_else() {
         let p = |settle: &str| {
@@ -4096,14 +4243,9 @@ nodes:
         assert_eq!(a.max_transport.ms(), Some(56.0));
         let react = &n.paths["react"];
         assert_eq!(react.max_latency.ms(), Some(149.0));
-        let profile = react
-            .safe_state
-            .as_ref()
-            .unwrap()
-            .settle_profile
-            .as_ref()
-            .unwrap();
-        assert_eq!(profile.response.ms(), Some(256.0));
+        let ss = react.safe_state.as_ref().unwrap();
+        assert!(ss.settle_profile.is_some());
+        assert_eq!(ss.settle_response.ms(), Some(256.0));
 
         let sources = m.budget_sources();
         let src = |k: &str| *sources.get(k).unwrap_or_else(|| panic!("{k}"));
