@@ -52,8 +52,8 @@ TABLE = "types/src/field_table.rs"
 
 
 ROW = re.compile(
-    r'\b(live|alias|removed)\(\s*"([^"]+)",\s*Context::(\w+),\s*'
-    r'(?:Kind::(\w+),\s*)?("(?:[^"\\]|\\.)*")',
+    r'\b(live|alias|removed|deprecated)\(\s*"([^"]+)",\s*Context::(\w+),\s*'
+    r'(?:Kind::(\w+),\s*)?("(?:[^"\\]|\\.)*")(?:,\s*("(?:[^"\\]|\\.)*"))?',
     re.S,
 )
 LABEL = re.compile(r'Context::(\w+)\s*=>\s*"([^"]+)"')
@@ -62,16 +62,19 @@ LABEL = re.compile(r'Context::(\w+)\s*=>\s*"([^"]+)"')
 def parse_table(src: str):
     body = src[src.index("pub const FIELDS") : src.index("\n];")]
     rows = []
-    for fn, key, ctx, kind, text in ROW.findall(body):
+    for fn, key, ctx, kind, text, doc in ROW.findall(body):
         text = text[1:-1].replace('\\"', '"')
+        doc = doc[1:-1].replace('\\"', '"') if doc else ""
         rows.append(
             dict(
-                status={"live": "live", "alias": "alias", "removed": "removed"}[fn],
+                status=fn,
                 key=key,
                 ctx=ctx,
                 kind=kind or "",
-                canonical=text if fn == "alias" else "",
-                doc="" if fn == "alias" else text,
+                # `deprecated(key, ctx, replacement, doc)` (phase 90 G3): a
+                # key still read for one release, its fact's place elsewhere.
+                canonical=text if fn in ("alias", "deprecated") else "",
+                doc=doc if fn == "deprecated" else ("" if fn == "alias" else text),
             )
         )
     return rows
@@ -140,11 +143,12 @@ FORMS = {
     ("OnViolation", "within"): BUDGET,
     ("OnViolation", "on"): "class | [classes]",
     ("Mode", "window"): "duration | {duration, param, source}",
-    ("SafeState", "settle"): "duration | {decel, jerk, duration, response}",
+    ("SafeState", "settle"): "duration | {duration | decel, jerk ; response ; source}",
     ("Settle", "response"): BUDGET,
+    ("Settle", "duration"): DUR,
     ("Manifest", "functions"): "per entry: [topics] | {all_of} | {of, when}",
     ("Budget", "source"): "requirement | measured | derived | analysed | {measured: {...}}",
-    ("Window", "source"): "requirement | measured | derived | analysed | {measured: {...}}",
+    ("Settle", "source"): "requirement | measured | derived | analysed | {measured: {...}}",
 }
 
 # --------------------------------------------------------------------------
@@ -228,17 +232,15 @@ PATTERNS = {
     ("Predicate", "le"): [r"CompareOp::Le\b", r"\bpred\.op\b"],
     ("Predicate", "gt"): [r"CompareOp::Gt\b", r"\bpred\.op\b"],
     ("Predicate", "ge"): [r"CompareOp::Ge\b", r"\bpred\.op\b"],
-    ("Window", "duration"): [r"window[\w.()?]*\.duration(?:_ms)?\b", r"\bw\.duration(?:_ms)?\b"],
-    ("Window", "param"): [r"window[\w.()?]*\.param\b", r"\bw\.param\b"],
-    ("Window", "source"): [r"budget_sources", r"\bBudgetSource\b"],
     ("Exit", "on"): [r"exit[\w.()?]*\.on\b", r"\bx\.on\b"],
     ("Exit", "to"): [r"exit[\w.()?]*\.to\b", r"\bx\.to\b"],
     ("Settle", "decel"): [r"\.decel\b"],
     ("Settle", "jerk"): [r"\.jerk\b"],
-    ("Settle", "duration"): [r"settle-conflict"],
-    ("Settle", "response"): [r"\.response(?:_ms)?\b"],
-    ("Budget", "duration"): [r"\bbudget_sources\b"],
-    ("Budget", "param"): [r"\.max_age_param\b"],
+    ("Settle", "duration"): [r"settle-conflict", r"written_settle_ms"],
+    ("Settle", "response"): [r"\.settle_response\b", r"\bresponse_ms\b"],
+    ("Settle", "source"): [r"\bbudget_sources\b", r"\bBudgetSource\b"],
+    ("Budget", "duration"): [r"\bbudget_sources\b", r"\bBound\b"],
+    ("Budget", "param"): [r"\.param\(\)", r"ParamBinding::"],
     ("Budget", "source"): [r"\bbudget_sources\b", r"\bBudgetSource\b", r"SourceKind::"],
     ("Measured", "max"): [r"\.terms\b", r"MeasuredTerm"],
     ("Measured", "n"): [r"\.terms\b", r"MeasuredTerm"],
@@ -265,9 +267,9 @@ NOTES = {
     ("Manifest", "version"): "parsed; only nano-ros reads a `version` (its own files' field, not this one)",
     ("Manifest", "if"): "conditions are evaluated generically (`if_condition`) for every context",
     ("IncludeExternal", "manifest"): "`IncludeDecl::external()` has no caller; play_launch finds contracts beside launch files instead",
-    ("Endpoint", "max_transport"): "G3: the subscriber's own; overrides the topic's",
-    ("Topic", "max_transport"): "G3: default for subscribers stating none",
-    ("Path", "drop"): "G3: read only by `drop-sanity` (range) and copied to the model; no rule or monitor uses it",
+    ("Endpoint", "max_transport"): "G3: the one place; the hop into this subscriber",
+    ("Topic", "max_transport"): "G3: deprecated; read for one release as the default of subscribers stating none; `migrate` copies it onto them",
+    ("Path", "drop"): "G3: scope path only, the E2E budget (`drop-tightness`); refused on a node path, `migrate` moves it to the output topic",
     ("Topic", "drop"): "G3: read by rate rules, the loss detector interval, the runtime drop monitor",
     ("Manifest", "external_topics"): "G3: merged into the same `externals` set as `topics.<n>.external`",
     ("ExternalTopic", "side"): "never written: both writers use the deprecated alias `external`",
@@ -277,8 +279,9 @@ NOTES = {
     ("Exit", "on"): "names a function, where `hazards.on` and `on_violation.on` name fault classes",
     ("Node", "criticality"): "G5: derived from hazards; a label stands only where none reaches the node",
     ("Topic", "rate_hz"): "a consequence (`derivable-rate`), written 236 times",
-    ("SafeState", "settle"): "G6: a duration, or the profile map",
-    ("Settle", "duration"): "G6: the measured settle beside a profile; compared by `settle-conflict`",
+    ("SafeState", "settle"): "G6: `settle: <d>` is `{ duration: <d> }`; one map form",
+    ("Settle", "duration"): "G6: the written settle; beside a profile, the fallback and compared by `settle-conflict`",
+    ("Settle", "response"): "G6: the settle's, added to a written duration or a profile; omitted 0",
     ("Path", "input"): "legacy spelling of `trigger: { input }`; both feed `effective_trigger()`",
     ("Predicate", "lt"): "operators are read generically (`pred.op`) by `when-*` rules; nothing evaluates them at run time yet",
     ("Arg", "type"): "read through `ArgDecl::valid_values()` (satisfiability rule)",
@@ -483,7 +486,7 @@ class Walk:
                 self.keys("Mode", m)
                 w = m.get("window")
                 if isinstance(w, dict):
-                    self.keys("Window", w)
+                    self.keys("Budget", w)  # G2: a window's map is a budget's
                     self.source(w.get("source"))
                 if isinstance(m.get("exit"), dict):
                     self.keys("Exit", m["exit"])
@@ -703,7 +706,6 @@ FOCUS = [
     ("Function", "all_of"),
     ("Function", "of"),
     ("Mode", "window"),
-    ("Window", "param"),
     ("TriggerTimer", "param"),
     ("TriggerTimer", "period_param"),
     ("Budget", "param"),
@@ -717,9 +719,9 @@ FOCUS = [
 # counts beside them are generated).
 TWO_PLACES = [
     (("Endpoint", "max_transport"), ("Topic", "max_transport"),
-     "the topic's is the default for every subscriber that states none (G3)"),
+     "G3 done: the subscriber's is kept; the topic's is deprecated and `migrate` copies it onto each subscriber stating none"),
     (("Path", "drop"), ("Topic", "drop"),
-     "loss is observed on a topic; only the topic form feeds a rule or monitor (G3)"),
+     "G3 done: the topic's is the hop loss; a scope path's is the E2E budget (`drop-tightness`); a node path's is refused"),
     (("Manifest", "external_topics"), ("Topic", "external"),
      "both land in the model's one `externals` set (G3)"),
     (("ExternalTopic", "external"), ("ExternalTopic", "side"),
@@ -729,7 +731,7 @@ TWO_PLACES = [
     (("HazardGuard", "all_of"), ("Function", "all_of"),
      "an inline redundant group, and the same group named (new)"),
     (("SafeState", "settle"), ("Settle", "duration"),
-     "a written settle as the value, or beside a profile (G6)"),
+     "G6 done: `settle: <d>` is shorthand for `{ duration: <d> }`, one fact in one map form"),
     (("Hazard", "severity"), ("Node", "criticality"),
      "criticality is derived from severity; a written label is a second copy (G5)"),
     (("TriggerTimer", "rate_hz"), ("Topic", "rate_hz"),
@@ -745,11 +747,11 @@ MULTI = [
                   ("OnViolation", "a path on the subscriber's own node")], "G4"),
     ("on", [("Hazard", "fault classes"), ("OnViolation", "fault classes"),
             ("Exit", "a function name")], "new"),
-    ("param", [("TriggerTimer", "bare parameter on the path's node, Hz"),
-               ("Budget", "bare parameter on the subscriber's node, s (`max_age` only)"),
-               ("Window", "`<node>.<parameter>`, s")], "G2"),
-    ("duration", [("Budget", "the bound"), ("Window", "the bound"),
-                  ("Settle", "a measured settle beside a derived one")], "G6"),
+    ("param", [("TriggerTimer", "bare parameter on the path's node, Hz or s"),
+               ("Budget", "bare on `max_age`'s node, or `<node>.<parameter>` on a window, s")],
+     "G2 done: one `ParamBinding`"),
+    ("duration", [("Budget", "the bound (a mode's window too)"),
+                  ("Settle", "the written settle")], "G6 done"),
     ("rate_hz", [("Topic", "a consequence"), ("TriggerTimer", "a fact")], "deferred"),
     ("type", [("Topic", "message type"), ("Param", "ROS 2 parameter type"),
               ("Arg", "`bool` or free string")], "benign"),
@@ -792,6 +794,7 @@ def render(rows, labels, since, oldest, readers, written, forms, values,
     w("")
     w(f"- Rows in `{TABLE}`: {len(rows)} ({len(live)} live, "
       f"{sum(r['status']=='alias' for r in rows)} deprecated alias, "
+      f"{sum(r['status']=='deprecated' for r in rows)} deprecated (one release), "
       f"{sum(r['status']=='removed' for r in rows)} removed).")
     w(f"- Distinct live key names: {len({r['key'] for r in live})}; contexts: {len(ctxs)}.")
     kinds = collections.Counter(r["kind"] for r in live)
@@ -836,8 +839,11 @@ def render(rows, labels, since, oldest, readers, written, forms, values,
             if r["ctx"] != c:
                 continue
             k = (c, r["key"])
-            status = r["status"] if r["status"] != "alias" else f"alias of `{r['canonical']}`"
-            if r["status"] == "live":
+            status = {
+                "alias": f"alias of `{r['canonical']}`",
+                "deprecated": f"deprecated: `{r['canonical']}`",
+            }.get(r["status"], r["status"])
+            if r["status"] in ("live", "deprecated"):
                 rd = fmt_readers(readers[k])
                 if r["key"] in SHARED_FIELD and rd != "**none**":
                     rd += " (*shared*)"
