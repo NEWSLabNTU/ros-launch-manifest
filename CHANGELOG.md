@@ -6,7 +6,7 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased (v0.1.59)
+## v0.1.59 - 2026-10-15
 
 Phase 90 G4 and G5: one meaning per key for `reaction` and `on`, and the
 severity-to-criticality map stated in the grammar. G3 (its non-bound part):
@@ -15,6 +15,9 @@ G7: two dead keys removed. Every contract that parsed still parses to the
 same values, except the G7 keys, which nothing writes; the old spellings
 are deprecated, reported by the consumer, and rewritten by
 `ros_launch_manifest_types::migrate` (play_launch's `migrate` verb).
+`GRAMMAR_VERSION` is `0.1.59`. **Workspace Cargo version `0.1.11` ->
+`0.1.12`**: the types API breaks (`ModeExit.on` is `ModeExit.holds`, and
+`IncludeKind::External` is gone).
 
 ### Added
 
