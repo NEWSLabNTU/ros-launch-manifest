@@ -61,6 +61,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `max_transport` | requirement |  | Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`). |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
+| `ingress` | requirement | since v0.1.64 | Subscriber: what this endpoint is made to ABSORB, a token bucket `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
 | `on_demand` | fact | since v0.1.49 | Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
@@ -262,6 +263,13 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `reaction` | meta |  | A path on this node whose trigger includes the subscription. |
 | `within` | requirement |  | This hop's share of the fault reaction time. |
 | `mechanism` | fact |  | Where the runtime observer reads the violation: qos (default) | diagnostics | application. |
+
+## `ingress`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `rate_hz` | requirement | since v0.1.64 | Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate_hz`. |
+| `burst` | requirement | since v0.1.64 | Messages that may arrive back to back before pacing applies. An integer >= 1. |
 
 ## `safe_state`
 

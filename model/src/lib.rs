@@ -1532,6 +1532,21 @@ pub struct SubContract {
     /// environment nothing here manages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_transport_ms: Option<f64>,
+    /// What this subscriber is made to ABSORB (since v0.1.64; nano-ros
+    /// RFC-0074, issue 0760): a token bucket. Both numbers are always present
+    /// when the contract states one -- the grammar requires both -- so a
+    /// consumer never has to invent a burst.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<IngressContract>,
+}
+
+/// A subscriber's ingress bound (since v0.1.64). See [`SubContract::ingress`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct IngressContract {
+    /// Sustained messages per second. Finite and > 0.
+    pub rate_hz: f64,
+    /// Messages that may arrive back to back before pacing applies. >= 1.
+    pub burst: u32,
 }
 
 /// How a `state: true` subscriber holds data between takes (design issue
@@ -2041,6 +2056,22 @@ mod tests {
             serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
             ss
         );
+        // v0.1.64: a subscriber's ingress bound round-trips, and a
+        // subscriber written before it (no `ingress`) still reads.
+        let sub = SubContract {
+            min_rate_hz: Some(10.0),
+            ingress: Some(IngressContract {
+                rate_hz: 200.0,
+                burst: 4,
+            }),
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&sub).unwrap();
+        assert!(y.contains("burst: 4"), "{y}");
+        assert_eq!(serde_yaml_ng::from_str::<SubContract>(&y).unwrap(), sub);
+        let old: SubContract = serde_yaml_ng::from_str("min_rate_hz: 10.0\n").unwrap();
+        assert_eq!(old.ingress, None);
+        assert!(!serde_yaml_ng::to_string(&old).unwrap().contains("ingress"));
         // v0.1.63: a mode override carries its resolved target, and one
         // written before v0.1.63 (no `resolved`) still reads.
         let ov = ModeOverrideContract {

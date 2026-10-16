@@ -1152,6 +1152,55 @@ fn parse_on_violation(doc: &Yaml, ctx: &str) -> Result<Option<OnViolation>, Pars
     }))
 }
 
+/// `ingress: { rate_hz, burst }` on a subscriber (v0.1.64, nano-ros
+/// RFC-0074). Shape only: whether the device can absorb it is a property of
+/// the board (its per-frame cost), which the consumer owns.
+fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseError> {
+    let section = &doc["ingress"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let ctx = &format_path(ctx, "ingress");
+    if !matches!(section, Yaml::Hash(_)) {
+        return Err(field_err(
+            ctx,
+            "ingress",
+            "expected a mapping `{ rate_hz: <n>, burst: <n> }`",
+        ));
+    }
+    reject_unknown_keys(section, ctx, Context::Ingress)?;
+    let rate_hz = yaml_f64(section, "rate_hz", ctx)?.ok_or_else(|| {
+        field_err(
+            ctx,
+            "rate_hz",
+            "required: the sustained messages per second this subscriber absorbs",
+        )
+    })?;
+    if !rate_hz.is_finite() || rate_hz <= 0.0 {
+        return Err(field_err(
+            ctx,
+            "rate_hz",
+            &format!("must be a finite number > 0, got {rate_hz}"),
+        ));
+    }
+    let burst = yaml_u32(section, "burst", ctx)?.ok_or_else(|| {
+        field_err(
+            ctx,
+            "burst",
+            "required: the messages that may arrive back to back. An ingress with no burst \
+             would read as unbounded, which is the hole the bound exists to close",
+        )
+    })?;
+    if burst == 0 {
+        return Err(field_err(
+            ctx,
+            "burst",
+            "must be >= 1: a burst of 0 admits nothing",
+        ));
+    }
+    Ok(Some(IngressDecl { rate_hz, burst }))
+}
+
 fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseError> {
     let section = &doc["safe_state"];
     if section.is_badvalue() {
@@ -1390,6 +1439,14 @@ fn parse_endpoints(
                 reject_endpoint_path(ctx, key, &name)?;
                 let path = format_path(ctx, &format!("{key}.{name}"));
                 let props = parse_endpoint_props(v, &path)?;
+                if key != "sub" && props.ingress.is_some() {
+                    return Err(field_err(
+                        &path,
+                        "ingress",
+                        "`ingress` bounds what a SUBSCRIBER is made to absorb; a publisher's \
+                         output rate is `min_rate_hz` / `max_rate_hz`",
+                    ));
+                }
                 if key != "pub" && props.on_demand.is_some() {
                     return Err(field_err(
                         &path,
@@ -1475,7 +1532,23 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
         on_demand: yaml_bool(yaml, "on_demand", ctx)?,
+        ingress: parse_ingress(yaml, ctx)?,
     };
+    if let (Some(ingress), Some(need)) = (
+        props.ingress,
+        props.min_rate_hz.as_ref().and_then(|b| b.hz()),
+    ) && ingress.rate_hz < need
+    {
+        return Err(field_err(
+            ctx,
+            "ingress",
+            &format!(
+                "`ingress.rate_hz` {} is below this subscriber's own `min_rate_hz` {need}: it \
+                 would admit less than the endpoint requires",
+                ingress.rate_hz
+            ),
+        ));
+    }
     if props.on_demand == Some(true) && props.min_rate_hz.is_some() {
         return Err(field_err(
             ctx,
@@ -2955,6 +3028,52 @@ hazards:
             assert!(ours > released, "{ours:?} must be after {released:?}");
         } else {
             assert_eq!(ours, released, "GRAMMAR_VERSION must be the newest release");
+        }
+    }
+
+    /// `ingress` (v0.1.64): a subscriber's `{ rate_hz, burst }`, both
+    /// required, refused on a publisher and below the endpoint's own need.
+    #[test]
+    fn ingress_is_a_subscribers_token_bucket() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 10, ingress: { rate_hz: 200, burst: 4 } }\n",
+        )
+        .unwrap();
+        let ing = m.nodes["n"].subscribers["cmd"].ingress.expect("ingress");
+        assert_eq!(ing.rate_hz, 200.0);
+        assert_eq!(ing.burst, 4);
+        for (bad, needle) in [
+            (
+                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 200 } }\n",
+                "required: the messages that may arrive back to back",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { burst: 4 } }\n",
+                "required: the sustained messages per second",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 200, burst: 0 } }\n",
+                "must be >= 1",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 0, burst: 4 } }\n",
+                "finite number > 0",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 200, burst: 4, cap: 9 } }\n",
+                "cap",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      cmd: { ingress: { rate_hz: 200, burst: 4 } }\n",
+                "bounds what a SUBSCRIBER",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 50, ingress: { rate_hz: 20, burst: 4 } }\n",
+                "below this subscriber's own `min_rate_hz`",
+            ),
+        ] {
+            let err = super::parse_manifest_str(bad).unwrap_err().to_string();
+            assert!(err.contains(needle), "{bad}: {err}");
         }
     }
 

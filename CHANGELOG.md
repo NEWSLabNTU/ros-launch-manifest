@@ -6,6 +6,38 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.64 - 2026-10-17
+
+A subscriber's ingress bound (nano-ros phase-462 W6b, RFC-0074, issue
+0760). The grammar moves: `GRAMMAR_VERSION` 0.1.64. Additive for every
+contract and model written before it.
+
+### Added
+
+- Contract: `sub.<endpoint>.ingress: { rate_hz, burst }` -- what the
+  subscriber is made to ABSORB, a token bucket. It is neither a QoS policy
+  (so `qos-match` never compares it) nor the rate the subscriber needs
+  (`min_rate_hz` is that); a consumer bounds the device's read path and the
+  router's pacing by it. **Both keys are required**: an absent burst would
+  read as unbounded, which is the hole the bound exists to close. Refused:
+  - under `pub:` / `cli:`;
+  - `rate_hz` not a finite number > 0;
+  - `burst` not an integer >= 1;
+  - `rate_hz` below the endpoint's own `min_rate_hz`.
+
+  Whether a board can absorb the bound (its per-frame cost against a tier's
+  slack) is the consumer's check, not the grammar's.
+- Model: `SubContract.ingress: Option<IngressContract { rate_hz, burst }>`,
+  absent when the contract states none. A `SubContract` or `EndpointProps`
+  struct literal without `..Default::default()` needs the new field.
+  **Workspace Cargo version `0.1.16` -> `0.1.17`**.
+
+### Fixed
+
+- `GRAMMAR_VERSION` read 0.1.62 after v0.1.63 was released, so
+  `the_grammar_version_is_the_release` was red. v0.1.63's grammar did not
+  move, but the test holds the constant to the newest release heading.
+
 ## v0.1.63 - 2026-10-16
 
 A mode override's target, resolved (nano-ros phase-462 W4). Additive for

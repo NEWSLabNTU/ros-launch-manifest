@@ -1054,6 +1054,25 @@ pub struct EndpointProps {
     /// `pub:`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_demand: Option<bool>,
+    /// Subscriber only: what this endpoint is made to ABSORB (since v0.1.64,
+    /// nano-ros RFC-0074 / issue 0760) -- a token bucket of `rate_hz` with
+    /// `burst` messages back to back. Not a QoS policy and not a rate the
+    /// subscriber needs (`min_rate_hz` is that): it bounds the work the
+    /// transport may hand the device, and a consumer enforces it on the
+    /// device's read path and at the router. Both keys are required, so an
+    /// unstated burst can never read as unbounded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<IngressDecl>,
+}
+
+/// A subscriber's ingress bound, `sub.<e>.ingress: { rate_hz, burst }`
+/// (since v0.1.64). See [`EndpointProps::ingress`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct IngressDecl {
+    /// Sustained messages per second the endpoint absorbs. Finite and > 0.
+    pub rate_hz: f64,
+    /// Messages that may arrive back to back before pacing applies. >= 1.
+    pub burst: u32,
 }
 
 /// Buffering discipline for a `state: true` subscriber endpoint

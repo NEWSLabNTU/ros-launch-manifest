@@ -91,6 +91,8 @@ pub enum Context {
     OnViolation,
     /// `safe_state` on a path.
     SafeState,
+    /// `ingress` on a subscriber (v0.1.64).
+    Ingress,
     /// The map form of `functions.<name>` (v0.1.46): `{ all_of: [...] }` or
     /// `{ of: [...], when: {...} }`.
     Function,
@@ -148,6 +150,7 @@ impl Context {
             Context::HazardGuard => "hazards.<name>.guards[]",
             Context::OnViolation => "on_violation",
             Context::SafeState => "safe_state",
+            Context::Ingress => "ingress",
             Context::Function => "functions.<name>",
             Context::Predicate => "when",
             Context::Exit => "modes.<name>.exit",
@@ -525,6 +528,12 @@ pub const FIELDS: &[Field] = &[
         Context::Endpoint,
         Kind::Requirement,
         "The reaction this subscriber owes when its assumption is violated.",
+    ),
+    live(
+        "ingress",
+        Context::Endpoint,
+        Kind::Requirement,
+        "Subscriber: what this endpoint is made to ABSORB, a token bucket `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`.",
     ),
     live(
         "buffer",
@@ -1114,6 +1123,19 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Where the runtime observer reads the violation: qos (default) | diagnostics | application.",
     ),
+    // ── ingress ──
+    live(
+        "rate_hz",
+        Context::Ingress,
+        Kind::Requirement,
+        "Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate_hz`.",
+    ),
+    live(
+        "burst",
+        Context::Ingress,
+        Kind::Requirement,
+        "Messages that may arrive back to back before pacing applies. An integer >= 1.",
+    ),
     // ── safe_state ──
     live(
         "emits",
@@ -1490,6 +1512,9 @@ fn render_bounds() -> String {
 pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Manifest, "rlm", "0.1.49"),
     (Context::Endpoint, "on_demand", "0.1.49"),
+    (Context::Endpoint, "ingress", "0.1.64"),
+    (Context::Ingress, "rate_hz", "0.1.64"),
+    (Context::Ingress, "burst", "0.1.64"),
     (Context::TriggerTimer, "jitter", "0.1.49"),
     (Context::TriggerTimer, "param", "0.1.58"),
     (Context::TriggerTimer, "period_param", "0.1.58"),
