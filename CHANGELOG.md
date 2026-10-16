@@ -6,6 +6,26 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.63 - 2026-10-16
+
+A mode override's target, resolved (nano-ros phase-462 W4). Additive for
+every model written under v0.1.62: the new field is optional and absent
+when unresolved. GRAMMAR_VERSION unchanged (0.1.62): the contract grammar
+does not move, only what the model carries.
+
+### Added
+
+- Model: `ModeOverrideContract.resolved: Option<ResolvedOverride>` --
+  the override's requirement in the model's OWN keys (`table`: one of
+  `node_paths | scope_paths | pub_endpoints | sub_endpoints | topics`;
+  `key`: the entry's key there; `field`: the requirement's field). `target`
+  stays as the contract wrote it, in the declaring scope's vocabulary,
+  which a consumer of the model cannot resolve: it has no scope namespaces.
+  The producer (play_launch's resolver) already resolves the target to
+  apply the mode in its own checks; this carries that answer out. A struct
+  literal of `ModeOverrideContract` without `..Default::default()` needs
+  the new field. **Workspace Cargo version `0.1.15` -> `0.1.16`**.
+
 ## v0.1.62 - 2026-10-16
 
 A supervised settle (play_launch phase 93, the follow-up "lower a
