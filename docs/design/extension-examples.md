@@ -89,20 +89,22 @@ nodes:
 
 ```
 info[settle-derived]: hazard 'hpc_loss' -> emergency_stop
-  settle = 4421.33 ms   derived by vehicle.braking 1.0.0 (sha256 ...)
-    entry_speed v0 = 8.33 m/s   30 km/h, hazard hpc_loss
+  settle = 4422.67 ms   derived by vehicle.braking 1.0.0 (sha256 ...)
+    entry_speed v0 = 8.3333 m/s 30 km/h, hazard hpc_loss
     decel       a  = 2.5 m/s^2  |target_acceleration| = |-2.5|
     jerk        j  = 1.5 m/s^3  |target_jerk| = |-1.5|
     response       = 256 ms     measured: 213.11 x 1.2 -> 256 (n=3)
     v_r = a^2/(2j) = 2.0833 m/s;  v0 > v_r
     a/j            = 1666.67 ms
-    (v0 - v_r)/a   = 2498.67 ms
-    settle         = 256 + 1666.67 + 2498.67 = 4421.33 ms
+    (v0 - v_r)/a   = 2500.00 ms
+    settle         = 256 + 1666.67 + 2500.00 = 4422.67 ms
   worst case: proved increasing in entry_speed, response; decreasing in decel, jerk
 ```
 
 What it shows: today's keys keep their names; the formula, its inputs and
-its worst-case direction are visible to a reviewer.
+its worst-case direction are visible to a reviewer. (The island states
+`entry_speed: 8.33`, in m/s, and gets 4421.33 ms; exact 30 km/h is the
+4422.67 ms above. E0 found the difference, extension-system.md section 13.)
 
 ---
 

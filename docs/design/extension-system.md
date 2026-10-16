@@ -97,13 +97,14 @@ one, which the core already compares (`settle-conflict`).
   `input`, `derive`, `check`, `report`, `fn`, `where`, `worst_case`,
   `domain`, `dimension`. This layer binds to rlm's contexts, and nothing
   existing provides it.
-- **The expression core (borrowed if the spike succeeds):** arithmetic with
-  units and dimensions, `if/then/else`, `min`, `max`, `sqrt`, powers, a
-  bounded `sum over` a table's bands. Candidate: Numbat (Rust, MIT/Apache,
-  dimensions as static types, a full unit library) embedded with a
-  restricted prelude (no `print`, `assert`, `now`, `random`) and recursion
-  refused. If the spike (E0) shows Numbat cannot be restricted cleanly, rlx
-  gets its own expression core of the same shape.
+- **The expression core (rlx's own; E0 ruled out borrowing Numbat, section
+  13):** arithmetic with units and dimensions, `if/then/else`, `min`,
+  `max`, `sqrt`, powers, a bounded `sum over` a table's bands. Numbat (Rust,
+  MIT/Apache, dimensions as static types, a full unit library) was the
+  candidate, embedded with a restricted prelude and recursion refused; its
+  public API cannot check a file without running it and does not expose the
+  expression tree the trace, the recursion check and the Z3 translation
+  need.
 
 ### 5.2 Properties
 
@@ -221,7 +222,7 @@ ISO 26262 decomposition is the one rule that needs a function; it is an rlx
 
 | Question | Decision |
 |---|---|
-| Language | Own the extension format; borrow the expression core (Numbat) if the spike passes |
+| Language | Own the extension format and the expression core (E0: Numbat cannot be embedded as published, section 13) |
 | Unicode | Allowed under 5.3; canonical form ASCII |
 | Bare or qualified keys | Bare unless two used extensions collide |
 | Core `detection` bound | Yes |
@@ -234,6 +235,88 @@ ISO 26262 decomposition is the one rule that needs a function; it is an rlx
 
 ## 12. Open
 
-- Whether the spike's restricted Numbat is acceptable (E0 decides).
 - Interop export to SysML v2 calculations or AADL property sets (later).
 - Whether `check` severities other than error and warning are needed.
+
+## 13. E0 result: Numbat is not embedded (2026-10-17)
+
+The spike (`spikes/e0-numbat/`, `cargo run --release` there) embeds
+`numbat` 1.24.0 with `default-features = false` (the defaults fetch
+exchange rates over the network and pull in plotting), a custom
+`ModuleImporter` whose prelude names only `core::{scalar, quantities,
+dimensions, functions, lists, numbers}`, `math::constants`, `units::si` and
+`units::time`, and refuses `core::random`, `core::debug`, `datetime`,
+`plot` and `extra`. `core::error` and `core::strings` stay: the prelude's
+own modules import them, and both are pure.
+
+What works:
+
+- **Dimensions are checked at load, in every branch.** A function whose
+  untaken `else` returns a length where a time is declared is refused
+  ("Incompatible types in condition"), and the exploration's unit bug
+  `sqrt(2 v0 / a)` is refused ("Could not solve the following constraint:
+  Time = Scalar") before anything calls it.
+- **The unit library**: `30 km/h -> m/s` is 8.33333 m/s.
+- **Both ports compute the documented numbers.** `vehicle.braking` gives
+  4422.67 ms for 30 km/h, 2.5 m/s^2, 1.5 m/s^3 and a 256 ms response (the
+  low-speed branch also evaluates). `rail.ebd` gives 64.35 s and 1529.75 m
+  once its table arrives as a list of `struct Band { lo, hi, a }`: Numbat
+  has neither lambdas nor partial application, so `map` needs a
+  one-argument function, and slicing the table into bands capped at the
+  entry speed is the format layer's job (`a_ebd.bands(...)`) anyway.
+- **Mutual recursion cannot occur**: a name must be defined before it is
+  called.
+- **Cost**: 74 crates, +2.7 MB stripped (0.34 to 3.04 MB against a
+  hello-world), a clean release build of 6.5 s on 48 cores and 13.9 s at
+  `-j4`.
+
+What does not, and decides it:
+
+- **No check without running.** `Context::interpret` resolves, type-checks
+  and executes in one call, and returns the typed statements only after
+  they ran; there is no parse- or check-only entry point. A file's
+  top-level statements therefore run at load, before a loader can refuse
+  them: in the spike `print(1)` printed and a declared `random()` returned
+  a random number before the refusal pass saw either. Refusing a file
+  after its effects ran is not refusing it.
+- **Bodyless `fn` declarations bind to Rust FFI by name.** A restricted
+  prelude is not a restriction: `fn random() -> Scalar` restores
+  `random()`, and `fn now() -> DateTime` would restore the clock. The
+  public `Statement` shows such a declaration (`body: None`) and the
+  procedures (`ProcedureCall`: `print`, `assert`, `assert_eq`, `type`,
+  which are grammar, not prelude), but only after execution, as above.
+- **The expression tree is private.** `numbat::Statement` is public;
+  `typed_ast::Expression`, the parser and the tokenizer are not. A function
+  body cannot be named or walked, so three things E0 had to show are out
+  of reach: the trace of every `where` binding and branch (the bytecode VM
+  has no hook either), the Z3 translation of an expression, and refusing
+  direct self-recursion, which Numbat accepts (`f(5)` ran). Only scraping
+  `Debug` output would reach them, which is not a foundation.
+- **Characters**: Numbat accepts a Cyrillic `а` and a Greek `ο` in
+  identifiers, a bidi override in a comment and a non-NFC identifier; only
+  zero-width characters are refused. Section 5.3 needs a pre-pass over the
+  raw text whatever the expression core is, so this alone would not have
+  decided it.
+
+Options considered: embedding as published fails the first and third
+points. Forking Numbat to expose its parser, a check-only entry point and
+the typed tree is possible, but it is a fork of about 27 kLOC of Rust to
+track, and the trace still needs hooks in its VM. Using Numbat to
+type-check beside an
+rlx parser for the trace and Z3 means two parsers of one syntax that must
+agree, which is the two-copies defect the contract rules exist to remove.
+
+Decision: rlx has its own expression core (E2 grows by about 2-3 kLOC, as
+planned for this outcome): an expression AST rlx owns, dimensions as
+vectors of base-dimension exponents, a small unit table (SI base and
+derived units, the prefixes, `h`, `min`, `km/h`, `g`), a tree-walking
+evaluator that records each binding and branch, and the Z3 encoding over
+the same tree. Numbat's checking rules (a dimension per expression,
+branches unified, `sqrt` halving exponents) are the reference for its
+type checker.
+
+One number to carry into E8: the example in `extension-examples.md` wrote
+`entry_speed: 30 km/h` beside 4421.33 ms, which is the arithmetic for a
+written `8.33` m/s (what the island contract states). Exact 30 km/h is
+4422.67 ms. Migrating a contract from `8.33` to `30 km/h` moves its totals
+by 1.34 ms, so E8's identical-totals gate keeps the value as written.

@@ -1,0 +1,13 @@
+# Phase 91 E0: can Numbat be rlx's expression core? Not part of the
+# workspace; run with `cargo run --release` from this directory.
+# Result: docs/design/extension-system.md, section 13.
+[package]
+name = "e0-numbat-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+numbat = { version = "1.24.0", default-features = false }
