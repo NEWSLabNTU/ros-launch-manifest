@@ -1019,8 +1019,51 @@ pub enum PredicateValueContract {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ModeOverrideContract {
+    /// The requirement, as the contract wrote it: a path in the declaring
+    /// scope's own vocabulary (`paths.<name>.max_latency`,
+    /// `nodes.<n>.sub.<e>.min_rate_hz`, `topics.<t>.rate_hz`).
     pub target: String,
     pub value: String,
+    /// v0.1.63 -- the same requirement in the MODEL's keys, resolved by the
+    /// producer that knows the declaring scope's namespace: which contract
+    /// table, the key in it, and the field. A consumer that applies a mode to
+    /// the model reads this rather than re-resolving `target` against scope
+    /// names it does not have. `None` when the producer did not resolve it --
+    /// a model written before v0.1.63, or a target naming no declared
+    /// requirement (which the producer reports).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedOverride>,
+}
+
+/// v0.1.63 -- a mode override's target in the model's own keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedOverride {
+    /// The `Contracts` table the requirement lives in.
+    pub table: OverrideTable,
+    /// Its key there: a node path's or an endpoint's ref
+    /// (`<node FQN>/<name>`), a scope path's `<scope id>/<name>`, or a topic
+    /// FQN.
+    pub key: String,
+    /// The requirement's field, as the contract spells it (`max_latency`,
+    /// `min_rate_hz`, `max_age`, `rate_hz`, ...). Its value is the
+    /// override's `value`, typed against that field.
+    pub field: String,
+}
+
+/// The `Contracts` table a [`ResolvedOverride`] keys into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverrideTable {
+    /// `contracts.node_paths`.
+    NodePaths,
+    /// `contracts.scope_paths`.
+    ScopePaths,
+    /// `contracts.pub_endpoints`.
+    PubEndpoints,
+    /// `contracts.sub_endpoints`.
+    SubEndpoints,
+    /// `contracts.topics`.
+    Topics,
 }
 
 /// A hazard after merge (phase 71).
@@ -1998,6 +2041,27 @@ mod tests {
             serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
             ss
         );
+        // v0.1.63: a mode override carries its resolved target, and one
+        // written before v0.1.63 (no `resolved`) still reads.
+        let ov = ModeOverrideContract {
+            target: "nodes.planner.sub.scan.min_rate_hz".into(),
+            value: "5".into(),
+            resolved: Some(ResolvedOverride {
+                table: OverrideTable::SubEndpoints,
+                key: "/nav/planner/scan".into(),
+                field: "min_rate_hz".into(),
+            }),
+        };
+        let y = serde_yaml_ng::to_string(&ov).unwrap();
+        assert!(y.contains("table: sub_endpoints"), "{y}");
+        assert_eq!(
+            serde_yaml_ng::from_str::<ModeOverrideContract>(&y).unwrap(),
+            ov
+        );
+        let old: ModeOverrideContract =
+            serde_yaml_ng::from_str("target: paths.stop.max_latency\nvalue: 50ms\n").unwrap();
+        assert_eq!(old.resolved, None);
+        assert!(!serde_yaml_ng::to_string(&old).unwrap().contains("resolved"));
         // v0.1.62: a supervised settle's lowering round-trips.
         let sv = SafeStateContract {
             supervise: Some(SettleSuperviseContract {
