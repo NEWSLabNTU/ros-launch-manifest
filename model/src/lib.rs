@@ -1175,6 +1175,35 @@ pub struct SafeStateContract {
     /// speed, so the model carries the names rather than a number.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settle_profile: Option<SettleProfileContract>,
+    /// The supervision of the whole settle (v0.1.62), when the contract
+    /// states one and the producer lowered it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervise: Option<SettleSuperviseContract>,
+}
+
+/// A supervised settle lowered to a standstill deadline (v0.1.62). The
+/// realizer arms due = the safe state's command + the settle + `observe_ms`
+/// and, when the vehicle is not at standstill on `observes` by then, starts
+/// `reaction`. The settle is `settle_ms` (a written duration, response
+/// included), or the profile at the hazard's entry speed plus
+/// `response_ms`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SettleSuperviseContract {
+    /// The settle's response, ms: added to the profile's settle when the
+    /// settle is derived; already inside `settle_ms` when it is written.
+    #[serde(default)]
+    pub response_ms: f64,
+    /// How late standstill is seen, ms: the observed input's period + its
+    /// `max_transport`.
+    pub observe_ms: f64,
+    /// The input standstill is seen on, by its key in
+    /// `contracts.sub_endpoints`.
+    pub observes: String,
+    /// The path a miss starts, by its key in this model (as
+    /// [`SuperviseContract::reaction`]).
+    pub reaction: String,
+    /// What checks the deadline.
+    pub mechanism: SuperviseMechanism,
 }
 
 /// `safe_state.settle: { decel, jerk }` after merge (v0.1.46).
@@ -1961,11 +1990,29 @@ mod tests {
                 decel: "target_acceleration".into(),
                 jerk: "target_jerk".into(),
             }),
+            supervise: None,
         };
         let y = serde_yaml_ng::to_string(&ss).unwrap();
+        assert!(!y.contains("supervise"), "{y}");
         assert_eq!(
             serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
             ss
+        );
+        // v0.1.62: a supervised settle's lowering round-trips.
+        let sv = SafeStateContract {
+            supervise: Some(SettleSuperviseContract {
+                response_ms: 943.0,
+                observe_ms: 156.0,
+                observes: "/h/kinematic_state".into(),
+                reaction: "island.emergency_stop".into(),
+                mechanism: SuperviseMechanism::Timer,
+            }),
+            ..ss.clone()
+        };
+        let y = serde_yaml_ng::to_string(&sv).unwrap();
+        assert_eq!(
+            serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
+            sv
         );
         // Absent keys stay absent: a model with none of them is unchanged.
         let plain = serde_yaml_ng::to_string(&HazardContract::default()).unwrap();

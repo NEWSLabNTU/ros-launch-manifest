@@ -296,13 +296,14 @@ fn yaml_bound(
     if !v["source"].is_badvalue() {
         b.source = Some(parse_source(&v["source"], bctx)?);
     }
-    b.supervise = parse_supervise(v, bctx)?;
+    b.supervise = parse_supervise(v, bctx, false)?;
     Ok(Some(b))
 }
 
 /// `supervise:` in a budget's map form (phase 93): `{ reaction: <path> |
-/// enters: <mode>, mechanism: executor | timer }`. `None` when absent.
-fn parse_supervise(v: &Yaml, ctx: &str) -> Result<Option<Supervision>, ParseError> {
+/// enters: <mode>, mechanism: executor | timer }`. `None` when absent. A
+/// settle's (`settle`) also takes `observes: <node>/<subscriber>` (v0.1.62).
+fn parse_supervise(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Supervision>, ParseError> {
     let section = &v["supervise"];
     if section.is_badvalue() {
         return Ok(None);
@@ -357,9 +358,35 @@ fn parse_supervise(v: &Yaml, ctx: &str) -> Result<Option<Supervision>, ParseErro
             ));
         }
     };
+    let observes = yaml_string(section, "observes", sctx)?;
+    if let Some(o) = &observes {
+        if !settle {
+            return Err(field_err(
+                sctx,
+                "observes",
+                "names the input a supervised settle's standstill is seen on; only a \
+                 settle's `supervise:` observes (`safe_state.settle: { ..., supervise: { \
+                 enters, mechanism, observes } }`)",
+            ));
+        }
+        let ok = o
+            .split_once('/')
+            .is_some_and(|(n, e)| !n.is_empty() && !e.is_empty() && !e.contains('/'));
+        if !ok {
+            return Err(field_err(
+                sctx,
+                "observes",
+                &format!(
+                    "`{o}` is not `<node>/<subscriber>`: name a subscriber of a node of this \
+                     manifest, the input standstill is seen on"
+                ),
+            ));
+        }
+    }
     Ok(Some(Supervision {
         reaction,
         mechanism,
+        observes,
     }))
 }
 
@@ -1141,7 +1168,8 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
     })?;
     // Phase 90 G6: `settle: <d>` is shorthand for `settle: { duration: <d> }`;
     // the map is `{ duration | decel, jerk ; response ; source }`.
-    let (settle, settle_profile, settle_response, settle_map) = match &section["settle"] {
+    let (settle, settle_profile, settle_response, settle_map, settle_supervise) = match &section["settle"]
+    {
         Yaml::Hash(_) => {
             let sctx = &format_path(ctx, "settle");
             let map = &section["settle"];
@@ -1186,24 +1214,18 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
                 };
                 b.source = Some(parse_source(&map["source"], sctx)?);
             }
-            if !map["supervise"].is_badvalue() {
-                let Some(b) = literal.as_mut() else {
-                    return Err(field_err(
-                        sctx,
-                        "supervise",
-                        "supervises a written `duration`, and none is written. A supervised                          `response` states it in its own map form, `response: { duration,                          supervise }`",
-                    ));
-                };
-                b.supervise = parse_supervise(map, sctx)?;
-            }
+            // v0.1.62: the whole settle (the written duration or the
+            // derived profile, plus the response) is what is supervised.
+            let supervise = parse_supervise(map, sctx, true)?;
             let response = yaml_bound(map, "response", sctx, Context::Settle)?;
-            (literal, profile, response, true)
+            (literal, profile, response, true, supervise)
         }
         _ => (
             yaml_bound(section, "settle", ctx, Context::SafeState)?,
             None,
             None,
             false,
+            None,
         ),
     };
     Ok(Some(SafeState {
@@ -1212,6 +1234,7 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
         settle_profile,
         settle_response,
         settle_map,
+        settle_supervise,
     }))
 }
 
@@ -4534,6 +4557,7 @@ nodes:
             Some(Supervision {
                 reaction: SuperviseReaction::Reaction("brake".into()),
                 mechanism: SuperviseMechanism::Timer,
+                observes: None,
             })
         );
         assert_eq!(p.level(), Some(BudgetLevel::Supervised));
@@ -4644,5 +4668,68 @@ nodes:
         .unwrap_err()
         .to_string();
         assert!(e.contains("value"), "{e}");
+    }
+
+    /// v0.1.62: `supervise:` on a settle supervises the whole settle, a
+    /// derived profile's too, and only a settle's takes `observes`.
+    #[test]
+    fn a_settle_is_supervised_whole() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            decel: d\n            jerk: j\n            response: { duration: 943ms, source: { measured: { max: 785.43ms, n: 3, margin: 0.2 } } }\n            supervise: { enters: emergency_stop, mechanism: timer, observes: h/kinematic_state }\n      lit:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state: { emits: o, settle: { duration: 2s, supervise: { reaction: operate, mechanism: executor } } }\n",
+        )
+        .unwrap();
+        let ss = m.nodes["op"].paths["operate"].safe_state.as_ref().unwrap();
+        let sv = ss.settle_supervise.as_ref().unwrap();
+        assert_eq!(
+            sv.reaction,
+            SuperviseReaction::Enters("emergency_stop".into())
+        );
+        assert_eq!(sv.mechanism, SuperviseMechanism::Timer);
+        assert_eq!(sv.observes.as_deref(), Some("h/kinematic_state"));
+        // The response stays a measured budget of its own; the supervision is
+        // the settle's.
+        assert!(ss.settle_response.as_ref().unwrap().supervise.is_none());
+        // A written duration's supervision is the settle's too (v0.1.61 kept
+        // it on the duration's bound).
+        let lit = m.nodes["op"].paths["lit"].safe_state.as_ref().unwrap();
+        assert!(lit.settle.as_ref().unwrap().supervise.is_none());
+        assert!(lit.settle_supervise.as_ref().unwrap().observes.is_none());
+        let keys: Vec<String> = m
+            .supervised_settles()
+            .into_iter()
+            .map(|(k, _, _)| k)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "nodes.op.paths.lit.safe_state.settle",
+                "nodes.op.paths.operate.safe_state.settle"
+            ]
+        );
+        assert!(m.supervised().is_empty());
+        let node = |extra: &str| {
+            super::parse_manifest_str(&format!(
+                "nodes:\n  n:\n    paths:\n      p:\n        trigger: {{ input: [a] }}\n        output: [o]\n{extra}"
+            ))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        for (extra, needle) in [
+            (
+                "        max_latency: { duration: 5ms, supervise: { reaction: r, mechanism: timer, observes: h/k } }\n",
+                "only a settle's",
+            ),
+            (
+                "        safe_state: { emits: o, settle: { decel: d, jerk: j, response: { duration: 9ms, supervise: { reaction: r, mechanism: timer, observes: h/k } } } }\n",
+                "only a settle's",
+            ),
+            (
+                "        safe_state: { emits: o, settle: { decel: d, jerk: j, supervise: { reaction: r, mechanism: timer, observes: kinematic_state } } }\n",
+                "not `<node>/<subscriber>`",
+            ),
+        ] {
+            let e = node(extra).unwrap_err();
+            assert!(e.contains(needle), "{extra}: {e}");
+        }
     }
 }

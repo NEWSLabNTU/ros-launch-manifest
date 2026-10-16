@@ -6,6 +6,35 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+A supervised settle (play_launch phase 93, the follow-up "lower a
+supervised settle"). Additive for every contract that parsed under v0.1.61,
+except that a written settle's `supervise:` moves from the duration's bound
+to the settle. GRAMMAR_VERSION 0.1.62.
+
+### Added
+
+- `safe_state.settle: { ..., supervise: { reaction | enters, mechanism,
+  observes } }` takes a derived profile's settle too (v0.1.61 refused it
+  without a written `duration`): the WHOLE settle, command to standstill
+  (the profile or the duration, plus the `response`), is supervised.
+  `SafeState.settle_supervise`, `Manifest::supervised_settles()`.
+- `supervise.observes: <node>/<subscriber>`: the input the platform sees
+  standstill on, from which the consumer derives how late standstill is
+  seen (the input's period + its `max_transport`). A settle's supervision
+  only; refused on any other budget. `Supervision.observes`.
+- Model: `SafeStateContract.supervise` (`SettleSuperviseContract {
+  response_ms, observe_ms, observes, reaction, mechanism }`), the
+  standstill deadline a realizer arms.
+
+### Changed (API)
+
+- `Supervision` has an `observes` field and `SafeState` a
+  `settle_supervise` field. A written settle's `supervise:` is
+  `SafeState.settle_supervise`, no longer `SafeState.settle.supervise`, so
+  `Manifest::supervised()` (bounds only) no longer lists it.
+
 ## v0.1.61 - 2026-10-16
 
 Phase 93 S1 (play_launch `docs/roadmap/phase-93-supervised-budgets.md`):

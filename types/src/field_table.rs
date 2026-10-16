@@ -1238,7 +1238,7 @@ pub const FIELDS: &[Field] = &[
         "supervise",
         Context::Settle,
         Kind::Requirement,
-        "The runtime supervision of the written `duration`, as a budget's `supervise:` (phase 93). Requires `duration`.",
+        "The runtime supervision of the WHOLE settle (since v0.1.62): from the safe state's command to standstill, the written `duration` or the derived profile plus the `response`. `{ reaction: <path> | enters: <mode>, mechanism: executor | timer, observes: <node>/<subscriber> }`: the platform arms due = command + settle + how late it sees standstill (`observes`: that input's period + its `max_transport`), and a vehicle not at standstill by then starts the reaction. The consumer's overrun case charges the rung up to the settle's end, that observation, the detection and the reaction's route and settle. v0.1.61 took it on a written `duration` only.",
     ),
     // -- the map form of a budget (phase 10) --
     live(
@@ -1332,6 +1332,12 @@ pub const FIELDS: &[Field] = &[
         Context::Supervise,
         Kind::Fact,
         "What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`).",
+    ),
+    live(
+        "observes",
+        Context::Supervise,
+        Kind::Fact,
+        "A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget.",
     ),
     // -- policy (phase 93) --
     live(
@@ -1509,6 +1515,7 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Supervise, "reaction", "0.1.61"),
     (Context::Supervise, "enters", "0.1.61"),
     (Context::Supervise, "mechanism", "0.1.61"),
+    (Context::Supervise, "observes", "0.1.62"),
     (Context::Policy, "unsupervised_measured", "0.1.61"),
     (Context::Supervision, "tick", "0.1.61"),
     (Context::Supervision, "switch", "0.1.61"),

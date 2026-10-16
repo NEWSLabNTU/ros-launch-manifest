@@ -159,6 +159,13 @@ pub struct Supervision {
     pub reaction: SuperviseReaction,
     /// What checks the budget.
     pub mechanism: SuperviseMechanism,
+    /// A settle's supervision only (v0.1.62): the input the platform sees
+    /// standstill on, as `<node>/<subscriber>` of this manifest. The
+    /// consumer derives how late standstill is seen from it (the input's
+    /// period + its `max_transport`) and adds that to the supervised
+    /// deadline. Refused on any other budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observes: Option<String>,
 }
 
 /// What a supervised budget's miss starts.
@@ -783,6 +790,16 @@ pub struct SafeState {
     /// `settle: 2s` is keyed `settle`.
     #[serde(skip)]
     pub settle_map: bool,
+    /// `settle: { ..., supervise: { reaction | enters, mechanism, observes }
+    /// }` (v0.1.62): the WHOLE settle is supervised, from the safe state's
+    /// command to standstill: the derived profile (or the written
+    /// duration) plus the response. The platform arms due = command +
+    /// settle + how late it sees standstill, and a vehicle not at
+    /// standstill by then starts the reaction. v0.1.61 kept a supervised
+    /// written duration on its own bound; it lives here now, for either
+    /// form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle_supervise: Option<Supervision>,
 }
 
 impl SafeState {

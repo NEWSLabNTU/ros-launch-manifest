@@ -731,6 +731,32 @@ impl crate::types::Manifest {
             .filter_map(|(k, b)| b.supervise.as_ref().map(|s| (k, b, s)))
             .collect()
     }
+
+    /// Every supervised settle (v0.1.62), keyed
+    /// `nodes.<n>.paths.<p>.safe_state.settle` or
+    /// `paths.<p>.safe_state.settle`, with its safe state: the whole settle
+    /// (written duration or derived profile, plus the response) is
+    /// supervised.
+    pub fn supervised_settles(&self) -> Vec<(String, &crate::types::SafeState, &Supervision)> {
+        let mut out = Vec::new();
+        for (n, nd) in &self.nodes {
+            for (p, pd) in &nd.paths {
+                if let Some(ss) = &pd.safe_state
+                    && let Some(sv) = &ss.settle_supervise
+                {
+                    out.push((format!("nodes.{n}.paths.{p}.safe_state.settle"), ss, sv));
+                }
+            }
+        }
+        for (p, pd) in &self.paths {
+            if let Some(ss) = &pd.safe_state
+                && let Some(sv) = &ss.settle_supervise
+            {
+                out.push((format!("paths.{p}.safe_state.settle"), ss, sv));
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]

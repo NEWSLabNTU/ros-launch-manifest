@@ -307,7 +307,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `duration` | fact |  | The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside a profile, the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). Required when no profile is written. |
 | `response` | fact | since v0.1.58 | The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived profile alike: `settle = duration + response`, or `response + a/j + (v0 - v_r)/a` (`settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies. |
 | `source` | meta | since v0.1.60 | Where the written `duration` comes from, as a budget's `source:` (phase 10). Requires `duration`: a profile's settle is derived from its parameters. |
-| `supervise` | requirement | since v0.1.61 | The runtime supervision of the written `duration`, as a budget's `supervise:` (phase 93). Requires `duration`. |
+| `supervise` | requirement | since v0.1.61 | The runtime supervision of the WHOLE settle (since v0.1.62): from the safe state's command to standstill, the written `duration` or the derived profile plus the `response`. `{ reaction: <path> | enters: <mode>, mechanism: executor | timer, observes: <node>/<subscriber> }`: the platform arms due = command + settle + how late it sees standstill (`observes`: that input's period + its `max_transport`), and a vehicle not at standstill by then starts the reaction. The consumer's overrun case charges the rung up to the settle's end, that observation, the detection and the reaction's route and settle. v0.1.61 took it on a written `duration` only. |
 
 ## `<budget> (map form)`
 
@@ -343,6 +343,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `reaction` | fact | since v0.1.61 | The path a miss starts: a path of the budget's own node (as `on_violation.reaction`), else a scope path of the manifest. Exactly one of `reaction` and `enters`. |
 | `enters` | fact | since v0.1.61 | The mode a miss enters; its `reaction:` scope path is what runs. Exactly one of `reaction` and `enters`. |
 | `mechanism` | fact | since v0.1.61 | What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`). |
+| `observes` | fact | since v0.1.62 | A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget. |
 
 ## `policy`
 
