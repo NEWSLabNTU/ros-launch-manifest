@@ -427,15 +427,29 @@ fn parse_source(v: &Yaml, ctx: &str) -> Result<BudgetSource, ParseError> {
         Yaml::String(s) => Ok(BudgetSource {
             kind: kind_of(s)?,
             measured: None,
+            derived: None,
         }),
         Yaml::Hash(h) if h.len() == 1 => {
             let (k, body) = h.iter().next().expect("len == 1");
             let kind = kind_of(&yaml_str_owned(k))?;
+            if kind == SourceKind::Derived {
+                return Ok(BudgetSource {
+                    kind,
+                    measured: None,
+                    derived: Some(Box::new(parse_derivation(
+                        body,
+                        &format_path(ctx, "source.derived"),
+                    )?)),
+                });
+            }
             if kind != SourceKind::Measured {
                 return Err(field_err(
                     ctx,
                     "source",
-                    &format!("only `measured` carries observations; write `source: {kind}`"),
+                    &format!(
+                        "only `measured` carries observations and `derived` a derivation \
+                         record; write `source: {kind}`"
+                    ),
                 ));
             }
             let mctx = &format_path(ctx, "source.measured");
@@ -511,14 +525,140 @@ fn parse_source(v: &Yaml, ctx: &str) -> Result<BudgetSource, ParseError> {
             Ok(BudgetSource {
                 kind,
                 measured: Some(Measurement { margin, terms }),
+                derived: None,
             })
         }
         other => Err(type_err(
             ctx,
             "source",
-            "a source name or `{ measured: { max, n, margin } }`",
+            "a source name, `{ measured: { max, n, margin } }` or `{ derived: { by, version } }`",
             other,
         )),
+    }
+}
+
+/// `source: { derived: { by, version, sha256, inputs, trace } }` (phase 91
+/// E1). The record is read as written: nothing here can check it against
+/// the extension, so it is only refused when it is malformed.
+fn parse_derivation(v: &Yaml, ctx: &str) -> Result<Derivation, ParseError> {
+    if !matches!(v, Yaml::Hash(_)) {
+        return Err(type_err(
+            ctx,
+            "",
+            "a map `{ by, version, sha256, inputs, trace }`",
+            v,
+        ));
+    }
+    reject_unknown_keys(v, ctx, Context::Derived)?;
+    let by = yaml_string(v, "by", ctx)?
+        .ok_or_else(|| field_err(ctx, "by", "required: the extension that derived the value"))?;
+    if !is_dotted_name(&by) {
+        return Err(field_err(
+            ctx,
+            "by",
+            &format!("`{by}` is not an extension name: dotted lowercase words (`vehicle.braking`)"),
+        ));
+    }
+    let version = yaml_scalar_text(v, "version", ctx)?
+        .ok_or_else(|| field_err(ctx, "version", "required: the extension's version"))?;
+    if !is_semver(&version) {
+        return Err(field_err(
+            ctx,
+            "version",
+            &format!("`{version}` is not a version: `MAJOR.MINOR.PATCH` (`1.0.0`)"),
+        ));
+    }
+    let sha256 = yaml_string(v, "sha256", ctx)?;
+    if let Some(h) = &sha256
+        && !(h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    {
+        return Err(field_err(
+            ctx,
+            "sha256",
+            "64 lowercase hex digits: the sha256 of the extension's canonical form",
+        ));
+    }
+    let mut inputs = Vec::new();
+    match &v["inputs"] {
+        Yaml::BadValue | Yaml::Null => {}
+        Yaml::Hash(h) => {
+            for (k, val) in h {
+                let name = yaml_str_owned(k);
+                let text = match val {
+                    Yaml::String(t) | Yaml::Real(t) => t.clone(),
+                    Yaml::Integer(i) => i.to_string(),
+                    Yaml::Boolean(b) => b.to_string(),
+                    other => {
+                        return Err(type_err(
+                            &format_path(ctx, "inputs"),
+                            &name,
+                            "a scalar, the value as the derivation read it",
+                            other,
+                        ));
+                    }
+                };
+                inputs.push((name, text));
+            }
+        }
+        other => return Err(type_err(ctx, "inputs", "a map of name -> value", other)),
+    }
+    let mut trace = Vec::new();
+    match &v["trace"] {
+        Yaml::BadValue | Yaml::Null => {}
+        Yaml::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                match item {
+                    Yaml::String(t) => trace.push(t.clone()),
+                    other => {
+                        return Err(type_err(
+                            ctx,
+                            &format!("trace[{i}]"),
+                            "a line of text",
+                            other,
+                        ));
+                    }
+                }
+            }
+        }
+        other => return Err(type_err(ctx, "trace", "a list of lines", other)),
+    }
+    Ok(Derivation {
+        by,
+        version,
+        sha256,
+        inputs,
+        trace,
+    })
+}
+
+/// A dotted lowercase name: `vehicle.braking`, `machine.iso13855`.
+fn is_dotted_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.split('.').all(|w| {
+            let mut c = w.chars();
+            matches!(c.next(), Some('a'..='z'))
+                && c.all(|ch| matches!(ch, 'a'..='z' | '0'..='9' | '_'))
+        })
+}
+
+/// `MAJOR.MINOR.PATCH`, digits only.
+fn is_semver(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A scalar's text whatever YAML typed it as: `version: 1.0.0` is a string
+/// but `version: 1.0` would be a real, and the message should be about the
+/// version, not the YAML type.
+fn yaml_scalar_text(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String>, ParseError> {
+    match &doc[key] {
+        Yaml::BadValue | Yaml::Null => Ok(None),
+        Yaml::String(t) | Yaml::Real(t) => Ok(Some(t.clone())),
+        Yaml::Integer(i) => Ok(Some(i.to_string())),
+        other => Err(type_err(ctx, key, "a version, `MAJOR.MINOR.PATCH`", other)),
     }
 }
 
@@ -1080,6 +1220,32 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 ),
             ));
         }
+        let deadline_by = match yaml_string(v, "deadline_by", &hctx)? {
+            None => None,
+            Some(raw) => {
+                let parsed = raw.split_once('/').and_then(|(e, c)| {
+                    let check_ok = {
+                        let mut ch = c.chars();
+                        matches!(ch.next(), Some('a'..='z' | '_'))
+                            && ch.all(|x| matches!(x, 'a'..='z' | '0'..='9' | '_'))
+                    };
+                    (is_dotted_name(e) && check_ok).then(|| CheckRef {
+                        extension: e.to_string(),
+                        check: c.to_string(),
+                    })
+                });
+                Some(parsed.ok_or_else(|| {
+                    field_err(
+                        &hctx,
+                        "deadline_by",
+                        &format!(
+                            "`{raw}` is not `<extension>/<check>` \
+                             (`machine.iso13855/safety_distance`)"
+                        ),
+                    )
+                })?)
+            }
+        };
         // v0.1.59: a hazard either enters a mode (the ladder) or reacts by
         // one scope path, never both. `reaction:` naming a mode is the old
         // spelling of `enters:`; the consumer tells the two apart by lookup.
@@ -1101,6 +1267,8 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 guards,
                 on,
                 ftti: yaml_bound(v, "ftti", &hctx, Context::Hazard)?,
+                detection: yaml_bound(v, "detection", &hctx, Context::Hazard)?,
+                deadline_by,
                 enters,
                 reaction,
                 when: parse_predicate(v, &hctx)?,
@@ -4629,6 +4797,10 @@ nodes:
         let e = err(
             "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: { derived: x } }\n",
         );
+        assert!(e.contains("a map `{ by, version"), "{e}");
+        let e = err(
+            "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: { analysed: x } }\n",
+        );
         assert!(e.contains("only `measured` carries observations"), "{e}");
         let e = err(
             "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, source: { measured: { max: 4ms } } }\n",
@@ -4649,6 +4821,92 @@ nodes:
         .unwrap();
         assert!(m.budget_sources().is_empty());
         assert_eq!(m.nodes["n"].paths["p"].timer_param, None);
+    }
+
+    /// Phase 91 E1: a derivation record on any bound, a hazard's
+    /// `detection:` and `deadline_by:`, and `reaction_total` refused.
+    #[test]
+    fn derived_records_and_the_hazard_interface_parse() {
+        let yaml = "hazards:\n  occlusion:\n    guards: [/p]\n    on: reported\n    ftti: 1800s\n    reaction: stop\n    detection:\n      duration: 3028.8s\n      source:\n        derived:\n          by: medical.occlusion\n          version: 0.1.0\n          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n          inputs: { min_rate: 1 mL/h, alarm_threshold: 300 }\n          trace: ['(300 - 20) mmHg * 0.003 mL/mmHg = 0.84 mL', '0.84 mL / 1 mL/h = 50.40 min']\n  reach:\n    guards: [/c]\n    on: reported\n    deadline_by: machine.iso13855/safety_distance\n    reaction: stop\n";
+        let m = super::parse_manifest_str(yaml).unwrap_or_else(|e| panic!("{e}"));
+        let h = &m.hazards["occlusion"];
+        let det = h.detection.as_ref().expect("detection");
+        let src = det.source.as_ref().expect("source");
+        assert_eq!(src.kind, crate::SourceKind::Derived);
+        let rec = src.derived.as_ref().expect("record");
+        assert_eq!(rec.by, "medical.occlusion");
+        assert_eq!(rec.version, "0.1.0");
+        assert_eq!(
+            rec.inputs,
+            vec![
+                ("min_rate".to_string(), "1 mL/h".to_string()),
+                ("alarm_threshold".to_string(), "300".to_string())
+            ]
+        );
+        assert_eq!(rec.trace.len(), 2);
+        assert!(
+            m.bounds()
+                .iter()
+                .any(|(at, _)| at == "hazards.occlusion.detection")
+        );
+        let r = &m.hazards["reach"];
+        assert!(r.ftti.is_none());
+        assert_eq!(
+            r.deadline_by.as_ref().map(|c| c.to_string()).as_deref(),
+            Some("machine.iso13855/safety_distance")
+        );
+        // A bare `source: derived` stays a kind without a record.
+        let bare = super::parse_manifest_str(
+            "hazards:\n  h:\n    guards: [/p]\n    ftti: { duration: 1s, source: derived }\n    reaction: r\n",
+        )
+        .unwrap();
+        let s = bare.hazards["h"]
+            .ftti
+            .as_ref()
+            .unwrap()
+            .source
+            .as_ref()
+            .unwrap();
+        assert_eq!(s.kind, crate::SourceKind::Derived);
+        assert!(s.derived.is_none());
+    }
+
+    #[test]
+    fn a_malformed_derivation_or_hazard_interface_is_refused() {
+        let hz = |extra: &str| {
+            super::parse_manifest_str(&format!(
+                "hazards:\n  h:\n    guards: [/p]\n    ftti: 1s\n    reaction: r\n{extra}"
+            ))
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+        };
+        let rec = |body: &str| {
+            hz(&format!(
+                "    detection: {{ duration: 1s, source: {{ derived: {body} }} }}\n"
+            ))
+        };
+        let e = rec("{ version: 1.0.0 }");
+        assert!(
+            e.contains("required: the extension that derived the value"),
+            "{e}"
+        );
+        let e = rec("{ by: vehicle.braking }");
+        assert!(e.contains("required: the extension's version"), "{e}");
+        let e = rec("{ by: Vehicle-Braking, version: 1.0.0 }");
+        assert!(e.contains("is not an extension name"), "{e}");
+        let e = rec("{ by: vehicle.braking, version: 1.0 }");
+        assert!(e.contains("is not a version"), "{e}");
+        let e = rec("{ by: vehicle.braking, version: 1.0.0, sha256: abc }");
+        assert!(e.contains("64 lowercase hex digits"), "{e}");
+        let e = rec("{ by: vehicle.braking, version: 1.0.0, trace: [1] }");
+        assert!(e.contains("a line of text"), "{e}");
+        let e = rec("{ by: vehicle.braking, version: 1.0.0, from: x }");
+        assert!(e.contains("unknown key"), "{e}");
+        let e = hz("    deadline_by: safety_distance\n");
+        assert!(e.contains("is not `<extension>/<check>`"), "{e}");
+        let e = hz("    reaction_total: 1s\n");
+        assert!(e.contains("Read-only: the consumer computes it"), "{e}");
     }
 
     /// Phase 93: `supervise:` beside `source:` in a budget's map form, the

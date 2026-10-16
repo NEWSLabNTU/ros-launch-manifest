@@ -14,9 +14,11 @@
 //! parses to. That table is what the format reference prints under its
 //! "Bounds" heading.
 
-use crate::duration::Duration;
-use crate::field_table::Context;
-use crate::types::{BudgetLevel, BudgetSource, DropCount, ParamRef, Supervision};
+use crate::{
+    duration::Duration,
+    field_table::Context,
+    types::{BudgetLevel, BudgetSource, DropCount, ParamRef, Supervision},
+};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
 /// What a bound limits.
@@ -479,6 +481,14 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         "duration",
         Form::Map,
     ),
+    bk(
+        "detection",
+        Context::Hazard,
+        BoundKind::Latency,
+        Limit::Max,
+        "duration",
+        Form::Map,
+    ),
     BoundKey {
         param: "`<node>.<parameter>`, seconds (`window-param`)",
         ..bk(
@@ -650,6 +660,7 @@ impl crate::types::Manifest {
         }
         for (h, d) in &self.hazards {
             put(&mut out, &format!("hazards.{h}"), "ftti", &d.ftti);
+            put(&mut out, &format!("hazards.{h}"), "detection", &d.detection);
         }
         for (m, d) in &self.modes {
             put(&mut out, &format!("modes.{m}"), "window", &d.window);
@@ -785,7 +796,7 @@ mod tests {
     #[test]
     fn every_bound_key_parses_to_its_row() {
         let m = crate::parse_manifest_str(
-            "hazards:\n  h: { guards: [/a], ftti: { duration: 1s, source: requirement } }\n\
+            "hazards:\n  h: { guards: [/a], ftti: { duration: 1s, source: requirement }, detection: 1s }\n\
              modes:\n  m: { requires: [/a], window: { duration: 10s, param: n.t } }\n\
              topics:\n  /a: { type: std_msgs/msg/Empty, max_transport: 2ms, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\
@@ -830,7 +841,7 @@ mod tests {
                 row.key
             );
         }
-        assert_eq!(bounds.len(), 20, "{spelled:?}");
+        assert_eq!(bounds.len(), 21, "{spelled:?}");
         let get = |k: &str| bounds.iter().find(|(p, _)| p == k).unwrap().1;
         assert_eq!(
             get("modes.m.window").param,

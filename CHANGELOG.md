@@ -6,6 +6,29 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+The core interface extensions read and fill (play_launch phase 91 E1).
+GRAMMAR_VERSION 0.1.65. The types API breaks (`BudgetSource.derived`,
+`HazardDecl.detection` and `deadline_by` are new public fields), so the
+workspace Cargo version moves at the release.
+
+- **Added:** `source: { derived: { by, version, sha256, inputs, trace } }`,
+  the record of a derived value (`types::Derivation`): the extension that
+  computed it, its identity, what it read and the steps it took. A bare
+  `source: derived` is unchanged. The record is read as written; it is
+  refused only when malformed (a missing `by` or `version`, a name that is
+  not dotted lowercase, a version that is not `MAJOR.MINOR.PATCH`, a
+  `sha256` that is not 64 lowercase hex digits).
+- **Added:** `hazards.<h>.detection`, a bound: fault to detection when that
+  is physics rather than a detector's timeout (an occlusion building
+  pressure). The consumer charges it before the detection it derives.
+- **Added:** `hazards.<h>.deadline_by: <extension>/<check>` (`types::CheckRef`):
+  the check that is the hazard's requirement when it is not a time. A
+  hazard states `ftti`, `deadline_by`, or both.
+- **Refused:** `hazards.<h>.reaction_total`. It is read-only: the consumer
+  computes it (detection + route + settle) for extension checks.
+
 ## v0.1.64 - 2026-10-17
 
 A subscriber's ingress bound (nano-ros phase-462 W6b, RFC-0074, issue

@@ -235,6 +235,9 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `enters` | meta | since v0.1.59 | The mode the hazard enters: the top of the `fallback:` ladder it walks to a safe state, each rung checked in its own right (`ladder-rung-budget`) and the floor against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
 | `reaction` | meta |  | The scope path whose route reaches the safe state: a one-rung reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
 | `when` | fact |  | The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`). |
+| `detection` | fact |  | Fault to detection when that is physics, not a detector's timeout (an occlusion building pressure), a duration or `{ duration, source }`. Charged before the detection the consumer derives from the detectors, so stating it never buys slack. Usually derived by an extension (`source: { derived: ... }`). |
+| `deadline_by` | requirement |  | `<extension>/<check>`: the check that is this hazard's requirement when it is not a time (a safety distance). A hazard states `ftti`, `deadline_by`, or both. |
+| `reaction_total` |  | **removed** | Read-only: the consumer computes it (detection + route + settle) and hands it to extension checks. A contract never writes it. |
 | `entry_speed` | requirement |  | The speed the vehicle may travel at when the fault occurs, in m/s, a plain positive number: the operating domain's speed bound. A braking-profile settle is derived from it (`settle-derived`). |
 
 ## `modes.<name>`
@@ -336,6 +339,16 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `margin` | requirement | since v0.1.58 | The margin over the observed maximum, a fraction (`0.2` = 20 %). Required with `max` or `terms`. |
 | `terms` | fact | since v0.1.58 | Several terms summed, a map of name -> `{ max, n, period }`: each is rounded up to the next ms on its own, then they are added (`tick: { period: 100ms, max: 14.84ms }`, `work: { max: 25.04ms }` -> 118 + 31 = 149 ms). Refused beside `max`. |
 
+## `source.derived`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `by` | fact |  | The extension that derived the value, a dotted name (`vehicle.braking`). Required. |
+| `version` | fact |  | The extension's version, `MAJOR.MINOR.PATCH`. Required. |
+| `sha256` | fact |  | The sha256 of the extension's canonical ASCII form, 64 lowercase hex digits. |
+| `inputs` | fact |  | The inputs the derivation read, a map of name -> value as written (`entry_speed: 8.33 m/s`). |
+| `trace` | fact |  | The derivation's steps, a list of lines, printed by `--explain`. |
+
 ## `source.measured.terms.<name>`
 
 | key | kind | status | meaning |
@@ -391,6 +404,7 @@ Every key below is a spelling of one bound: a value with a unit, what it limits 
 | `max_response` | `srv.<endpoint>` | response | at most | duration | `{ duration, source }` |
 | `within` | `on_violation` | deadline | at most | duration | `{ duration, source }` |
 | `ftti` | `hazards.<name>` | deadline | at most | duration | `{ duration, source }` |
+| `detection` | `hazards.<name>` | latency | at most | duration | `{ duration, source }` |
 | `window` | `modes.<name>` | least time | at least | duration | `{ duration, source, param }`; `param`: `<node>.<parameter>`, seconds (`window-param`) |
 | `settle` | `safe_state` | response | at most | duration | `{ duration | decel, jerk ; response ; source }` (`settle: <d>` is `{ duration: <d> }`) |
 | `duration` | `safe_state.settle` | response | at most | duration |  |

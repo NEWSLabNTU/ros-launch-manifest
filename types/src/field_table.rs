@@ -112,6 +112,8 @@ pub enum Context {
     Measured,
     /// One entry of `source: { measured: { terms: ... } }` (phase 10).
     MeasuredTerm,
+    /// The map under `source: { derived: ... }` (phase 91 E1).
+    Derived,
     /// `supervise:` in a budget's map form (phase 93).
     Supervise,
     /// `policy:` at a manifest's top (phase 93).
@@ -158,6 +160,7 @@ impl Context {
             Context::Budget => "<budget> (map form)",
             Context::Measured => "source.measured",
             Context::MeasuredTerm => "source.measured.terms.<name>",
+            Context::Derived => "source.derived",
             Context::Supervise => "<budget>.supervise",
             Context::Policy => "policy",
             Context::Supervision => "supervision",
@@ -1044,6 +1047,23 @@ pub const FIELDS: &[Field] = &[
         "The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`).",
     ),
     live(
+        "detection",
+        Context::Hazard,
+        Kind::Fact,
+        "Fault to detection when that is physics, not a detector's timeout (an occlusion building pressure), a duration or `{ duration, source }`. Charged before the detection the consumer derives from the detectors, so stating it never buys slack. Usually derived by an extension (`source: { derived: ... }`).",
+    ),
+    live(
+        "deadline_by",
+        Context::Hazard,
+        Kind::Requirement,
+        "`<extension>/<check>`: the check that is this hazard's requirement when it is not a time (a safety distance). A hazard states `ftti`, `deadline_by`, or both.",
+    ),
+    removed(
+        "reaction_total",
+        Context::Hazard,
+        "Read-only: the consumer computes it (detection + route + settle) and hands it to extension checks. A contract never writes it.",
+    ),
+    live(
         "entry_speed",
         Context::Hazard,
         Kind::Requirement,
@@ -1317,6 +1337,36 @@ pub const FIELDS: &[Field] = &[
         Context::Measured,
         Kind::Fact,
         "Several terms summed, a map of name -> `{ max, n, period }`: each is rounded up to the next ms on its own, then they are added (`tick: { period: 100ms, max: 14.84ms }`, `work: { max: 25.04ms }` -> 118 + 31 = 149 ms). Refused beside `max`.",
+    ),
+    live(
+        "by",
+        Context::Derived,
+        Kind::Fact,
+        "The extension that derived the value, a dotted name (`vehicle.braking`). Required.",
+    ),
+    live(
+        "version",
+        Context::Derived,
+        Kind::Fact,
+        "The extension's version, `MAJOR.MINOR.PATCH`. Required.",
+    ),
+    live(
+        "sha256",
+        Context::Derived,
+        Kind::Fact,
+        "The sha256 of the extension's canonical ASCII form, 64 lowercase hex digits.",
+    ),
+    live(
+        "inputs",
+        Context::Derived,
+        Kind::Fact,
+        "The inputs the derivation read, a map of name -> value as written (`entry_speed: 8.33 m/s`).",
+    ),
+    live(
+        "trace",
+        Context::Derived,
+        Kind::Fact,
+        "The derivation's steps, a list of lines, printed by `--explain`.",
     ),
     live(
         "max",

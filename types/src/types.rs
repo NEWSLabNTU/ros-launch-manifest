@@ -106,6 +106,36 @@ pub struct BudgetSource {
     /// sized from, which the consumer reproduces (`budget-rule`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub measured: Option<Measurement>,
+    /// `derived` only, and optional there (phase 91 E1): what derived the
+    /// value. An extension writes it when it fills a core bound; a contract
+    /// may write one by hand, and the consumer reads the bound the same way
+    /// either way. A bare `source: derived` carries none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derived: Option<Box<Derivation>>,
+}
+
+/// The record of a derived value (phase 91 E1): the extension that
+/// computed it, its identity, the inputs it read and the steps it took.
+/// The consumer prints it (`derived by`) and never recomputes it; checking
+/// that the record matches the extension is the extension system's job
+/// (E4, E7).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Derivation {
+    /// The extension, a dotted name (`vehicle.braking`).
+    pub by: String,
+    /// Its version, `MAJOR.MINOR.PATCH`.
+    pub version: String,
+    /// The sha256 of the extension's canonical ASCII form, 64 lowercase hex
+    /// digits; `None` when the record does not say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// The inputs read, name to value as written (`entry_speed: 8.33 m/s`),
+    /// in the order written.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<(String, String)>,
+    /// The steps, one line each, in order (`v_r = a^2/(2j) = 2.0833 m/s`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub trace: Vec<String>,
 }
 
 /// The provenances a budget can have.
@@ -652,6 +682,18 @@ pub struct HazardDecl {
     /// reaction. The only new number; `FDTI + FRTI` must fit inside it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ftti: Option<crate::bound::Bound>,
+    /// Fault to detection, when that is physics rather than a detector's
+    /// timeout (phase 91 E1): an occlusion builds pressure for minutes
+    /// before any threshold can see it. The consumer charges it BEFORE the
+    /// detection it derives from the detectors, so stating it never buys
+    /// slack. Usually derived by an extension (`source: { derived: ... }`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detection: Option<crate::bound::Bound>,
+    /// The check that is this hazard's requirement when the requirement is
+    /// not a time (phase 91 E1): a safety distance, an end of authority.
+    /// A hazard states `ftti`, `deadline_by`, or both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_by: Option<CheckRef>,
     /// The mode this hazard enters (v0.1.59): the top of the fallback ladder
     /// it walks to a safe state. Exactly one of `enters` and `reaction` is
     /// written; the parser refuses both.
@@ -695,6 +737,21 @@ impl HazardDecl {
         } else {
             "reaction"
         }
+    }
+}
+
+/// `<extension>/<check>`: a check an extension declares (phase 91 E1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CheckRef {
+    /// The extension, a dotted name (`machine.iso13855`).
+    pub extension: String,
+    /// The check's name inside it (`safety_distance`).
+    pub check: String,
+}
+
+impl std::fmt::Display for CheckRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.extension, self.check)
     }
 }
 
