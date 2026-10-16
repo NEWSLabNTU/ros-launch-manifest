@@ -6,7 +6,7 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.1.62 - 2026-10-16
 
 A supervised settle (play_launch phase 93, the follow-up "lower a
 supervised settle"). Additive for every contract that parsed under v0.1.61,
@@ -33,7 +33,9 @@ to the settle. GRAMMAR_VERSION 0.1.62.
 - `Supervision` has an `observes` field and `SafeState` a
   `settle_supervise` field. A written settle's `supervise:` is
   `SafeState.settle_supervise`, no longer `SafeState.settle.supervise`, so
-  `Manifest::supervised()` (bounds only) no longer lists it.
+  `Manifest::supervised()` (bounds only) no longer lists it. A struct
+  literal of `Supervision` or `SafeState` without `..Default::default()`
+  needs the new field. **Workspace Cargo version `0.1.14` -> `0.1.15`**.
 
 ## v0.1.61 - 2026-10-16
 
