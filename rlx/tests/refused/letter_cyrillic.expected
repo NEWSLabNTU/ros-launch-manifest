@@ -1,0 +1,2 @@
+letter_cyrillic.rlx:4:6: error[rlx-letter]: `ж` (U+0436) is not allowed in an identifier: identifiers use ASCII letters, digits, `_`, `'`, subscripts and the Greek letters αβγδεζηθκμξπρστφχψωΓΔΘΛΞΦΨΩ
+letter_cyrillic.rlx:4:29: error[rlx-letter]: `ж` (U+0436) is not allowed in an identifier: identifiers use ASCII letters, digits, `_`, `'`, subscripts and the Greek letters αβγδεζηθκμξπρστφχψωΓΔΘΛΞΦΨΩ

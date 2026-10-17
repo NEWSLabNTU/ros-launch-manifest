@@ -235,6 +235,26 @@ ISO 26262 decomposition is the one rule that needs a function; it is an rlx
 
 ## 12. Open
 
+Found while building the front end (E2, `rlx/`), for E3 and later:
+
+- The canonical form is ASCII for operators and keywords, but identifiers
+  stay as written: allowing Greek identifiers and an all-ASCII canonical
+  form cannot both hold. The hash is over this form.
+- One script per identifier refuses `Δt` and `ω_max`, the most natural
+  physics names, though `Δ` and `ω` are allowed letters. Decide whether a
+  Greek letter may lead a Latin tail.
+- How expressions name keys is unspecified. E2 reads the last segment
+  (`settle.response` is `response`), which collides when two contexts
+  declare the same key name; E3 needs a rule.
+- Units and variables: after a number, a name on the unit list is a unit,
+  any other name a factor (`30 km/h` a quantity, `2 v0` a product). The
+  design never says implicit multiplication exists; the examples need it.
+  Single-letter variable names common in the examples (`T`, `C`, `t`, `d`)
+  are left off the unit list, and a binding named like a unit is refused.
+- `param <Dim> unit mmHg` (example 3) is not in section 3, which names only
+  `magnitude`.
+- Version requirements are spelled `requires rlm >= 0.2.0` in rlx and
+  `requires: { rlm: ">=0.2.0" }` in a YAML profile.
 - Interop export to SysML v2 calculations or AADL property sets (later).
 - Whether `check` severities other than error and warning are needed.
 

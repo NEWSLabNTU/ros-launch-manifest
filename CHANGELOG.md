@@ -28,6 +28,19 @@ workspace Cargo version moves at the release.
   hazard states `ftti`, `deadline_by`, or both.
 - **Refused:** `hazards.<h>.reaction_total`. It is read-only: the consumer
   computes it (detection + route + settle) for extension checks.
+- **Added:** the `rlx` crate (`ros-launch-manifest-rlx`, play_launch phase 91
+  E2), the front end of the extension language: the character rules of
+  design 5.3 (UTF-8, NFC, no bidi, invisible or control characters
+  anywhere; allowed Greek, confusables and reserved letters refused, one
+  script per identifier), a tokenizer and hand-written parser for the
+  extension format and the expression core (an AST rlx owns; units kept as
+  syntax for E3), recursion and unit-named bindings refused (`rlx-shadow`:
+  a binding `h` would make `2 h` ambiguous), and `rlx fmt --ascii |
+  --unicode` (the ASCII form is canonical; formatting swaps operator
+  spellings in place, so comments and aligned columns survive). `rlx check`
+  and `rlx fmt` are its CLI. The six `.rlx` examples of
+  `docs/design/extension-examples.md` parse verbatim (a test keeps them in
+  step with the doc); 29 refused files pin one diagnostic each.
 
 ## v0.1.64 - 2026-10-17
 

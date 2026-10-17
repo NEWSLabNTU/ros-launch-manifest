@@ -1,0 +1,21 @@
+-- share/rlm_ext_rail/rlm/ebd.rlx
+extension rail.ebd 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.entry_speed      : Velocity
+key hazard.distance_to_eoa  : Length                  "to the end of movement authority"
+key settle.traction_cut_off : Time
+key settle.brake_build_up   : Time
+key settle.a_ebd            : table Velocity -> Acceleration
+    "emergency deceleration; each entry holds from its speed up to the next"
+
+derive settle.duration : Time =
+    traction_cut_off + brake_build_up
+    + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value
+  worst_case: increasing in entry_speed; decreasing in a_ebd
+
+check stop_before_eoa: stopping_distance <= distance_to_eoa
+  where stopping_distance =
+      entry_speed * (traction_cut_off + brake_build_up)
+      + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi^2 - b.lo^2) / (2 b.value)
+  worst_case: increasing in entry_speed

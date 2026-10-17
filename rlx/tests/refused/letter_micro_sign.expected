@@ -1,0 +1,2 @@
+letter_micro_sign.rlx:4:6: error[rlx-letter]: `µ` (U+00B5) is not allowed in an identifier: identifiers use ASCII letters, digits, `_`, `'`, subscripts and the Greek letters αβγδεζηθκμξπρστφχψωΓΔΘΛΞΦΨΩ; the micro sign is not Greek `μ`, and units are spelled in ASCII (`us`, `um`)
+letter_micro_sign.rlx:4:29: error[rlx-letter]: `µ` (U+00B5) is not allowed in an identifier: identifiers use ASCII letters, digits, `_`, `'`, subscripts and the Greek letters αβγδεζηθκμξπρστφχψωΓΔΘΛΞΦΨΩ; the micro sign is not Greek `μ`, and units are spelled in ASCII (`us`, `um`)

@@ -1,0 +1,1 @@
+nfc_identifier.rlx:4:15: error[rlx-not-nfc]: text is not in Unicode normalization form C (found U+0065 U+0301, NFC writes U+00E9); rlx refuses a non-NFC file rather than normalizing it, so the bytes hashed are the bytes written

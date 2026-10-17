@@ -1,0 +1,1 @@
+bom.rlx:1:1: error[rlx-zero-width]: invisible character U+FEFF (ZERO WIDTH NO-BREAK SPACE / BYTE ORDER MARK) is refused anywhere in an rlx file: it makes text that looks the same differ

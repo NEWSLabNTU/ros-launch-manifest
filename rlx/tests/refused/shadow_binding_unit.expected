@@ -1,0 +1,1 @@
+shadow_binding_unit.rlx:6:9: error[rlx-shadow]: binding `h` has the name of the unit `h` (hour); after a number, as in `2 h`, it would read as the unit, so choose another name

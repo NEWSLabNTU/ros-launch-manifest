@@ -1,0 +1,2 @@
+mixed_script.rlx:4:7: error[rlx-mixed-script]: identifier `vα` mixes Latin (`v`) and Greek (`α`) letters; an identifier uses one script
+mixed_script.rlx:4:35: error[rlx-mixed-script]: identifier `vα` mixes Latin (`v`) and Greek (`α`) letters; an identifier uses one script

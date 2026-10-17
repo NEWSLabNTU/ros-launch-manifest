@@ -1,0 +1,6 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+input reaction_total : Time
+check c: 2 h <= reaction_total
+  where h = 1 s

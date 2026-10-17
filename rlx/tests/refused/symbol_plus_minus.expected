@@ -1,0 +1,1 @@
+symbol_plus_minus.rlx:4:31: error[rlx-symbol]: non-ASCII symbol `±` (U+00B1) has no meaning in rlx outside a comment or string; the only Unicode operators are the twins → ≤ ≥ ≠ · ÷ − √ ² ³ ∈ Σ

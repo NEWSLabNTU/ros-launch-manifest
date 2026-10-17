@@ -1,0 +1,18 @@
+[package]
+name = "ros-launch-manifest-rlx"
+version.workspace = true
+edition.workspace = true
+description = "rlx, the extension language of launch manifests: character rules, parser and formatter"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "rlx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rlx"
+path = "src/main.rs"
+
+[dependencies]
+unicode-normalization = "0.1"

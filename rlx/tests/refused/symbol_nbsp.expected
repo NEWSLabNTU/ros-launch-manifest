@@ -1,0 +1,1 @@
+symbol_nbsp.rlx:4:28: error[rlx-symbol]: non-ASCII space U+00A0 outside a comment or string; use an ASCII space or tab

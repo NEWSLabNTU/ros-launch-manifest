@@ -1,0 +1,1 @@
+recursion_mutual.rlx:4:28: error[rlx-recursion]: fns `even`, `odd` call each other (even -> odd -> even); rlx refuses recursion so that every expression terminates

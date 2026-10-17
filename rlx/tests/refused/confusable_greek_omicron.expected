@@ -1,0 +1,1 @@
+confusable_greek_omicron.rlx:5:11: error[rlx-confusable]: Greek `ο` (U+03BF) in identifier `scοpe` looks like Latin `o`; write `o` if that is what you mean

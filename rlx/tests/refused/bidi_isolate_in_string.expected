@@ -1,0 +1,2 @@
+bidi_isolate_in_string.rlx:4:42: error[rlx-bidi]: bidirectional control U+2066 (LEFT-TO-RIGHT ISOLATE) is refused anywhere in an rlx file, comments and strings included: it changes the order text is displayed in
+bidi_isolate_in_string.rlx:4:48: error[rlx-bidi]: bidirectional control U+2069 (POP DIRECTIONAL ISOLATE) is refused anywhere in an rlx file, comments and strings included: it changes the order text is displayed in

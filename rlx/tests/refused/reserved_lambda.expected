@@ -1,0 +1,2 @@
+reserved_lambda.rlx:4:6: error[rlx-reserved]: `λ` (U+03BB) is reserved and cannot appear in an identifier
+reserved_lambda.rlx:4:29: error[rlx-reserved]: `λ` (U+03BB) is reserved and cannot appear in an identifier

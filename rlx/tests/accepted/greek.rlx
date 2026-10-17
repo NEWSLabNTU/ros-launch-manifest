@@ -1,0 +1,23 @@
+-- Greek letters and subscripts in identifiers, and every operator twin in
+-- its ASCII spelling.
+extension test.greek 0.1.0
+requires rlm >= 0.2.0, < 1.0.0
+
+dimension Frequency = 1 / Time
+
+key hazard.v₀       : Velocity
+key settle.α        : param Acceleration magnitude
+key settle.ωₘₐₓ     : Frequency = 2 Hz       "upper bound"
+input reaction_total : Time
+
+derive settle.duration : Time =
+    -v₀ / -α + sqrt(Δ / α) * 1 s^-1 * 1 s
+  where Δ = v₀^2 / (2 α) - 0 m^2/s^3 * 0 s^3/m
+  worst_case: increasing in v₀; decreasing in α
+  domain: v₀ in [0 m/s, 70 m/s), α > 0 m/s^2, not (α == 0 m/s^2)
+
+check margin: reaction_total <= 10 s and reaction_total != 3 s or ωₘₐₓ >= 1 Hz
+
+report τ : Time = sum over b in α.bands(0 m/s, v₀): (b.hi - b.lo) / b.value
+
+fn ramp(θ': Time, κ₂: Time) -> Time = if θ' > κ₂ then θ' - κ₂ else κ₂ - θ'

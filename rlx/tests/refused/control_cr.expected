@@ -1,0 +1,1 @@
+control_cr.rlx:1:29: error[rlx-control]: carriage return (U+000D) is refused: rlx files use LF line endings (4 carriage returns in the file)

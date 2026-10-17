@@ -1,0 +1,1 @@
+symbol_times.rlx:4:40: error[rlx-symbol]: non-ASCII symbol `×` (U+00D7) has no meaning in rlx outside a comment or string; the only Unicode operators are the twins → ≤ ≥ ≠ · ÷ − √ ² ³ ∈ Σ; write `*` (or its one twin `·`, U+00B7)

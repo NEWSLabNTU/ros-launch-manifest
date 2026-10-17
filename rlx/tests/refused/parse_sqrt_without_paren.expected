@@ -1,0 +1,1 @@
+parse_sqrt_without_paren.rlx:4:27: error[rlx-parse]: `√` is the twin of `sqrt` and takes a parenthesized argument directly after it: write `√(x)`

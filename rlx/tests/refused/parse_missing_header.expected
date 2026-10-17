@@ -1,0 +1,1 @@
+parse_missing_header.rlx:1:1: error[rlx-parse]: an rlx file starts with `extension <name> <version>`, found `key`

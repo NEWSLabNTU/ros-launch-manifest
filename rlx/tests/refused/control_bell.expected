@@ -1,0 +1,1 @@
+control_bell.rlx:4:41: error[rlx-control]: control character U+0007 is refused; only LF and tab are allowed

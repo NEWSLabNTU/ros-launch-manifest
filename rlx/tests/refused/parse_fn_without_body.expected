@@ -1,0 +1,1 @@
+parse_fn_without_body.rlx:5:1: error[rlx-parse]: expected `=` and the function's body, found end of file; every `fn` has a body written in rlx

@@ -1,0 +1,9 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+fn even(x: Time) -> Time = odd(x)
+
+fn odd(x: Time) -> Time = helper(x)
+  where y = even(x)
+
+fn helper(x: Time) -> Time = x

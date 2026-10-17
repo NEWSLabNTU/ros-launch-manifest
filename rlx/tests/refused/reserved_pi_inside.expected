@@ -1,0 +1,2 @@
+reserved_pi_inside.rlx:4:7: error[rlx-reserved]: `Π` (U+03A0) is reserved and cannot appear in an identifier
+reserved_pi_inside.rlx:4:31: error[rlx-reserved]: `Π` (U+03A0) is reserved and cannot appear in an identifier

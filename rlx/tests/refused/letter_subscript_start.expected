@@ -1,0 +1,1 @@
+letter_subscript_start.rlx:4:6: error[rlx-letter]: `₀` (U+2080) cannot start an identifier; an identifier starts with a letter or `_`

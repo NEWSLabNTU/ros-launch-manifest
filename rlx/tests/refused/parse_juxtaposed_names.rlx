@@ -1,0 +1,4 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+fn f(a: Length, b: Length) -> Area = a b

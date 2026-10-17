@@ -1,0 +1,1 @@
+parse_chained_comparison.rlx:5:18: error[rlx-parse]: comparisons do not chain; write `a <= b and b <= c`

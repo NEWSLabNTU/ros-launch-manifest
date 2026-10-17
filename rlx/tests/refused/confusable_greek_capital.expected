@@ -1,0 +1,2 @@
+confusable_greek_capital.rlx:5:10: error[rlx-confusable]: Greek `Α` (U+0391) in identifier `Α` looks like Latin `A`; write `A` if that is what you mean
+confusable_greek_capital.rlx:6:9: error[rlx-confusable]: Greek `Α` (U+0391) in identifier `Α` looks like Latin `A`; write `A` if that is what you mean

@@ -1,0 +1,1 @@
+confusable_cyrillic.rlx:5:47: error[rlx-confusable]: Cyrillic `а` (U+0430) in identifier `а` looks like Latin `a`; write `a` if that is what you mean

@@ -1,0 +1,1 @@
+recursion_direct.rlx:4:41: error[rlx-recursion]: fn `f` calls itself; rlx refuses recursion so that every expression terminates

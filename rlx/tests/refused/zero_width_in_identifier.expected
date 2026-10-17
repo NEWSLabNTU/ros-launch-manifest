@@ -1,0 +1,1 @@
+zero_width_in_identifier.rlx:4:17: error[rlx-zero-width]: invisible character U+200B (ZERO WIDTH SPACE) is refused anywhere in an rlx file: it makes text that looks the same differ

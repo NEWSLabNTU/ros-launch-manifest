@@ -1,0 +1,1 @@
+utf8_invalid.rlx:4:40: error[rlx-utf8]: invalid UTF-8 at byte 91; rlx files are UTF-8

@@ -1,0 +1,1 @@
+bidi_override_in_comment.rlx:4:38: error[rlx-bidi]: bidirectional control U+202E (RIGHT-TO-LEFT OVERRIDE) is refused anywhere in an rlx file, comments and strings included: it changes the order text is displayed in
