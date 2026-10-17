@@ -6,7 +6,12 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.1.66 - 2026-10-17
+
+Extensions that check and derive (play_launch phase 91 E3, E4): the rlx
+dimension checker, its evaluator, and `use:` in contracts. GRAMMAR_VERSION
+0.1.66. Workspace Cargo 0.1.18 -> 0.1.19: the types API gains public
+fields (`Manifest.uses`, `HazardDecl.ext`, `SafeState.settle_ext`).
 
 - **Added (`rlx`, play_launch phase 91 E4):** the evaluator (`rlx::eval`).
   `eval_derive`, `eval_check` and `eval_report` evaluate an item on input
