@@ -98,6 +98,35 @@ pub mod code {
     /// A contract value that is not a value of its key's type.
     pub const VALUE: &str = "rlx-value";
 
+    /// Evaluation: the extension has no item of that name.
+    pub const NO_ITEM: &str = "rlx-no-item";
+    /// Evaluation: an input without a default was not given.
+    pub const MISSING_INPUT: &str = "rlx-missing-input";
+    /// Evaluation: a supplied input is not a value of its key's type.
+    pub const INPUT: &str = "rlx-input";
+    /// Evaluation: an input lies outside the item's `domain`.
+    pub const DOMAIN: &str = "rlx-domain";
+    /// Evaluation: a division by zero.
+    pub const DIVISION_BY_ZERO: &str = "rlx-division-by-zero";
+    /// Evaluation: `sqrt` of a negative value.
+    pub const NEGATIVE_SQRT: &str = "rlx-negative-sqrt";
+    /// Evaluation: a `bands` slice outside its table.
+    pub const BANDS: &str = "rlx-bands";
+    /// Evaluation: a result that is infinite or not a number.
+    pub const NON_FINITE: &str = "rlx-non-finite";
+
+    /// The codes raised only while evaluating (see `crate::eval`).
+    pub const EVAL: &[&str] = &[
+        NO_ITEM,
+        MISSING_INPUT,
+        INPUT,
+        DOMAIN,
+        DIVISION_BY_ZERO,
+        NEGATIVE_SQRT,
+        BANDS,
+        NON_FINITE,
+    ];
+
     /// Every code an rlx file can raise, for tests that check each one has
     /// a refused example. `VALUE` is raised only by the contract value
     /// parser and is tested there.

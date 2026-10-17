@@ -129,6 +129,8 @@ pub mod ast;
 pub mod chars;
 pub mod diag;
 pub mod dim;
+pub mod display;
+pub mod eval;
 pub mod fmt;
 pub mod lexer;
 pub mod parser;

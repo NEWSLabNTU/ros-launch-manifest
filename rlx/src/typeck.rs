@@ -111,7 +111,27 @@ pub struct KeyInfo {
     pub last: String,
     pub ty: KeyTy,
     pub kind: KeyKind,
+    /// The declaration gives a default, so a contract may leave it out.
+    pub has_default: bool,
     pub span: Span,
+}
+
+/// An item that produces a value: a `derive` by its target path, a
+/// `check` or `report` by its name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ItemRef {
+    Derive(String),
+    Check(String),
+    Report(String),
+}
+
+/// A key or input an item reads, for the consumer to gather.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Need {
+    pub path: String,
+    pub ty: KeyTy,
+    pub kind: KeyKind,
+    pub has_default: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +148,8 @@ pub struct Env {
     dims: Vec<(String, Dim)>,
     pub keys: Vec<KeyInfo>,
     fns: HashMap<String, FnSig>,
+    /// The keys each item reads (see [`Env::reads`]).
+    reads: Vec<(ItemRef, BTreeSet<usize>)>,
 }
 
 impl Env {
@@ -144,6 +166,27 @@ impl Env {
             .find(|(_, v)| *v == d)
             .map(|(n, _)| n.clone())
             .unwrap_or_else(|| d.render_base())
+    }
+
+    /// The keys and inputs an item reads, in declaration order: directly,
+    /// through its `where` bindings, through the `fn`s it calls, and in its
+    /// `domain`. A key read only by another key's default is not listed.
+    /// `None` when the extension has no such item.
+    pub fn reads(&self, item: &ItemRef) -> Option<Vec<Need>> {
+        let (_, set) = self.reads.iter().find(|(i, _)| i == item)?;
+        Some(
+            set.iter()
+                .map(|&i| {
+                    let k = &self.keys[i];
+                    Need {
+                        path: k.path.clone(),
+                        ty: k.ty.clone(),
+                        kind: k.kind,
+                        has_default: k.has_default,
+                    }
+                })
+                .collect(),
+        )
     }
 
     /// A key or input by its full path or its last segment.
@@ -166,6 +209,7 @@ pub fn check(file: &File) -> Result<Env, Vec<Diagnostic>> {
                 .collect(),
             keys: Vec::new(),
             fns: HashMap::new(),
+            reads: Vec::new(),
         },
         poisoned_keys: BTreeSet::new(),
         fn_used: HashMap::new(),
@@ -400,15 +444,16 @@ impl Cx {
     fn keys(&mut self, file: &File) {
         let mut declared_core = BTreeSet::new();
         for item in &file.items {
-            let (path, ty, kind) = match item {
+            let (path, ty, kind, has_default) = match item {
                 Item::Key(k) => {
                     let ty = self.key_type(&k.ty);
-                    (&k.path, ty, KeyKind::Key)
+                    (&k.path, ty, KeyKind::Key, k.default.is_some())
                 }
                 Item::Input(i) => (
                     &i.path,
                     self.resolve_product(&i.dim).map(KeyTy::Value),
                     KeyKind::Input,
+                    i.default.is_some(),
                 ),
                 _ => continue,
             };
@@ -459,6 +504,7 @@ impl Cx {
                 last,
                 ty: ty.unwrap_or(KeyTy::Value(Dim::SCALAR)),
                 kind,
+                has_default,
                 span: path.span,
             });
         }
@@ -483,6 +529,7 @@ impl Cx {
                 last: name.to_string(),
                 ty: KeyTy::Value(dim::builtin(d).expect("built in")),
                 kind: KeyKind::Core,
+                has_default: false,
                 span: Span::default(),
             });
         }
@@ -763,7 +810,8 @@ impl Cx {
                         self.err(code::DIMENSION, d.dim.span, msg);
                     }
                     targets.push(target.clone());
-                    let (got, span) = self.body(&d.body, declared, "derive");
+                    let (got, span, used) = self.body(&d.body, declared, "derive");
+                    self.env.reads.push((ItemRef::Derive(target.clone()), used));
                     if let (Some(want), Ty::Q(g)) = (declared, got)
                         && want != g
                     {
@@ -783,7 +831,10 @@ impl Cx {
                 }
                 Item::Check(c) => {
                     self.unique_name(&c.name, &mut named);
-                    let (got, span) = self.body(&c.body, None, "check");
+                    let (got, span, used) = self.body(&c.body, None, "check");
+                    self.env
+                        .reads
+                        .push((ItemRef::Check(c.name.name.clone()), used));
                     if !matches!(got, Ty::Bool | Ty::Err) {
                         self.not_boolean(got, span, &format!("check `{}`", c.name.name));
                     }
@@ -794,6 +845,10 @@ impl Cx {
                     let mut loc = Locals::default();
                     self.bindings(&r.bindings, &mut loc);
                     let got = self.infer(&r.value, &mut loc, declared);
+                    let used = self.with_fn_reads(&loc);
+                    self.env
+                        .reads
+                        .push((ItemRef::Report(r.name.name.clone()), used));
                     if let (Some(want), Ty::Q(g)) = (declared, got)
                         && want != g
                     {
@@ -845,21 +900,28 @@ impl Cx {
         );
     }
 
-    /// A derive's or check's expression and clauses. Returns its type and
-    /// the span of its expression.
-    fn body(&mut self, b: &Body, expect: Option<Dim>, what: &str) -> (Ty, Span) {
-        let mut loc = Locals::default();
-        self.bindings(&b.bindings, &mut loc);
-        let ty = self.infer(&b.value, &mut loc, expect);
+    /// The keys `loc` read, plus those the fns it called read.
+    fn with_fn_reads(&self, loc: &Locals) -> BTreeSet<usize> {
         let mut used = loc.used.clone();
         for f in &loc.calls {
             if let Some(u) = self.fn_used.get(f) {
                 used.extend(u.iter().copied());
             }
         }
+        used
+    }
+
+    /// A derive's or check's expression and clauses. Returns its type, the
+    /// span of its expression, and every key it reads (the domain's
+    /// included, since the domain is checked before evaluating).
+    fn body(&mut self, b: &Body, expect: Option<Dim>, what: &str) -> (Ty, Span, BTreeSet<usize>) {
+        let mut loc = Locals::default();
+        self.bindings(&b.bindings, &mut loc);
+        let ty = self.infer(&b.value, &mut loc, expect);
+        let mut used = self.with_fn_reads(&loc);
         self.worst_case(&b.worst_case, &b.bindings, &used, what);
-        self.domain(&b.domain);
-        (ty, b.value.span)
+        used.extend(self.domain(&b.domain));
+        (ty, b.value.span, used)
     }
 
     fn worst_case(
@@ -922,7 +984,8 @@ impl Cx {
         }
     }
 
-    fn domain(&mut self, constraints: &[Constraint]) {
+    fn domain(&mut self, constraints: &[Constraint]) -> BTreeSet<usize> {
+        let mut read = BTreeSet::new();
         for c in constraints {
             let mut loc = Locals::default();
             match c {
@@ -949,6 +1012,7 @@ impl Cx {
                         );
                         continue;
                     };
+                    read.insert(idx);
                     let want = match self.key_ty(idx) {
                         Ty::Q(d) => d,
                         Ty::Err => continue,
@@ -981,7 +1045,9 @@ impl Cx {
                     }
                 }
             }
+            read.extend(loc.used);
         }
+        read
     }
 
     // -- expressions ---------------------------------------------------------

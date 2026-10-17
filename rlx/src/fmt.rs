@@ -56,6 +56,42 @@ pub fn format(src: &str, tokens: &[Token], roles: &[Role], style: Style) -> Stri
     normalize_layout(&out)
 }
 
+/// One expression of the source, `span`, in canonical ASCII on one line:
+/// twins rewritten as [`Style::Ascii`] would, comments dropped, and every
+/// run of whitespace (line breaks and indentation included) one space. The
+/// evaluator's trace prints expressions this way, so a trace reads the
+/// same whichever spelling the extension was written in.
+pub fn ascii_span(src: &str, tokens: &[Token], span: Span) -> String {
+    let mut edits: Vec<(Span, String)> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = &tokens[i];
+        if t.span.start >= span.start && t.span.end <= span.end {
+            i += ascii_edit(src, tokens, i, &mut edits);
+        } else {
+            i += 1;
+        }
+    }
+    let mut text = String::new();
+    let mut at = span.start;
+    for (e, repl) in edits {
+        text.push_str(&src[at..e.start]);
+        text.push_str(&repl);
+        at = e.end;
+    }
+    text.push_str(&src[at..span.end]);
+    // An expression holds no strings, so `--` always starts a comment.
+    let without_comments: String = text
+        .split('\n')
+        .map(|l| l.find("--").map_or(l, |c| &l[..c]))
+        .collect::<Vec<_>>()
+        .join(" ");
+    without_comments
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn is_wordish(t: &Tok) -> bool {
     matches!(
         t,
