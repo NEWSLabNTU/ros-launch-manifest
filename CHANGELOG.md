@@ -6,12 +6,12 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.1.65 - 2026-10-17
 
-The core interface extensions read and fill (play_launch phase 91 E1).
-GRAMMAR_VERSION 0.1.65. The types API breaks (`BudgetSource.derived`,
-`HazardDecl.detection` and `deadline_by` are new public fields), so the
-workspace Cargo version moves at the release.
+The core interface extensions read and fill, and the front end of their
+language (play_launch phase 91 E1, E2). GRAMMAR_VERSION 0.1.65. Workspace
+Cargo 0.1.17 -> 0.1.18: the types API breaks (`BudgetSource.derived`,
+`HazardDecl.detection` and `deadline_by` are new public fields).
 
 - **Added:** `source: { derived: { by, version, sha256, inputs, trace } }`,
   the record of a derived value (`types::Derivation`): the extension that
