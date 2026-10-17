@@ -11,6 +11,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `version` | meta |  | Manifest format version. Absent means 1. |
+| `use` | meta |  | The extensions this contract uses, a map of name -> version requirement (`use: { vehicle.braking: "^1" }`; `^`, `~`, `=` or `>=`). With it, `hazards.<name>` and `safe_state.settle` may carry the keys those extensions declare; without it an unknown key is an error. |
 | `rlm` | meta | since v0.1.49 | The grammar release this file needs, `v<major>.<minor>.<patch>` (or `>=` that). Checked before any other key: a checker whose grammar is older refuses the file naming both releases, instead of refusing the first key it does not know as if it were a typo. A checker before v0.1.49 refuses the key itself as unknown. Optional; beside `version`, which is the file format and stays 1. |
 | `args` | meta |  | Arguments this manifest requires, supplied by the launch scope. |
 | `exclude_patterns` |  | **removed** | Removed in phase 70 — it was parsed and read by nothing, so it excluded nothing. Mark an expected-absent side with `external:`. |

@@ -8,6 +8,15 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 
 ## Unreleased
 
+- **Added (play_launch phase 91 E4):** `use: { <extension>: "<requirement>" }`
+  (`Manifest.uses`, `types::VersionReq` with cargo's `^ ~ = >=` meaning).
+  With it, `hazards.<h>` and `safe_state.settle` may carry keys the contract
+  layer does not know; they are kept as written (`HazardDecl.ext`,
+  `SafeState.settle_ext`: a scalar's text or a table's entries) for the
+  consumer to check against the extensions it loads. Without `use:` an
+  unknown key is still refused, and an inline include's own `use:` governs
+  only its own keys. A settle with extension keys may state neither a
+  duration nor a profile: an extension derives it. GRAMMAR_VERSION 0.1.66.
 - **Added (`rlx`, play_launch phase 91 E3):** dimensions, units and the
   load-time checker. Dimensions are integer exponents over the seven SI base
   dimensions, with a built-in table of named ones (Velocity, Acceleration,

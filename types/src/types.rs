@@ -36,6 +36,12 @@ pub struct Manifest {
     /// states none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rlm: Option<String>,
+    /// The extensions this contract uses (phase 91 E4), `use: { <name>:
+    /// "<requirement>" }`, in the order written. A contract that uses one
+    /// may write the keys it declares in the contexts it extends; without
+    /// `use:` an unknown key stays an error.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub uses: Vec<UseDecl>,
     /// Manifest arguments — all mandatory. Values provided by scope args from record.json.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub args: BTreeMap<String, ArgDecl>,
@@ -694,6 +700,10 @@ pub struct HazardDecl {
     /// A hazard states `ftti`, `deadline_by`, or both.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deadline_by: Option<CheckRef>,
+    /// Keys a used extension declares in `hazard` (phase 91 E4), as
+    /// written; empty without `use:`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ext: Vec<ExtKey>,
     /// The mode this hazard enters (v0.1.59): the top of the fallback ladder
     /// it walks to a safe state. Exactly one of `enters` and `reaction` is
     /// written; the parser refuses both.
@@ -738,6 +748,163 @@ impl HazardDecl {
             "reaction"
         }
     }
+}
+
+/// One entry of `use:` (phase 91 E4): an extension and the versions the
+/// contract accepts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UseDecl {
+    /// The extension, a dotted name (`vehicle.braking`).
+    pub name: String,
+    /// The requirement as written (`^1`, `~0.2`, `=1.0.0`, `>=1.0.0`).
+    pub req: VersionReq,
+}
+
+/// A version requirement with cargo's meaning (phase 91 E4): `^1.2.3`
+/// accepts `>=1.2.3, <2.0.0` (`<0.3.0` for `^0.2.3`, `<0.0.4` for `^0.0.3`),
+/// `~1.2.3` accepts `>=1.2.3, <1.3.0`, `=1.2.3` that version only, `>=1.2.3`
+/// that version or any later one. Missing components read as 0, so `^1` is
+/// `^1.0.0` and `^0.1` is `^0.1.0`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(into = "String")]
+pub struct VersionReq {
+    pub op: ReqOp,
+    pub major: u64,
+    pub minor: Option<u64>,
+    pub patch: Option<u64>,
+}
+
+/// The operator of a [`VersionReq`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReqOp {
+    Caret,
+    Tilde,
+    Exact,
+    AtLeast,
+}
+
+impl VersionReq {
+    /// Parse `^1`, `~0.2.1`, `=1.0.0`, `>=1.0.0`; `None` when it is none of
+    /// these.
+    pub fn parse(text: &str) -> Option<VersionReq> {
+        let t = text.trim();
+        let (op, rest) = if let Some(r) = t.strip_prefix(">=") {
+            (ReqOp::AtLeast, r)
+        } else if let Some(r) = t.strip_prefix('^') {
+            (ReqOp::Caret, r)
+        } else if let Some(r) = t.strip_prefix('~') {
+            (ReqOp::Tilde, r)
+        } else {
+            (ReqOp::Exact, t.strip_prefix('=')?)
+        };
+        let parts: Vec<&str> = rest.trim().split('.').collect();
+        if parts.is_empty()
+            || parts.len() > 3
+            || parts
+                .iter()
+                .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return None;
+        }
+        let num = |i: usize| parts.get(i).map(|p| p.parse::<u64>().ok());
+        let major = num(0)??;
+        let minor = match num(1) {
+            None => None,
+            Some(v) => Some(v?),
+        };
+        let patch = match num(2) {
+            None => None,
+            Some(v) => Some(v?),
+        };
+        if op == ReqOp::Exact && patch.is_none() {
+            return None;
+        }
+        Some(VersionReq {
+            op,
+            major,
+            minor,
+            patch,
+        })
+    }
+
+    /// Whether `version` (`MAJOR.MINOR.PATCH`) satisfies the requirement.
+    pub fn matches(&self, version: &str) -> bool {
+        let v: Vec<u64> = match version
+            .split('.')
+            .map(|p| p.parse::<u64>())
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(v) if v.len() == 3 => v,
+            _ => return false,
+        };
+        let have = (v[0], v[1], v[2]);
+        let lo = (self.major, self.minor.unwrap_or(0), self.patch.unwrap_or(0));
+        match self.op {
+            ReqOp::Exact => have == lo,
+            ReqOp::AtLeast => have >= lo,
+            ReqOp::Tilde => {
+                let hi = match self.minor {
+                    Some(m) => (self.major, m + 1, 0),
+                    None => (self.major + 1, 0, 0),
+                };
+                have >= lo && have < hi
+            }
+            ReqOp::Caret => {
+                let hi = if self.major > 0 || self.minor.is_none() {
+                    (self.major + 1, 0, 0)
+                } else if self.minor.unwrap_or(0) > 0 || self.patch.is_none() {
+                    (0, self.minor.unwrap_or(0) + 1, 0)
+                } else {
+                    (0, 0, self.patch.unwrap_or(0) + 1)
+                };
+                have >= lo && have < hi
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for VersionReq {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let op = match self.op {
+            ReqOp::Caret => "^",
+            ReqOp::Tilde => "~",
+            ReqOp::Exact => "=",
+            ReqOp::AtLeast => ">=",
+        };
+        write!(f, "{op}{}", self.major)?;
+        if let Some(m) = self.minor {
+            write!(f, ".{m}")?;
+        }
+        if let Some(p) = self.patch {
+            write!(f, ".{p}")?;
+        }
+        Ok(())
+    }
+}
+
+impl From<VersionReq> for String {
+    fn from(r: VersionReq) -> String {
+        r.to_string()
+    }
+}
+
+/// A key an extension declares, as the contract wrote it (phase 91 E4).
+/// The contract layer cannot type it -- only the extension knows its
+/// dimension -- so it keeps the text and the consumer converts it with the
+/// extension's value checker.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExtKey {
+    pub key: String,
+    pub value: ExtValue,
+}
+
+/// The value of an [`ExtKey`]: a scalar's text (`30 km/h`, `target_jerk`,
+/// `15ms`) or a map's entries in order (a table: `{ 0 km/h: 0.75 m/s^2 }`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ExtValue {
+    Scalar(String),
+    Map(Vec<(String, String)>),
 }
 
 /// `<extension>/<check>`: a check an extension declares (phase 91 E1).
@@ -857,6 +1024,11 @@ pub struct SafeState {
     /// form.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settle_supervise: Option<Supervision>,
+    /// Keys a used extension declares in `settle` (phase 91 E4), as
+    /// written; empty without `use:`. With any, the settle may state
+    /// neither a duration nor a profile: an extension derives it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub settle_ext: Vec<ExtKey>,
 }
 
 impl SafeState {

@@ -144,8 +144,150 @@ pub fn parse_manifest_str_with_spans(source: &str) -> Result<ParseResult, ParseE
     })
 }
 
+thread_local! {
+    /// Whether the manifest being parsed has a non-empty `use:` (phase 91
+    /// E4). Read by [`reject_unknown_keys`], which then lets an unknown key
+    /// through in the contexts an extension may extend, for the consumer to
+    /// check against the extensions it loads. Scoped by [`ExtensionMode`],
+    /// so an inline include's own `use:` governs only its own keys.
+    static EXTENSIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Sets [`EXTENSIBLE`] for one manifest's parse and restores the outer
+/// value when dropped, error paths included.
+struct ExtensionMode(bool);
+
+impl ExtensionMode {
+    fn enter(on: bool) -> Self {
+        ExtensionMode(EXTENSIBLE.with(|c| c.replace(on)))
+    }
+}
+
+impl Drop for ExtensionMode {
+    fn drop(&mut self) {
+        EXTENSIBLE.with(|c| c.set(self.0));
+    }
+}
+
+/// The contexts an extension may declare keys in (design section 3).
+fn extensible(context: Context) -> bool {
+    matches!(context, Context::Hazard | Context::Settle)
+}
+
+/// `use: { <name>: "<requirement>" }` (phase 91 E4).
+fn parse_uses(doc: &Yaml, ctx: &str) -> Result<Vec<UseDecl>, ParseError> {
+    let section = &doc["use"];
+    let hash = match section {
+        Yaml::BadValue | Yaml::Null => return Ok(Vec::new()),
+        Yaml::Hash(h) => h,
+        other => {
+            return Err(type_err(
+                ctx,
+                "use",
+                "a map of extension -> version requirement",
+                other,
+            ));
+        }
+    };
+    let uctx = &format_path(ctx, "use");
+    let mut out: Vec<UseDecl> = Vec::new();
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        if !is_dotted_name(&name) {
+            return Err(field_err(
+                uctx,
+                &name,
+                &format!(
+                    "`{name}` is not an extension name: dotted lowercase words (`vehicle.braking`)"
+                ),
+            ));
+        }
+        let text = match v {
+            Yaml::String(t) | Yaml::Real(t) => t.clone(),
+            Yaml::Integer(i) => i.to_string(),
+            other => {
+                return Err(type_err(
+                    uctx,
+                    &name,
+                    "a version requirement (`\"^1\"`)",
+                    other,
+                ));
+            }
+        };
+        let req = VersionReq::parse(&text).ok_or_else(|| {
+            field_err(
+                uctx,
+                &name,
+                &format!(
+                    "`{text}` is not a version requirement: `^1`, `~0.2`, `=1.0.0` or `>=1.0.0` \
+                     (quote it: `\"^1\"`)"
+                ),
+            )
+        })?;
+        out.push(UseDecl { name, req });
+    }
+    Ok(out)
+}
+
+/// The keys of `doc` the field table does not know, in the order written:
+/// in an extensible context of a manifest with `use:`, the extensions'
+/// keys (phase 91 E4).
+fn extension_keys(doc: &Yaml, ctx: &str, context: Context) -> Result<Vec<ExtKey>, ParseError> {
+    let Some(hash) = doc.as_hash() else {
+        return Ok(Vec::new());
+    };
+    if !EXTENSIBLE.with(|c| c.get()) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (k, v) in hash {
+        let Some(key) = k.as_str() else { continue };
+        if field_table::lookup(context, key).is_some() {
+            continue;
+        }
+        let scalar = |y: &Yaml| match y {
+            Yaml::String(t) | Yaml::Real(t) => Some(t.clone()),
+            Yaml::Integer(i) => Some(i.to_string()),
+            Yaml::Boolean(b) => Some(b.to_string()),
+            _ => None,
+        };
+        let value = match v {
+            Yaml::Hash(m) => {
+                let mut pairs = Vec::new();
+                for (mk, mv) in m {
+                    match (scalar(mk), scalar(mv)) {
+                        (Some(a), Some(b)) => pairs.push((a, b)),
+                        _ => {
+                            return Err(type_err(
+                                &format_path(ctx, key),
+                                "",
+                                "a table of scalar -> scalar entries",
+                                v,
+                            ));
+                        }
+                    }
+                }
+                ExtValue::Map(pairs)
+            }
+            other => match scalar(other) {
+                Some(t) => ExtValue::Scalar(t),
+                None => {
+                    return Err(type_err(ctx, key, "a value or a table of values", other));
+                }
+            },
+        };
+        out.push(ExtKey {
+            key: key.to_string(),
+            value,
+        });
+    }
+    Ok(out)
+}
+
 fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     reject_chains(doc, ctx)?;
+    let uses = parse_uses(doc, ctx)?;
+    let _mode = ExtensionMode::enter(!uses.is_empty());
     reject_unknown_keys(doc, ctx, Context::Manifest)?;
     // `if:`/`unless:` at a manifest root are the INLINE include's condition
     // (issue #0043), and an inline include is the only manifest that has one:
@@ -172,6 +314,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         } else {
             None
         },
+        uses,
         args: parse_args(doc, ctx)?,
         nodes: parse_nodes(doc, ctx)?,
         topics: parse_topics(doc, ctx)?,
@@ -1269,6 +1412,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 ftti: yaml_bound(v, "ftti", &hctx, Context::Hazard)?,
                 detection: yaml_bound(v, "detection", &hctx, Context::Hazard)?,
                 deadline_by,
+                ext: extension_keys(v, &hctx, Context::Hazard)?,
                 enters,
                 reaction,
                 when: parse_predicate(v, &hctx)?,
@@ -1385,66 +1529,68 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
     })?;
     // Phase 90 G6: `settle: <d>` is shorthand for `settle: { duration: <d> }`;
     // the map is `{ duration | decel, jerk ; response ; source }`.
-    let (settle, settle_profile, settle_response, settle_map, settle_supervise) = match &section["settle"]
-    {
-        Yaml::Hash(_) => {
-            let sctx = &format_path(ctx, "settle");
-            let map = &section["settle"];
-            reject_unknown_keys(map, sctx, Context::Settle)?;
-            let profile = if map["decel"].is_badvalue() && map["jerk"].is_badvalue() {
-                None
-            } else {
-                let param = |key: &str| {
-                    yaml_string(map, key, sctx)?.ok_or_else(|| {
-                        field_err(
-                            sctx,
-                            key,
-                            "required: a braking profile names both its deceleration and its \
+    let (settle, settle_profile, settle_response, settle_map, settle_supervise, settle_ext) =
+        match &section["settle"] {
+            Yaml::Hash(_) => {
+                let sctx = &format_path(ctx, "settle");
+                let map = &section["settle"];
+                reject_unknown_keys(map, sctx, Context::Settle)?;
+                let profile = if map["decel"].is_badvalue() && map["jerk"].is_badvalue() {
+                    None
+                } else {
+                    let param = |key: &str| {
+                        yaml_string(map, key, sctx)?.ok_or_else(|| {
+                            field_err(
+                                sctx,
+                                key,
+                                "required: a braking profile names both its deceleration and its \
                              jerk parameter",
-                        )
-                    })
+                            )
+                        })
+                    };
+                    let decel = param("decel")?;
+                    let jerk = param("jerk")?;
+                    Some(SettleProfile { decel, jerk })
                 };
-                let decel = param("decel")?;
-                let jerk = param("jerk")?;
-                Some(SettleProfile { decel, jerk })
-            };
-            let mut literal =
-                yaml_bound(map, "duration", sctx, Context::Settle).map_err(|e| reframe(e, sctx))?;
-            if literal.is_none() && profile.is_none() {
-                return Err(field_err(
-                    sctx,
-                    "duration",
-                    "required: a settle states its duration (`settle: { duration: 2s }`, or \
-                     `settle: 2s`) or a braking profile it is derived from (`decel` and `jerk`)",
-                ));
-            }
-            if !map["source"].is_badvalue() {
-                let Some(b) = literal.as_mut() else {
+                let settle_ext = extension_keys(map, sctx, Context::Settle)?;
+                let mut literal = yaml_bound(map, "duration", sctx, Context::Settle)
+                    .map_err(|e| reframe(e, sctx))?;
+                if literal.is_none() && profile.is_none() && settle_ext.is_empty() {
                     return Err(field_err(
                         sctx,
-                        "source",
-                        "says where a written `duration` comes from, and none is written: a \
+                        "duration",
+                        "required: a settle states its duration (`settle: { duration: 2s }`, or \
+                     `settle: 2s`) or a braking profile it is derived from (`decel` and `jerk`)",
+                    ));
+                }
+                if !map["source"].is_badvalue() {
+                    let Some(b) = literal.as_mut() else {
+                        return Err(field_err(
+                            sctx,
+                            "source",
+                            "says where a written `duration` comes from, and none is written: a \
                          profile's settle is derived from its parameters. A measured or \
                          analysed `response` states its source in its own map form, \
                          `response: { duration, source }`",
-                    ));
-                };
-                b.source = Some(parse_source(&map["source"], sctx)?);
+                        ));
+                    };
+                    b.source = Some(parse_source(&map["source"], sctx)?);
+                }
+                // v0.1.62: the whole settle (the written duration or the
+                // derived profile, plus the response) is what is supervised.
+                let supervise = parse_supervise(map, sctx, true)?;
+                let response = yaml_bound(map, "response", sctx, Context::Settle)?;
+                (literal, profile, response, true, supervise, settle_ext)
             }
-            // v0.1.62: the whole settle (the written duration or the
-            // derived profile, plus the response) is what is supervised.
-            let supervise = parse_supervise(map, sctx, true)?;
-            let response = yaml_bound(map, "response", sctx, Context::Settle)?;
-            (literal, profile, response, true, supervise)
-        }
-        _ => (
-            yaml_bound(section, "settle", ctx, Context::SafeState)?,
-            None,
-            None,
-            false,
-            None,
-        ),
-    };
+            _ => (
+                yaml_bound(section, "settle", ctx, Context::SafeState)?,
+                None,
+                None,
+                false,
+                None,
+                Vec::new(),
+            ),
+        };
     Ok(Some(SafeState {
         emits,
         settle,
@@ -1452,6 +1598,7 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
         settle_response,
         settle_map,
         settle_supervise,
+        settle_ext,
     }))
 }
 
@@ -2495,6 +2642,7 @@ fn reject_unknown_keys(doc: &Yaml, ctx: &str, context: Context) -> Result<(), Pa
                 return Err(field_err(ctx, key, f.doc));
             }
             Some(_) => continue,
+            None if extensible(context) && EXTENSIBLE.with(|c| c.get()) => continue,
             None => {
                 let near = field_table::nearest_all(context, key);
                 let detail = match near.as_slice() {
@@ -4821,6 +4969,79 @@ nodes:
         .unwrap();
         assert!(m.budget_sources().is_empty());
         assert_eq!(m.nodes["n"].paths["p"].timer_param, None);
+    }
+
+    /// Phase 91 E4: `use:` lets a contract write the keys its extensions
+    /// declare in `hazards.<h>` and `safe_state.settle`, kept as written;
+    /// without `use:` the same key is refused as unknown.
+    #[test]
+    fn use_captures_extension_keys() {
+        let body = "hazards:\n  h:\n    guards: [/p]\n    on: reported\n    deadline_by: machine.iso13855/safety_distance\n    reaction: stop\n    detection_capability: 30 mm\n    device_response: 15ms\nnodes:\n  n:\n    paths:\n      stop:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            traction_cut_off: 1.0s\n            a_ebd: { 0 km/h: 0.75 m/s^2, 100 km/h: 0.70 m/s^2 }\n            response: 256ms\n";
+        let m = super::parse_manifest_str(&format!(
+            "use: {{ machine.iso13855: \"^0.3\", rail.ebd: \"~0.1\" }}\n{body}"
+        ))
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            m.uses
+                .iter()
+                .map(|u| (u.name.as_str(), u.req.to_string()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("machine.iso13855", "^0.3".to_string()),
+                ("rail.ebd", "~0.1".to_string())
+            ]
+        );
+        let h = &m.hazards["h"];
+        assert_eq!(
+            h.ext,
+            vec![
+                crate::ExtKey {
+                    key: "detection_capability".into(),
+                    value: crate::ExtValue::Scalar("30 mm".into())
+                },
+                crate::ExtKey {
+                    key: "device_response".into(),
+                    value: crate::ExtValue::Scalar("15ms".into())
+                },
+            ]
+        );
+        let ss = m.nodes["n"].paths["stop"].safe_state.as_ref().unwrap();
+        assert!(ss.settle.is_none() && ss.settle_profile.is_none());
+        assert_eq!(
+            ss.settle_ext[0].value,
+            crate::ExtValue::Scalar("1.0s".into())
+        );
+        assert_eq!(
+            ss.settle_ext[1].value,
+            crate::ExtValue::Map(vec![
+                ("0 km/h".into(), "0.75 m/s^2".into()),
+                ("100 km/h".into(), "0.70 m/s^2".into())
+            ])
+        );
+        let e = super::parse_manifest_str(body)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("unknown key in `safe_state.settle`"), "{e}");
+        let e = super::parse_manifest_str(&format!("use: {{ rail.ebd: 1 }}\n{body}"))
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("is not a version requirement"), "{e}");
+    }
+
+    #[test]
+    fn version_requirements_have_cargo_semantics() {
+        let ok = |r: &str, v: &str| crate::VersionReq::parse(r).unwrap().matches(v);
+        assert!(ok("^1", "1.4.2") && !ok("^1", "2.0.0") && !ok("^1", "0.9.9"));
+        assert!(ok("^0.1", "0.1.7") && !ok("^0.1", "0.2.0"));
+        assert!(ok("^0.0.3", "0.0.3") && !ok("^0.0.3", "0.0.4"));
+        assert!(ok("~1.2.3", "1.2.9") && !ok("~1.2.3", "1.3.0"));
+        assert!(ok("=1.0.0", "1.0.0") && !ok("=1.0.0", "1.0.1"));
+        assert!(ok(">=1.2.0", "3.0.0") && !ok(">=1.2.0", "1.1.9"));
+        for bad in ["1", "^", "^1.x", "=1.0", "^1.2.3.4", ""] {
+            assert!(crate::VersionReq::parse(bad).is_none(), "{bad}");
+        }
     }
 
     /// Phase 91 E1: a derivation record on any bound, a hazard's

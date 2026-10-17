@@ -295,6 +295,12 @@ pub const FIELDS: &[Field] = &[
         "Manifest format version. Absent means 1.",
     ),
     live(
+        "use",
+        Context::Manifest,
+        Kind::Meta,
+        "The extensions this contract uses, a map of name -> version requirement (`use: { vehicle.braking: \"^1\" }`; `^`, `~`, `=` or `>=`). With it, `hazards.<name>` and `safe_state.settle` may carry the keys those extensions declare; without it an unknown key is an error.",
+    ),
+    live(
         "rlm",
         Context::Manifest,
         Kind::Meta,
