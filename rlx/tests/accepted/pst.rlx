@@ -4,7 +4,7 @@ requires rlm >= 0.2.0
 
 dimension PressureRate = Pressure / Time
 
-key hazard.trip_setpoint   : param Pressure
+key hazard.trip_setpoint   : param Pressure unit bar
 key hazard.hazard_pressure : Pressure          "pressure at which harm begins"
 key hazard.max_rise_rate   : PressureRate      "worst credible rise, from the HAZOP"
 key settle.valve_stroke    : Time              "final element: closed from command"

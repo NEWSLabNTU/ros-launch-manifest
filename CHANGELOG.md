@@ -8,6 +8,21 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 
 ## Unreleased
 
+- **Added (`rlx`, play_launch phase 91 E4):** the evaluator (`rlx::eval`).
+  `eval_derive`, `eval_check` and `eval_report` evaluate an item on input
+  values keyed by declared path, checking its `domain:` first and refusing a
+  missing input, a division by zero, a negative `sqrt`, a `bands` slice
+  outside its table and any non-finite value (eight `rlx-*` codes, each with
+  a span), never panicking. Each records a deterministic trace: every
+  binding, every branch taken, each call and `sum over` term. `Env::reads`
+  lists what an item needs (through bindings and fns); `param_value` applies
+  `magnitude` and `unit U` to a parameter's number; `identity` is the name,
+  version and sha256 of the canonical ASCII form (one hash for both
+  spellings). All six examples reproduce their documented numbers.
+- **Fixed (examples):** process.pst's `trip_setpoint` is `param Pressure unit
+  bar` (without the unit, the parameter's 9 read as 9 Pa and the ftti came
+  out 22 s, not 4 s), and the UAV example's contract now states the settle
+  parameters its arithmetic uses.
 - **Added (play_launch phase 91 E4):** `use: { <extension>: "<requirement>" }`
   (`Manifest.uses`, `types::VersionReq` with cargo's `^ ~ = >=` meaning).
   With it, `hazards.<h>` and `safe_state.settle` may carry keys the contract

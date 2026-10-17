@@ -286,6 +286,16 @@ hazards:
     battery_capacity: 222 Wh
     trigger_soc: low_battery_fraction      # 0.30
     reserve_soc: reserve_fraction          # 0.22
+nodes:
+  failsafe:
+    paths:
+      land:
+        safe_state:
+          emits: land_cmd
+          settle:
+            descent_speed: descent_speed   # 3 m/s
+            slow_altitude: slow_altitude   # 10 m
+            land_speed: land_speed         # 0.7 m/s
 ```
 
 First check, with the claim as written:
@@ -391,7 +401,7 @@ requires rlm >= 0.2.0
 
 dimension PressureRate = Pressure / Time
 
-key hazard.trip_setpoint   : param Pressure
+key hazard.trip_setpoint   : param Pressure unit bar
 key hazard.hazard_pressure : Pressure          "pressure at which harm begins"
 key hazard.max_rise_rate   : PressureRate      "worst credible rise, from the HAZOP"
 key settle.valve_stroke    : Time              "final element: closed from command"

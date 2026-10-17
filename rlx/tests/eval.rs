@@ -230,11 +230,10 @@ fn process_safety_time() {
     let inp = inputs(
         &c,
         &[
-            // The contract names `pt101_trip_bar` (9 bar), but the key is
-            // `param Pressure` with no `unit bar`, so a raw 9 would read as
-            // 9 Pa and give 22 s. The example's 4 s needs the parameter in
-            // SI, 9e5; the extension should say `param Pressure unit bar`.
-            ("trip_setpoint", In::Param(9e5)),
+            // `pt101_trip_bar` is 9; the key is `param Pressure unit bar`,
+            // so 9 reads as 9 bar (the example first omitted the unit, and
+            // 9 Pa gave 22 s).
+            ("trip_setpoint", In::Param(9.0)),
             ("hazard_pressure", In::Text("11 bar")),
             ("max_rise_rate", In::Text("0.5 bar/s")),
             ("valve_stroke", In::Text("2s")),
