@@ -1,0 +1,1 @@
+redefinition_binding.rlx:5:19: error[rlx-redefinition]: `y` is bound twice in this `where`

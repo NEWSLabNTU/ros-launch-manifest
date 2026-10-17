@@ -1,0 +1,1 @@
+ambiguous_key.rlx:5:5: error[rlx-ambiguous-key]: `hazard.decel` and `settle.decel` both end in `decel`, so the bare name would be ambiguous; rename one

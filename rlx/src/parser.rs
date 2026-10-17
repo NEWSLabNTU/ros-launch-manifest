@@ -48,6 +48,22 @@ pub fn parse(tokens: &[Token]) -> Result<Parsed, Diagnostic> {
     })
 }
 
+/// Parse a lone expression filling the whole token list. The contract
+/// value parser uses it, so a contract writes a quantity exactly as an
+/// extension does (`30 km/h`, `256ms`).
+pub fn parse_expr(tokens: &[Token]) -> Result<Expr, Diagnostic> {
+    let mut p = Parser {
+        toks: tokens,
+        pos: 0,
+        roles: vec![Role::Plain; tokens.len()],
+    };
+    let e = p.expr()?;
+    if !p.at(&Tok::Eof) {
+        return Err(p.error("the end of the value"));
+    }
+    Ok(e)
+}
+
 type PResult<T> = Result<T, Diagnostic>;
 
 struct Parser<'a> {

@@ -1,0 +1,1 @@
+cycle_dimensions.rlx:4:11: error[rlx-cycle]: dimensions `A`, `B` are defined in terms of each other (A -> B -> A)

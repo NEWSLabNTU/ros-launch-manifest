@@ -60,7 +60,47 @@ pub mod code {
     /// A name that a quantity literal would read as a unit.
     pub const SHADOW: &str = "rlx-shadow";
 
-    /// Every code, for tests that check each one has a refused example.
+    /// Two expressions that must have one dimension do not, `sqrt` of a
+    /// dimension with an odd exponent, or a value with the wrong dimension
+    /// for its key.
+    pub const DIMENSION: &str = "rlx-dimension";
+    /// A name no binding, summation variable, parameter, key or input
+    /// declares, or a call to an undeclared function.
+    pub const UNKNOWN_NAME: &str = "rlx-unknown-name";
+    /// A dimension name that is neither built in nor declared.
+    pub const UNKNOWN_DIMENSION: &str = "rlx-unknown-dimension";
+    /// Two keys or inputs whose last path segments are the same name.
+    pub const AMBIGUOUS_KEY: &str = "rlx-ambiguous-key";
+    /// A call with the wrong number of arguments.
+    pub const ARITY: &str = "rlx-arity";
+    /// A condition, a `check`, or an operand of `and`, `or`, `not` that is
+    /// not a boolean.
+    pub const NOT_BOOLEAN: &str = "rlx-not-boolean";
+    /// A value of the wrong kind: a boolean, table or band where a quantity
+    /// belongs, or the reverse.
+    pub const TYPE: &str = "rlx-type";
+    /// A power of a dimensioned value whose exponent is not an integer
+    /// literal.
+    pub const EXPONENT: &str = "rlx-exponent";
+    /// A field or method a table or band does not have.
+    pub const MEMBER: &str = "rlx-member";
+    /// `param Dim unit U` with a unit that is not of the dimension.
+    pub const UNIT: &str = "rlx-unit";
+    /// `dimension` declarations that define each other.
+    pub const CYCLE: &str = "rlx-cycle";
+    /// A second declaration of a name: a built-in dimension, a function, a
+    /// key path, a derive target, a binding or a parameter.
+    pub const REDEFINITION: &str = "rlx-redefinition";
+    /// A `worst_case` name that is not a key or input the item uses.
+    pub const WORST_CASE: &str = "rlx-worst-case";
+    /// A `derive` whose target is not a core bound an extension may fill.
+    pub const DERIVE_TARGET: &str = "rlx-derive-target";
+    /// A contract value that is not a value of its key's type.
+    pub const VALUE: &str = "rlx-value";
+
+    /// Every code an rlx file can raise, for tests that check each one has
+    /// a refused example. `VALUE` is raised only by the contract value
+    /// parser and is tested there.
     pub const ALL: &[&str] = &[
         UTF8,
         NOT_NFC,
@@ -75,6 +115,20 @@ pub mod code {
         PARSE,
         RECURSION,
         SHADOW,
+        DIMENSION,
+        UNKNOWN_NAME,
+        UNKNOWN_DIMENSION,
+        AMBIGUOUS_KEY,
+        ARITY,
+        NOT_BOOLEAN,
+        TYPE,
+        EXPONENT,
+        MEMBER,
+        UNIT,
+        CYCLE,
+        REDEFINITION,
+        WORST_CASE,
+        DERIVE_TARGET,
     ];
 }
 
@@ -133,6 +187,28 @@ pub fn line_col(src: &[u8], offset: usize) -> (usize, usize) {
     (line, col)
 }
 
+/// `a Acceleration` to `an Acceleration`: messages put a dimension name
+/// after "a", and dimension names are the only capitalized words that do,
+/// so the article is fixed where the name is known rather than at every
+/// format string.
+pub fn fix_articles(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len() + 4);
+    let mut rest = msg;
+    while let Some(i) = rest.find("a ") {
+        let at_word = i == 0 || !rest[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+        let next = rest[i + 2..].chars().next();
+        out.push_str(&rest[..i]);
+        if at_word && next.is_some_and(|c| "AEIOU".contains(c)) {
+            out.push_str("an ");
+        } else {
+            out.push_str("a ");
+        }
+        rest = &rest[i + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `U+XXXX`, the spelling every message uses for a code point, so a reader
 /// can search a character table for it.
 pub fn code_point(c: char) -> String {
@@ -150,6 +226,14 @@ mod tests {
         let off = src.len() - 1;
         assert_eq!(line_col(src, off), (2, 3));
         assert_eq!(line_col(src, 0), (1, 1));
+    }
+
+    #[test]
+    fn articles() {
+        assert_eq!(
+            fix_articles("a Acceleration, a Time, data Area, a unit"),
+            "an Acceleration, a Time, data Area, a unit"
+        );
     }
 
     #[test]

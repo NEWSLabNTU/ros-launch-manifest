@@ -1,0 +1,1 @@
+dim_fn_argument.rlx:8:51: error[rlx-dimension]: argument 2 of `stop` (`a`) must be an Acceleration, found a Velocity

@@ -1,0 +1,5 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+fn f(x: Time) -> Time = y
+  where y = x and y = 2 x

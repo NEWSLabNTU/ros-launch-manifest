@@ -1,0 +1,1 @@
+member_table_method.rlx:8:25: error[rlx-member]: a table has one method, `bands(lo, hi)`, not `steps`

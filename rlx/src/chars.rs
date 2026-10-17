@@ -425,6 +425,10 @@ pub fn symbol_hint(c: char) -> Option<&'static str> {
         '⟶' | '➝' | '⇒' => "write `->` (or its one twin `→`)",
         '∑' => "write `sum` (or its one twin `Σ`, U+03A3)",
         '“' | '”' | '„' => "strings are delimited by ASCII `\"`",
+        '°' | '℃' | '℉' => {
+            "rlx has no affine temperature units (°C, °F); write a temperature \
+             difference in `K`, or an angle in `deg`"
+        }
         _ => return None,
     })
 }

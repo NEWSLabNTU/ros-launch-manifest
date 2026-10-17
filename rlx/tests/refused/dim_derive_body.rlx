@@ -1,0 +1,6 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.installed_distance : Length
+
+derive settle.duration : Time = installed_distance

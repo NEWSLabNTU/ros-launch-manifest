@@ -1,0 +1,8 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.installed_distance : Length
+input reaction_total : Time
+
+check c: reaction_total <= limit
+  where limit = if installed_distance > 0 m then 1 s else installed_distance

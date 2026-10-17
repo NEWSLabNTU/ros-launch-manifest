@@ -1,0 +1,1 @@
+redefinition_builtin_dimension.rlx:4:11: error[rlx-redefinition]: `Velocity` is a built-in dimension and cannot be redefined

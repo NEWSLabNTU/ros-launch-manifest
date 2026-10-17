@@ -1,0 +1,1 @@
+derive_target.rlx:6:8: error[rlx-derive-target]: `hazard.max_latency` is not a bound an extension can derive; the targets are settle.duration, hazard.detection, hazard.ftti (design section 4)

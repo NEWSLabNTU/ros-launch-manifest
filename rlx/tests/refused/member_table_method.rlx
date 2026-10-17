@@ -1,0 +1,8 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.entry_speed : Velocity
+key settle.a_ebd : table Velocity -> Acceleration
+
+derive settle.duration : Time =
+    sum over b in a_ebd.steps(0 m/s, entry_speed): (b.hi - b.lo) / b.value

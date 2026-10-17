@@ -1,0 +1,1 @@
+unknown_name.rlx:6:33: error[rlx-unknown-name]: unknown name `entry_speed`: not a `where` binding, summation variable, fn parameter, declared key or input, or core input

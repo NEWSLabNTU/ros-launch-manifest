@@ -1,0 +1,1 @@
+not_boolean_check.rlx:6:10: error[rlx-not-boolean]: check `c` must be a boolean (a comparison), found a Length

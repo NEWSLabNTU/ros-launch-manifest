@@ -93,7 +93,7 @@ fn accepted_corpus_round_trips() {
                     .join("\n")
             )
         });
-        assert!(!checked.file.items.is_empty());
+        assert!(!checked.file().items.is_empty());
 
         // The canonical form is a fixed point of `fmt --ascii`.
         assert_eq!(
@@ -231,4 +231,113 @@ fn binary_exit_codes() {
     assert_eq!(out.stdout, fs::read(&good).unwrap());
     let out = Command::new(bin).arg("fmt").arg(&good).output().unwrap();
     assert_eq!(out.status.code(), Some(2));
+}
+
+/// Every value the example contracts write for an extension key parses
+/// against that key's type, and converts to the SI value the examples'
+/// arithmetic uses.
+#[test]
+fn example_contract_values_parse() {
+    use rlx::value::ContractValue;
+    /// (key, value as written, SI value; `None` for a parameter name).
+    type Row = (&'static str, &'static str, Option<f64>);
+    let cases: &[(&str, &[Row])] = &[
+        (
+            "braking.rlx",
+            &[
+                ("entry_speed", "30 km/h", Some(30.0 / 3.6)),
+                ("decel", "target_acceleration", None),
+                ("jerk", "target_jerk", None),
+            ],
+        ),
+        (
+            "iso13855.rlx",
+            &[
+                ("detection_capability", "30 mm", Some(0.03)),
+                ("device_response", "15ms", Some(0.015)),
+                ("installed_distance", "520 mm", Some(0.52)),
+            ],
+        ),
+        (
+            "occlusion.rlx",
+            &[
+                ("min_rate", "1 mL/h", Some(1e-6 / 3600.0)),
+                (
+                    "compliance",
+                    "0.003 mL/mmHg",
+                    Some(0.003e-6 / 133.322387415),
+                ),
+                ("baseline_pressure", "20 mmHg", Some(20.0 * 133.322387415)),
+                ("alarm_threshold", "occlusion_limit_mmhg", None),
+                ("signal_delay", "5s", Some(5.0)),
+            ],
+        ),
+        (
+            "descent.rlx",
+            &[
+                ("max_altitude", "120 m", Some(120.0)),
+                ("hover_power", "600 W", Some(600.0)),
+                ("battery_capacity", "222 Wh", Some(222.0 * 3600.0)),
+                ("trigger_soc", "low_battery_fraction", None),
+                ("reserve_soc", "reserve_fraction", None),
+            ],
+        ),
+        (
+            "ebd.rlx",
+            &[
+                ("entry_speed", "160 km/h", Some(160.0 / 3.6)),
+                ("distance_to_eoa", "1600 m", Some(1600.0)),
+                ("traction_cut_off", "1.0s", Some(1.0)),
+                ("brake_build_up", "2.5s", Some(2.5)),
+            ],
+        ),
+        (
+            "pst.rlx",
+            &[
+                ("trip_setpoint", "pt101_trip_bar", None),
+                ("hazard_pressure", "11 bar", Some(1.1e6)),
+                ("max_rise_rate", "0.5 bar/s", Some(0.5e5)),
+                ("valve_stroke", "2s", Some(2.0)),
+            ],
+        ),
+    ];
+    for (file, values) in cases {
+        let bytes = fs::read(dir("accepted").join(file)).unwrap();
+        let checked = check_source(&bytes).unwrap();
+        let env = &checked.env;
+        for &(key, text, want) in *values {
+            let ty = &env.key(key).unwrap_or_else(|| panic!("{file}: {key}")).ty;
+            let got = env
+                .parse_value(text, ty)
+                .unwrap_or_else(|d| panic!("{file}: {key}: {text}: {}", d.message));
+            match (got, want) {
+                (ContractValue::Quantity(q), Some(w)) => {
+                    assert!(
+                        (q.si - w).abs() <= 1e-9 * w.abs(),
+                        "{file}: {key}: {} != {w}",
+                        q.si
+                    )
+                }
+                (ContractValue::Param(p), None) => assert_eq!(p, text),
+                (got, want) => panic!("{file}: {key}: {got:?} vs {want:?}"),
+            }
+        }
+    }
+    // The rail table, as example 5 writes it.
+    let bytes = fs::read(dir("accepted").join("ebd.rlx")).unwrap();
+    let checked = check_source(&bytes).unwrap();
+    let ty = &checked.env.key("a_ebd").unwrap().ty;
+    let rows = checked
+        .env
+        .parse_table(&[("0 km/h", "0.75 m/s^2"), ("100 km/h", "0.70 m/s^2")], ty)
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+}
+
+/// `fmt` needs only the syntax: a file with a dimension error still formats.
+#[test]
+fn fmt_does_not_need_the_type_check() {
+    let bytes = fs::read(dir("refused").join("dim_sqrt_unit_bug.rlx")).unwrap();
+    assert!(check_source(&bytes).is_err());
+    assert!(format_source(&bytes, Style::Unicode).is_ok());
 }

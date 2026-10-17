@@ -1,0 +1,21 @@
+-- share/rlm_ext_vehicle/rlm/braking.rlx
+extension vehicle.braking 1.0.0
+requires rlm >= 0.2.0
+
+key hazard.entry_speed : Velocity              "speed bound of the operating domain"
+key settle.decel       : param Acceleration magnitude
+key settle.jerk        : param Jerk magnitude
+input settle.response  : Time = 0 s            -- core bound
+
+derive settle.duration : Time =
+    response + braking_time(entry_speed, decel, jerk)
+  worst_case:
+    increasing in entry_speed, response
+    decreasing in decel, jerk
+  domain:
+    entry_speed in (0 m/s, 70 m/s]
+
+fn braking_time(v0: Velocity, a: Acceleration, j: Jerk) -> Time =
+    if v0 > v_r then a / j + (v0 - v_r) / a
+    else sqrt(2 v0 / a)
+  where v_r = a^2 / (2 j)                      -- speed shed during the jerk ramp

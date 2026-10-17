@@ -1,0 +1,1 @@
+exponent_non_integer.rlx:6:40: error[rlx-exponent]: the base of `^` is a Length, so its exponent must be an integer literal (`2`, `-1`): only then does the result have one dimension

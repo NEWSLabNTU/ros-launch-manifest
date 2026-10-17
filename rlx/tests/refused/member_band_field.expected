@@ -1,0 +1,1 @@
+member_band_field.rlx:8:70: error[rlx-member]: a band has the fields `lo`, `hi` and `value`, not `decel`

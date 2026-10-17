@@ -1,0 +1,1 @@
+dim_sqrt_odd.rlx:6:26: error[rlx-dimension]: `sqrt` halves every exponent of its argument, which must therefore all be even, but the argument is Length; the result should be a Length, so the argument should be Area

@@ -1,0 +1,1 @@
+dim_sqrt_unit_bug.rlx:20:15: error[rlx-dimension]: `sqrt` halves every exponent of its argument, which must therefore all be even, but the argument is Time; the result should be a Time, so the argument should be Time^2

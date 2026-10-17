@@ -6,7 +6,7 @@
 //! `fmt` without `--check` writes the formatted text to stdout and takes one
 //! file, so its output is never an ambiguous concatenation.
 
-use rlx::{Style, check_source};
+use rlx::{Style, check_source, parse_source};
 use std::{fs, process::ExitCode};
 
 const USAGE: &str =
@@ -90,7 +90,7 @@ fn fmt(args: &[String]) -> ExitCode {
             ok = false;
             continue;
         };
-        match check_source(&bytes) {
+        match parse_source(&bytes) {
             Err(diags) => {
                 report(path, &bytes, &diags);
                 ok = false;

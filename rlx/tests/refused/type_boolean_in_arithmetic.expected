@@ -1,0 +1,1 @@
+type_boolean_in_arithmetic.rlx:6:21: error[rlx-type]: `*` needs a quantity, found a boolean

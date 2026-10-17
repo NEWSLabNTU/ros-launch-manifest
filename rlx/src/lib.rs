@@ -5,9 +5,10 @@
 //! it. The design is `docs/design/extension-system.md`; this crate is unit E2
 //! of play_launch phase 91: the character rules, the tokenizer and parser
 //! for both layers (the extension format and the expression core), the
-//! purely syntactic refusals, and the formatter. Dimension checking (E3) and
-//! evaluation (E4) build on the tree defined in [`ast`]; nothing here gives
-//! a unit or a name a meaning.
+//! purely syntactic refusals, and the formatter; and unit E3: dimensions
+//! ([`dim`]), units with their scales ([`units`]), the load-time checker
+//! ([`typeck`]) and contract values ([`value`]). Evaluation (E4) builds on
+//! the same tree, [`ast`].
 //!
 //! # Pipeline
 //!
@@ -20,7 +21,12 @@
 //!    symbol rules outside comments and strings;
 //! 3. the parser ([`parser::parse`]), first error only;
 //! 4. the tree refusals ([`refuse::refuse`]): recursion, and names a
-//!    quantity would read as units.
+//!    quantity would read as units;
+//! 5. the load-time type check ([`typeck::check`]): names, dimensions and
+//!    kinds in every branch (E3).
+//!
+//! [`value`] checks a contract's value against a key's type, with the same
+//! lexer and parser, and converts it to SI base units.
 //!
 //! # Grammar
 //!
@@ -122,32 +128,52 @@
 pub mod ast;
 pub mod chars;
 pub mod diag;
+pub mod dim;
 pub mod fmt;
 pub mod lexer;
 pub mod parser;
 pub mod refuse;
+pub mod typeck;
 pub mod units;
+pub mod value;
 
 pub use diag::{Diagnostic, Span};
 pub use fmt::Style;
 
-/// A file that passed every check in this crate.
-pub struct Checked<'a> {
+/// A file that passed the syntactic stages (1 to 4 above).
+pub struct Syntax<'a> {
     pub source: &'a str,
     pub tokens: Vec<lexer::Token>,
     pub file: ast::File,
     roles: Vec<parser::Role>,
 }
 
-impl Checked<'_> {
+impl Syntax<'_> {
     /// The file in `style` (see [`fmt`]).
     pub fn format(&self, style: Style) -> String {
         fmt::format(self.source, &self.tokens, &self.roles, style)
     }
 }
 
+/// A file that passed every check, the load-time type check included.
+pub struct Checked<'a> {
+    pub syntax: Syntax<'a>,
+    /// What the extension declares, for contract values and evaluation.
+    pub env: typeck::Env,
+}
+
+impl Checked<'_> {
+    pub fn file(&self) -> &ast::File {
+        &self.syntax.file
+    }
+
+    pub fn format(&self, style: Style) -> String {
+        self.syntax.format(style)
+    }
+}
+
 /// Run the character rules, tokenizer, parser and tree refusals.
-pub fn check_source(bytes: &[u8]) -> Result<Checked<'_>, Vec<Diagnostic>> {
+pub fn parse_source(bytes: &[u8]) -> Result<Syntax<'_>, Vec<Diagnostic>> {
     let source = chars::prepass(bytes)?;
     let (tokens, diags) = lexer::lex(source);
     if !diags.is_empty() {
@@ -158,7 +184,7 @@ pub fn check_source(bytes: &[u8]) -> Result<Checked<'_>, Vec<Diagnostic>> {
     if !diags.is_empty() {
         return Err(diags);
     }
-    Ok(Checked {
+    Ok(Syntax {
         source,
         tokens,
         file: parsed.file,
@@ -166,8 +192,17 @@ pub fn check_source(bytes: &[u8]) -> Result<Checked<'_>, Vec<Diagnostic>> {
     })
 }
 
-/// Format a file, refusing one that does not check: the roles that decide
-/// how a token renders come from the parse.
+/// Every check: [`parse_source`], then the load-time type check
+/// ([`typeck::check`]).
+pub fn check_source(bytes: &[u8]) -> Result<Checked<'_>, Vec<Diagnostic>> {
+    let syntax = parse_source(bytes)?;
+    let env = typeck::check(&syntax.file)?;
+    Ok(Checked { syntax, env })
+}
+
+/// Format a file. Only the syntactic stages must pass: the roles that
+/// decide how a token renders come from the parse, and a file with a
+/// dimension error is still worth formatting.
 pub fn format_source(bytes: &[u8], style: Style) -> Result<String, Vec<Diagnostic>> {
-    Ok(check_source(bytes)?.format(style))
+    Ok(parse_source(bytes)?.format(style))
 }

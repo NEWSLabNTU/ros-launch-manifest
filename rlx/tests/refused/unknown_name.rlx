@@ -1,0 +1,6 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+key settle.decel : param Acceleration magnitude
+
+derive settle.duration : Time = entry_speed / decel

@@ -1,0 +1,9 @@
+extension test.refused 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.entry_speed : Velocity
+key settle.decel : param Acceleration magnitude
+key settle.jerk : param Jerk magnitude
+
+derive settle.duration : Time = entry_speed / decel
+  worst_case: increasing in entry_speed; decreasing in decel, jerk

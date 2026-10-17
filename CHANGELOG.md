@@ -6,6 +6,26 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+- **Added (`rlx`, play_launch phase 91 E3):** dimensions, units and the
+  load-time checker. Dimensions are integer exponents over the seven SI base
+  dimensions, with a built-in table of named ones (Velocity, Acceleration,
+  Jerk, Pressure, Energy, ...) and `dimension X = ...` declarations (any
+  order; a cycle, an unknown name or a redefined built-in is refused). Each
+  unit has a dimension and an f64 factor to SI (mmHg, mL, km/h, min, h, Wh,
+  bar, deg, ...); affine temperature units are refused. Every expression in
+  every branch is checked when the file loads, used or not: the exploration's
+  unit bug `sqrt(2 v0 / a)` is refused ("the argument is Time; ... should be
+  Time^2"). A bare name resolves to a binding, a `sum over` variable, a `fn`
+  parameter, then a key or input by its last segment; two keys sharing a last
+  segment are refused (`rlx-ambiguous-key`), so a bare name is never
+  ambiguous. The value API (`Env::parse_value`, `parse_table`) checks a
+  contract value against its key type: `30 km/h` converts, a bare `15` for a
+  Velocity needs a unit, `15 s` names both dimensions. Fourteen new codes;
+  the refused corpus has 51 files. A derive may target only `settle.duration`,
+  `hazard.detection` or `hazard.ftti` (design section 4).
+
 ## v0.1.65 - 2026-10-17
 
 The core interface extensions read and fill, and the front end of their
