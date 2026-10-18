@@ -472,6 +472,35 @@ topics = ["/perception/objects"]
 "#;
 
     #[test]
+    fn a_tier_above_the_transport_rides_into_the_model() {
+        // `above = "transport"` is part of the verbatim tier schema, so the
+        // model's execution table carries it to the realizer that owns the
+        // address plan.
+        let toml = r#"
+[[component]]
+pkg = "p"
+class = "p::C"
+name = "handler"
+group_tiers = { main = "mrm" }
+[tiers.mrm]
+spin_period = "10ms"
+above = "transport"
+"#;
+        let cfg = parse_system_config(toml).expect("parses");
+        let mut e = Execution::default();
+        cfg.apply_to(&mut e, &["/handler"]).expect("applies");
+        assert_eq!(
+            e.tiers["mrm"].above,
+            Some(ros_launch_manifest_sched::ReservedBand::Transport)
+        );
+        // And through the model's serialized (YAML) form.
+        let yaml = serde_yaml_ng::to_string(&e.tiers["mrm"]).unwrap();
+        assert!(yaml.contains("above: transport"), "{yaml}");
+        let back: ros_launch_manifest_sched::TierDef = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(back, e.tiers["mrm"]);
+    }
+
+    #[test]
     fn reads_tiers_lifecycle_and_group_tier_bindings() {
         // A system.toml with inline [tiers.*], [[component]] group_tiers and
         // a `[lifecycle]` table this crate does not declare (ignored).

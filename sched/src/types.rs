@@ -59,6 +59,14 @@ pub struct TierDef {
         skip_serializing_if = "Option::is_none"
     )]
     pub spin_period: Option<ros_launch_manifest_types::duration::Duration>,
+    /// `above = "transport"`: this tier is placed above a reserved SYSTEM
+    /// band rather than in the application pool (nano-ros RFC-0079 section
+    /// 6, "crossing into a reserved band requires naming it"). Portable: it
+    /// states something about the system, not about one kernel's numbering,
+    /// so it lives on the head, not in a platform sub-table. The band names
+    /// are a closed set; an unknown one is a parse error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub above: Option<ReservedBand>,
 
     // Per-platform placement sub-tables. `posix` is Linux RT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +79,30 @@ pub struct TierDef {
     pub threadx: Option<TierPlatformSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nuttx: Option<TierPlatformSpec>,
+}
+
+/// A reserved band a tier may be placed above (`[tiers.<name>] above`).
+///
+/// The bands themselves are a port's address plan (which priorities the
+/// transport tasks hold); this names one, and the realizer that owns the
+/// plan places the tier. `transport` is the only band a tier may name: it is
+/// the one the application's executors wait behind (the zenoh read, lease
+/// and flush tasks).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReservedBand {
+    /// The transport tasks' band.
+    Transport,
+}
+
+impl ReservedBand {
+    /// The band's name as written (`"transport"`), which is also its key in
+    /// a port's `reserved.*` plan.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReservedBand::Transport => "transport",
+        }
+    }
 }
 
 impl TierDef {

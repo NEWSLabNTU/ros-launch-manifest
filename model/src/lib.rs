@@ -1901,7 +1901,7 @@ pub struct Deploy {
 /// `stack_bytes`, `core`, `sched_class`, `preempt_threshold`, per-platform
 /// `deadline_us` override). One schema for the authoring form
 /// (`system.toml`), the model, and the `SchedMapper` pipeline.
-pub use ros_launch_manifest_sched::types::{TierDef, TierPlatformSpec};
+pub use ros_launch_manifest_sched::types::{ReservedBand, TierDef, TierPlatformSpec};
 
 #[cfg(test)]
 mod order_tests {

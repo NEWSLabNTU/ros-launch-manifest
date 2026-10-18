@@ -11,7 +11,7 @@ pub mod types;
 
 pub use parse::parse_system_sched;
 pub use resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError, SchedNode, resolve};
-pub use types::{AssignRule, SystemSched, TierDef, TierPlatformSpec};
+pub use types::{AssignRule, ReservedBand, SystemSched, TierDef, TierPlatformSpec};
 
 // --- v2 (derived) model: platform-file schema, SchedMapper, legacy bridge,
 // conflict-semantics validation (Phase 41.1). Additive: everything above

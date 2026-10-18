@@ -560,6 +560,7 @@ period      = "20ms"       # period_us
 budget      = "5ms"        # budget_us
 deadline_policy = "warn"   # ignore | warn | skip | fault
 spin_period = "1ms"        # spin_period_us
+# above = "transport"      # optional: placed above the reserved transport band
 
 [[assign]]
 tier  = "control"
@@ -589,6 +590,13 @@ and `rr_timeslice_us` in the v2 file) are accepted as deprecated aliases.
   Vec<AssignRule> }`**, `deny_unknown_fields` on the generic `TierDef`
   head — a stray `priority` on the head is a parse error; that is what
   enforces "no priority leakage" portability.
+- **`above = "transport"`** on the head (`ReservedBand`, a closed set whose
+  one member is `transport`; anything else is a parse error, and the key is
+  refused in a platform sub-table). It states a system fact, not a number:
+  the tier is placed above the port's reserved transport band instead of in
+  its application pool. This crate only carries it; the realizer that owns
+  the port's address plan (nano-ros RFC-0079 section 6) places the tier, and
+  decides what a platform without a transport band does with it.
 - **`TierPlatformSpec`** per target sub-table (`posix`, `freertos`,
   `zephyr`, `threadx`, `nuttx`): `priority: i64` (i64 admits Zephyr
   negative coop priorities), `stack_bytes`, `core`, `sched_class`,
