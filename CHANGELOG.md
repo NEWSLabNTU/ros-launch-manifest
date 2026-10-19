@@ -6,6 +6,25 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.67 - 2026-10-19
+
+A tier names the reserved band it crosses (nano-ros RFC-0079 section 6,
+issue 1967). GRAMMAR_VERSION 0.1.67. Workspace Cargo 0.1.19 -> 0.1.20:
+`TierDef` gains a public field (`above`).
+
+### Added
+
+- System config: `[tiers.<name>] above = "transport"` places a tier above
+  the port's reserved transport band instead of in its application pool
+  ("crossing into a reserved band requires naming it"). The value is
+  `ReservedBand` (`sched::ReservedBand`, re-exported by `model`), a closed
+  set whose one member is `transport`: a misspelt band is a parse error
+  naming the band. The key is refused in a platform sub-table, because it
+  is a system fact rather than one kernel's number. rlm carries it verbatim
+  into the model's `execution.tiers`; the realizer that owns the port's
+  address plan places the tier. A `TierDef` struct literal without
+  `..Default::default()` needs the new field.
+
 ## v0.1.66 - 2026-10-17
 
 Extensions that check and derive (play_launch phase 91 E3, E4): the rlx
