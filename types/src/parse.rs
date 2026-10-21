@@ -1844,6 +1844,14 @@ fn parse_endpoints(
                         }
                     }
                 }
+                if key != "cli" && props.call.is_some() {
+                    return Err(field_err(
+                        &path,
+                        "call",
+                        "`call` says how a CLIENT waits for its response (`blocking` or \
+                         `async`); a publisher or a subscriber sends or takes no response",
+                    ));
+                }
                 if key != "pub" && props.on_demand.is_some() {
                     return Err(field_err(
                         &path,
@@ -1934,6 +1942,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         min_interarrival,
         budget,
         budget_period,
+        call: parse_call_mode(yaml, ctx)?,
     };
     if let (Some(gap), Some(need)) = (
         props.min_interarrival,
@@ -2003,6 +2012,26 @@ fn parse_criticality(doc: &Yaml, ctx: &str) -> Result<Option<String>, ParseError
             &format!(
                 "`{other}` is not a criticality — accepted: high, medium, low. An unknown \
                  value used to be read as no declaration at all"
+            ),
+        )),
+    }
+}
+
+/// `call: blocking | async` on a client (since v0.1.69). A closed set: an
+/// unknown value is an error, never "not stated".
+fn parse_call_mode(doc: &Yaml, ctx: &str) -> Result<Option<CallMode>, ParseError> {
+    let Some(raw) = yaml_string(doc, "call", ctx)? else {
+        return Ok(None);
+    };
+    match raw.as_str() {
+        "blocking" => Ok(Some(CallMode::Blocking)),
+        "async" => Ok(Some(CallMode::Async)),
+        other => Err(field_err(
+            ctx,
+            "call",
+            &format!(
+                "`{other}` is not a call mode -- accepted: blocking (the sending callback \
+                 waits for the response), async (a later callback takes it)"
             ),
         )),
     }
@@ -2282,6 +2311,7 @@ fn parse_actions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ActionDecl>, 
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         reject_unknown_keys(v, ctx, Context::Action)?;
+        let call_mode = parse_call_mode(v, &format_path(ctx, &format!("actions.{name}")))?;
         out.insert(
             name,
             ActionDecl {
@@ -2291,6 +2321,7 @@ fn parse_actions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ActionDecl>, 
                 server: yaml_string_list(v, "server", ctx)?,
                 client: yaml_string_list(v, "client", ctx)?,
                 external: parse_external_endpoint_side(v, "external", ctx)?,
+                call: call_mode,
             },
         );
     }
@@ -3562,6 +3593,53 @@ hazards:
             (
                 "nodes:\n  n:\n    sub:\n      a: { min_rate_hz: 10, min_interarrival: 150ms }\n",
                 "cannot arrive both that often and that seldom",
+            ),
+        ] {
+            let err = super::parse_manifest_str(bad).unwrap_err().to_string();
+            assert!(err.contains(needle), "{bad}: {err}");
+        }
+    }
+
+    /// v0.1.69 (nano-ros RFC-0108 D8.3): a client states how it waits for
+    /// its response, `call: blocking | async`, on a `cli:` endpoint and on an
+    /// action (for every client it lists). Absent stays "not stated"; any
+    /// other value, and the key on a publisher or a subscriber, is refused.
+    #[test]
+    fn a_clients_call_is_blocking_or_async() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  n:\n    cli:\n      a: { call: blocking }\n\
+             \x20     b: { call: async }\n\
+             \x20     c: {}\n\
+             actions:\n  go:\n    type: x/action/Go\n    client: [n/go]\n    call: blocking\n\
+             \x20 stay:\n    type: x/action/Go\n    client: [n/stay]\n",
+        )
+        .unwrap();
+        let n = &m.nodes["n"];
+        assert_eq!(n.cli["a"].call, Some(CallMode::Blocking));
+        assert_eq!(n.cli["b"].call, Some(CallMode::Async));
+        assert_eq!(n.cli["c"].call, None);
+        assert_eq!(m.actions["go"].call, Some(CallMode::Blocking));
+        assert_eq!(m.actions["stay"].call, None);
+        for (bad, needle) in [
+            (
+                "nodes:\n  n:\n    cli:\n      a: { call: sync }\n",
+                "is not a call mode",
+            ),
+            (
+                "actions:\n  go:\n    type: x/action/Go\n    call: maybe\n",
+                "is not a call mode",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      o: { call: async }\n",
+                "how a CLIENT waits",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      i: { call: blocking }\n",
+                "how a CLIENT waits",
+            ),
+            (
+                "nodes:\n  n:\n    srv:\n      s: { call: blocking }\n",
+                "call",
             ),
         ] {
             let err = super::parse_manifest_str(bad).unwrap_err().to_string();

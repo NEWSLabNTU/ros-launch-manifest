@@ -837,6 +837,15 @@ pub struct Contracts {
     /// Service server guarantees.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub srv_endpoints: BTreeMap<String, SrvContract>,
+    /// Service client facts (since v0.1.69), keyed like the other endpoint
+    /// maps. A client with nothing stated has no entry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cli_endpoints: BTreeMap<String, CliContract>,
+    /// Action client facts (since v0.1.69), keyed by the client endpoint ref
+    /// `actions.<a>.client` lists (`"<node FQN>/<endpoint>"`). The
+    /// contract's `actions.<a>.call` applies to every client of the action.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub action_cli_endpoints: BTreeMap<String, CliContract>,
     /// Node processing paths (take → publish).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_paths: BTreeMap<String, PathContract>,
@@ -1261,6 +1270,8 @@ impl Contracts {
         self.pub_endpoints.is_empty()
             && self.sub_endpoints.is_empty()
             && self.srv_endpoints.is_empty()
+            && self.cli_endpoints.is_empty()
+            && self.action_cli_endpoints.is_empty()
             && self.node_paths.is_empty()
             && self.scope_paths.is_empty()
             && self.topics.is_empty()
@@ -1594,6 +1605,28 @@ pub struct SrvContract {
     /// The server period of `budget_ms`, ms (since v0.1.68).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_period_ms: Option<f64>,
+}
+
+/// A client's facts (since v0.1.69): a service client (`cli.<e>`) or an
+/// action client (`actions.<a>.client`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CliContract {
+    /// How the code waits for the response (contract `call`). Absent means
+    /// not stated, which is not the same as `async`: a consumer that refuses
+    /// a blocking call to a level that cannot preempt the client checks a
+    /// stated call and reports an unstated one (nano-ros RFC-0108 D8.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<CallMode>,
+}
+
+/// How a client waits for its response (since v0.1.69).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CallMode {
+    /// The callback that sends the request waits for the response.
+    Blocking,
+    /// The request is sent and a later callback takes the response.
+    Async,
 }
 
 /// A causal path with a latency budget. Node paths: input/output are
@@ -2126,6 +2159,33 @@ mod tests {
             (None, None, None)
         );
         assert!(!serde_yaml_ng::to_string(&old).unwrap().contains("budget"));
+        // v0.1.69: a client's call mode round-trips in both maps, and a
+        // model written before it still reads.
+        let mut c = Contracts::default();
+        c.cli_endpoints.insert(
+            "/n/ask".into(),
+            CliContract {
+                call: Some(CallMode::Blocking),
+            },
+        );
+        c.action_cli_endpoints.insert(
+            "/n/goal".into(),
+            CliContract {
+                call: Some(CallMode::Async),
+            },
+        );
+        assert!(!c.is_empty());
+        let y = serde_yaml_ng::to_string(&c).unwrap();
+        assert!(y.contains("call: blocking"), "{y}");
+        assert!(y.contains("call: async"), "{y}");
+        assert_eq!(serde_yaml_ng::from_str::<Contracts>(&y).unwrap(), c);
+        let old: Contracts = serde_yaml_ng::from_str("srv_endpoints: {}\n").unwrap();
+        assert!(old.cli_endpoints.is_empty() && old.action_cli_endpoints.is_empty());
+        assert!(
+            !serde_yaml_ng::to_string(&old)
+                .unwrap()
+                .contains("cli_endpoints")
+        );
         // v0.1.63: a mode override carries its resolved target, and one
         // written before v0.1.63 (no `resolved`) still reads.
         let ov = ModeOverrideContract {

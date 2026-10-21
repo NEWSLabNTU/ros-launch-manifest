@@ -1314,6 +1314,29 @@ pub struct EndpointProps {
     /// and only meaningful beside, `budget`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_period: Option<crate::duration::Duration>,
+    /// Client only (since v0.1.69, nano-ros RFC-0108 D8.3): whether the
+    /// code waits for the response inside the callback that sends the
+    /// request (`blocking`) or sends it and drains the response on a later
+    /// release (`async`). Absent means not stated: a consumer that checks
+    /// blocking calls across preemption levels checks only a stated one,
+    /// and reports an unstated one. Refused under `pub:`/`sub:`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call: Option<CallMode>,
+}
+
+/// How a client waits for its response (`cli.<e>.call`, and
+/// `actions.<a>.call`; since v0.1.69).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CallMode {
+    /// The callback that sends the request waits for the response. Under a
+    /// preemptive executor the server must run at a more urgent level, or
+    /// the wait is a priority inversion (a less urgent server) or a
+    /// deadlock (a server at the client's own level).
+    Blocking,
+    /// The request is sent and the response is taken by a later callback;
+    /// the sender never waits.
+    Async,
 }
 
 /// A subscriber's ingress bound, `sub.<e>.ingress: { rate_hz, burst }`
@@ -1492,6 +1515,10 @@ pub struct ActionDecl {
     /// [`ServiceDecl::external`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalEndpointSide>,
+    /// How every client listed in `client` waits for its result (since
+    /// v0.1.69). See [`EndpointProps::call`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call: Option<CallMode>,
 }
 
 /// Include declaration: an inline scope.

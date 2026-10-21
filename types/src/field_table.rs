@@ -563,6 +563,12 @@ pub const FIELDS: &[Field] = &[
         "Subscriber: the server period P of `budget`. Only beside `budget`.",
     ),
     live(
+        "call",
+        Context::Endpoint,
+        Kind::Fact,
+        "Client: how the code waits for the response. `blocking`: the callback that sends the request waits for it, so under a preemptive executor the server must run at a more urgent level (a less urgent one is a priority inversion, its own level a deadlock). `async`: the request is sent and a later callback takes the response. Absent means not stated: a consumer checks a stated call and reports an unstated one. Refused under `pub:`/`sub:`.",
+    ),
+    live(
         "buffer",
         Context::Endpoint,
         Kind::Fact,
@@ -763,6 +769,12 @@ pub const FIELDS: &[Field] = &[
         Context::Action,
         Kind::Meta,
         "Mark one side of this action as provided by an external system: server | client | both.",
+    ),
+    live(
+        "call",
+        Context::Action,
+        Kind::Fact,
+        "How every client in `client` waits for its result: `blocking` (the callback that sends the goal waits for the result) or `async` (a later callback takes it). Absent means not stated. See `call` on a `cli:` endpoint.",
     ),
     // ── includes.<name>, the retired file-reference form ──
     removed(
@@ -1644,6 +1656,8 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Supervision, "switch", "0.1.61"),
     (Context::TimerRate, "value", "0.1.61"),
     (Context::TimerRate, "source", "0.1.61"),
+    (Context::Endpoint, "call", "0.1.69"),
+    (Context::Action, "call", "0.1.69"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

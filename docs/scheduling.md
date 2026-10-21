@@ -57,6 +57,17 @@ reads them there: nano-ros RFC-0108 D1 classifies each callback as periodic,
 sporadic, served or unanalysable, and refuses an unanalysable event input on
 an image that supervises a deadline.
 
+**A client's call mode is carried, not ranked** (since v0.1.69). A
+service client (`cli.<e>.call`) or an action's clients (`actions.<a>.call`)
+may state whether the callback that sends the request waits for the
+response (`blocking`) or a later callback takes it (`async`). The model
+carries it in `Contracts::cli_endpoints` and
+`Contracts::action_cli_endpoints` (`CliContract::call`), absent when
+unstated. A consumer with preemption levels reads it there: nano-ros
+RFC-0108 D8.3 refuses a blocking call whose server runs at the client's
+own level (a deadlock) or a less urgent one (an inversion), and reports an
+unstated call to such a server.
+
 **Cost is authorable, and a deadline is never a cost.** `DeriveFacts` is the
 one input the model does not carry, because it differs per platform:
 play_launch fills `node_exec_ms` from the platform file's `budget`
