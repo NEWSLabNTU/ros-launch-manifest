@@ -6,6 +6,33 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.68 - 2026-10-21
+
+An input's release bound (nano-ros RFC-0108 D1, phase-509 P4).
+GRAMMAR_VERSION 0.1.68. Additive for every contract and model written
+before it. Workspace Cargo 0.1.20 -> 0.1.21: `EndpointProps`,
+`SrvEndpointProps`, `SubContract` and `SrvContract` gain public fields.
+
+### Added
+
+- Contract, on a `sub:` endpoint and a `srv:` server:
+  - `min_interarrival: <duration>` -- the least time between two
+    arrivals. The callback is then a sporadic task (T_min).
+  - `budget: <duration>` + `budget_period: <duration>` -- the execution
+    time the callback may use per server period. The callback is then
+    served: put behind a server and analysed as a periodic task (Q, P).
+
+  Refused: a value that is not a positive duration with a unit; a
+  `budget` without `budget_period`, and the reverse; a `budget` longer
+  than its period; any of the three under `pub:`/`cli:`; a
+  `min_interarrival` longer than `1 / min_rate_hz` on the same subscriber.
+  An event input with none of these and no rate bound is what a consumer
+  calls unanalysable; nano-ros refuses it on an image whose contract
+  supervises a deadline.
+- Model: `SubContract` and `SrvContract` gain `min_interarrival_ms`,
+  `budget_ms` and `budget_period_ms`, absent when unstated. A struct
+  literal without `..Default::default()` needs the new fields.
+
 ## v0.1.67 - 2026-10-19
 
 A tier names the reserved band it crosses (nano-ros RFC-0079 section 6,
