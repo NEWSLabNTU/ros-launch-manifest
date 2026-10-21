@@ -1292,6 +1292,28 @@ pub struct EndpointProps {
     /// unstated burst can never read as unbounded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress: Option<IngressDecl>,
+    /// Subscriber only (since v0.1.68, nano-ros RFC-0108 D1): the least time
+    /// between two arrivals at this input. With it the callback is a
+    /// SPORADIC task (T_min); without it, or a rate bound, or a `budget`, an
+    /// event input's arrivals are unbounded and no response-time analysis
+    /// can bound the interference its callback adds. Not the same statement
+    /// as `max_rate_hz`: a rate bounds arrivals per second on average, a
+    /// minimum inter-arrival bounds every pair. Refused under `pub:`/`cli:`,
+    /// and when it exceeds `1 / min_rate_hz` (the input would have to arrive
+    /// both at least that often and at most that often).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_interarrival: Option<crate::duration::Duration>,
+    /// Subscriber only (since v0.1.68, nano-ros RFC-0108 D1): the execution
+    /// budget Q the callback may use per `budget_period` P. With it the
+    /// callback is SERVED: put behind a server (sporadic, deferrable or
+    /// constant-bandwidth) and analysed as a periodic task (Q, P). Requires
+    /// `budget_period`; refused when Q exceeds P.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<crate::duration::Duration>,
+    /// The server period P of [`Self::budget`] (since v0.1.68). Required by,
+    /// and only meaningful beside, `budget`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_period: Option<crate::duration::Duration>,
 }
 
 /// A subscriber's ingress bound, `sub.<e>.ingress: { rate_hz, burst }`
@@ -1323,6 +1345,17 @@ pub struct SrvEndpointProps {
     /// Max time from request to response (runtime monitoring only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_response: Option<crate::bound::Bound>,
+    /// The least time between two requests (since v0.1.68, nano-ros
+    /// RFC-0108 D1). See [`EndpointProps::min_interarrival`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_interarrival: Option<crate::duration::Duration>,
+    /// The execution budget per `budget_period` (since v0.1.68). See
+    /// [`EndpointProps::budget`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<crate::duration::Duration>,
+    /// The server period of `budget` (since v0.1.68).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_period: Option<crate::duration::Duration>,
 }
 
 /// Topic declaration.

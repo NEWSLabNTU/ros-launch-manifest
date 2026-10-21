@@ -1538,6 +1538,20 @@ pub struct SubContract {
     /// consumer never has to invent a burst.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ingress: Option<IngressContract>,
+    /// The least time between two arrivals, ms (contract
+    /// `sub.<e>.min_interarrival`, since v0.1.68; nano-ros RFC-0108 D1): a
+    /// sporadic task's T_min. Absent means not stated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_interarrival_ms: Option<f64>,
+    /// The execution budget Q per [`Self::budget_period_ms`], ms (contract
+    /// `budget`, since v0.1.68): the callback is served, analysed as a
+    /// periodic task (Q, P). Present exactly when `budget_period_ms` is: the
+    /// grammar refuses one without the other, and Q > P.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_ms: Option<f64>,
+    /// The server period P of [`Self::budget_ms`], ms (since v0.1.68).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_period_ms: Option<f64>,
 }
 
 /// A subscriber's ingress bound (since v0.1.64). See [`SubContract::ingress`].
@@ -1568,6 +1582,18 @@ pub struct SrvContract {
     /// Max request-to-response time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_response_ms: Option<f64>,
+    /// The least time between two requests, ms (contract
+    /// `srv.<e>.min_interarrival`, since v0.1.68). See
+    /// [`SubContract::min_interarrival_ms`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_interarrival_ms: Option<f64>,
+    /// The execution budget per `budget_period_ms`, ms (since v0.1.68). See
+    /// [`SubContract::budget_ms`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_ms: Option<f64>,
+    /// The server period of `budget_ms`, ms (since v0.1.68).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_period_ms: Option<f64>,
 }
 
 /// A causal path with a latency budget. Node paths: input/output are
@@ -2072,6 +2098,34 @@ mod tests {
         let old: SubContract = serde_yaml_ng::from_str("min_rate_hz: 10.0\n").unwrap();
         assert_eq!(old.ingress, None);
         assert!(!serde_yaml_ng::to_string(&old).unwrap().contains("ingress"));
+        // v0.1.68: an input's release bound round-trips on a subscriber and
+        // a server, and one written before it still reads.
+        let sub = SubContract {
+            min_interarrival_ms: Some(50.0),
+            budget_ms: Some(2.0),
+            budget_period_ms: Some(100.0),
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&sub).unwrap();
+        assert!(y.contains("min_interarrival_ms: 50.0"), "{y}");
+        assert_eq!(serde_yaml_ng::from_str::<SubContract>(&y).unwrap(), sub);
+        let srv = SrvContract {
+            min_interarrival_ms: Some(100.0),
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&srv).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<SrvContract>(&y).unwrap(), srv);
+        let old: SrvContract = serde_yaml_ng::from_str("max_response_ms: 5.0\n").unwrap();
+        assert_eq!(
+            (old.min_interarrival_ms, old.budget_ms, old.budget_period_ms),
+            (None, None, None)
+        );
+        let old: SubContract = serde_yaml_ng::from_str("min_rate_hz: 10.0\n").unwrap();
+        assert_eq!(
+            (old.min_interarrival_ms, old.budget_ms, old.budget_period_ms),
+            (None, None, None)
+        );
+        assert!(!serde_yaml_ng::to_string(&old).unwrap().contains("budget"));
         // v0.1.63: a mode override carries its resolved target, and one
         // written before v0.1.63 (no `resolved`) still reads.
         let ov = ModeOverrideContract {

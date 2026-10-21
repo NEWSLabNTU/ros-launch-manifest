@@ -637,6 +637,7 @@ fn deadline_is_the_tightest_of_path_budgets_and_service_bounds() {
         s("/svc/lookup"),
         SrvContract {
             max_response_ms: Some(2.5),
+            ..Default::default()
         },
     );
     let (input, _) = mapper_input_from_model(&model, &DeriveFacts::default());

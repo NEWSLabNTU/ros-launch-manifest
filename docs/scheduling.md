@@ -47,6 +47,16 @@ contract keys behind those facts are in
 | `exec_ms` | `DeriveFacts::path_exec_ms` keyed `"<node FQN>/<path>"`, else `DeriveFacts::node_exec_ms` and only when the node has exactly ONE path — with several, the split is unknown and attributing the whole node's cost to any one of them would overstate it |
 | chains | `resolve_chains`: one per scope path that declares a budget — the longest causal route from the scope's input topics to its output topics within its subtree, timer paths as `Boundary` elements (`period_ms = 1000 / rate_hz`), the rest as `Segment`s; chain criticality = max over members. A scope path that yields none is reported with a reason (`ChainSkip::{NoBudget, NoEndpoints, Cycle, NoRoute, NoPathOnRoute}`) |
 
+**An input's release bound is carried, not ranked** (since v0.1.68). A
+subscriber or a service server may state what bounds its arrivals:
+`min_interarrival` (a sporadic task's T_min), or `budget` + `budget_period`
+(a served callback, Q per P). The model carries them on `SubContract` and
+`SrvContract` (`min_interarrival_ms`, `budget_ms`, `budget_period_ms`), and
+no mapper reads them yet. A consumer that builds a task record per callback
+reads them there: nano-ros RFC-0108 D1 classifies each callback as periodic,
+sporadic, served or unanalysable, and refuses an unanalysable event input on
+an image that supervises a deadline.
+
 **Cost is authorable, and a deadline is never a cost.** `DeriveFacts` is the
 one input the model does not carry, because it differs per platform:
 play_launch fills `node_exec_ms` from the platform file's `budget`

@@ -1513,6 +1513,68 @@ fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseErro
     Ok(Some(IngressDecl { rate_hz, burst }))
 }
 
+/// What bounds an input's arrivals (since v0.1.68, nano-ros RFC-0108 D1):
+/// `min_interarrival`, and `budget` + `budget_period`, on a subscriber or a
+/// service server. Returns `(min_interarrival, budget, budget_period)`.
+///
+/// Shape only: whether the stated arrivals fit the image is the consumer's
+/// analysis. Refused here: a value that is not a positive duration, a
+/// budget without its period (or a period without its budget), and a budget
+/// longer than its period (a server that may run more than all of the time).
+type InputRelease = (Option<Duration>, Option<Duration>, Option<Duration>);
+
+fn parse_input_release(doc: &Yaml, ctx: &str) -> Result<InputRelease, ParseError> {
+    if doc.is_null() || doc.is_badvalue() {
+        return Ok((None, None, None));
+    }
+    let positive = |key: &str| -> Result<Option<Duration>, ParseError> {
+        let d = yaml_duration(doc, key).map_err(|e| reframe(e, ctx))?;
+        if let Some(d) = d
+            && d.as_nanos() <= 0
+        {
+            return Err(field_err(
+                ctx,
+                key,
+                &format!("must be a duration > 0, got {d}"),
+            ));
+        }
+        Ok(d)
+    };
+    let min_interarrival = positive("min_interarrival")?;
+    let budget = positive("budget")?;
+    let budget_period = positive("budget_period")?;
+    match (budget, budget_period) {
+        (Some(_), None) => {
+            return Err(field_err(
+                ctx,
+                "budget_period",
+                "required beside `budget`: a budget is execution time PER period, and with \
+                 no period it bounds nothing. Write `budget_period: <duration>`",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(field_err(
+                ctx,
+                "budget",
+                "`budget_period` is the period of a `budget`; write the budget beside it, or \
+                 delete the period",
+            ));
+        }
+        (Some(q), Some(p)) if q > p => {
+            return Err(field_err(
+                ctx,
+                "budget",
+                &format!(
+                    "`budget` {q} exceeds its `budget_period` {p}: a server cannot run longer \
+                     than its period"
+                ),
+            ));
+        }
+        _ => {}
+    }
+    Ok((min_interarrival, budget, budget_period))
+}
+
 fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseError> {
     let section = &doc["safe_state"];
     if section.is_badvalue() {
@@ -1762,6 +1824,26 @@ fn parse_endpoints(
                          output rate is `min_rate_hz` / `max_rate_hz`",
                     ));
                 }
+                if key != "sub" {
+                    for (set, k) in [
+                        (props.min_interarrival.is_some(), "min_interarrival"),
+                        (props.budget.is_some(), "budget"),
+                        (props.budget_period.is_some(), "budget_period"),
+                    ] {
+                        if set {
+                            return Err(field_err(
+                                &path,
+                                k,
+                                &format!(
+                                    "`{k}` bounds the arrivals at an INPUT (a `sub:` endpoint or \
+                                     a `srv:` server); a publisher's output rate is \
+                                     `min_rate_hz` / `max_rate_hz`, and a client's responses \
+                                     follow its own requests"
+                                ),
+                            ));
+                        }
+                    }
+                }
                 if key != "pub" && props.on_demand.is_some() {
                     return Err(field_err(
                         &path,
@@ -1836,6 +1918,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         ));
     }
     reject_unknown_keys(yaml, ctx, Context::Endpoint)?;
+    let (min_interarrival, budget, budget_period) = parse_input_release(yaml, ctx)?;
     let props = EndpointProps {
         min_rate_hz: yaml_rate_bound(yaml, "min_rate_hz", ctx, Context::Endpoint)?,
         max_rate_hz: yaml_rate_bound(yaml, "max_rate_hz", ctx, Context::Endpoint)?,
@@ -1848,7 +1931,27 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         on_violation: parse_on_violation(yaml, ctx)?,
         on_demand: yaml_bool(yaml, "on_demand", ctx)?,
         ingress: parse_ingress(yaml, ctx)?,
+        min_interarrival,
+        budget,
+        budget_period,
     };
+    if let (Some(gap), Some(need)) = (
+        props.min_interarrival,
+        props.min_rate_hz.as_ref().and_then(|b| b.hz()),
+    ) && need > 0.0
+        && gap.as_secs_f64() > 1.0 / need
+    {
+        return Err(field_err(
+            ctx,
+            "min_interarrival",
+            &format!(
+                "`min_interarrival` {gap} is longer than this subscriber's own `min_rate_hz` \
+                 {need} allows (one arrival every {:.3} ms at most): the input cannot arrive \
+                 both that often and that seldom",
+                1000.0 / need
+            ),
+        ));
+    }
     if let (Some(ingress), Some(need)) = (
         props.ingress,
         props.min_rate_hz.as_ref().and_then(|b| b.hz()),
@@ -1944,6 +2047,8 @@ fn parse_srv_endpoints(
                 let name = yaml_str_owned(k);
                 reject_endpoint_path(ctx, key, &name)?;
                 reject_unknown_keys(v, ctx, Context::SrvEndpoint)?;
+                let (min_interarrival, budget, budget_period) =
+                    parse_input_release(v, &format_path(ctx, &format!("{key}.{name}")))?;
                 let props = SrvEndpointProps {
                     max_response: if v.is_null() || v.is_badvalue() {
                         None
@@ -1955,6 +2060,9 @@ fn parse_srv_endpoints(
                             Context::SrvEndpoint,
                         )?
                     },
+                    min_interarrival,
+                    budget,
+                    budget_period,
                 };
                 eps.insert(name, props);
             }
@@ -3386,6 +3494,74 @@ hazards:
             (
                 "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 50, ingress: { rate_hz: 20, burst: 4 } }\n",
                 "below this subscriber's own `min_rate_hz`",
+            ),
+        ] {
+            let err = super::parse_manifest_str(bad).unwrap_err().to_string();
+            assert!(err.contains(needle), "{bad}: {err}");
+        }
+    }
+
+    /// v0.1.68 (nano-ros RFC-0108 D1): an input's release bound,
+    /// `min_interarrival` and `budget` + `budget_period`, on a subscriber and
+    /// on a service server. A budget needs its period, and a period its
+    /// budget; neither belongs on a publisher or a client.
+    #[test]
+    fn an_inputs_release_bound_is_a_minimum_interarrival_or_a_budget() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  n:\n    sub:\n      a: { min_rate_hz: 10, min_interarrival: 50ms }\n\
+             \x20     b: { budget: 2ms, budget_period: 100ms }\n\
+             \x20     c: { min_rate_hz: 10 }\n\
+             \x20   srv:\n      s: { min_interarrival: 100ms }\n\
+             \x20     t: { max_response: 5ms, budget: 1ms, budget_period: 20ms }\n",
+        )
+        .unwrap();
+        let n = &m.nodes["n"];
+        let ms = |d: Option<Duration>| d.map(|d| d.as_millis_f64());
+        assert_eq!(ms(n.subscribers["a"].min_interarrival), Some(50.0));
+        assert_eq!(ms(n.subscribers["a"].budget), None);
+        assert_eq!(ms(n.subscribers["b"].budget), Some(2.0));
+        assert_eq!(ms(n.subscribers["b"].budget_period), Some(100.0));
+        assert_eq!(ms(n.subscribers["c"].min_interarrival), None);
+        assert_eq!(ms(n.srv["s"].min_interarrival), Some(100.0));
+        assert_eq!(ms(n.srv["t"].budget), Some(1.0));
+        assert_eq!(ms(n.srv["t"].budget_period), Some(20.0));
+        assert!(n.srv["t"].max_response.is_some());
+        for (bad, needle) in [
+            (
+                "nodes:\n  n:\n    sub:\n      a: { budget: 2ms }\n",
+                "required beside `budget`",
+            ),
+            (
+                "nodes:\n  n:\n    srv:\n      s: { budget: 2ms }\n",
+                "required beside `budget`",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      a: { budget_period: 100ms }\n",
+                "is the period of a `budget`",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      a: { budget: 200ms, budget_period: 100ms }\n",
+                "cannot run longer than its period",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      a: { min_interarrival: 0ms }\n",
+                "must be a duration > 0",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      a: { min_interarrival: 50 }\n",
+                "has no unit",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      o: { min_interarrival: 50ms }\n",
+                "bounds the arrivals at an INPUT",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      c: { budget: 1ms, budget_period: 10ms }\n",
+                "bounds the arrivals at an INPUT",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      a: { min_rate_hz: 10, min_interarrival: 150ms }\n",
+                "cannot arrive both that often and that seldom",
             ),
         ] {
             let err = super::parse_manifest_str(bad).unwrap_err().to_string();

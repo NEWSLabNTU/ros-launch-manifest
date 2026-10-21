@@ -63,6 +63,9 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
 | `ingress` | requirement | since v0.1.64 | Subscriber: what this endpoint is made to ABSORB, a token bucket `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`. |
+| `min_interarrival` | requirement | since v0.1.68 | Subscriber: the least time between two arrivals. Its callback is then a sporadic task (T_min). An event input with no rate bound, no `min_interarrival` and no `budget` is unanalysable: a consumer that supervises a deadline refuses it. Refused under `pub:`/`cli:`, and above `1 / min_rate_hz`. |
+| `budget` | requirement | since v0.1.68 | Subscriber: the execution time its callback may use per `budget_period`. Its callback is then served (a server of budget Q per period P, analysed as a periodic task). Requires `budget_period`, and may not exceed it. Refused under `pub:`/`cli:`. |
+| `budget_period` | requirement | since v0.1.68 | Subscriber: the server period P of `budget`. Only beside `budget`. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
 | `on_demand` | fact | since v0.1.49 | Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
@@ -73,6 +76,9 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `max_response` | requirement |  | Deadline for answering a request on this service. |
+| `min_interarrival` | requirement | since v0.1.68 | The least time between two requests. The server's callback is then a sporadic task (T_min). See `min_interarrival` on a subscriber. |
+| `budget` | requirement | since v0.1.68 | The execution time the server's callback may use per `budget_period` (a served callback). Requires `budget_period`, and may not exceed it. |
+| `budget_period` | requirement | since v0.1.68 | The server period P of `budget`. Only beside `budget`. |
 | `max_response_ms` |  | **removed** | Removed in phase 70 — write `max_response: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 
 ## `topics.<name>`
