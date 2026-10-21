@@ -6,6 +6,25 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.69 - 2026-10-21
+
+A client's call mode (nano-ros RFC-0108 D8.3, phase-509 P8).
+GRAMMAR_VERSION 0.1.69. Additive for every contract and model written
+before it. Workspace Cargo 0.1.21 -> 0.1.22: `EndpointProps`, `ActionDecl`
+and `Contracts` gain public fields.
+
+### Added
+
+- Contract: `call: blocking | async` on a `cli:` endpoint, and on an
+  `actions.<a>` entry for every client it lists. `blocking`: the callback
+  that sends the request waits for the response. `async`: a later
+  callback takes it. Absent is "not stated". Refused: any other value, and
+  the key under `pub:`/`sub:`/`srv:`.
+- Model: `Contracts::cli_endpoints` and `Contracts::action_cli_endpoints`,
+  client endpoint ref -> `CliContract { call: Option<CallMode> }`, absent
+  when unstated. nano-ros refuses a blocking call to a server at the
+  client's own level or a less urgent one, and reports an unstated one.
+
 ## v0.1.68 - 2026-10-21
 
 An input's release bound (nano-ros RFC-0108 D1, phase-509 P4).
