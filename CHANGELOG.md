@@ -6,6 +6,35 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.70 - 2026-10-22
+
+Worst-case proofs (play_launch phase 91 E5). GRAMMAR_VERSION 0.1.70.
+Additive for every contract, model and extension that loaded before it.
+Workspace Cargo version unchanged: the rlx crate gains a module and a
+feature, and no public item changes.
+
+### Added
+
+- rlx: `prove` (feature `smt`, on by default, z3 0.12 as `check`'s): each
+  `worst_case` claim of a `derive` or `check` is proved, refuted with a
+  counterexample the evaluator reproduces (and, where one exists, the
+  domain that would make it hold), or left unknown. Semantics and encoding:
+  `docs/design/extension-system.md` section 6.1. A consumer that wants no
+  libz3/libclang turns default features off.
+- rlx CLI: `rlx prove [--strict] [--timeout-ms=N] <file>...`.
+- rlx: a `domain:` interval on a table key bounds every entry's value
+  (`a_ebd in (0 m/s^2, 5 m/s^2]`); the evaluator refuses an entry outside
+  it, naming the entry.
+
+### Changed
+
+- The reference extensions state the signs their worst cases need, found by
+  the prover: `medical.occlusion` `compliance > 0 mL/mmHg`, `process.pst`
+  `max_rise_rate > 0 bar/s`, `rail.ebd` `a_ebd in (0 m/s^2, 5 m/s^2]` and
+  non-negative delays. `uav.descent` stays as the design first writes it,
+  refuted, and `extension-examples.md` section 4 shows the checker's real
+  report and the domains it names.
+
 ## v0.1.69 - 2026-10-21
 
 A client's call mode (nano-ros RFC-0108 D8.3, phase-509 P8).
