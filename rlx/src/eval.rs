@@ -630,19 +630,47 @@ impl<'a> Ev<'a> {
                     let idx = self
                         .key_index(&var.dotted(), var.segments.len() == 1)
                         .expect("checked at load");
-                    let (v, dim) = self.key(idx, var.span)?.q();
+                    // A table's interval bounds each entry's value.
+                    let (values, dim, entry) = match self.key(idx, var.span)? {
+                        V::Table(rows, from, to) => (
+                            rows.iter().map(|r| (r.1, Some(r.0))).collect::<Vec<_>>(),
+                            to,
+                            Some(from),
+                        ),
+                        other => {
+                            let (v, d) = other.q();
+                            (vec![(v, None)], d, None)
+                        }
+                    };
                     let (lo, _) = self.eval(&interval.lo, &mut scope)?.q();
                     let (hi, _) = self.eval(&interval.hi, &mut scope)?.q();
-                    let above = if interval.lo_closed { v >= lo } else { v > lo };
-                    let below = if interval.hi_closed { v <= hi } else { v < hi };
-                    if !(above && below) {
+                    let outside = values.iter().find(|(v, _)| {
+                        let above = if interval.lo_closed {
+                            *v >= lo
+                        } else {
+                            *v > lo
+                        };
+                        let below = if interval.hi_closed {
+                            *v <= hi
+                        } else {
+                            *v < hi
+                        };
+                        !(above && below)
+                    });
+                    if let Some(&(v, at)) = outside {
+                        let name = match (at, entry) {
+                            (Some(k), Some(from)) => {
+                                format!("{} at {}", var.dotted(), display::quantity(k, from))
+                            }
+                            _ => var.dotted(),
+                        };
                         return Err(fail(
                             code::DOMAIN,
                             var.span,
                             format!(
                                 "`{}` = {} is outside its domain {}{}, {}{}; the worst-case \
                                  claim holds only inside it",
-                                var.dotted(),
+                                name,
                                 display::quantity(v, dim),
                                 if interval.lo_closed { "[" } else { "(" },
                                 display::quantity(lo, dim),

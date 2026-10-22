@@ -457,3 +457,28 @@ fn outside_the_domain() {
         "{m}"
     );
 }
+
+/// A table's domain interval bounds every entry's value, and the refusal
+/// names the entry (phase 91 E5: rail's worst case needs the sign).
+#[test]
+fn a_table_entry_outside_the_domain() {
+    let src = read("ebd.rlx");
+    let c = check_source(&src).unwrap();
+    let table: &[(&str, &str)] = &[("0 km/h", "0.75 m/s^2"), ("100 km/h", "-0.70 m/s^2")];
+    let inp = inputs(
+        &c,
+        &[
+            ("entry_speed", In::Text("160 km/h")),
+            ("traction_cut_off", In::Text("1.0s")),
+            ("brake_build_up", In::Text("2.5s")),
+            ("a_ebd", In::Table(table)),
+        ],
+    );
+    let d = eval_derive(&c, "settle.duration", &inp).unwrap_err();
+    assert_eq!(d.code, code::DOMAIN);
+    assert_eq!(
+        d.message,
+        "`a_ebd at 27.78 m/s` = -0.7 m/s^2 is outside its domain (0 m/s^2, 5 m/s^2]; the \
+         worst-case claim holds only inside it"
+    );
+}

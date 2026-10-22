@@ -13,9 +13,11 @@ derive settle.duration : Time =
     traction_cut_off + brake_build_up
     + Σ over b ∈ a_ebd.bands(0 m/s, entry_speed): (b.hi − b.lo) ÷ b.value
   worst_case: increasing in entry_speed; decreasing in a_ebd
+  domain: a_ebd ∈ (0 m/s², 5 m/s²]
 
 check stop_before_eoa: stopping_distance ≤ distance_to_eoa
   where stopping_distance =
       entry_speed · (traction_cut_off + brake_build_up)
       + Σ over b ∈ a_ebd.bands(0 m/s, entry_speed): (b.hi² − b.lo²) ÷ (2 b.value)
   worst_case: increasing in entry_speed
+  domain: a_ebd ∈ (0 m/s², 5 m/s²], traction_cut_off ≥ 0 s, brake_build_up ≥ 0 s

@@ -202,7 +202,8 @@ derive hazard.detection : Time =
   worst_case:
     decreasing in min_rate
     increasing in compliance, alarm_threshold
-  domain: min_rate in (0 mL/h, 1200 mL/h], alarm_threshold > baseline_pressure
+  domain: min_rate in (0 mL/h, 1200 mL/h], alarm_threshold > baseline_pressure,
+          compliance > 0 mL/mmHg
 
 report bolus_on_release : Volume = compliance * (alarm_threshold - baseline_pressure)
 ```
@@ -298,24 +299,40 @@ nodes:
             land_speed: land_speed         # 0.7 m/s
 ```
 
-First check, with the claim as written:
+First check, with the claim as written (play_launch's
+`contract_ext_uav_refuted`, verbatim):
 
 ```
 error[worst-case-refuted]: uav.descent 0.2.0: settle.duration is not increasing in slow_altitude
-  counterexample (Z3): descent_speed = 1 m/s, land_speed = 2 m/s, max_altitude = 120 m
-    slow_altitude 10 m -> 110 + 5 = 115 s;  20 m -> 100 + 10 = 110 s
-  help: it holds on `domain: land_speed <= descent_speed`
+  counterexample (Z3): max_altitude = 120 m, descent_speed = 3 m/s, land_speed = 5 m/s
+    slow_altitude 1 m -> 39.87 s;  2 m -> 39.73 s
+  help: it holds on `domain: land_speed <= descent_speed, land_speed > 0 m/s`
 ```
 
-After the author adds that domain:
+Four more claims are refuted the same way, each because a speed, an
+altitude or the hover power might be negative: the prover assumes no sign
+the file does not state. `max_altitude <= slow_altitude` would also make
+the slow_altitude claim hold (the settle no longer depends on it), and is
+not offered, because the contract's 120 m and 10 m are outside it.
+
+After the author adds the domains the checker names:
+
+```
+  domain: descent_speed > 0 m/s, land_speed > 0 m/s, land_speed <= descent_speed,
+          max_altitude > 0 m, slow_altitude > 0 m
+...
+  domain: hover_power > 0 W
+```
 
 ```
 info[settle-derived]: hazard 'lost_link' -> land_now
   settle = 50.95 s   derived by uav.descent 0.2.0
     (120 - 10) m / 3 m/s = 36.67 s;  10 m / 0.7 m/s = 14.29 s
+  worst case: proved increasing in max_altitude, slow_altitude; decreasing in descent_speed, land_speed
 info[check]: uav.descent/energy_reserve PASS
     reaction_total = 60.95 s   core: detection 10 s + settle 50.95 s
     600 W * 60.95 s = 10.16 Wh <= 222 Wh * (0.30 - 0.22) = 17.76 Wh
+  worst case: proved increasing in reaction_total
 ```
 
 What it shows: a predicate fed by core; a refuted worst-case claim with a
@@ -344,12 +361,14 @@ derive settle.duration : Time =
     traction_cut_off + brake_build_up
     + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value
   worst_case: increasing in entry_speed; decreasing in a_ebd
+  domain: a_ebd in (0 m/s^2, 5 m/s^2]
 
 check stop_before_eoa: stopping_distance <= distance_to_eoa
   where stopping_distance =
       entry_speed * (traction_cut_off + brake_build_up)
       + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi^2 - b.lo^2) / (2 b.value)
   worst_case: increasing in entry_speed
+  domain: a_ebd in (0 m/s^2, 5 m/s^2], traction_cut_off >= 0 s, brake_build_up >= 0 s
 ```
 
 ```yaml
@@ -379,8 +398,10 @@ nodes:
 ```
 info[settle-derived]: settle = 64.35 s   derived by rail.ebd 0.1.0
     3.5 s + (27.78 m/s)/0.75 + (16.67 m/s)/0.70 = 3.5 + 37.04 + 23.81 s
+  worst case: proved increasing in entry_speed; decreasing in a_ebd (for a_ebd's 2 keys as written)
 info[check]: rail.ebd/stop_before_eoa PASS
     155.56 + 514.40 + 859.79 = 1529.75 m <= 1600 m   (margin 70.25 m)
+  worst case: proved increasing in entry_speed (for a_ebd's 2 keys as written)
 ```
 
 What it shows: a table input with a bounded sum, and two requirements on
@@ -408,7 +429,7 @@ key settle.valve_stroke    : Time              "final element: closed from comma
 
 derive hazard.ftti : Time = (hazard_pressure - trip_setpoint) / max_rise_rate
   worst_case: decreasing in max_rise_rate; increasing in hazard_pressure
-  domain: hazard_pressure > trip_setpoint
+  domain: hazard_pressure > trip_setpoint, max_rise_rate > 0 bar/s
 
 derive settle.duration : Time = valve_stroke
 ```

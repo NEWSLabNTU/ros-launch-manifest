@@ -7,8 +7,9 @@
 //! for both layers (the extension format and the expression core), the
 //! purely syntactic refusals, and the formatter; and unit E3: dimensions
 //! ([`dim`]), units with their scales ([`units`]), the load-time checker
-//! ([`typeck`]) and contract values ([`value`]). Evaluation (E4) builds on
-//! the same tree, [`ast`].
+//! ([`typeck`]) and contract values ([`value`]). Evaluation (E4,
+//! [`eval`]) and the worst-case proofs (E5, `prove`, behind the `smt`
+//! feature, over Z3) build on the same tree, [`ast`].
 //!
 //! # Pipeline
 //!
@@ -104,6 +105,8 @@
 //!   else b + 1` is `if c then a else (b + 1)`); parenthesize to stop them.
 //! - **`and`** separates `where` bindings and is also the boolean
 //!   conjunction; it is a separator exactly when `name =` follows it.
+//! - **A domain interval on a table** (`a_ebd in (0 m/s^2, 5 m/s^2]`)
+//!   bounds every entry's value; its bounds have the value's dimension.
 //! - **Clauses** come in the order `where`, `worst_case`, `domain` (the
 //!   order every example uses). `worst_case` groups are separated by `;` or
 //!   by simply starting the next `increasing`/`decreasing`; domain
@@ -134,6 +137,8 @@ pub mod eval;
 pub mod fmt;
 pub mod lexer;
 pub mod parser;
+#[cfg(feature = "smt")]
+pub mod prove;
 pub mod refuse;
 pub mod typeck;
 pub mod units;

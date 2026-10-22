@@ -149,18 +149,77 @@ worst_case: increasing in entry_speed, response; decreasing in decel, jerk
 domain: entry_speed in (0 m/s, 70 m/s]
 ```
 
-- The checker proves it with Z3 (already in play_launch behind `smt`) over
-  the declared domain; nonlinear terms (`sqrt`, division) are encoded with
-  side conditions.
-- Proved: `--explain` says so. Refuted: an error with Z3's counterexample
-  and, where found, the domain that would make it hold. Unknown (a timeout,
-  or beyond Z3): a warning, an error under `--strict`.
 - Why it matters: the checker evaluates a derived bound at the contract's
   declared value (the entry speed, the minimum rate) and calls it the worst
   case. The direction is what makes that true; board runs at the declared
   entry speed showed the difference between a profile and the worst run.
 - A heavier proof (Lean, KeYmaera X) may live in an extension's own CI and
   be recorded by hash; the checker never runs it.
+
+### 6.1 What is proved (E5, built)
+
+Each named key is one claim, proved by Z3 (`rlx::prove`, the `smt`
+feature, z3 0.12 as the checker's satisfiability rule uses):
+
+- A `derive` is a bound, larger is worse. `increasing in x`: no `x1 < x2`
+  gives `f(x1) > f(x2)`; `decreasing in x`: none gives `f(x1) < f(x2)`.
+  Non-strict, so a flat stretch (a `max(..., 500 mm)`) is not a violation.
+- A `check` is a predicate, failing is worse. `increasing in x`: a check
+  that passes at `x2` passes at every `x1 < x2`; `decreasing`, the mirror.
+- Every other key and input is free and shared by the two points, so the
+  claim covers every value a contract could write. Both points must be in
+  the item's `domain:` and **defined**: the evaluator refuses a division by
+  zero, the square root of a negative and a `bands` slice outside its
+  table, so such a point is not a counterexample.
+- The declarations' own facts are assumed: a `magnitude` parameter is not
+  negative, a table's keys increase. **Nothing else.** A speed without a
+  domain may be negative, and a claim that needs it positive is refuted.
+  This is deliberate: a sign the extension needs is a sign it must state,
+  and the checker says which (below). So the reference extensions state
+  them: `compliance > 0 mL/mmHg` (medical), `max_rise_rate > 0 bar/s`
+  (process), `a_ebd in (0 m/s^2, 5 m/s^2]` and non-negative delays (rail).
+- A table's domain interval bounds every entry's value (the one grammar
+  addition E5 needed; `rail.ebd`'s worst case depends on the deceleration's
+  sign). A claim over a table varies every value, keys held, and is
+  violated when raising values pointwise moves the result the wrong way.
+
+Encoding: SI reals, a literal's unit applied as the evaluator applies it;
+`if`, `min`, `max`, `abs` as `ite`; a quotient as a fresh `q` with
+`q * y = x` wherever `y != 0`, and `sqrt(x)` as a fresh `s >= 0` with
+`s * s = x` (polynomial constraints nlsat decides, where Z3's own `/` left
+rail's distance sum incomplete); an integer power as a product. `sqrt` is
+also stated monotone between every pair of roots: on two copies of the
+braking profile Z3 did not derive it within minutes, and stated it proves
+in milliseconds. A power with a non-integer or non-constant exponent is
+beyond the encoding: unknown, never a guess. A table is unrolled over its
+entries: at the keys the contract writes, when the consumer passes them
+(play_launch does), else for 1, 2 and 3 symbolic entries. Rail's distance
+check is decided at its written keys and not at three symbolic ones.
+
+Verdicts:
+
+- **Proved**: the violation is unsatisfiable, and the domain admits two
+  defined points (otherwise any claim would hold vacuously, and the
+  verdict is unknown). `--explain` and the derivation's trace print
+  `worst case: proved increasing in ...`.
+- **Refuted**: Z3 found a violation **and the evaluator reproduces it** at
+  the two points; the numbers in the report are the evaluator's, so an
+  encoding defect cannot produce a false refutation. The counterexample is
+  made readable (each key pinned to the contract's value or a small whole
+  number where the violation survives). Where a set of at most three
+  simple constraints (`x > 0`, `a <= b` between keys of one dimension)
+  proves the claim, leaves the domain non-empty and admits the contract's
+  values, it is offered: `help: it holds on domain: ...`. An error,
+  `worst-case-refuted`.
+- **Unknown**: a timeout (a watchdog interrupts Z3, whose own `timeout`
+  parameter nlsat does not honour), a construct beyond the encoding, or a
+  model the evaluator does not reproduce. A warning, `worst-case-unknown`;
+  an error under `check --strict`. A build without `smt` reports every
+  stated claim this way rather than leaving it to read as checked.
+
+`rlx prove [--strict] [--timeout-ms=N] <file>` runs the same proofs on an
+extension alone (tables at 1 to 3 entries, no contract point), for an
+extension's own CI.
 
 ## 7. Profiles
 

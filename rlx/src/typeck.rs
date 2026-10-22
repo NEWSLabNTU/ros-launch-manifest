@@ -1015,13 +1015,17 @@ impl Cx {
                     read.insert(idx);
                     let want = match self.key_ty(idx) {
                         Ty::Q(d) => d,
+                        // A table's interval bounds every entry's value
+                        // (phase 91 E5: a worst case over a deceleration
+                        // table needs its sign).
+                        Ty::Table(_, to) => to,
                         Ty::Err => continue,
                         other => {
                             self.err(
                                 code::TYPE,
                                 var.span,
                                 format!(
-                                    "`{}` is {}; a domain interval bounds a quantity",
+                                    "`{}` is {}; a domain interval bounds a quantity or a table's values",
                                     var.dotted(),
                                     kind(other)
                                 ),

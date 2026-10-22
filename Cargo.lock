@@ -445,6 +445,7 @@ version = "0.1.22"
 dependencies = [
  "sha2",
  "unicode-normalization",
+ "z3",
 ]
 
 [[package]]
