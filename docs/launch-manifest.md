@@ -2455,10 +2455,11 @@ sheds `v_r = a^2 / (2 j)`; a vehicle at `v0 <= v_r` stops inside the ramp,
 j = 1.5 that is 2033.33 ms from 3.0 m/s and 2525.33 ms from 4.23 m/s. A
 measured value may sit beside the profile as `settle: { decel, jerk,
 duration: 2517ms }`: it is the fallback when the hazard states no entry
-speed, and it is compared with the derivation. For one minor release a
-contract that writes these keys without `use:` loads `vehicle.braking`
-implicitly (a plain-number `entry_speed` read as m/s, as the core key was),
-with a `deprecated-implicit-extension` warning; `migrate` adds the line.
+speed, and it is compared with the derivation. A contract that writes
+these keys without `use:` is refused (`deprecated-implicit-extension`, an
+error since play_launch 0.20; 0.19 warned and loaded `vehicle.braking`
+implicitly); `migrate` adds the line and gives a plain-number
+`entry_speed` its unit, m/s.
 
 The settle has one map form (phase 90 G6), `settle: { duration ; response ;
 source }` plus the keys of an extension that derives it, and `settle: 2s`
@@ -2490,7 +2491,7 @@ The consumer's rules for these keys:
 | `settle-entry-missing` | Warning | A derived settle reached by a hazard that writes no value for a key the derivation needs (a braking profile and no `entry_speed`) |
 | `settle-param-unresolved` | Error | A parameter the derivation reads with no numeric launch value on the node |
 | `settle-conflict` | Warning | A measured settle and the derivation differ by more than 1 % |
-| `deprecated-implicit-extension` | Warning | `vehicle.braking`'s keys without `use:`, or hazard severities on the implicit ISO 26262 scale (v0.2.0, one minor release) |
+| `deprecated-implicit-extension` | Error | `vehicle.braking`'s keys without `use:`, or hazard severities with no profile and no `severity_levels:` (a warning in play_launch 0.19) |
 
 ## Static Validation
 

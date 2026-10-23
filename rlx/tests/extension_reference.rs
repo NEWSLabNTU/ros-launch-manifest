@@ -144,16 +144,18 @@ fn render() -> String {
          - **Reference** extensions are the worked examples of \
          [design/extension-examples.md](design/extension-examples.md) as files. They are not \
          bundled: a contract that wants one ships a copy in its package's `rlm/` directory. \
-         They are illustrative: no clause of the standard each models has been checked \
-         against the standard's text.\n\n",
+         They are illustrative: \
+         [design/reference-extensions-verification.md](design/reference-extensions-verification.md) \
+         compares each with the standard it models and lists what each leaves out.\n\n",
     );
     for (file, src) in BUNDLED {
         out.push_str(&section(
             file,
             src,
-            "**Bundled.** The keys were core grammar from rlm v0.1.46 to v0.1.71; for one minor \
-             release a contract that writes them without `use:` loads this extension implicitly, \
-             with `deprecated-implicit-extension`.",
+            "**Bundled.** The keys were core grammar from rlm v0.1.46 to v0.1.71. play_launch 0.19 \
+             loaded this extension implicitly, with a warning, for a contract that writes them \
+             without `use:`; later releases refuse such a contract \
+             (`deprecated-implicit-extension`).",
         ));
     }
     for (file, src) in REFERENCE {

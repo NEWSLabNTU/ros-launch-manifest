@@ -338,7 +338,10 @@ elements is the open R6 question.
   severity with no profile and no `severity_levels:` gets the same rule
   for the ISO 26262 scale. Neither changes a verdict: play_launch's gate
   checks every contract fixture as written and migrated, compares verdicts
-  and fault-reaction totals, and finds them equal (phase 91 E8).
+  and fault-reaction totals, and finds them equal (phase 91 E8). After
+  play_launch 0.19 the rule is an error; the extension is still loaded, so
+  the check runs on, and the gate runs inverted (each migrated fixture with
+  its `use:` lines deleted gives the same verdicts plus the refusal).
 - The settle rules the core profile had are now any extension's
   (`settle-param-unresolved`, `settle-entry-missing`, `settle-conflict`,
   `derive-conflict`), and the checks of an extension receive the safe

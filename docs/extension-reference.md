@@ -5,11 +5,11 @@
 The core grammar is [format-reference.md](format-reference.md); a key not listed there is a parse error unless the contract `use:`s an extension that declares it in that context (`hazards.<name>` or `safe_state.settle`). This page lists the extensions this repository publishes. How to write one: [extension-guide.md](extension-guide.md).
 
 - **Bundled** extensions ship inside the checker and resolve for any `use:` entry with no file on disk.
-- **Reference** extensions are the worked examples of [design/extension-examples.md](design/extension-examples.md) as files. They are not bundled: a contract that wants one ships a copy in its package's `rlm/` directory. They are illustrative: no clause of the standard each models has been checked against the standard's text.
+- **Reference** extensions are the worked examples of [design/extension-examples.md](design/extension-examples.md) as files. They are not bundled: a contract that wants one ships a copy in its package's `rlm/` directory. They are illustrative: [design/reference-extensions-verification.md](design/reference-extensions-verification.md) compares each with the standard it models and lists what each leaves out.
 
 ## `vehicle.braking 1.0.0`
 
-**Bundled.** The keys were core grammar from rlm v0.1.46 to v0.1.71; for one minor release a contract that writes them without `use:` loads this extension implicitly, with `deprecated-implicit-extension`.
+**Bundled.** The keys were core grammar from rlm v0.1.46 to v0.1.71. play_launch 0.19 loaded this extension implicitly, with a warning, for a contract that writes them without `use:`; later releases refuse such a contract (`deprecated-implicit-extension`).
 
 Requires: `rlm >= 0.2.0`.
 

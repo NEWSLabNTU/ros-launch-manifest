@@ -11,7 +11,9 @@ to its block here. The printed output is the proposal's shape; the
 checker's actual output for each, on play_launch's fixtures, is recorded
 beside them (`tests/fixtures/contract_ext_<domain>/expected_explain.txt`). Numbers are worked
 in the exploration's appendix A unless marked otherwise; domain constants are
-illustrative, not values taken from a standard.
+illustrative, not values taken from a standard. How far each reference
+extension's formulas follow its standard, and what each leaves out, is
+[reference-extensions-verification.md](reference-extensions-verification.md).
 
 ## The design these examples follow
 
