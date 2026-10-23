@@ -2344,10 +2344,13 @@ arithmetic that clears the default one says nothing about it.
 Four keys (v0.1.46) make a Drive Pilot-style takeover checkable without a
 transition language: a fault by **value**, a rung that lasts at most a
 **window**, the driver's answer as an **exit**, and a **settle derived** from
-the braking profile and the operating domain's speed bound.
+the braking profile and the operating domain's speed bound. Since v0.2.0 the
+last is not core grammar: `entry_speed`, `decel` and `jerk` are keys of the
+bundled extension `vehicle.braking`, which the contract names in `use:`.
 
 ```yaml
 version: 1
+use: { vehicle.braking: "^1" }
 functions:
   hpc_alive: [/system/operation_mode/availability]
   hpc_in_odd:                                  # a VALUE function
@@ -2361,7 +2364,7 @@ hazards:
     guards: [/system/operation_mode/availability]
     on: reported                               # `when:` needs `reported`
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33                          # m/s: the speed bound
+    entry_speed: 30 km/h                       # the speed bound (vehicle.braking)
     ftti: 30s
     enters: l3_engaged
 modes:
@@ -2442,19 +2445,24 @@ function was written `on:`; that spelling still parses for one release, with
 a `deprecated-spelling` warning (`on` names fault classes everywhere else:
 `hazards.<h>.on`, `on_violation.on`), and `play_launch migrate` rewrites it.
 
-**`entry_speed`** (m/s, positive) on a hazard, and **`settle: { decel, jerk }`**
-naming two parameters of the path's node, derive the settle per hazard. With
-a = |decel| and j = |jerk|, the ramp to full deceleration sheds
-`v_r = a^2 / (2 j)`; a vehicle at `v0 <= v_r` stops inside the ramp,
+**`entry_speed`** (a velocity, `30 km/h`) on a hazard, and **`settle: { decel,
+jerk }`** naming two parameters of the path's node, derive the settle per
+hazard: they are the keys of the bundled `vehicle.braking` extension
+(`types/extensions/vehicle.braking.rlx`; the arithmetic was core from v0.1.46
+to v0.1.71). With a = |decel| and j = |jerk|, the ramp to full deceleration
+sheds `v_r = a^2 / (2 j)`; a vehicle at `v0 <= v_r` stops inside the ramp,
 `t = sqrt(2 v0 / j)`, otherwise `t = a/j + (v0 - v_r)/a`. At a = 2.5 and
 j = 1.5 that is 2033.33 ms from 3.0 m/s and 2525.33 ms from 4.23 m/s. A
 measured value may sit beside the profile as `settle: { decel, jerk,
 duration: 2517ms }`: it is the fallback when the hazard states no entry
-speed, and it is compared with the derivation.
+speed, and it is compared with the derivation. For one minor release a
+contract that writes these keys without `use:` loads `vehicle.braking`
+implicitly (a plain-number `entry_speed` read as m/s, as the core key was),
+with a `deprecated-implicit-extension` warning; `migrate` adds the line.
 
-The settle has one map form (phase 90 G6), `settle: { duration | decel,
-jerk ; response ; source }`, and `settle: 2s` is shorthand for `settle: {
-duration: 2s }`. `response` is the vehicle's response, from the braking
+The settle has one map form (phase 90 G6), `settle: { duration ; response ;
+source }` plus the keys of an extension that derives it, and `settle: 2s`
+is shorthand for `settle: { duration: 2s }`. `response` is the vehicle's response, from the braking
 command to the deceleration it then holds; it is added to the settle
 whether that is a written `duration` or derived from a profile, and
 omitted means 0 (a written duration that already includes the response
@@ -2478,10 +2486,11 @@ The consumer's rules for these keys:
 | `mode-exit-target` | Error | `to:` is not a mode, or is a rung of some `fallback:` ladder |
 | `mode-exit-unwired` | Error | No node publishing the rung's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
 | `ladder-rung-budget` | Error | Now cumulative: detection + every windowed rung passed (route + window) + the rung's route + settle, against the interval |
-| `settle-derived` | Info | The arithmetic, printed |
-| `settle-entry-missing` | Warning | A braking profile reached by a hazard with no `entry_speed` |
-| `settle-param-unresolved` | Error | A profile parameter the node does not declare, or with no numeric launch value |
+| `settle-derived` | Info | The derivation's trace, printed (any extension's settle) |
+| `settle-entry-missing` | Warning | A derived settle reached by a hazard that writes no value for a key the derivation needs (a braking profile and no `entry_speed`) |
+| `settle-param-unresolved` | Error | A parameter the derivation reads with no numeric launch value on the node |
 | `settle-conflict` | Warning | A measured settle and the derivation differ by more than 1 % |
+| `deprecated-implicit-extension` | Warning | `vehicle.braking`'s keys without `use:`, or hazard severities on the implicit ISO 26262 scale (v0.2.0, one minor release) |
 
 ## Static Validation
 

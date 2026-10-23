@@ -4,6 +4,8 @@
 
 Every key below is accepted in the context that heads its section, and **a key that is not listed is a parse error**. Contexts whose keys are chosen by the author — `nodes:`, `topics:`, `services:`, `actions:`, `includes:`, `paths:`, `args:`, `external_topics:`, the endpoint maps under `pub:`/`sub:`/`srv:`/`cli:`, and the parameter names under a node's `params:` — have no section here, because no allowlist applies to them.
 
+This is the **core** grammar. A contract that `use:`s an extension may also write the keys that extension declares, in `hazards.<name>` and `safe_state.settle`: those are listed per extension in [extension-reference.md](extension-reference.md) (the bundled `vehicle.braking` and the reference extensions), and [extension-guide.md](extension-guide.md) says how to write one.
+
 The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is what the code does, a *requirement* is what it must achieve, *meta* is structure, and a **consequence** is computable from the facts — a second copy the graph already knows, kept only where the graph has no answer (an external source). `scripts/derivation_census.py` counts how often each consequence agrees.
 
 ## `manifest`
@@ -247,7 +249,6 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `detection` | fact |  | Fault to detection when that is physics, not a detector's timeout (an occlusion building pressure), a duration or `{ duration, source }`. Charged before the detection the consumer derives from the detectors, so stating it never buys slack. Usually derived by an extension (`source: { derived: ... }`). |
 | `deadline_by` | requirement |  | `<extension>/<check>`: the check that is this hazard's requirement when it is not a time (a safety distance). A hazard states `ftti`, `deadline_by`, or both. |
 | `reaction_total` |  | **removed** | Read-only: the consumer computes it (detection + route + settle) and hands it to extension checks. A contract never writes it. |
-| `entry_speed` | requirement |  | The speed the vehicle may travel at when the fault occurs, in m/s, a plain positive number: the operating domain's speed bound. A braking-profile settle is derived from it (`settle-derived`). |
 
 ## `modes.<name>`
 
@@ -288,7 +289,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `emits` | fact |  | The endpoint this reaction commands the safe state on. |
-| `settle` | fact |  | How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration | decel, jerk ; response ; source }`: a written (measured) duration, or `decel` and `jerk`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic). `response` is added to either (omitted: 0). Both a duration and a profile: the profile is charged and the two compared (`settle-conflict`). |
+| `settle` | fact |  | How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration ; response ; source }` plus the keys of a used extension that derives `settle.duration` (v0.2.0: the braking profile `decel`, `jerk` with the hazard's `entry_speed` is the bundled `vehicle.braking`'s; `settle-derived` prints its trace). `response` is added to either (omitted: 0). Both a duration and a derivation: the derivation is charged and the two compared (`settle-conflict`). |
 
 ## `functions.<name>`
 
@@ -322,10 +323,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `decel` | fact |  | The parameter on this path's node holding the deceleration, m/s^2, read as a magnitude. |
-| `jerk` | fact |  | The parameter on this path's node holding the jerk the deceleration ramps at, m/s^3, read as a magnitude. |
-| `duration` | fact |  | The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside a profile, the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). Required when no profile is written. |
-| `response` | fact | since v0.1.58 | The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived profile alike: `settle = duration + response`, or `response + a/j + (v0 - v_r)/a` (`settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies. |
+| `duration` | fact |  | The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside an extension's keys, the fallback when a hazard does not write a key the derivation needs (`settle-entry-missing`), and compared against the derivation (`settle-conflict`). Required when no extension derives the settle. |
+| `response` | fact | since v0.1.58 | The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived one alike (an extension that reads `settle.response`, as `vehicle.braking` does, adds it in its own formula; `settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies. |
 | `source` | meta | since v0.1.60 | Where the written `duration` comes from, as a budget's `source:` (phase 10). Requires `duration`: a profile's settle is derived from its parameters. |
 | `supervise` | requirement | since v0.1.61 | The runtime supervision of the WHOLE settle (since v0.1.62): from the safe state's command to standstill, the written `duration` or the derived profile plus the `response`. `{ reaction: <path> | enters: <mode>, mechanism: executor | timer, observes: <node>/<subscriber> }`: the platform arms due = command + settle + how late it sees standstill (`observes`: that input's period + its `max_transport`), and a vehicle not at standstill by then starts the reaction. The consumer's overrun case charges the rung up to the settle's end, that observation, the detection and the reaction's route and settle. v0.1.61 took it on a written `duration` only. |
 
@@ -415,7 +414,7 @@ Every key below is a spelling of one bound: a value with a unit, what it limits 
 | `ftti` | `hazards.<name>` | deadline | at most | duration | `{ duration, source }` |
 | `detection` | `hazards.<name>` | latency | at most | duration | `{ duration, source }` |
 | `window` | `modes.<name>` | least time | at least | duration | `{ duration, source, param }`; `param`: `<node>.<parameter>`, seconds (`window-param`) |
-| `settle` | `safe_state` | response | at most | duration | `{ duration | decel, jerk ; response ; source }` (`settle: <d>` is `{ duration: <d> }`) |
+| `settle` | `safe_state` | response | at most | duration | `{ duration ; response ; source }` plus a used extension's keys (`settle: <d>` is `{ duration: <d> }`) |
 | `duration` | `safe_state.settle` | response | at most | duration |  |
 | `response` | `safe_state.settle` | response | at most | duration | `{ duration, source }` |
 | `max_count` | `drop` | count | at most | count / window |  |

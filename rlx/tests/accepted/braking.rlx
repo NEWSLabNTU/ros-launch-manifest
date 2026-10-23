@@ -3,8 +3,8 @@ extension vehicle.braking 1.0.0
 requires rlm >= 0.2.0
 
 key hazard.entry_speed : Velocity              "speed bound of the operating domain"
-key settle.decel       : param Acceleration magnitude
-key settle.jerk        : param Jerk magnitude
+key settle.decel       : param Acceleration magnitude  "node parameter: the deceleration held"
+key settle.jerk        : param Jerk magnitude          "node parameter: the jerk it ramps at"
 input settle.response  : Time = 0 s            -- core bound
 
 derive settle.duration : Time =

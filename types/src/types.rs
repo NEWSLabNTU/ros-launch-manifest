@@ -722,12 +722,6 @@ pub struct HazardDecl {
     /// classes (`when-requires-reported` in the consumer).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<ValuePredicate>,
-    /// The speed the vehicle may be travelling at when the fault occurs, in
-    /// METRES PER SECOND (v0.1.46): the operating domain's speed bound. A
-    /// plain number, positive. A `safe_state` whose settle is a braking
-    /// profile derives its settle time from it, per hazard.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entry_speed: Option<f64>,
 }
 
 impl HazardDecl {
@@ -991,22 +985,17 @@ pub struct SafeState {
     pub emits: String,
     /// A written settle time: `settle: 2s`, shorthand for `settle: {
     /// duration: 2s }` (phase 90 G6), whose map form may also state its
-    /// `source:`. With a [`SettleProfile`] beside it, the written duration is
-    /// what the consumer falls back to when the hazard states no entry
-    /// speed, and what it compares the derivation against
-    /// (`settle-conflict`).
+    /// `source:`. Beside keys an extension derives the settle from, the
+    /// written duration is what the consumer falls back to when a hazard
+    /// does not write a key the derivation needs, and what it compares the
+    /// derivation against (`settle-conflict`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settle: Option<crate::bound::Bound>,
-    /// The settle DERIVED from a braking profile (v0.1.46):
-    /// `settle: { decel: <param>, jerk: <param> }`, the parameters by name
-    /// on this path's node, and the entry speed from the hazard.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub settle_profile: Option<SettleProfile>,
     /// The vehicle's response (phase 10 B2; phase 90 G6 made it the
     /// settle's, not the profile's): `settle: { ..., response: <d> }`, the
     /// time from the braking command to the deceleration the plant then
     /// holds. Added to the settle, whether the settle is a written duration
-    /// or derived from a profile; omitted means 0.
+    /// or derived by an extension; omitted means 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settle_response: Option<crate::bound::Bound>,
     /// The settle was written in its map form (`settle: { ... }`), so its
@@ -1025,8 +1014,9 @@ pub struct SafeState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settle_supervise: Option<Supervision>,
     /// Keys a used extension declares in `settle` (phase 91 E4), as
-    /// written; empty without `use:`. With any, the settle may state
-    /// neither a duration nor a profile: an extension derives it.
+    /// written; without `use:`, only the legacy `decel` and `jerk`
+    /// (v0.2.0, [`crate::extension::LEGACY_KEYS`]). With any, the settle
+    /// may state no duration: an extension derives it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub settle_ext: Vec<ExtKey>,
 }
@@ -1043,44 +1033,6 @@ impl SafeState {
     pub fn written_settle_ms(&self) -> Option<f64> {
         use crate::bound::OptBound;
         self.settle.ms().map(|d| d + self.response_ms())
-    }
-}
-
-/// A braking profile named by the parameters that implement it (v0.1.46).
-///
-/// The node ramps its deceleration at `jerk` up to `decel` and holds it until
-/// standstill. Both are read as magnitudes, so Autoware's signed spellings
-/// (`target_acceleration: -2.5`, `target_jerk: -1.5`) name them unchanged.
-/// [`SettleProfile::settle_s`] is the arithmetic.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct SettleProfile {
-    /// The parameter holding the deceleration, m/s^2.
-    pub decel: String,
-    /// The parameter holding the jerk the deceleration ramps at, m/s^3.
-    pub jerk: String,
-}
-
-impl SettleProfile {
-    /// Seconds from the braking command to standstill, from entry speed
-    /// `v0` (m/s), deceleration `decel` (m/s^2) and jerk `jerk` (m/s^3),
-    /// both taken as magnitudes.
-    ///
-    /// With a = |decel| and j = |jerk|, the ramp to full deceleration takes
-    /// a/j and sheds `v_r = a^2 / (2 j)`. A vehicle slower than that stops
-    /// inside the ramp: `t = sqrt(2 v0 / j)`. Otherwise it finishes at full
-    /// deceleration: `t = a/j + (v0 - v_r) / a`. `None` when either
-    /// magnitude is zero or a value is not finite: no profile, no number.
-    pub fn settle_s(v0: f64, decel: f64, jerk: f64) -> Option<f64> {
-        let (a, j) = (decel.abs(), jerk.abs());
-        if !(v0.is_finite() && a.is_finite() && j.is_finite()) || a == 0.0 || j == 0.0 || v0 < 0.0 {
-            return None;
-        }
-        let v_r = a * a / (2.0 * j);
-        Some(if v0 <= v_r {
-            (2.0 * v0 / j).sqrt()
-        } else {
-            a / j + (v0 - v_r) / a
-        })
     }
 }
 
@@ -2000,26 +1952,5 @@ mod tests {
         assert!(ep.min_rate_hz.is_none());
         assert!(ep.state.is_none());
         assert!(ep.required.is_none());
-    }
-
-    /// The arithmetic of the island's contract comment block, reproduced:
-    /// decel 2.5, jerk 1.5, so v_r = 2.0833 m/s. 3.0 m/s is past the ramp
-    /// and gives 2033.33 ms; phase 7's observed 4.23 m/s gives 2525.33 ms.
-    #[test]
-    fn settle_arithmetic_reproduces_the_islands_numbers() {
-        let ms = |v0: f64| SettleProfile::settle_s(v0, -2.5, -1.5).unwrap() * 1000.0;
-        assert!((ms(3.0) - 2033.333).abs() < 0.01, "{}", ms(3.0));
-        assert!((ms(4.23) - 2525.333).abs() < 0.01, "{}", ms(4.23));
-        // Below v_r the vehicle stops inside the ramp: sqrt(2 v0 / j).
-        let slow = SettleProfile::settle_s(1.5, 2.5, 1.5).unwrap();
-        assert!((slow - (2.0f64 * 1.5 / 1.5).sqrt()).abs() < 1e-12);
-        // The two branches meet at v_r: continuous, no jump.
-        let v_r = 2.5 * 2.5 / 3.0;
-        let a = SettleProfile::settle_s(v_r, 2.5, 1.5).unwrap();
-        let b = SettleProfile::settle_s(v_r + 1e-9, 2.5, 1.5).unwrap();
-        assert!((a - b).abs() < 1e-6);
-        // No profile, no number.
-        assert_eq!(SettleProfile::settle_s(3.0, 0.0, 1.5), None);
-        assert_eq!(SettleProfile::settle_s(3.0, 2.5, f64::NAN), None);
     }
 }

@@ -18,6 +18,11 @@ What each document is, and a suggested reading order.
 3. [format-reference.md](format-reference.md) — the **exhaustive key
    list**, generated from the field table and enforced by a test. Every key
    the parser accepts, per context; anything absent is a parse error.
+3b. [extension-reference.md](extension-reference.md) — the keys
+   **extensions** add (the bundled `vehicle.braking` and the five reference
+   extensions), generated from `types/extensions/` and enforced by a test;
+   [extension-guide.md](extension-guide.md) — how to **write** one (rlx,
+   worst-case proofs, packaging, locks).
 4. [contract-theory.md](contract-theory.md) — the **theory**: why the
    composition rules are what they are (latency, drops, age, chains,
    burstiness), with the formal derivations.

@@ -1107,10 +1107,42 @@ pub struct HazardContract {
     /// The value that is the fault (v0.1.46).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<PredicateContract>,
-    /// The speed bound the vehicle may be at when the fault occurs, m/s
-    /// (v0.1.46).
+    /// Where `ftti_ms` came from when an extension derived it (phase 91
+    /// E10): the number is read as any written one; this says why it is
+    /// that number. Absent for a written interval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry_speed_mps: Option<f64>,
+    pub ftti_derived: Option<DerivedSource>,
+    /// The hazard's own detection bound, ms (phase 91 E1: a physical
+    /// detection time, written or derived), charged before the detectors'.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detection_ms: Option<f64>,
+    /// Where `detection_ms` came from when an extension derived it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detection_derived: Option<DerivedSource>,
+}
+
+/// The source of a bound an extension derived (phase 91 E10). The model
+/// carries every derived bound as a plain number beside its written
+/// siblings, so a consumer (nano-ros's image build) reads it unchanged and
+/// never evaluates an extension; this record is for a reviewer, and for a
+/// lock: the extension, its version and the sha256 of its canonical form,
+/// and the inputs it read as the contract wrote them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DerivedSource {
+    /// The extension (`vehicle.braking`).
+    pub by: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// For a settle, which differs per hazard: the hazard whose values give
+    /// the number, the largest over the hazards whose reaction ends at the
+    /// safe state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hazard: Option<String>,
+    /// The inputs read, name to value as written (`hazard.entry_speed: 30
+    /// km/h`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1220,13 +1252,16 @@ pub struct OnViolationContract {
 pub struct SafeStateContract {
     /// Endpoint ref the safe state is commanded on.
     pub emits: String,
+    /// The settle, ms, response included: a written duration, or (phase
+    /// 91 E10) the one an extension derives -- a braking profile among them
+    /// -- at the largest of the hazards whose reaction ends here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settle_ms: Option<f64>,
-    /// The braking profile the settle is derived from, by parameter name on
-    /// the path's node (v0.1.46). The derivation needs a hazard's entry
-    /// speed, so the model carries the names rather than a number.
+    /// Where `settle_ms` came from when an extension derived it. v0.1.46 to
+    /// v0.1.71 carried a braking profile's parameter names here
+    /// (`settle_profile`) and no number; a model with that key still reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub settle_profile: Option<SettleProfileContract>,
+    pub settle_derived: Option<DerivedSource>,
     /// The supervision of the whole settle (v0.1.62), when the contract
     /// states one and the producer lowered it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1236,13 +1271,13 @@ pub struct SafeStateContract {
 /// A supervised settle lowered to a standstill deadline (v0.1.62). The
 /// realizer arms due = the safe state's command + the settle + `observe_ms`
 /// and, when the vehicle is not at standstill on `observes` by then, starts
-/// `reaction`. The settle is `settle_ms` (a written duration, response
-/// included), or the profile at the hazard's entry speed plus
-/// `response_ms`.
+/// `reaction`. The settle is `settle_ms`, response included, written or
+/// derived (phase 91 E10; before it a derived settle was absent from the
+/// model and the realizer computed it from the profile).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SettleSuperviseContract {
-    /// The settle's response, ms: added to the profile's settle when the
-    /// settle is derived; already inside `settle_ms` when it is written.
+    /// The settle's response, ms: already inside `settle_ms`, stated apart
+    /// so a reader can tell the vehicle's share from the plant's.
     #[serde(default)]
     pub response_ms: f64,
     /// How late standstill is seen, ms: the observed input's period + its
@@ -1256,13 +1291,6 @@ pub struct SettleSuperviseContract {
     pub reaction: String,
     /// What checks the deadline.
     pub mechanism: SuperviseMechanism,
-}
-
-/// `safe_state.settle: { decel, jerk }` after merge (v0.1.46).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct SettleProfileContract {
-    pub decel: String,
-    pub jerk: String,
 }
 
 impl Contracts {
@@ -2049,7 +2077,13 @@ mod tests {
                 op: CompareOp::Equals,
                 value: PredicateValueContract::Bool(false),
             }),
-            entry_speed_mps: Some(8.33),
+            ftti_derived: Some(DerivedSource {
+                by: "process.pst".into(),
+                version: "0.1.0".into(),
+                sha256: Some("ab".repeat(32)),
+                hazard: None,
+                inputs: BTreeMap::from([("hazard.max_rise_rate".into(), "0.5 bar/s".into())]),
+            }),
             ..Default::default()
         };
         let y = serde_yaml_ng::to_string(&h).unwrap();
@@ -2102,10 +2136,13 @@ mod tests {
 
         let ss = SafeStateContract {
             emits: "/op/cmd".into(),
-            settle_ms: None,
-            settle_profile: Some(SettleProfileContract {
-                decel: "target_acceleration".into(),
-                jerk: "target_jerk".into(),
+            settle_ms: Some(2033.33),
+            settle_derived: Some(DerivedSource {
+                by: "vehicle.braking".into(),
+                version: "1.0.0".into(),
+                sha256: None,
+                hazard: Some("hpc_loss".into()),
+                inputs: BTreeMap::from([("hazard.entry_speed".into(), "3 m/s".into())]),
             }),
             supervise: None,
         };
@@ -2115,6 +2152,16 @@ mod tests {
             serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
             ss
         );
+        // Phase 91 E10: a model written before it (a braking profile by
+        // name, an entry speed) still reads; the keys are dropped.
+        let old: SafeStateContract = serde_yaml_ng::from_str(
+            "emits: /op/cmd\nsettle_profile: { decel: target_acceleration, jerk: target_jerk }\n",
+        )
+        .unwrap();
+        assert_eq!((old.settle_ms, old.settle_derived), (None, None));
+        let old: HazardContract =
+            serde_yaml_ng::from_str("on: omission\nentry_speed_mps: 8.33\n").unwrap();
+        assert_eq!(old.on, vec![FaultKind::Omission]);
         // v0.1.64: a subscriber's ingress bound round-trips, and a
         // subscriber written before it (no `ingress`) still reads.
         let sub = SubContract {

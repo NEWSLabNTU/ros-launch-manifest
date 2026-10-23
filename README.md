@@ -23,6 +23,9 @@ order. Direct links:
 - **[Format Reference](docs/format-reference.md)** — every accepted key,
   **generated** from `types/src/field_table.rs`. Normative: a key it does
   not list is a parse error.
+- **[Extensions Reference](docs/extension-reference.md)** — the keys
+  extensions add to the core grammar, generated from `types/extensions/`;
+  **[Writing an extension](docs/extension-guide.md)** — the author's guide.
 - **[Launch Manifest Specification](docs/launch-manifest.md)** — the
   manifest format: elements, background, worked examples, the tutorial
   pass over the format (including Vocabulary v2: `trigger:`, `sync:`,

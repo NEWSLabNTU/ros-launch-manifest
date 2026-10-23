@@ -1117,12 +1117,6 @@ pub const FIELDS: &[Field] = &[
         Context::Hazard,
         "Read-only: the consumer computes it (detection + route + settle) and hands it to extension checks. A contract never writes it.",
     ),
-    live(
-        "entry_speed",
-        Context::Hazard,
-        Kind::Requirement,
-        "The speed the vehicle may travel at when the fault occurs, in m/s, a plain positive number: the operating domain's speed bound. A braking-profile settle is derived from it (`settle-derived`).",
-    ),
     // ── modes.<name> ──
     live(
         "description",
@@ -1221,7 +1215,7 @@ pub const FIELDS: &[Field] = &[
         "settle",
         Context::SafeState,
         Kind::Fact,
-        "How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration | decel, jerk ; response ; source }`: a written (measured) duration, or `decel` and `jerk`, a braking profile by parameter name, read from the node's launch parameter values, from which the settle is derived with the hazard's `entry_speed` v0: a = |decel|, j = |jerk|, v_r = a^2/(2j); t = a/j + (v0 - v_r)/a when v0 > v_r, else sqrt(2 v0 / j) (`settle-derived` prints the arithmetic). `response` is added to either (omitted: 0). Both a duration and a profile: the profile is charged and the two compared (`settle-conflict`).",
+        "How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration ; response ; source }` plus the keys of a used extension that derives `settle.duration` (v0.2.0: the braking profile `decel`, `jerk` with the hazard's `entry_speed` is the bundled `vehicle.braking`'s; `settle-derived` prints its trace). `response` is added to either (omitted: 0). Both a duration and a derivation: the derivation is charged and the two compared (`settle-conflict`).",
     ),
     // -- functions.<name> (map form) --
     live(
@@ -1299,30 +1293,18 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "The mode the ladder ends in. Not a member of any `fallback:` list (`mode-exit-target`).",
     ),
-    // -- safe_state.settle (profile form) --
-    live(
-        "decel",
-        Context::Settle,
-        Kind::Fact,
-        "The parameter on this path's node holding the deceleration, m/s^2, read as a magnitude.",
-    ),
-    live(
-        "jerk",
-        Context::Settle,
-        Kind::Fact,
-        "The parameter on this path's node holding the jerk the deceleration ramps at, m/s^3, read as a magnitude.",
-    ),
+    // -- safe_state.settle (map form) --
     live(
         "duration",
         Context::Settle,
         Kind::Fact,
-        "The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside a profile, the fallback when the hazard states no entry speed, and compared against the derivation (`settle-conflict`). Required when no profile is written.",
+        "The written settle (a measured duration): `settle: { duration: 2s }` is `settle: 2s`. Beside an extension's keys, the fallback when a hazard does not write a key the derivation needs (`settle-entry-missing`), and compared against the derivation (`settle-conflict`). Required when no extension derives the settle.",
     ),
     live(
         "response",
         Context::Settle,
         Kind::Fact,
-        "The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived profile alike: `settle = duration + response`, or `response + a/j + (v0 - v_r)/a` (`settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies.",
+        "The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived one alike (an extension that reads `settle.response`, as `vehicle.braking` does, adds it in its own formula; `settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies.",
     ),
     live(
         "source",
@@ -1520,6 +1502,12 @@ pub fn render_markdown() -> String {
          maps under `pub:`/`sub:`/`srv:`/`cli:`, and the parameter names under \
          a node's `params:` — have no section here, because \
          no allowlist applies to them.\n\n\
+         This is the **core** grammar. A contract that `use:`s an extension may \
+         also write the keys that extension declares, in `hazards.<name>` and \
+         `safe_state.settle`: those are listed per extension in \
+         [extension-reference.md](extension-reference.md) (the bundled \
+         `vehicle.braking` and the reference extensions), and \
+         [extension-guide.md](extension-guide.md) says how to write one.\n\n\
          The **kind** column is the rule of `contract-primitives.md` as data: a \
          *fact* is what the code does, a *requirement* is what it must achieve, \
          *meta* is structure, and a **consequence** is computable from the facts — \
@@ -1587,7 +1575,7 @@ fn render_bounds() -> String {
             Form::Bare => "".to_string(),
             Form::Map => "`{ duration, source }`".to_string(),
             Form::MapParam => format!("`{{ duration, source, param }}`; `param`: {}", b.param),
-            Form::Settle => "`{ duration | decel, jerk ; response ; source }` (`settle: <d>` is `{ duration: <d> }`)".to_string(),
+            Form::Settle => "`{ duration ; response ; source }` plus a used extension's keys (`settle: <d>` is `{ duration: <d> }`)".to_string(),
         };
         let deprecated = lookup(b.context, b.key).is_some_and(|f| f.status == Status::Deprecated);
         let form = if deprecated {

@@ -1,0 +1,33 @@
+-- Reference extension (UAV): a lost-link descent and its battery reserve.
+-- Phase 91 E9, rlm extension-examples.md. ILLUSTRATIVE: the formulas follow
+-- the published examples, but no clause of the standard named here has been
+-- checked against the standard's text, and every constant a contract gives
+-- it in the examples is an example value. Verify both before calling this a
+-- reference implementation of the standard.
+extension uav.descent 0.2.0
+requires rlm >= 0.2.0
+
+key hazard.max_altitude     : Length
+key hazard.hover_power      : Power
+key hazard.battery_capacity : Energy
+key hazard.trigger_soc      : param Fraction
+key hazard.reserve_soc      : param Fraction
+key settle.descent_speed    : param Velocity
+key settle.slow_altitude    : param Length
+key settle.land_speed       : param Velocity
+input reaction_total : Time
+
+derive settle.duration : Time =
+    if max_altitude > slow_altitude
+    then (max_altitude - slow_altitude) / descent_speed + slow_altitude / land_speed
+    else max_altitude / land_speed
+  worst_case:
+    increasing in max_altitude, slow_altitude
+    decreasing in descent_speed, land_speed
+  domain: descent_speed > 0 m/s, land_speed > 0 m/s, land_speed <= descent_speed,
+          max_altitude > 0 m, slow_altitude > 0 m
+
+check energy_reserve:
+    hover_power * reaction_total <= battery_capacity * (trigger_soc - reserve_soc)
+  worst_case: increasing in reaction_total
+  domain: hover_power > 0 W

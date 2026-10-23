@@ -1,9 +1,15 @@
 # Domain extensions by example
 
-Companion to `extension-language-exploration.md`. Draft, for review. Shows
-the recommended design on seven domains, each as the extension file (rlx),
-the contract that uses it, and what `play_launch check --explain` prints.
-Nothing here is implemented; the syntax is the proposal. Numbers are worked
+Companion to `extension-language-exploration.md`. Shows the design on
+seven domains, each as the extension file (rlx), the contract that uses it,
+and what `play_launch check --explain` prints. Written before the
+implementation (2026-10-15); built in play_launch phase 91 (rlm v0.2.0).
+The extension files are published as the bundled `vehicle.braking`
+(`types/extensions/`) and the five reference extensions
+(`types/extensions/reference/`), and rlx's `tests/reference.rs` holds each
+to its block here. The printed output is the proposal's shape; the
+checker's actual output for each, on play_launch's fixtures, is recorded
+beside them (`tests/fixtures/contract_ext_<domain>/expected_explain.txt`). Numbers are worked
 in the exploration's appendix A unless marked otherwise; domain constants are
 illustrative, not values taken from a standard.
 
@@ -47,8 +53,8 @@ extension vehicle.braking 1.0.0
 requires rlm >= 0.2.0
 
 key hazard.entry_speed : Velocity              "speed bound of the operating domain"
-key settle.decel       : param Acceleration magnitude
-key settle.jerk        : param Jerk magnitude
+key settle.decel       : param Acceleration magnitude  "node parameter: the deceleration held"
+key settle.jerk        : param Jerk magnitude          "node parameter: the jerk it ramps at"
 input settle.response  : Time = 0 s            -- core bound
 
 derive settle.duration : Time =

@@ -6,6 +6,61 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.2.0 - 2026-10-23
+
+The extension system's release (play_launch phase 91 E8-E11).
+GRAMMAR_VERSION 0.2.0; workspace Cargo version 0.2.0, because public
+items of `types` and `model` are removed. Every contract that loaded under
+v0.1.71 still loads and, checked by play_launch, gets the same verdicts and
+totals, plus `deprecated-implicit-extension` where it relied on the vehicle
+keys or the ASIL scale without naming them; `migrate` names them.
+
+### Changed
+
+- The vehicle keys leave the core grammar. `hazards.<h>.entry_speed` and
+  `settle: { decel, jerk }` are keys of the bundled extension
+  `vehicle.braking 1.0.0` (`types::extension::BUNDLED`,
+  `types/extensions/vehicle.braking.rlx`, extension-examples.md section 1).
+  The parser collects them as extension keys with or without `use:`
+  (`extension::LEGACY_KEYS`); the consumer loads the extension implicitly
+  for one minor release when a contract writes them without `use:`, with
+  `deprecated-implicit-extension`, reading a plain-number `entry_speed` as
+  m/s. The next minor release requires `use: { vehicle.braking: "^1" }`.
+- The ASIL default scale is the bundled `iso26262` profile on the same
+  schedule: hazard severities with no profile and no `severity_levels:` get
+  the same warning, then an error.
+- model: a derived bound is a plain number with its source. New
+  `DerivedSource { by, version, sha256, hazard, inputs }`;
+  `SafeStateContract.settle_ms` carries a derived settle (the largest over
+  the hazards whose reaction ends there) with `settle_derived`;
+  `HazardContract` gains `ftti_derived`, `detection_ms` and
+  `detection_derived`. A model written before still reads.
+- Format reference: the core grammar, pointing at the new extension
+  reference for the keys extensions add.
+
+### Added
+
+- migrate: `use-implicit` (the `use:` entries a level needs so nothing loads
+  implicitly: `vehicle.braking`, `iso26262`) and `entry-speed-unit` (`8.33`
+  becomes `8.33 m/s`).
+- `types::extension::REFERENCE`: the five reference extensions as files
+  (`types/extensions/reference/`: `machine.iso13855`, `medical.occlusion`,
+  `uav.descent`, `rail.ebd`, `process.pst`), each marked illustrative (no
+  clause of a standard checked against its text). rlx's `tests/reference.rs`
+  holds each, and the bundled `vehicle.braking`, to its block in
+  extension-examples.md and proves every worst case.
+- `docs/extension-reference.md`, generated from `types/extensions/` by
+  `rlx/tests/extension_reference.rs`; `docs/extension-guide.md`, the
+  author's guide, whose rlx examples a test loads and proves.
+
+### Removed
+
+- types: `HazardDecl.entry_speed`, `SafeState.settle_profile`,
+  `SettleProfile` (the braking arithmetic is `vehicle.braking`'s rlx), and
+  the field-table rows `entry_speed`, `decel`, `jerk`.
+- model: `HazardContract.entry_speed_mps`, `SafeStateContract.settle_profile`,
+  `SettleProfileContract`.
+
 ## v0.1.71 - 2026-10-23
 
 Profiles (play_launch phase 91 E6). GRAMMAR_VERSION 0.1.71. Additive for

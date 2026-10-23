@@ -236,13 +236,16 @@ fn extension_keys(doc: &Yaml, ctx: &str, context: Context) -> Result<Vec<ExtKey>
     let Some(hash) = doc.as_hash() else {
         return Ok(Vec::new());
     };
-    if !EXTENSIBLE.with(|c| c.get()) {
-        return Ok(Vec::new());
-    }
+    let extensible = EXTENSIBLE.with(|c| c.get());
     let mut out = Vec::new();
     for (k, v) in hash {
         let Some(key) = k.as_str() else { continue };
         if field_table::lookup(context, key).is_some() {
+            continue;
+        }
+        // Without `use:`, only the legacy vehicle keys (v0.2.0), which
+        // the consumer reads through an implicit `vehicle.braking`.
+        if !extensible && !crate::extension::is_legacy_key(context, key) {
             continue;
         }
         let scalar = |y: &Yaml| match y {
@@ -1350,19 +1353,6 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 on.push(kind);
             }
         }
-        let entry_speed = yaml_f64(v, "entry_speed", &hctx)?;
-        if let Some(s) = entry_speed
-            && !(s.is_finite() && s > 0.0)
-        {
-            return Err(field_err(
-                &hctx,
-                "entry_speed",
-                &format!(
-                    "`entry_speed: {s}` -- a speed in m/s, positive. It is the operating \
-                     domain's speed bound, and a braking settle is derived from it"
-                ),
-            ));
-        }
         let deadline_by = match yaml_string(v, "deadline_by", &hctx)? {
             None => None,
             Some(raw) => {
@@ -1416,7 +1406,6 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 enters,
                 reaction,
                 when: parse_predicate(v, &hctx)?,
-                entry_speed,
             },
         );
     }
@@ -1590,73 +1579,57 @@ fn parse_safe_state(doc: &Yaml, ctx: &str) -> Result<Option<SafeState>, ParseErr
         )
     })?;
     // Phase 90 G6: `settle: <d>` is shorthand for `settle: { duration: <d> }`;
-    // the map is `{ duration | decel, jerk ; response ; source }`.
-    let (settle, settle_profile, settle_response, settle_map, settle_supervise, settle_ext) =
-        match &section["settle"] {
-            Yaml::Hash(_) => {
-                let sctx = &format_path(ctx, "settle");
-                let map = &section["settle"];
-                reject_unknown_keys(map, sctx, Context::Settle)?;
-                let profile = if map["decel"].is_badvalue() && map["jerk"].is_badvalue() {
-                    None
-                } else {
-                    let param = |key: &str| {
-                        yaml_string(map, key, sctx)?.ok_or_else(|| {
-                            field_err(
-                                sctx,
-                                key,
-                                "required: a braking profile names both its deceleration and its \
-                             jerk parameter",
-                            )
-                        })
-                    };
-                    let decel = param("decel")?;
-                    let jerk = param("jerk")?;
-                    Some(SettleProfile { decel, jerk })
-                };
-                let settle_ext = extension_keys(map, sctx, Context::Settle)?;
-                let mut literal = yaml_bound(map, "duration", sctx, Context::Settle)
-                    .map_err(|e| reframe(e, sctx))?;
-                if literal.is_none() && profile.is_none() && settle_ext.is_empty() {
+    // the map is `{ duration ; response ; source }` plus the keys of the
+    // extensions the contract uses (v0.2.0: `decel` and `jerk` are
+    // `vehicle.braking`'s).
+    let (settle, settle_response, settle_map, settle_supervise, settle_ext) = match &section["settle"]
+    {
+        Yaml::Hash(_) => {
+            let sctx = &format_path(ctx, "settle");
+            let map = &section["settle"];
+            reject_unknown_keys(map, sctx, Context::Settle)?;
+            let settle_ext = extension_keys(map, sctx, Context::Settle)?;
+            let mut literal =
+                yaml_bound(map, "duration", sctx, Context::Settle).map_err(|e| reframe(e, sctx))?;
+            if literal.is_none() && settle_ext.is_empty() {
+                return Err(field_err(
+                    sctx,
+                    "duration",
+                    "required: a settle states its duration (`settle: { duration: 2s }`, or \
+                     `settle: 2s`) or the keys an extension derives it from (`vehicle.braking`'s \
+                     `decel` and `jerk`)",
+                ));
+            }
+            if !map["source"].is_badvalue() {
+                let Some(b) = literal.as_mut() else {
                     return Err(field_err(
                         sctx,
-                        "duration",
-                        "required: a settle states its duration (`settle: { duration: 2s }`, or \
-                     `settle: 2s`) or a braking profile it is derived from (`decel` and `jerk`)",
-                    ));
-                }
-                if !map["source"].is_badvalue() {
-                    let Some(b) = literal.as_mut() else {
-                        return Err(field_err(
-                            sctx,
-                            "source",
-                            "says where a written `duration` comes from, and none is written: a \
-                         profile's settle is derived from its parameters. A measured or \
+                        "source",
+                        "says where a written `duration` comes from, and none is written: a \
+                         derived settle is derived from its keys. A measured or \
                          analysed `response` states its source in its own map form, \
                          `response: { duration, source }`",
-                        ));
-                    };
-                    b.source = Some(parse_source(&map["source"], sctx)?);
-                }
-                // v0.1.62: the whole settle (the written duration or the
-                // derived profile, plus the response) is what is supervised.
-                let supervise = parse_supervise(map, sctx, true)?;
-                let response = yaml_bound(map, "response", sctx, Context::Settle)?;
-                (literal, profile, response, true, supervise, settle_ext)
+                    ));
+                };
+                b.source = Some(parse_source(&map["source"], sctx)?);
             }
-            _ => (
-                yaml_bound(section, "settle", ctx, Context::SafeState)?,
-                None,
-                None,
-                false,
-                None,
-                Vec::new(),
-            ),
-        };
+            // v0.1.62: the whole settle (the written duration or the
+            // derived profile, plus the response) is what is supervised.
+            let supervise = parse_supervise(map, sctx, true)?;
+            let response = yaml_bound(map, "response", sctx, Context::Settle)?;
+            (literal, response, true, supervise, settle_ext)
+        }
+        _ => (
+            yaml_bound(section, "settle", ctx, Context::SafeState)?,
+            None,
+            false,
+            None,
+            Vec::new(),
+        ),
+    };
     Ok(Some(SafeState {
         emits,
         settle,
-        settle_profile,
         settle_response,
         settle_map,
         settle_supervise,
@@ -2782,6 +2755,10 @@ fn reject_unknown_keys(doc: &Yaml, ctx: &str, context: Context) -> Result<(), Pa
             }
             Some(_) => continue,
             None if extensible(context) && EXTENSIBLE.with(|c| c.get()) => continue,
+            // v0.2.0: the vehicle keys moved to the bundled
+            // `vehicle.braking`; without `use:` they are read for one
+            // release, and the consumer loads it implicitly.
+            None if crate::extension::is_legacy_key(context, key) => continue,
             None => {
                 let near = field_table::nearest_all(context, key);
                 let detail = match near.as_slice() {
@@ -4645,7 +4622,15 @@ nodes:
         assert_eq!(drv.value, PredicateValue::Constant("MANUAL".into()));
 
         let h = &m.hazards["odd_exit"];
-        assert_eq!(h.entry_speed, Some(8.33));
+        // v0.2.0: a legacy vehicle key, read without `use:` as a key of
+        // the bundled `vehicle.braking`.
+        assert_eq!(
+            h.ext,
+            vec![ExtKey {
+                key: "entry_speed".into(),
+                value: ExtValue::Scalar("8.33".into())
+            }]
+        );
         assert_eq!(h.when.as_ref().unwrap().field, "autonomous");
 
         let tor = &m.modes["takeover_request"];
@@ -4673,16 +4658,21 @@ nodes:
 
         let ss = m.nodes["op"].paths["on_timer"].safe_state.as_ref().unwrap();
         assert_eq!(ss.settle, None);
+        let keys: Vec<(&str, &ExtValue)> = ss
+            .settle_ext
+            .iter()
+            .map(|k| (k.key.as_str(), &k.value))
+            .collect();
         assert_eq!(
-            ss.settle_profile,
-            Some(SettleProfile {
-                decel: "target_acceleration".into(),
-                jerk: "target_jerk".into(),
-            })
+            keys,
+            [
+                ("decel", &ExtValue::Scalar("target_acceleration".into())),
+                ("jerk", &ExtValue::Scalar("target_jerk".into())),
+            ]
         );
         let both = m.nodes["op"].paths["measured"].safe_state.as_ref().unwrap();
         assert_eq!(both.settle.ms(), Some(2034.0));
-        assert!(both.settle_profile.is_some());
+        assert_eq!(both.settle_ext.len(), 2);
     }
 
     /// A literal settle is unchanged by the new map form.
@@ -4695,7 +4685,7 @@ nodes:
         .unwrap();
         let ss = m.nodes["n"].paths["p"].safe_state.as_ref().unwrap();
         assert_eq!(ss.settle.ms(), Some(2034.0));
-        assert_eq!(ss.settle_profile, None);
+        assert!(ss.settle_ext.is_empty());
     }
 
     #[test]
@@ -4860,23 +4850,24 @@ nodes:
         assert!(e.contains("not both"), "{e}");
     }
 
+    /// v0.2.0: `entry_speed`, `decel` and `jerk` are `vehicle.braking`'s
+    /// keys. Without `use:` they are collected as extension keys for the
+    /// consumer's implicit load (values as written: the unit and the sign are
+    /// the extension's to check); any other unknown key is still refused.
     #[test]
-    fn entry_speed_is_a_positive_number_in_metres_per_second() {
+    fn the_legacy_vehicle_keys_are_extension_keys_without_use() {
         let h = |v: &str| format!("version: 1\nhazards:\n  h:\n    entry_speed: {v}\n");
-        assert_eq!(
-            parse_manifest_str(&h("16.7")).unwrap().hazards["h"].entry_speed,
-            Some(16.7)
+        for v in ["16.7", "8", "30 km/h"] {
+            let m = parse_manifest_str(&h(v)).unwrap();
+            assert_eq!(m.hazards["h"].ext[0].value, ExtValue::Scalar(v.into()));
+        }
+        let e = err_of("version: 1\nhazards:\n  h:\n    max_altitude: 120 m\n");
+        assert!(e.contains("unknown key"), "{e}");
+        let e = err_of(
+            "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
+             safe_state: { emits: o, settle: { decel: a, slow: b } }\n",
         );
-        assert_eq!(
-            parse_manifest_str(&h("8")).unwrap().hazards["h"].entry_speed,
-            Some(8.0)
-        );
-        let e = err_of(&h("0"));
-        assert!(e.contains("positive"), "{e}");
-        let e = err_of(&h("-3.0"));
-        assert!(e.contains("positive"), "{e}");
-        let e = err_of(&h("30km/h"));
-        assert!(e.contains("hazards.h.entry_speed"), "{e}");
+        assert!(e.contains("unknown key") && e.contains("slow"), "{e}");
     }
 
     /// Phase 90 G6: `settle: <d>` is `settle: { duration: <d> }`, the map
@@ -4903,7 +4894,7 @@ nodes:
         );
         let both = ss("{ duration: 2s, response: 300ms, source: measured }");
         assert_eq!(both.written_settle_ms(), Some(2300.0));
-        assert_eq!(both.settle_profile, None);
+        assert!(both.settle_ext.is_empty());
         assert_eq!(
             both.settle.source().map(|s| s.kind),
             Some(crate::SourceKind::Measured)
@@ -4911,7 +4902,7 @@ nodes:
         let prof = ss("{ decel: a, jerk: j, response: 300ms }");
         assert_eq!(prof.settle, None);
         assert_eq!(prof.response_ms(), 300.0);
-        assert!(prof.settle_profile.is_some());
+        assert_eq!(prof.settle_ext.len(), 2);
         let keys: Vec<String> = parse_manifest_str(
             "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
              safe_state: { emits: o, settle: { duration: 2s, response: 300ms, source: measured } }\n",
@@ -4940,7 +4931,7 @@ nodes:
         };
         let e = err_of(&p("{ response: 300ms }"));
         assert!(
-            e.contains("safe_state.settle.duration") && e.contains("braking profile"),
+            e.contains("safe_state.settle.duration") && e.contains("extension derives"),
             "{e}"
         );
         let e = err_of(&p("{ decel: a, jerk: j, source: measured }"));
@@ -4985,18 +4976,16 @@ nodes:
     }
 
     #[test]
-    fn a_settle_profile_names_both_parameters_and_nothing_else() {
+    fn a_settle_map_takes_the_legacy_keys_and_nothing_else() {
         let p = |settle: &str| {
             format!(
                 "version: 1\nnodes:\n  n:\n    paths:\n      p:\n        output: [o]\n        \
                  safe_state: {{ emits: o, settle: {settle} }}\n"
             )
         };
-        let e = err_of(&p("{ decel: target_acceleration }"));
-        assert!(
-            e.contains("safe_state.settle.jerk") && e.contains("required"),
-            "{e}"
-        );
+        // v0.2.0: a missing `jerk` is `vehicle.braking`'s to report (its
+        // derivation names the key it lacks), not the grammar's.
+        assert!(parse_manifest_str(&p("{ decel: target_acceleration }")).is_ok());
         let e = err_of(&p("{ decel: a, jerk: j, entry_speed: 3.0 }"));
         assert!(e.contains("unknown key in `safe_state.settle`"), "{e}");
         let e = err_of(&p("{ decel: a, jerk: j, duration: 2034 }"));
@@ -5134,7 +5123,7 @@ nodes:
         let react = &n.paths["react"];
         assert_eq!(react.max_latency.ms(), Some(149.0));
         let ss = react.safe_state.as_ref().unwrap();
-        assert!(ss.settle_profile.is_some());
+        assert_eq!(ss.settle_ext.len(), 2);
         assert_eq!(ss.settle_response.ms(), Some(256.0));
 
         let sources = m.budget_sources();
@@ -5260,7 +5249,7 @@ nodes:
             ]
         );
         let ss = m.nodes["n"].paths["stop"].safe_state.as_ref().unwrap();
-        assert!(ss.settle.is_none() && ss.settle_profile.is_none());
+        assert!(ss.settle.is_none());
         assert_eq!(
             ss.settle_ext[0].value,
             crate::ExtValue::Scalar("1.0s".into())

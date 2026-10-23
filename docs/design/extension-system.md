@@ -1,6 +1,9 @@
 # The extension system: domain vocabulary outside the core
 
-Status: **design draft** (2026-10-15), stage 2 of the grammar work. Stage 1
+Status: **built** (play_launch phase 91, rlm v0.2.0; drafted 2026-10-15),
+stage 2 of the grammar work. Sections marked "as built" record where the
+implementation settled a question the draft left open. An extension
+author starts with `docs/extension-guide.md`. Stage 1
 (play_launch phase 90, "a tidy grammar") folds and renames core keys and
 lands first; this design assumes its result. Inputs:
 `extension-language-exploration.md` (languages compared, domains surveyed)
@@ -318,6 +321,45 @@ elements is the open R6 question.
   same schedule: a contract with `severity: ASIL_x` and no profile gets the
   warning, then an error.
 - `play_launch migrate` (from stage 1) adds the `use:` lines.
+
+### 10.1 As built (E8, rlm v0.2.0)
+
+- `vehicle.braking 1.0.0` is bundled (`types::extension::BUNDLED`, file
+  `types/extensions/vehicle.braking.rlx`, section 1 of the examples
+  verbatim) and is a candidate for any `use:` entry, after a file on disk
+  of the same name and version. The core's `HazardDecl.entry_speed`,
+  `SafeState.settle_profile` and `SettleProfile` arithmetic are gone; the
+  parser collects `entry_speed`, `decel` and `jerk` as extension keys, with
+  or without `use:` (`extension::LEGACY_KEYS`).
+- Implicit load (one minor release): a contract that writes those keys with
+  no used extension declaring them loads `vehicle.braking`, reads a
+  plain-number `entry_speed` as m/s (the core key's unit), and gets
+  `deprecated-implicit-extension`. A contract whose hazards state a
+  severity with no profile and no `severity_levels:` gets the same rule
+  for the ISO 26262 scale. Neither changes a verdict: play_launch's gate
+  checks every contract fixture as written and migrated, compares verdicts
+  and fault-reaction totals, and finds them equal (phase 91 E8).
+- The settle rules the core profile had are now any extension's
+  (`settle-param-unresolved`, `settle-entry-missing`, `settle-conflict`,
+  `derive-conflict`), and the checks of an extension receive the safe
+  state the hazard's floor ends at, so a check may read its keys (rail's
+  stopping distance).
+- `migrate` rewrites: `use-implicit` adds the entries that apply to the
+  level's `use:` (creating it after the header), `entry-speed-unit`
+  gives a plain number its `m/s`. `iso26262` is not added beside an
+  undotted name that is not a reference profile (it may be a local
+  profile); that file is reported for a hand edit.
+- An extension's `requires rlm ...` is enforced (`extension-invalid`), as a
+  profile's already was.
+
+### 10.2 The model (E10)
+
+Every derived bound is a plain number in the model, with a `DerivedSource`
+beside it (extension, version, sha256, inputs as written): a safe state's
+`settle_ms` (the largest over the hazards whose reaction ends there, with
+the hazard named), a hazard's `ftti_ms` and its new `detection_ms`. The
+model no longer carries `settle_profile` or `entry_speed_mps`; a model that
+does still reads. nano-ros reads the numbers and never evaluates rlx.
 
 ## 11. Decisions (folded)
 

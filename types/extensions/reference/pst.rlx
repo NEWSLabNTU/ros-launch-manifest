@@ -1,0 +1,21 @@
+-- Reference extension (process industry): process safety time against a safety instrumented function (IEC 61511 style).
+-- Phase 91 E9, rlm extension-examples.md. ILLUSTRATIVE: the formulas follow
+-- the published examples, but no clause of the standard named here has been
+-- checked against the standard's text, and every constant a contract gives
+-- it in the examples is an example value. Verify both before calling this a
+-- reference implementation of the standard.
+extension process.pst 0.1.0
+requires rlm >= 0.2.0
+
+dimension PressureRate = Pressure / Time
+
+key hazard.trip_setpoint   : param Pressure unit bar
+key hazard.hazard_pressure : Pressure          "pressure at which harm begins"
+key hazard.max_rise_rate   : PressureRate      "worst credible rise, from the HAZOP"
+key settle.valve_stroke    : Time              "final element: closed from command"
+
+derive hazard.ftti : Time = (hazard_pressure - trip_setpoint) / max_rise_rate
+  worst_case: decreasing in max_rise_rate; increasing in hazard_pressure
+  domain: hazard_pressure > trip_setpoint, max_rise_rate > 0 bar/s
+
+derive settle.duration : Time = valve_stroke

@@ -110,6 +110,24 @@ pub const REWRITES: &[Rewrite] = &[
         when: "always (the inline group is removed; the same group named in `functions:`)",
         find: guard_all_of_function,
     },
+    Rewrite {
+        id: "entry-speed-unit",
+        unit: "E8",
+        since: "0.2.0",
+        from: "hazards.<h>.entry_speed: <number>",
+        to: "hazards.<h>.entry_speed: <number> m/s",
+        when: "the value is a plain number (the core key's metres per second); `vehicle.braking` reads a velocity with its unit",
+        find: entry_speed_unit,
+    },
+    Rewrite {
+        id: "use-implicit",
+        unit: "E8",
+        since: "0.2.0",
+        from: "`vehicle.braking`'s keys (`entry_speed`, `settle: { decel, jerk }`) without `use:`; a hazard `severity:` with no profile and no `severity_levels:`",
+        to: "use: { vehicle.braking: \"^1\" } / use: { iso26262: \"^1\" }, the entries that apply, added to the level's `use:` (created when absent)",
+        when: "the checker would load the extension or the scale implicitly; `iso26262` is not added beside a used name that may be a profile (an undotted name that is not a reference profile is skipped for a hand edit)",
+        find: use_implicit,
+    },
 ];
 
 /// One textual edit.
@@ -1268,6 +1286,196 @@ fn guard_all_of_function(doc: &Doc) -> Vec<Edit> {
     out
 }
 
+/// E8: a plain-number `entry_speed` (the core key's m/s, v0.1.46-v0.1.71)
+/// gains its unit, as `vehicle.braking` reads a velocity.
+fn entry_speed_unit(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "entry-speed-unit";
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let Some(hazards) = y["hazards"].as_hash() else {
+            continue;
+        };
+        for (k, h) in hazards {
+            let Some(name) = key_str(k) else { continue };
+            let number = match &h["entry_speed"] {
+                Yaml::Real(r) => r.clone(),
+                Yaml::Integer(i) => i.to_string(),
+                _ => continue,
+            };
+            let kpath = with(&level, &["hazards", &name, "entry_speed"]);
+            let dotted = kpath.join(".");
+            let Some(r) = doc.key(&kpath) else {
+                doc.skip(ID, &dotted, "key token not found");
+                continue;
+            };
+            let vs = doc.value_start(&r);
+            let ve = doc.inline_value_end(vs, doc.flow.contains(&kpath));
+            if doc.src[vs..ve].trim() != number {
+                doc.skip(ID, &dotted, "the value is not written as a plain number");
+                continue;
+            }
+            out.push(doc.edit(ID, &dotted, vs..ve, format!("{number} m/s")));
+        }
+    }
+    out
+}
+
+/// E8: the `use:` entries a level needs so that nothing is loaded
+/// implicitly: `vehicle.braking` when it writes the extension's keys, and
+/// `iso26262` when a hazard states a severity on the implicit scale.
+fn use_implicit(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "use-implicit";
+    let reference: Vec<String> = crate::profile::reference()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let used: Vec<String> = y["use"]
+            .as_hash()
+            .map(|h| h.keys().filter_map(key_str).collect())
+            .unwrap_or_default();
+        let dotted_level = if level.is_empty() {
+            "use".to_string()
+        } else {
+            with(&level, &["use"]).join(".")
+        };
+        let hazards = y["hazards"].as_hash();
+        let mut add: Vec<&str> = Vec::new();
+        let vehicle_keys = hazards
+            .is_some_and(|hs| hs.values().any(|h| !h["entry_speed"].is_badvalue()))
+            || y["nodes"].as_hash().is_some_and(|ns| {
+                ns.values().any(|n| {
+                    n["paths"].as_hash().is_some_and(|ps| {
+                        ps.values().any(|p| {
+                            let st = &p["safe_state"]["settle"];
+                            st.as_hash().is_some()
+                                && (!st["decel"].is_badvalue() || !st["jerk"].is_badvalue())
+                        })
+                    })
+                })
+            });
+        let ext = crate::extension::VEHICLE_BRAKING;
+        if vehicle_keys && !used.iter().any(|u| u == ext) {
+            // Another used extension may declare the key itself (`rail.ebd`
+            // has an `entry_speed`), and then nothing loads implicitly:
+            // which it is needs the extension, which a file does not hold.
+            match used.iter().find(|u| u.contains('.')) {
+                Some(other) => doc.skip(
+                    ID,
+                    &dotted_level,
+                    &format!(
+                        "uses `{other}`, which may declare `entry_speed`, `decel` or `jerk`: add \
+                         `{ext}` by hand if the checker reports `deprecated-implicit-extension`"
+                    ),
+                ),
+                None => add.push(ext),
+            }
+        }
+        let severity = hazards.is_some_and(|hs| hs.values().any(|h| !h["severity"].is_badvalue()));
+        if severity && y["severity_levels"].is_badvalue() {
+            let profile = used.iter().find(|u| reference.contains(u));
+            let maybe = used
+                .iter()
+                .find(|u| !u.contains('.') && !reference.contains(u));
+            match (profile, maybe) {
+                (Some(_), _) => {}
+                (None, Some(m)) => doc.skip(
+                    ID,
+                    &dotted_level,
+                    &format!("uses `{m}`, which may be a profile: add `iso26262` by hand if not"),
+                ),
+                (None, None) => add.push("iso26262"),
+            }
+        }
+        if add.is_empty() {
+            continue;
+        }
+        let upath = with(&level, &["use"]);
+        let entry = |n: &str| format!("{n}: \"^1\"");
+        let edit = if let Some(ur) = doc.key(&upath) {
+            if doc.src.as_bytes().get(doc.value_start(&ur)) == Some(&b'{') {
+                // `use: { a: "^1" }`: before the closing brace.
+                let vs = doc.value_start(&ur);
+                let ve = doc.inline_value_end(vs, false);
+                let b = doc.src.as_bytes();
+                if b.get(vs) != Some(&b'{') || ve < 2 || b[ve - 1] != b'}' {
+                    doc.skip(ID, &dotted_level, "a `use:` that is not a map");
+                    continue;
+                }
+                let mut at = ve - 1;
+                while at > vs + 1 && b[at - 1] == b' ' {
+                    at -= 1;
+                }
+                let empty = doc.src[vs + 1..at].trim().is_empty();
+                let text: Vec<String> = add.iter().map(|n| entry(n)).collect();
+                let text = if empty {
+                    format!(" {} ", text.join(", "))
+                } else {
+                    format!(", {}", text.join(", "))
+                };
+                doc.edit(ID, &dotted_level, at..at, text)
+            } else {
+                let Some(ci) = doc.child_indent(&ur) else {
+                    doc.skip(ID, &dotted_level, "an empty `use:`");
+                    continue;
+                };
+                let at = doc.block_end(&ur);
+                let mut text: String = add
+                    .iter()
+                    .map(|n| format!("{}{}\n", " ".repeat(ci), entry(n)))
+                    .collect();
+                if at > 0 && doc.src.as_bytes()[at - 1] != b'\n' {
+                    text.insert(0, '\n');
+                }
+                doc.edit(ID, &dotted_level, at..at, text)
+            }
+        } else {
+            // A new `use:` beside the level's first key: after the header
+            // (`version:`, `rlm:`) at the root, else before the level's
+            // first key.
+            let first = doc
+                .keys
+                .iter()
+                .filter(|(p, _)| p.len() == level.len() + 1 && p.starts_with(&level))
+                .map(|(p, r)| (r.clone(), p.clone()))
+                .min_by_key(|(r, _)| r.start);
+            let Some((fr, _)) = first else {
+                doc.skip(
+                    ID,
+                    &dotted_level,
+                    "the level has no key to place `use:` beside",
+                );
+                continue;
+            };
+            if !doc.starts_line(&fr) {
+                doc.skip(ID, &dotted_level, "a flow-mapping level");
+                continue;
+            }
+            let col = fr.start - doc.line_start(fr.start);
+            let header = ["version", "rlm"]
+                .iter()
+                .filter_map(|k| doc.key(&with(&level, &[k])))
+                .filter(|r| doc.starts_line(r))
+                .max_by_key(|r| r.start);
+            let at = match header {
+                Some(hr) => doc.block_end(&hr),
+                None => doc.line_start(fr.start),
+            };
+            let mut text = format!("{}use:\n", " ".repeat(col));
+            for n in &add {
+                text.push_str(&format!("{}{}\n", " ".repeat(col + 2), entry(n)));
+            }
+            if at > 0 && doc.src.as_bytes()[at - 1] != b'\n' {
+                text.insert(0, '\n');
+            }
+            doc.edit(ID, &dotted_level, at..at, text)
+        };
+        out.push(edit);
+    }
+    out
+}
+
 /// Migrate one contract's text. An input that is not YAML is an error; an
 /// input that parses as a contract must still parse after the rewrite, or
 /// the migration is refused (a rewrite bug must not reach a file).
@@ -1510,11 +1718,14 @@ hazards:
         assert_eq!(
             ids,
             vec![
+                ("use-implicit", "use", 2),
                 ("exit-on-holds", "modes.tor.exit.on", 9),
                 ("hazard-reaction-enters", "hazards.blind.reaction", 18),
             ]
         );
+        // E8: `severity: ASIL_D` on the implicit scale names it.
         let want = LADDER
+            .replace("version: 1\n", "version: 1\nuse:\n  iso26262: \"^1\"\n")
             .replace("exit: { on: driver", "exit: { holds: driver")
             .replace("reaction: driving ", "enters: driving ");
         assert_eq!(m.output, want);
@@ -1970,5 +2181,108 @@ paths:
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), REWRITES.len());
+    }
+}
+
+#[cfg(test)]
+mod e8_tests {
+    use super::*;
+
+    fn run(src: &str) -> Migration {
+        migrate_str(src).unwrap()
+    }
+
+    /// The vehicle keys without `use:`: the extension is added after
+    /// `version:`, the entry speed gains its unit, and the severity's scale
+    /// is named; a second run changes nothing.
+    #[test]
+    fn e8_names_what_the_checker_would_load_implicitly() {
+        let src = "\
+version: 1
+# braking
+hazards:
+  blind:
+    severity: ASIL_B
+    entry_speed: 8.33   # m/s
+    guards: [scan]
+nodes:
+  op:
+    paths:
+      p:
+        output: [cmd]
+        safe_state: { emits: cmd, settle: { decel: target_acceleration, jerk: target_jerk } }
+";
+        let m = run(src);
+        assert_eq!(
+            m.output,
+            "\
+version: 1
+use:
+  vehicle.braking: \"^1\"
+  iso26262: \"^1\"
+# braking
+hazards:
+  blind:
+    severity: ASIL_B
+    entry_speed: 8.33 m/s   # m/s
+    guards: [scan]
+nodes:
+  op:
+    paths:
+      p:
+        output: [cmd]
+        safe_state: { emits: cmd, settle: { decel: target_acceleration, jerk: target_jerk } }
+"
+        );
+        let ids: Vec<&str> = m.edits.iter().map(|e| e.rewrite).collect();
+        assert_eq!(ids, ["use-implicit", "entry-speed-unit"]);
+        assert!(!run(&m.output).changed());
+    }
+
+    /// An existing `use:` is extended in either form; a used profile, or
+    /// `severity_levels:`, means the scale is named already.
+    #[test]
+    fn e8_extends_a_use_in_both_forms_and_respects_a_named_scale() {
+        let flow =
+            "version: 1\nuse: { machine.iso13855: \"^1\" }\nhazards:\n  h:\n    severity: SIL_2\n";
+        assert_eq!(
+            run(flow).output,
+            "version: 1\nuse: { machine.iso13855: \"^1\", iso26262: \"^1\" }\nhazards:\n  h:\n    severity: SIL_2\n"
+        );
+        // Another extension may declare `entry_speed` itself: reported,
+        // not guessed.
+        let rail = "version: 1\nuse: { rail.ebd: \"^0.1\", en50129: \"^1\" }\nhazards:\n  h:\n    severity: SIL_4\n    entry_speed: 160 km/h\n";
+        let m = run(rail);
+        assert!(!m.changed());
+        assert!(m.skipped[0].contains("rail.ebd"), "{:?}", m.skipped);
+        let block = "version: 1\nuse:\n  iec61508: \"^1\"\nhazards:\n  h:\n    severity: SIL_2\n    entry_speed: 3 m/s\n";
+        assert_eq!(
+            run(block).output,
+            "version: 1\nuse:\n  iec61508: \"^1\"\n  vehicle.braking: \"^1\"\nhazards:\n  h:\n    severity: SIL_2\n    entry_speed: 3 m/s\n"
+        );
+        let levels =
+            "version: 1\nseverity_levels: [low, high]\nhazards:\n  h:\n    severity: high\n";
+        assert!(!run(levels).changed());
+        // An undotted name that is not a reference profile may be one.
+        let local = "version: 1\nuse: { site_scale: \"^1\" }\nhazards:\n  h:\n    severity: S2\n";
+        let m = run(local);
+        assert!(!m.changed());
+        assert!(m.skipped[0].contains("may be a profile"), "{:?}", m.skipped);
+    }
+
+    /// A file with no root `version:` gets `use:` before its first key;
+    /// one with a header gets it after the header's last key.
+    #[test]
+    fn e8_places_use_before_the_first_key_without_version() {
+        let src = "# c\nhazards:\n  h:\n    severity: ASIL_A\n";
+        assert_eq!(
+            run(src).output,
+            "# c\nuse:\n  iso26262: \"^1\"\nhazards:\n  h:\n    severity: ASIL_A\n"
+        );
+        let src = "version: 1\nrlm: v0.1.49\n\nhazards:\n  h:\n    severity: ASIL_A\n";
+        assert_eq!(
+            run(src).output,
+            "version: 1\nrlm: v0.1.49\nuse:\n  iso26262: \"^1\"\n\nhazards:\n  h:\n    severity: ASIL_A\n"
+        );
     }
 }
