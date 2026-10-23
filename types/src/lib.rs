@@ -9,6 +9,7 @@ pub mod duration;
 pub mod field_table;
 pub mod migrate;
 pub mod parse;
+pub mod profile;
 pub mod severity;
 pub mod span;
 pub mod subst;
@@ -29,6 +30,6 @@ pub use span::{SpanIndex, Spanned};
 /// [`parse_manifest_str`] refuses one newer than this before reading a key
 /// of the body, naming both. Kept equal to the newest released heading of
 /// `CHANGELOG.md` by a test, so a release cannot forget it.
-pub const GRAMMAR_VERSION: &str = "0.1.70";
+pub const GRAMMAR_VERSION: &str = "0.1.71";
 pub use subst::{SubstError, resolve_args, substitute_manifest, substitute_str};
 pub use types::*;

@@ -375,7 +375,7 @@ pub const FIELDS: &[Field] = &[
         "severity_levels",
         Context::Manifest,
         Kind::Meta,
-        "The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader.",
+        "The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this.",
     ),
     deprecated(
         "external_topics",

@@ -443,6 +443,7 @@ dependencies = [
 name = "ros-launch-manifest-rlx"
 version = "0.1.22"
 dependencies = [
+ "ros-launch-manifest-types",
  "sha2",
  "unicode-normalization",
  "z3",

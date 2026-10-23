@@ -775,7 +775,7 @@ fn parse_derivation(v: &Yaml, ctx: &str) -> Result<Derivation, ParseError> {
 }
 
 /// A dotted lowercase name: `vehicle.braking`, `machine.iso13855`.
-fn is_dotted_name(s: &str) -> bool {
+pub(crate) fn is_dotted_name(s: &str) -> bool {
     !s.is_empty()
         && s.split('.').all(|w| {
             let mut c = w.chars();
@@ -785,7 +785,7 @@ fn is_dotted_name(s: &str) -> bool {
 }
 
 /// `MAJOR.MINOR.PATCH`, digits only.
-fn is_semver(s: &str) -> bool {
+pub(crate) fn is_semver(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
     parts.len() == 3
         && parts

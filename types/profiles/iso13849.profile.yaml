@@ -1,0 +1,10 @@
+# ISO 13849-1 (safety of machinery): the required Performance Level, clause
+# 4.3 and Annex A. The map follows the standard's own correspondence to IEC
+# 61508's SIL (Table 4: PL b and c to SIL 1, d to SIL 2, e to SIL 3; a has
+# none) read through the iec61508 profile; PL a is still a requirement, so
+# it maps to the lowest criticality rather than none.
+profile: iso13849
+version: 1.0.0
+requires: { rlm: ">=0.1.71" }
+severity_scale: [none, PL_a, PL_b, PL_c, PL_d, PL_e]
+criticality: { none: null, PL_a: low, PL_b: low, PL_c: low, PL_d: medium, PL_e: high }

@@ -1,0 +1,19 @@
+# ISO 26262 (road vehicles): the Automotive Safety Integrity Level of a
+# hazardous event, Part 3 clause 6.4.3. QM is "no ASIL": no safety
+# requirement, so it derives no scheduling criticality. Identical to the
+# checker's default scale and map; using it changes no derived value.
+profile: iso26262
+version: 1.0.0
+requires: { rlm: ">=0.1.71" }
+severity_scale: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+criticality: { QM: null, ASIL_A: low, ASIL_B: medium, ASIL_C: high, ASIL_D: high }
+# ASIL decomposition (Part 9 clause 5): a requirement may be split over two
+# sufficiently independent elements when their ASILs, as ranks (QM 0, A 1,
+# B 2, C 3, D 4), sum to at least the parent's: D as C(D)+A(D), B(D)+B(D)
+# or D(D)+QM(D); C as B(C)+A(C) or C(C)+QM(C); B as A(B)+A(B) or B(B)+QM(B);
+# A as A(A)+QM(A). A margin of zero or more is a permitted decomposition.
+# No core rule calls it yet (independence of the two elements is the open
+# R6 question); it is here so a profile is where the rule lives.
+functions: |
+  fn asil_decomposition_margin(parent: Fraction, a: Fraction, b: Fraction) -> Fraction =
+      a + b - parent

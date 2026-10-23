@@ -27,3 +27,8 @@ smt = ["dep:z3"]
 z3 = { version = "0.12", optional = true }
 unicode-normalization = "0.1"
 sha2 = "0.10"
+
+[dev-dependencies]
+# The reference profiles' `functions:` (phase 91 E6) are rlx; their tests
+# read the profiles where they ship.
+ros-launch-manifest-types = { path = "../types" }

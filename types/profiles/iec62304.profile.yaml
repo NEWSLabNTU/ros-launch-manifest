@@ -1,0 +1,7 @@
+# IEC 62304 (medical device software): the software safety class, clause
+# 4.3: A no injury possible, B non-serious injury, C death or serious injury.
+profile: iec62304
+version: 1.0.0
+requires: { rlm: ">=0.1.71" }
+severity_scale: [class_A, class_B, class_C]
+criticality: { class_A: null, class_B: medium, class_C: high }

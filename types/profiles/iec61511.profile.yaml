@@ -1,0 +1,7 @@
+# IEC 61511 (process industry): the SIL of a safety instrumented function,
+# Part 1 clause 9.2.4 (IEC 61508's levels, applied to the process sector).
+profile: iec61511
+version: 1.0.0
+requires: { rlm: ">=0.1.71" }
+severity_scale: [none, SIL_1, SIL_2, SIL_3, SIL_4]
+criticality: { none: null, SIL_1: low, SIL_2: medium, SIL_3: high, SIL_4: high }

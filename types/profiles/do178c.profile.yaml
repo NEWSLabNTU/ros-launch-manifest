@@ -1,0 +1,8 @@
+# DO-178C (airborne software): the software level from the failure
+# condition it can cause (section 2.3.3): E no effect, D minor, C major,
+# B hazardous, A catastrophic.
+profile: do178c
+version: 1.0.0
+requires: { rlm: ">=0.1.71" }
+severity_scale: [DAL_E, DAL_D, DAL_C, DAL_B, DAL_A]
+criticality: { DAL_E: null, DAL_D: low, DAL_C: medium, DAL_B: high, DAL_A: high }

@@ -1,0 +1,7 @@
+# IEC 61508 (functional safety of E/E/PE systems): Safety Integrity Level,
+# Part 1 clause 7.6.2.9. `none` is no safety function.
+profile: iec61508
+version: 1.0.0
+requires: { rlm: ">=0.1.71" }
+severity_scale: [none, SIL_1, SIL_2, SIL_3, SIL_4]
+criticality: { none: null, SIL_1: low, SIL_2: medium, SIL_3: high, SIL_4: high }

@@ -240,6 +240,29 @@ on a declared ordered scale"; ASIL leaves the core default (section 10).
 ISO 26262 decomposition is the one rule that needs a function; it is an rlx
 `fn` in the `iso26262` profile.
 
+### 7.1 As built (E6)
+
+`types::profile` parses a profile (`parse_profile`) and ships the seven
+reference profiles (`REFERENCE`, files in `types/profiles/`), so a checker
+has them without a ROS package; a `<name>.profile.yaml` beside the contract
+or in a registered package resolves like an rlx file, the highest accepted
+version winning and a file on disk winning a tie with a bundled one. The
+parser refuses an unknown key, a level the map does not name or a name the
+scale lacks, a criticality outside `low | medium | high | null`, and a map
+that falls as the severity rises. `requires: { rlm }` is enforced against
+`GRAMMAR_VERSION`. The map is stated level by level rather than computed:
+`iso13849` maps PL a, b and c to `low` (Table 4's correspondence to SIL 1
+through the `iec61508` profile), where the split into thirds would give PL b
+and c `medium`. A contract uses at most one profile and, using one, may not
+also write `severity_levels:`. `iso26262` is the default scale and map
+exactly, so a contract that adds it derives the same criticality (play_launch
+checks this over every fixture). Decomposition is `fn
+asil_decomposition_margin(parent, a, b) = a + b - parent` over the ranks
+(QM 0 to D 4): a margin of zero or more is a split ISO 26262 Part 9 permits,
+and `rlx/tests/profiles.rs` checks it against every permitted and every
+one-short split. No core rule calls it yet; the independence of the two
+elements is the open R6 question.
+
 ## 8. Packaging, resolution and identity
 
 - An extension ships in `share/<pkg>/rlm/` and registers in the ament index
@@ -255,6 +278,25 @@ ISO 26262 decomposition is the one rule that needs a function; it is an rlx
   `play_launch check --update-lock`).
 - Semver: a change to a derive's formula or a key's dimension is a major
   version; a widened domain or a new key is a minor.
+
+### 8.1 As built (E7, play_launch)
+
+- Search: the `rlm/` directory beside the contract, then `share/<pkg>/rlm/`
+  of each package with a marker at
+  `share/ament_index/resource_index/rlm_extensions/<pkg>`
+  (`ament_index_register_resource(rlm_extensions)` in CMake), in
+  `AMENT_PREFIX_PATH` order. An unregistered package is not searched.
+- Keys: a qualified key (`machine.stopping/device_response:`) is read only
+  by the extension it names; a bare key declared by two used extensions is
+  `extension-key-ambiguous`, naming both qualified spellings.
+- `rlm.lock` beside the contract maps each used name to its version, the
+  sha256 (of the canonical ASCII form for rlx, of the file's bytes for a
+  profile) and its kind. Resolution prefers the locked version while it is
+  installed and accepted; otherwise, or when the file of that version
+  changed, `lock-drift` (a warning) or, under `--locked`, `lock-mismatch`
+  (an error); `--locked` with no lock is `lock-missing`. `--update-lock`
+  resolves afresh and rewrites each directory's lock. `--explain` lists
+  every resolution with its full sha256 and file.
 
 ## 9. What leaves the checker unchanged
 

@@ -24,7 +24,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
 | `modes` | meta |  | Operational modes: what each requires, and the ordered ladder to fall to when it is lost. |
-| `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. |
+| `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this. |
 | `external_topics` |  | deprecated — use `topics.<name>.external` | Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
@@ -434,4 +434,6 @@ A node a hazard reaches (it feeds, detects for, or reacts for the hazard) takes 
 | `ASIL_B` | medium |
 | `ASIL_C` | high |
 | `ASIL_D` | high |
+
+A contract that uses a profile (phase 91 E6; `use: { iec61508: "^1" }`) draws severities from the profile's `severity_scale` and takes each level's criticality from the profile's `criticality` map, stated level by level, instead of the split above; it may not also write `severity_levels:`. Reference profiles ship with the checker: `iso26262`, `iec61508`, `iec61511`, `do178c`, `iec62304`, `iso13849`, `en50129` (`iso26262` is the default scale and map above).
 

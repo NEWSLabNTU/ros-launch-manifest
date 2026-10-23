@@ -6,6 +6,34 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.1.71 - 2026-10-23
+
+Profiles (play_launch phase 91 E6). GRAMMAR_VERSION 0.1.71. Additive for
+every contract, model and extension that loaded before it. Workspace Cargo
+version unchanged: the types crate gains a module and no public item
+changes.
+
+### Added
+
+- types: `profile` -- the profile format (`parse_profile`): a severity
+  scale, its criticality map stated level by level, an optional
+  `requires: { rlm }` and optional rlx `functions:`. Refused: an unknown
+  key, a map that misses or invents a level, a criticality outside
+  `low | medium | high | null`, a map that falls as severity rises.
+- Seven reference profiles, bundled (`profile::REFERENCE`, files in
+  `types/profiles/`): `iso26262` (identical to the default scale and map,
+  with ASIL decomposition as an rlx `fn`), `iec61508`, `iec61511`,
+  `do178c`, `iec62304`, `iso13849`, `en50129`. Design:
+  `docs/design/extension-system.md` sections 7.1 and 8.1.
+- rlx tests: every profile's `functions:` type-checks, and
+  `asil_decomposition_margin` reproduces ISO 26262 Part 9's permitted
+  decompositions.
+
+### Changed
+
+- Format reference: the severity section and `severity_levels` name the
+  profiles; a contract using one may not also write `severity_levels:`.
+
 ## v0.1.70 - 2026-10-22
 
 Worst-case proofs (play_launch phase 91 E5). GRAMMAR_VERSION 0.1.70.

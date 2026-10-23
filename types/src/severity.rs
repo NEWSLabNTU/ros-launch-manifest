@@ -63,6 +63,19 @@ pub fn render_markdown() -> String {
         out.push_str(&format!("| `{level}` | {} |\n", crit.unwrap_or("none")));
     }
     out.push('\n');
+    out.push_str(
+        "A contract that uses a profile (phase 91 E6; `use: { iec61508: \"^1\" }`) draws \
+         severities from the profile's `severity_scale` and takes each level's criticality \
+         from the profile's `criticality` map, stated level by level, instead of the split \
+         above; it may not also write `severity_levels:`. Reference profiles ship with the \
+         checker: ",
+    );
+    let names: Vec<String> = crate::profile::reference()
+        .iter()
+        .map(|p| format!("`{}`", p.name))
+        .collect();
+    out.push_str(&names.join(", "));
+    out.push_str(" (`iso26262` is the default scale and map above).\n\n");
     out
 }
 

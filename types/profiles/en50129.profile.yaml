@@ -1,0 +1,7 @@
+# EN 50129 (railway signalling): Safety Integrity Level, clause 5.3 and
+# Annex A. SIL 0 is "basic integrity", no safety requirement.
+profile: en50129
+version: 1.0.0
+requires: { rlm: ">=0.1.71" }
+severity_scale: [SIL_0, SIL_1, SIL_2, SIL_3, SIL_4]
+criticality: { SIL_0: null, SIL_1: low, SIL_2: medium, SIL_3: high, SIL_4: high }
