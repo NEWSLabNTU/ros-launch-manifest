@@ -6,6 +6,33 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.2.1 - 2026-10-24
+
+The reference extension `rail.ebd` moves to 1.0.0, after ERA SUBSET-026-3
+v4.0.0 section 3.13 (docs/design/reference-extensions-verification.md).
+GRAMMAR_VERSION 0.2.1 (it names the release); no grammar or API change,
+so the workspace version stays 0.2.0.
+
+### Changed
+
+- `rail.ebd 1.0.0`. The dead time is `max(traction_cut_off,
+  brake_build_up)`, since both run from the one command (0.1.0 added them,
+  which erred safe). The train may accelerate through it
+  (`settle.acceleration`, A_est) from an under-read speed
+  (`settle.speed_error`, V_ura), and braking starts from the speed it
+  reaches; 0.1.0 held the entry speed, which erred unsafe. The table is
+  `settle.a_safe`, SUBSET-026's A_safe: the guaranteed deceleration with
+  the correction factors applied and the worst gradient folded in. The
+  distance check is `stop_before_svl` against `hazard.distance_to_svl`,
+  the supervised location the emergency brake curve targets (0.1.0
+  checked the end of authority). A contract on 0.1.0 renames `a_ebd` and
+  `distance_to_eoa` and writes the two new keys.
+- The settle's six worst-case claims are proved. The distance check's
+  claims, other than `decreasing in a_safe`, are past what Z3 decides (the
+  braking distance squares a speed that grows with acceleration times the
+  dead time) and come back unknown; the reference test admits exactly
+  those, and never a refutation.
+
 ## v0.2.0 - 2026-10-23
 
 The extension system's release (play_launch phase 91 E8-E11).

@@ -244,7 +244,7 @@ check energy_reserve:
   domain: hover_power > 0 W
 ```
 
-## `rail.ebd 0.1.0`
+## `rail.ebd 1.0.0`
 
 **Reference, illustrative.**
 
@@ -254,50 +254,71 @@ Keys a contract writes:
 
 | key | type | default | meaning |
 |---|---|---|---|
-| `hazard.entry_speed` | Velocity | no |  |
-| `hazard.distance_to_eoa` | Length | no | to the end of movement authority |
-| `settle.traction_cut_off` | Time | no |  |
-| `settle.brake_build_up` | Time | no |  |
-| `settle.a_ebd` | table Velocity -> Acceleration | no | emergency deceleration; each entry holds from its speed up to the next |
+| `hazard.entry_speed` | Velocity | no | the highest speed supervised at intervention |
+| `hazard.distance_to_svl` | Length | no | to the supervised location the emergency brake must stop short of |
+| `settle.speed_error` | Velocity | no | worst speed under-reading at entry_speed (V_ura) |
+| `settle.acceleration` | Acceleration | no | worst acceleration held from intervention until full braking (A_est) |
+| `settle.traction_cut_off` | Time | no | intervention to zero traction (T_traction) |
+| `settle.brake_build_up` | Time | no | equivalent emergency build-up time (T_be: react + half of increase) |
+| `settle.a_safe` | table Velocity -> Acceleration | no | safe deceleration A_safe = A_brake_safe (Kdry, Kwet applied) + the worst gradient over the braking distance; each entry holds from its speed up to the next |
 
 What it produces:
 
 | item | name | result | worst case |
 |---|---|---|---|
-| derive | `settle.duration` | Time | increasing in `entry_speed`; decreasing in `a_ebd` |
-| check | `stop_before_eoa` | verdict | increasing in `entry_speed` |
+| derive | `settle.duration` | Time | increasing in `entry_speed`, `speed_error`, `acceleration`, `traction_cut_off`, `brake_build_up`; decreasing in `a_safe` |
+| check | `stop_before_svl` | verdict | increasing in `entry_speed`, `speed_error`, `acceleration`, `traction_cut_off`, `brake_build_up`; decreasing in `a_safe` |
 
-sha256 of the canonical form: `f0f3c943b6199efb7006c6d545a0dba95416819faca18d752d91540e2ddf6588`. Source (`types/extensions/reference/ebd.rlx`):
+sha256 of the canonical form: `9b6efcac3c094cfe50f40f09c704a29ecc025d0cb67fd8cbbb2d2cffa4110478`. Source (`types/extensions/reference/ebd.rlx`):
 
 ```
--- Reference extension (rail): emergency brake deceleration supervision (ETCS braking-curve style).
+-- Reference extension (rail): emergency brake deceleration supervision, after ERA SUBSET-026-3 section 3.13.
 -- Phase 91 E9, rlm extension-examples.md. ILLUSTRATIVE: the formulas follow
--- the published examples, but no clause of the standard named here has been
--- checked against the standard's text, and every constant a contract gives
--- it in the examples is an example value. Verify both before calling this a
--- reference implementation of the standard.
-extension rail.ebd 0.1.0
+-- the published examples, and docs/design/reference-extensions-verification.md
+-- compares them with SUBSET-026 v4.0.0 section 3.13; every constant a contract
+-- gives it in the examples is an example value. 1.0.0 overlaps the two dead
+-- times, lets the train accelerate through them from its under-read speed,
+-- takes the table as A_safe (gradient included) and stops short of the
+-- supervised location. The settle's worst cases are proved; the distance
+-- check's are past what Z3 decides (the braking distance squares a speed
+-- that grows with acceleration times the dead time) and come back unknown,
+-- never refuted.
+extension rail.ebd 1.0.0
 requires rlm >= 0.2.0
 
-key hazard.entry_speed      : Velocity
-key hazard.distance_to_eoa  : Length                  "to the end of movement authority"
-key settle.traction_cut_off : Time
-key settle.brake_build_up   : Time
-key settle.a_ebd            : table Velocity -> Acceleration
-    "emergency deceleration; each entry holds from its speed up to the next"
+key hazard.entry_speed      : Velocity      "the highest speed supervised at intervention"
+key hazard.distance_to_svl  : Length        "to the supervised location the emergency brake must stop short of"
+key settle.speed_error      : Velocity      "worst speed under-reading at entry_speed (V_ura)"
+key settle.acceleration     : Acceleration  "worst acceleration held from intervention until full braking (A_est)"
+key settle.traction_cut_off : Time          "intervention to zero traction (T_traction)"
+key settle.brake_build_up   : Time          "equivalent emergency build-up time (T_be: react + half of increase)"
+key settle.a_safe           : table Velocity -> Acceleration
+    "safe deceleration A_safe = A_brake_safe (Kdry, Kwet applied) + the worst gradient over the braking distance; each entry holds from its speed up to the next"
 
 derive settle.duration : Time =
-    traction_cut_off + brake_build_up
-    + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value
-  worst_case: increasing in entry_speed; decreasing in a_ebd
-  domain: a_ebd in (0 m/s^2, 5 m/s^2]
+    dead + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi - b.lo) / b.value
+  where dead  = max(traction_cut_off, brake_build_up)  -- both run from the one command
+    and v_bec = entry_speed + speed_error + acceleration * dead
+  worst_case:
+    increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up
+    decreasing in a_safe
+  domain: a_safe in (0 m/s^2, 5 m/s^2], entry_speed in (0 m/s, 100 m/s],
+          speed_error in [0 m/s, 10 m/s], acceleration in [0 m/s^2, 2 m/s^2],
+          traction_cut_off in [0 s, 30 s], brake_build_up in [0 s, 30 s]
 
-check stop_before_eoa: stopping_distance <= distance_to_eoa
-  where stopping_distance =
-      entry_speed * (traction_cut_off + brake_build_up)
-      + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi^2 - b.lo^2) / (2 b.value)
-  worst_case: increasing in entry_speed
-  domain: a_ebd in (0 m/s^2, 5 m/s^2], traction_cut_off >= 0 s, brake_build_up >= 0 s
+check stop_before_svl: stopping_distance <= distance_to_svl
+  where dead  = max(traction_cut_off, brake_build_up)
+    and v0    = entry_speed + speed_error
+    and v_bec = v0 + acceleration * dead
+    and stopping_distance =
+      v0 * dead + acceleration * dead^2 / 2
+      + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)
+  worst_case:
+    increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up
+    decreasing in a_safe
+  domain: a_safe in (0 m/s^2, 5 m/s^2], entry_speed in (0 m/s, 100 m/s],
+          speed_error in [0 m/s, 10 m/s], acceleration in [0 m/s^2, 2 m/s^2],
+          traction_cut_off in [0 s, 30 s], brake_build_up in [0 s, 30 s]
 ```
 
 ## `process.pst 0.1.0`

@@ -102,40 +102,37 @@ fn a_missing_sign_is_refuted_and_the_sign_is_suggested() {
     );
 }
 
-/// The rail example at the contract's table keys (0 and 100 km/h).
+/// The rail example at the contract's table keys (0 and 100 km/h): the
+/// settle's six claims are proved, and so is the check's claim over the
+/// table; its claims over the speeds and times square a speed that grows
+/// with acceleration times the dead time, which Z3 does not decide, so they
+/// may be unknown, and are never refuted.
 #[test]
 fn the_rail_claims_are_proved_at_the_written_keys() {
     let mut opts = Options::default();
     opts.table_keys
-        .insert("settle.a_ebd".into(), vec![0.0, 100.0 / 3.6]);
+        .insert("settle.a_safe".into(), vec![0.0, 100.0 / 3.6]);
     let claims = prove_text(&accepted("ebd.rlx"), &opts);
-    assert_eq!(claims.len(), 3);
-    all_proved(&claims);
-    assert!(
-        claims[0]
-            .report()
-            .ends_with("(for a_ebd's 2 keys as written)"),
-        "{}",
-        claims[0].report()
-    );
-}
-
-#[test]
-fn the_rail_settle_is_proved_for_any_small_table() {
-    // The distance check alone: at three symbolic entries Z3 does not
-    // decide it in time, which is why a consumer passes the written keys.
-    let src = accepted("ebd.rlx");
-    let checked = check_source(src.as_bytes()).unwrap();
-    let item = ItemRef::Derive("settle.duration".into());
-    let claims = rlx::prove::prove(&checked, &item, &Options::default());
-    assert_eq!(claims.len(), 2);
-    for c in &claims {
+    assert_eq!(claims.len(), 12);
+    let (settle, check): (Vec<_>, Vec<_>) = claims
+        .iter()
+        .partition(|c| c.report().starts_with("settle.duration"));
+    assert_eq!(settle.len(), 6);
+    for c in &settle {
         assert_eq!(c.verdict, Verdict::Proved, "{}", c.report());
         assert!(
-            c.report().contains("a 1- to 3-entry a_ebd"),
+            c.report().ends_with("(for a_safe's 2 keys as written)"),
             "{}",
             c.report()
         );
+    }
+    for c in &check {
+        let over_table = c.report().contains("decreasing in a_safe");
+        match &c.verdict {
+            Verdict::Proved => {}
+            Verdict::Unknown(_) if !over_table => {}
+            v => panic!("{v:?}: {}", c.report()),
+        }
     }
 }
 

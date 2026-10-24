@@ -190,37 +190,43 @@ fn uav_descent() {
 fn rail_braking_table() {
     let src = read("ebd.rlx");
     let c = check_source(&src).unwrap();
-    let table: &[(&str, &str)] = &[("0 km/h", "0.75 m/s^2"), ("100 km/h", "0.70 m/s^2")];
+    let table: &[(&str, &str)] = &[("0 km/h", "0.65 m/s^2"), ("100 km/h", "0.60 m/s^2")];
     let inp = inputs(
         &c,
         &[
             ("entry_speed", In::Text("160 km/h")),
-            ("distance_to_eoa", In::Text("1600 m")),
+            ("distance_to_svl", In::Text("2000 m")),
+            ("speed_error", In::Text("2 km/h")),
+            ("acceleration", In::Text("0.5 m/s^2")),
             ("traction_cut_off", In::Text("1.0s")),
             ("brake_build_up", In::Text("2.5s")),
-            ("a_ebd", In::Table(table)),
+            ("a_safe", In::Table(table)),
         ],
     );
     let e = eval_derive(&c, "settle.duration", &inp).unwrap();
-    close(e.si, 64.35, 0.005);
+    close(e.si, 76.02, 0.005);
     assert_eq!(
         e.trace.render(),
         "\
 entry_speed = 44.44 m/s   (160 km/h)
+speed_error = 0.5556 m/s   (2 km/h)
+acceleration = 0.5 m/s^2   (0.5 m/s^2)
 traction_cut_off = 1 s   (1.0s)
 brake_build_up = 2.5 s   (2.5s)
-a_ebd = a table of 2 entries
-sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value = 60.85 s
-  b = [0 m/s, 27.78 m/s] 0.75 m/s^2: 37.04 s
-  b = [27.78 m/s, 44.44 m/s] 0.7 m/s^2: 23.81 s
-settle.duration = traction_cut_off + brake_build_up + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value = 64.35 s
+a_safe = a table of 2 entries
+dead = max(traction_cut_off, brake_build_up) = 2.5 s
+v_bec = entry_speed + speed_error + acceleration * dead = 46.25 m/s
+sum over b in a_safe.bands(0 m/s, v_bec): (b.hi - b.lo) / b.value = 73.52 s
+  b = [0 m/s, 27.78 m/s] 0.65 m/s^2: 42.74 s
+  b = [27.78 m/s, 46.25 m/s] 0.6 m/s^2: 30.79 s
+settle.duration = dead + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi - b.lo) / b.value = 76.02 s
 "
     );
-    let o = eval_check(&c, "stop_before_eoa", &inp).unwrap();
+    let o = eval_check(&c, "stop_before_svl", &inp).unwrap();
     assert!(o.pass);
     let cmp = o.comparison.unwrap();
-    close(cmp.lhs, 1529.75, 0.005);
-    close(cmp.margin.unwrap(), 70.25, 0.005);
+    close(cmp.lhs, 1847.15, 0.005);
+    close(cmp.margin.unwrap(), 152.85, 0.005);
 }
 
 #[test]
@@ -300,19 +306,21 @@ fn identity_is_spelling_independent() {
 fn deterministic() {
     let src = read("ebd.rlx");
     let c = check_source(&src).unwrap();
-    let table: &[(&str, &str)] = &[("0 km/h", "0.75 m/s^2"), ("100 km/h", "0.70 m/s^2")];
+    let table: &[(&str, &str)] = &[("0 km/h", "0.65 m/s^2"), ("100 km/h", "0.60 m/s^2")];
     let inp = inputs(
         &c,
         &[
             ("entry_speed", In::Text("160 km/h")),
-            ("distance_to_eoa", In::Text("1600 m")),
+            ("distance_to_svl", In::Text("2000 m")),
+            ("speed_error", In::Text("2 km/h")),
+            ("acceleration", In::Text("0.5 m/s^2")),
             ("traction_cut_off", In::Text("1.0s")),
             ("brake_build_up", In::Text("2.5s")),
-            ("a_ebd", In::Table(table)),
+            ("a_safe", In::Table(table)),
         ],
     );
-    let a = eval_check(&c, "stop_before_eoa", &inp).unwrap();
-    let b = eval_check(&c, "stop_before_eoa", &inp).unwrap();
+    let a = eval_check(&c, "stop_before_svl", &inp).unwrap();
+    let b = eval_check(&c, "stop_before_svl", &inp).unwrap();
     assert_eq!(a.trace.render(), b.trace.render());
     assert_eq!(
         a.comparison.unwrap().lhs.to_bits(),
@@ -464,21 +472,23 @@ fn outside_the_domain() {
 fn a_table_entry_outside_the_domain() {
     let src = read("ebd.rlx");
     let c = check_source(&src).unwrap();
-    let table: &[(&str, &str)] = &[("0 km/h", "0.75 m/s^2"), ("100 km/h", "-0.70 m/s^2")];
+    let table: &[(&str, &str)] = &[("0 km/h", "0.65 m/s^2"), ("100 km/h", "-0.60 m/s^2")];
     let inp = inputs(
         &c,
         &[
             ("entry_speed", In::Text("160 km/h")),
+            ("speed_error", In::Text("2 km/h")),
+            ("acceleration", In::Text("0.5 m/s^2")),
             ("traction_cut_off", In::Text("1.0s")),
             ("brake_build_up", In::Text("2.5s")),
-            ("a_ebd", In::Table(table)),
+            ("a_safe", In::Table(table)),
         ],
     );
     let d = eval_derive(&c, "settle.duration", &inp).unwrap_err();
     assert_eq!(d.code, code::DOMAIN);
     assert_eq!(
         d.message,
-        "`a_ebd at 27.78 m/s` = -0.7 m/s^2 is outside its domain (0 m/s^2, 5 m/s^2]; the \
+        "`a_safe at 27.78 m/s` = -0.6 m/s^2 is outside its domain (0 m/s^2, 5 m/s^2]; the \
          worst-case claim holds only inside it"
     );
 }

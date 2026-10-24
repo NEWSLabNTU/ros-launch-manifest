@@ -286,7 +286,9 @@ fn example_contract_values_parse() {
             "ebd.rlx",
             &[
                 ("entry_speed", "160 km/h", Some(160.0 / 3.6)),
-                ("distance_to_eoa", "1600 m", Some(1600.0)),
+                ("distance_to_svl", "2000 m", Some(2000.0)),
+                ("speed_error", "2 km/h", Some(2.0 / 3.6)),
+                ("acceleration", "0.5 m/s^2", Some(0.5)),
                 ("traction_cut_off", "1.0s", Some(1.0)),
                 ("brake_build_up", "2.5s", Some(2.5)),
             ],
@@ -326,10 +328,10 @@ fn example_contract_values_parse() {
     // The rail table, as example 5 writes it.
     let bytes = fs::read(dir("accepted").join("ebd.rlx")).unwrap();
     let checked = check_source(&bytes).unwrap();
-    let ty = &checked.env.key("a_ebd").unwrap().ty;
+    let ty = &checked.env.key("a_safe").unwrap().ty;
     let rows = checked
         .env
-        .parse_table(&[("0 km/h", "0.75 m/s^2"), ("100 km/h", "0.70 m/s^2")], ty)
+        .parse_table(&[("0 km/h", "0.65 m/s^2"), ("100 km/h", "0.60 m/s^2")], ty)
         .unwrap();
     assert_eq!(rows.len(), 2);
 }

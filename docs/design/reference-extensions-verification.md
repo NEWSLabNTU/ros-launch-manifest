@@ -63,6 +63,18 @@ Sources:
 
 ## 2. `rail.ebd` (ETCS emergency braking, SUBSET-026-3 §3.13)
 
+**Since rlm v0.2.1, `rail.ebd 1.0.0`** addresses the differences below that
+its arithmetic can carry: the dead time is `max(T_traction, T_be)`, not the
+sum; the train accelerates through it (`acceleration`, A_est) from an
+under-read speed (`speed_error`, V_ura), and braking starts from that
+speed; the table is A_safe (`a_safe`, correction factors applied and the
+worst gradient folded in, since a speed table cannot hold a gradient that
+varies with distance); and the check targets the supervised location
+(`distance_to_svl`). Still not modelled: the separate A_est2 during
+T_berem (1.0.0 uses the one acceleration throughout, which errs safe),
+Kt_int, T_be_reduced, and a gradient varying along the route. The table
+below is the comparison as made against 0.1.0.
+
 Primary source read: **SUBSET-026-3 v4.0.0**, §3.13.2, §3.13.6, §3.13.8 and §3.13.9 (text extracted from ERA's PDF). Context: ERA_ERTMS_040026 v1.5, which references SRS 3.6.0. Appendix A (A.3.1 fixed values, A.3.12 T_be_reduced) is not in the downloaded zip and was **not read**.
 
 | Item in file | SUBSET-026-3 v4.0.0 | Verdict |

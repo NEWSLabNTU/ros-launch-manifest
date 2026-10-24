@@ -351,38 +351,61 @@ counterexample and a fix.
 ## 5. Rail: emergency braking against a supervision table
 
 The deceleration depends on speed band, given as a table; the settle is a
-bounded sum over it, and a distance check stands beside the FTTI.
+bounded sum over it, and a distance check stands beside the FTTI. Version
+1.0.0 follows ERA SUBSET-026-3 section 3.13 where 0.1.0 simplified it
+([reference-extensions-verification.md](reference-extensions-verification.md)):
+traction cut-off and brake build-up run from one command, so the dead time
+is the larger of the two, not their sum; the train may keep accelerating
+through it from a speed that may be under-read; the table is A_safe, the
+guaranteed deceleration with the worst gradient already in it (a gradient
+varies with distance, which a speed table cannot hold, so its worst case
+is folded in); and the stop is checked against the supervised location,
+not the end of authority.
 
 ```
 -- share/rlm_ext_rail/rlm/ebd.rlx
-extension rail.ebd 0.1.0
+extension rail.ebd 1.0.0
 requires rlm >= 0.2.0
 
-key hazard.entry_speed      : Velocity
-key hazard.distance_to_eoa  : Length                  "to the end of movement authority"
-key settle.traction_cut_off : Time
-key settle.brake_build_up   : Time
-key settle.a_ebd            : table Velocity -> Acceleration
-    "emergency deceleration; each entry holds from its speed up to the next"
+key hazard.entry_speed      : Velocity      "the highest speed supervised at intervention"
+key hazard.distance_to_svl  : Length        "to the supervised location the emergency brake must stop short of"
+key settle.speed_error      : Velocity      "worst speed under-reading at entry_speed (V_ura)"
+key settle.acceleration     : Acceleration  "worst acceleration held from intervention until full braking (A_est)"
+key settle.traction_cut_off : Time          "intervention to zero traction (T_traction)"
+key settle.brake_build_up   : Time          "equivalent emergency build-up time (T_be: react + half of increase)"
+key settle.a_safe           : table Velocity -> Acceleration
+    "safe deceleration A_safe = A_brake_safe (Kdry, Kwet applied) + the worst gradient over the braking distance; each entry holds from its speed up to the next"
 
 derive settle.duration : Time =
-    traction_cut_off + brake_build_up
-    + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value
-  worst_case: increasing in entry_speed; decreasing in a_ebd
-  domain: a_ebd in (0 m/s^2, 5 m/s^2]
+    dead + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi - b.lo) / b.value
+  where dead  = max(traction_cut_off, brake_build_up)  -- both run from the one command
+    and v_bec = entry_speed + speed_error + acceleration * dead
+  worst_case:
+    increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up
+    decreasing in a_safe
+  domain: a_safe in (0 m/s^2, 5 m/s^2], entry_speed in (0 m/s, 100 m/s],
+          speed_error in [0 m/s, 10 m/s], acceleration in [0 m/s^2, 2 m/s^2],
+          traction_cut_off in [0 s, 30 s], brake_build_up in [0 s, 30 s]
 
-check stop_before_eoa: stopping_distance <= distance_to_eoa
-  where stopping_distance =
-      entry_speed * (traction_cut_off + brake_build_up)
-      + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi^2 - b.lo^2) / (2 b.value)
-  worst_case: increasing in entry_speed
-  domain: a_ebd in (0 m/s^2, 5 m/s^2], traction_cut_off >= 0 s, brake_build_up >= 0 s
+check stop_before_svl: stopping_distance <= distance_to_svl
+  where dead  = max(traction_cut_off, brake_build_up)
+    and v0    = entry_speed + speed_error
+    and v_bec = v0 + acceleration * dead
+    and stopping_distance =
+      v0 * dead + acceleration * dead^2 / 2
+      + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)
+  worst_case:
+    increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up
+    decreasing in a_safe
+  domain: a_safe in (0 m/s^2, 5 m/s^2], entry_speed in (0 m/s, 100 m/s],
+          speed_error in [0 m/s, 10 m/s], acceleration in [0 m/s^2, 2 m/s^2],
+          traction_cut_off in [0 s, 30 s], brake_build_up in [0 s, 30 s]
 ```
 
 ```yaml
-use: { rail.ebd: "^0.1", en50129: "^1" }
+use: { rail.ebd: "^1", en50129: "^1" }
 hazards:
-  overspeed_at_eoa:
+  overspeed_at_svl:
     severity: SIL_4
     guards: [/evc/supervision]
     on: reported
@@ -390,7 +413,7 @@ hazards:
     ftti: 90s
     reaction: emergency_brake
     entry_speed: 160 km/h
-    distance_to_eoa: 1600 m
+    distance_to_svl: 2000 m
 nodes:
   evc:
     paths:
@@ -398,22 +421,28 @@ nodes:
         safe_state:
           emits: brake_cmd
           settle:
+            speed_error: 2 km/h
+            acceleration: 0.5 m/s^2
             traction_cut_off: 1.0s
             brake_build_up: 2.5s
-            a_ebd: { 0 km/h: 0.75 m/s^2, 100 km/h: 0.70 m/s^2 }
+            a_safe: { 0 km/h: 0.65 m/s^2, 100 km/h: 0.60 m/s^2 }   # a 1% fall included
 ```
 
 ```
-info[settle-derived]: settle = 64.35 s   derived by rail.ebd 0.1.0
-    3.5 s + (27.78 m/s)/0.75 + (16.67 m/s)/0.70 = 3.5 + 37.04 + 23.81 s
-  worst case: proved increasing in entry_speed; decreasing in a_ebd (for a_ebd's 2 keys as written)
-info[check]: rail.ebd/stop_before_eoa PASS
-    155.56 + 514.40 + 859.79 = 1529.75 m <= 1600 m   (margin 70.25 m)
-  worst case: proved increasing in entry_speed (for a_ebd's 2 keys as written)
+info[settle-derived]: settle = 76.02 s   derived by rail.ebd 1.0.0
+    dead = max(1.0, 2.5) = 2.5 s;  v_bec = 44.44 + 0.56 + 0.5 x 2.5 = 46.25 m/s
+    2.5 s + (27.78 m/s)/0.65 + (18.47 m/s)/0.60 = 2.5 + 42.74 + 30.79 s
+  worst case: proved increasing in entry_speed, speed_error, acceleration,
+    traction_cut_off, brake_build_up; decreasing in a_safe (for a_safe's 2 keys as written)
+info[check]: rail.ebd/stop_before_svl PASS
+    114.06 + 593.54 + 1139.55 = 1847.15 m <= 2000 m   (margin 152.85 m)
+  worst case: proved decreasing in a_safe; the others unknown (Z3 does not
+    decide a square of acceleration x dead time)
 ```
 
-What it shows: a table input with a bounded sum, and two requirements on
-one hazard (a time and a distance).
+What it shows: a table input with a bounded sum, two requirements on one
+hazard (a time and a distance), and a claim the prover cannot decide,
+reported as unknown rather than assumed.
 
 ---
 

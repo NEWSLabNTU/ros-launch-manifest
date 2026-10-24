@@ -109,8 +109,15 @@ fn options(file: &str) -> Options {
             ]);
         }
         "ebd.rlx" => {
+            opts.point = BTreeMap::from([
+                ("hazard.entry_speed".into(), q(160.0 / 3.6, "Velocity")),
+                ("settle.speed_error".into(), q(2.0 / 3.6, "Velocity")),
+                ("settle.acceleration".into(), q(0.5, "Acceleration")),
+                ("settle.traction_cut_off".into(), q(1.0, "Time")),
+                ("settle.brake_build_up".into(), q(2.5, "Time")),
+            ]);
             opts.table_keys
-                .insert("settle.a_ebd".into(), vec![0.0, 100.0 / 3.6]);
+                .insert("settle.a_safe".into(), vec![0.0, 100.0 / 3.6]);
         }
         _ => {}
     }
@@ -125,11 +132,19 @@ fn every_reference_extension_loads_and_proves_its_worst_case() {
         let claims = prove_all(&checked, &options(file));
         assert!(!claims.is_empty(), "{file} states no worst case");
         for c in &claims {
+            // rail.ebd 1.0.0's distance check squares a speed that grows
+            // with acceleration times the dead time, which Z3 does not
+            // decide: those claims may come back unknown (the file says
+            // so), never refuted. Everything else is proved.
+            let undecidable = file == "ebd.rlx" && c.report().starts_with("check stop_before_svl");
+            if undecidable && matches!(c.verdict, Verdict::Unknown(_)) {
+                continue;
+            }
             assert_eq!(c.verdict, Verdict::Proved, "{file}: {}", c.report());
+            proved += 1;
         }
-        proved += claims.len();
     }
-    assert!(proved >= 12, "{proved}");
+    assert!(proved >= 14, "{proved}");
 }
 
 #[allow(dead_code)]
