@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Units and dimensions of a value read from the launch tree (phase 94): one
+# unit table for the extension language and the core grammar. No z3.
+rlx = { package = "ros-launch-manifest-rlx", path = "../rlx", default-features = false }
 yaml-rust2 = "0.9"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

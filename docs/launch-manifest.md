@@ -1823,6 +1823,47 @@ entry matching an error is itself an error, since errors cannot be
 acknowledged; and an entry that matches nothing is a warning, so an
 acknowledgement cannot outlive its finding.
 
+### Values read from the launch tree
+
+A number that is the system's CONFIGURATION is read from the launch tree,
+never retyped; a number that is a REQUIREMENT stays written, with the
+parameter that enforces it checked against it (since v0.2.4; design
+`docs/design/contract-values.md`):
+
+```yaml
+let:
+  lidar_rate: $(var lidar_hz) Hz          # stated once
+nodes:
+  lidar_driver:
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: $(param rate_hz) Hz } }   # read
+        output: [scan]
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: $(let lidar_rate)
+        qos: { lease_duration: $(param watchdog_ms) ms }
+        max_age: 3 / $(let lidar_rate)
+```
+
+`$(param [<node>] <name>)` reads a node's effective parameter (one
+argument: the node the key sits under; a bare node: a node key of this
+contract; `/<fqn>`: any node of the launch tree), `$(var <name>)` a launch
+configuration, `$(let <name>)` an entry of the root `let:`. A `$(param)`
+or `$(var)` takes a unit, always: a parameter carries none, and
+`watchdog_ms: 100` read in SI would be a 100 s lease. `params.<p>.default`
+is what a `$(param)` reads when no launch source sets the parameter.
+`source:` beside a reference is refused: the reference is the source, and
+the model records it (`sources:`).
+
+The consumer that holds the launch tree evaluates every reference per
+scope instance, before any rule reads the contract, and hands each rule a
+plain number. A contract read alone leaves the value unknown, never zero.
+The resolution rules (`param-unset`, `param-node-unknown`,
+`param-node-missing`, `param-not-number`, `param-dimension`,
+`var-ambiguous`) are the consumer's.
+
 ## Vocabulary v2
 
 *Phase 44.1. All fields below are additive and optional — existing

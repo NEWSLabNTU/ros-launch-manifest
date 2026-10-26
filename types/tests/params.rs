@@ -27,7 +27,11 @@ fn every_ros2_parameter_type_parses() {
     for ty in ParamType::ALL {
         let m = parse_manifest_str(&one_param(&format!("{{ type: {ty} }}")))
             .unwrap_or_else(|e| panic!("`{ty}` must parse: {e}"));
-        assert_eq!(declared(&m, "n")["p"], ParamDecl { ty }, "{ty}");
+        assert_eq!(
+            declared(&m, "n")["p"],
+            ParamDecl { ty, default: None },
+            "{ty}"
+        );
     }
     let spelled: Vec<&str> = ParamType::ALL.map(ParamType::as_str).to_vec();
     assert_eq!(
@@ -192,7 +196,8 @@ nodes:
         Some(BTreeMap::from([(
             "rate".to_string(),
             ParamDecl {
-                ty: ParamType::Integer
+                ty: ParamType::Integer,
+                default: None,
             }
         )]))
     );

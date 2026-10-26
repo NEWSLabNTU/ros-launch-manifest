@@ -102,6 +102,17 @@ pub struct Manifest {
     /// error, and warns on one that matches nothing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub acknowledged: Vec<AckDecl>,
+    /// `let:` (play_launch phase 94): names for values, stated once and read
+    /// as `$(let <name>)`, in the order written. Root only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub lets: Vec<crate::values::LetDecl>,
+    /// Every value that reads the launch tree or a `let:` entry (`$(param
+    /// …)`, `$(var …)`, `$(let …)`), by the dotted path of its scalar, with
+    /// the expression and, once a consumer resolved the contract, the
+    /// value and what it read. The value itself is in its key, as any
+    /// written one; an unresolved one leaves its key absent.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub value_refs: Vec<crate::values::ValueRef>,
     // Where each budget comes from (phase 10 B7) is the `source` of its
     // [`crate::Bound`] (phase 90 G2); [`Manifest::budget_sources`] lists
     // them by dotted contract path.
@@ -1136,6 +1147,11 @@ pub struct ParamDecl {
     /// nothing a consumer could size or check.
     #[serde(rename = "type")]
     pub ty: ParamType,
+    /// The value the contract assumes when no launch source sets the
+    /// parameter (play_launch phase 94), as written: what a `$(param …)`
+    /// reads then. Absent: an unset parameter is an error to read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
 }
 
 /// The ROS 2 parameter types (`rcl_interfaces/msg/ParameterType`, less

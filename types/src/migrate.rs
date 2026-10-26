@@ -128,6 +128,15 @@ pub const REWRITES: &[Rewrite] = &[
         when: "the checker would load the extension or the scale implicitly; `iso26262` is not added beside a used name that may be a profile (an undotted name that is not a reference profile is skipped for a hand edit)",
         find: use_implicit,
     },
+    Rewrite {
+        id: "ext-param-read",
+        unit: "94",
+        since: "0.2.4",
+        from: "settle: { decel: <parameter> }, an extension key typed `param` holding a bare parameter name",
+        to: "settle: { decel: $(param <parameter>) m/s^2 }, the read form with the unit the key reads the parameter in",
+        when: "the key is a `param` key of a bundled extension (`vehicle.braking`'s `decel` and `jerk`) and its value is a bare parameter name; a key of an extension the file does not carry is left (its type is the extension's)",
+        find: ext_param_read,
+    },
 ];
 
 /// One textual edit.
@@ -1476,6 +1485,115 @@ fn use_implicit(doc: &Doc) -> Vec<Edit> {
     out
 }
 
+/// The `param` keys of the bundled extensions: (extension, context
+/// (`hazard` / `settle`), key, the unit the parameter is read in).
+fn bundled_param_keys() -> Vec<(String, String, String, String)> {
+    let mut out = Vec::new();
+    for (file, src) in crate::extension::BUNDLED {
+        let Ok(checked) = rlx::check_source(src.as_bytes()) else {
+            continue;
+        };
+        let ext = file.trim_end_matches(".rlx").to_string();
+        for k in &checked.env.keys {
+            let rlx::typeck::KeyTy::Param { dim, unit, .. } = &k.ty else {
+                continue;
+            };
+            let Some((ctx, key)) = k.path.split_once('.') else {
+                continue;
+            };
+            let unit = unit
+                .as_ref()
+                .map_or_else(|| rlx::units::example(*dim), |u| u.text.clone());
+            out.push((ext.clone(), ctx.to_string(), key.to_string(), unit));
+        }
+    }
+    out
+}
+
+/// Phase 94: `decel: target_acceleration` reads the parameter by bare name;
+/// the read form says the unit (`decel: $(param target_acceleration)
+/// m/s^2`), as every other value read from the launch tree does.
+fn ext_param_read(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "ext-param-read";
+    let keys = bundled_param_keys();
+    let is_name = |s: &str| {
+        let mut c = s.chars();
+        c.next()
+            .is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
+            && c.all(|x| x.is_ascii_alphanumeric() || x == '_' || x == '.')
+    };
+    let mut out = Vec::new();
+    // (path of the map, context word)
+    let mut maps: Vec<(Vec<String>, &'static str)> = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        if let Some(hs) = y["hazards"].as_hash() {
+            for k in hs.keys().filter_map(key_str) {
+                maps.push((with(&level, &["hazards", &k]), "hazard"));
+            }
+        }
+        let mut paths: Vec<Vec<String>> = Vec::new();
+        if let Some(ns) = y["nodes"].as_hash() {
+            for (nk, n) in ns {
+                let Some(nk) = key_str(nk) else { continue };
+                if let Some(ps) = n["paths"].as_hash() {
+                    for pk in ps.keys().filter_map(key_str) {
+                        paths.push(with(&level, &["nodes", &nk, "paths", &pk]));
+                    }
+                }
+            }
+        }
+        if let Some(ps) = y["paths"].as_hash() {
+            for pk in ps.keys().filter_map(key_str) {
+                paths.push(with(&level, &["paths", &pk]));
+            }
+        }
+        for p in paths {
+            maps.push((with(&p, &["safe_state", "settle"]), "settle"));
+        }
+    }
+    for (map, ctx) in maps {
+        let mut y = &doc.yaml;
+        for seg in &map {
+            y = &y[seg.as_str()];
+        }
+        let Some(h) = y.as_hash() else { continue };
+        for (k, v) in h {
+            let Some(written) = key_str(k) else { continue };
+            let (qual, bare) = match written.split_once('/') {
+                Some((q, b)) => (Some(q), b),
+                None => (None, written.as_str()),
+            };
+            let Some((_, _, _, unit)) = keys
+                .iter()
+                .find(|(e, c, kk, _)| c == ctx && kk == bare && qual.is_none_or(|q| q == e))
+            else {
+                continue;
+            };
+            let Some(name) = v.as_str().filter(|t| is_name(t)) else {
+                continue;
+            };
+            let kpath = {
+                let mut p = map.clone();
+                p.push(written.clone());
+                p
+            };
+            let dotted = kpath.join(".");
+            let Some(r) = doc.key(&kpath) else {
+                doc.skip(ID, &dotted, "key token not found");
+                continue;
+            };
+            let vs = doc.value_start(&r);
+            let ve = doc.inline_value_end(vs, doc.flow.contains(&kpath));
+            if doc.src[vs..ve].trim() != name {
+                doc.skip(ID, &dotted, "the value is not written as a plain name");
+                continue;
+            }
+            out.push(doc.edit(ID, &dotted, vs..ve, format!("$(param {name}) {unit}")));
+        }
+    }
+    out
+}
+
 /// Migrate one contract's text. An input that is not YAML is an error; an
 /// input that parses as a contract must still parse after the rewrite, or
 /// the migration is refused (a rewrite bug must not reach a file).
@@ -2185,6 +2303,53 @@ paths:
 }
 
 #[cfg(test)]
+mod phase94_tests {
+    use super::*;
+
+    /// A bare parameter name on a bundled `param` key becomes the read form,
+    /// block and qualified spellings included; a value already a reference,
+    /// a quantity, or a key of an extension the file does not carry is left.
+    #[test]
+    fn ext_param_read_rewrites_bare_names_only() {
+        let src = "\
+version: 1
+use: { vehicle.braking: \"^1\", my.ext: \"^1\" }
+nodes:
+  op:
+    paths:
+      p:
+        output: [cmd]
+        safe_state:
+          emits: cmd
+          settle:
+            vehicle.braking/decel: target_acceleration   # qualified
+            jerk: $(param target_jerk) m/s^3
+            my.ext/decel: other
+      q:
+        output: [cmd]
+        safe_state: { emits: cmd, settle: { decel: 2.5 m/s^2, jerk: target_jerk } }
+";
+        let m = migrate_str(src).unwrap();
+        let paths: Vec<&str> = m.edits.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "nodes.op.paths.p.safe_state.settle.vehicle.braking/decel",
+                "nodes.op.paths.q.safe_state.settle.jerk",
+            ]
+        );
+        assert!(
+            m.output.contains(
+                "vehicle.braking/decel: $(param target_acceleration) m/s^2   # qualified"
+            )
+        );
+        assert!(m.output.contains("jerk: $(param target_jerk) m/s^3 } }"));
+        assert!(m.output.contains("my.ext/decel: other"));
+        assert!(!migrate_str(&m.output).unwrap().changed());
+    }
+}
+
+#[cfg(test)]
 mod e8_tests {
     use super::*;
 
@@ -2231,11 +2396,19 @@ nodes:
     paths:
       p:
         output: [cmd]
-        safe_state: { emits: cmd, settle: { decel: target_acceleration, jerk: target_jerk } }
+        safe_state: { emits: cmd, settle: { decel: $(param target_acceleration) m/s^2, jerk: $(param target_jerk) m/s^3 } }
 "
         );
         let ids: Vec<&str> = m.edits.iter().map(|e| e.rewrite).collect();
-        assert_eq!(ids, ["use-implicit", "entry-speed-unit"]);
+        assert_eq!(
+            ids,
+            [
+                "use-implicit",
+                "entry-speed-unit",
+                "ext-param-read",
+                "ext-param-read"
+            ]
+        );
         assert!(!run(&m.output).changed());
     }
 

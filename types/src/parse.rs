@@ -9,9 +9,117 @@ use crate::{
     field_table::{self, Context},
     span::SpanIndex,
     types::*,
+    values::{self, LetDecl, Resolved, ValueRef},
 };
 use std::{collections::BTreeMap, path::Path};
 use yaml_rust2::{Yaml, YamlLoader};
+
+/// One parse's reference-bearing values (play_launch phase 94): the
+/// expressions found, the `let:` names declared so far, the node key being
+/// parsed, and, on the second pass, the values to put in place.
+#[derive(Default)]
+struct ValuePass {
+    values: Option<BTreeMap<String, Resolved>>,
+    refs: Vec<ValueRef>,
+    lets: Vec<String>,
+    node: Option<String>,
+}
+
+thread_local! {
+    static VALUE_PASS: std::cell::RefCell<ValuePass> = std::cell::RefCell::new(ValuePass::default());
+}
+
+/// A scalar that reads the launch tree or a `let:` entry: its text.
+fn ref_text(y: &Yaml) -> Option<&str> {
+    y.as_str().filter(|s| values::is_reference(s))
+}
+
+/// A reference-bearing value at `path`, for a key of dimension `want`: the
+/// expression is checked and kept, and the value the consumer resolved, if
+/// any, returned in SI units (`None`: unknown).
+fn read_reference(text: &str, path: &str, want: rlx::dim::Dim) -> Result<Option<f64>, ParseError> {
+    let syntax = |m: String| ParseError::Field {
+        path: path.to_string(),
+        message: format!("value-syntax: `{text}`: {m}"),
+    };
+    let expr = values::parse_expr(text).map_err(syntax)?;
+    VALUE_PASS
+        .with(|p| values::check_static(&expr, want, &p.borrow().lets, text))
+        .map_err(|m| ParseError::Field {
+            path: path.to_string(),
+            message: format!("value-syntax: {m}"),
+        })?;
+    Ok(VALUE_PASS.with(|p| {
+        let mut p = p.borrow_mut();
+        let node = p.node.clone();
+        p.refs.push(ValueRef {
+            path: path.to_string(),
+            written: text.to_string(),
+            expr,
+            want,
+            node,
+            resolved: None,
+        });
+        p.values.as_ref().and_then(|v| v.get(path)).map(|r| r.si)
+    }))
+}
+
+/// A duration at `doc[key]`, a reference-bearing one included (`ctx` names
+/// where, for the reference). A reference with no value yet is `None`. A
+/// literal's error is reported as [`yaml_duration`] reports it, under `ctx`
+/// when `framed`.
+fn yaml_duration_at(
+    doc: &Yaml,
+    key: &str,
+    ctx: &str,
+    framed: bool,
+) -> Result<Option<Duration>, ParseError> {
+    if let Some(text) = ref_text(&doc[key]) {
+        return Ok(read_reference(text, &format_path(ctx, key), values::TIME)?
+            .map(|s| Duration::from_nanos((s * 1e9).round() as i64)));
+    }
+    if framed {
+        yaml_duration(doc, key).map_err(|e| reframe(e, ctx))
+    } else {
+        yaml_duration(doc, key)
+    }
+}
+
+/// A rate, Hz, at `doc[key]`, a reference-bearing one included.
+fn yaml_rate_at(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<f64>, ParseError> {
+    if let Some(text) = ref_text(&doc[key]) {
+        return read_reference(text, &format_path(ctx, key), values::FREQUENCY);
+    }
+    yaml_f64(doc, key, ctx)
+}
+
+/// A count at `doc[key]`, a reference-bearing one included.
+fn yaml_count_at(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<u32>, ParseError> {
+    if let Some(text) = ref_text(&doc[key]) {
+        return Ok(
+            read_reference(text, &format_path(ctx, key), values::SCALAR)?
+                .map(|n| n.round().clamp(0.0, u32::MAX as f64) as u32),
+        );
+    }
+    yaml_u32(doc, key, ctx)
+}
+
+/// `source:` beside a value read from the launch tree: refused, since the
+/// reference is the value's source.
+fn source_on_reference(map: &Yaml, value_key: &str, ctx: &str) -> Result<(), ParseError> {
+    if ref_text(&map[value_key]).is_some() && !map["source"].is_badvalue() {
+        return Err(field_err(
+            ctx,
+            "source",
+            "source-on-reference: a value read from the launch tree has its provenance \
+             recorded automatically (`source: { param | var | let }`), so `source:` beside a \
+             reference states a second, competing origin. Delete `source:`; or, when the \
+             number is a requirement somebody chose, write the number and bind the parameter \
+             to check it (`{ duration: 10s, param: <parameter>, source: requirement }`)",
+        ));
+    }
+    Ok(())
+}
 
 /// Parse error with optional source location.
 #[derive(Debug, thiserror::Error)]
@@ -48,7 +156,38 @@ pub fn parse_manifest_with_spans(path: &Path) -> Result<ParseResult, ParseError>
 }
 
 /// Parse a manifest from a YAML string.
+///
+/// A value that reads the launch tree (`$(param …)`, `$(var …)`) is kept
+/// as an expression in [`Manifest::value_refs`] and its key left absent: a
+/// contract read alone has no launch tree, so the value is unknown. A value
+/// that reads only `let:` entries of literals is evaluated and put in place.
+/// The consumer that holds the launch tree uses
+/// [`crate::values::resolve_manifest_str`] instead.
 pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
+    let first = parse_manifest_str_with_values(source, None)?;
+    if first.value_refs.is_empty() && first.lets.is_empty() {
+        return Ok(first);
+    }
+    let resolution = first.resolve_values(&values::NoLaunchTree);
+    if resolution.values.is_empty() {
+        return Ok(first);
+    }
+    let mut m = parse_manifest_str_with_values(source, Some(&resolution.values))?;
+    for r in &mut m.value_refs {
+        r.resolved = resolution.values.get(&r.path).cloned();
+    }
+    Ok(m)
+}
+
+/// One parse, with the values of a previous parse's references put in
+/// place when `values` is given (the second of [`resolve_manifest_str`]'s
+/// two passes).
+///
+/// [`resolve_manifest_str`]: crate::values::resolve_manifest_str
+pub fn parse_manifest_str_with_values(
+    source: &str,
+    values: Option<&BTreeMap<String, Resolved>>,
+) -> Result<Manifest, ParseError> {
     let docs =
         YamlLoader::load_from_str(source).map_err(|e| ParseError::YamlSyntax(e.to_string()))?;
     if docs.is_empty() {
@@ -61,7 +200,25 @@ pub fn parse_manifest_str(source: &str) -> Result<Manifest, ParseError> {
     // the body is read -- a file written for a newer grammar would otherwise
     // be refused for its first new key, which reads as the author's typo.
     check_grammar_header(&docs[0])?;
-    with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""))
+    let outer = VALUE_PASS.with(|p| {
+        std::mem::replace(
+            &mut *p.borrow_mut(),
+            ValuePass {
+                values: values.cloned(),
+                ..ValuePass::default()
+            },
+        )
+    });
+    let result = with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""));
+    let pass = VALUE_PASS.with(|p| std::mem::replace(&mut *p.borrow_mut(), outer));
+    let mut m = result?;
+    let mut seen = std::collections::BTreeSet::new();
+    m.value_refs = pass
+        .refs
+        .into_iter()
+        .filter(|r| seen.insert(r.path.clone()))
+        .collect();
+    Ok(m)
 }
 
 /// A release spelled `0.1.49`, `v0.1.49`, `>=0.1.49` or `>= v0.1.49`, as
@@ -310,7 +467,10 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
             }
         }
     }
+    let lets = parse_lets(doc, ctx)?;
     let manifest = Manifest {
+        lets,
+        value_refs: Vec::new(),
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
         rlm: if ctx.is_empty() {
             doc["rlm"].as_str().map(str::to_string)
@@ -335,6 +495,113 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         acknowledged: parse_acknowledged(doc, ctx)?,
     };
     Ok(manifest)
+}
+
+/// `let:` (play_launch phase 94): names for values, stated once, in order.
+/// Root only: the names are the file's. An entry reads only the entries
+/// before it, so a forward reference or a cycle is refused here.
+fn parse_lets(doc: &Yaml, ctx: &str) -> Result<Vec<LetDecl>, ParseError> {
+    let section = &doc["let"];
+    let hash = match section {
+        Yaml::BadValue => return Ok(Vec::new()),
+        Yaml::Hash(h) => h,
+        other => {
+            return Err(type_err(
+                ctx,
+                "let",
+                "a mapping of name -> value (`odd_speed: 8.33 m/s`)",
+                other,
+            ));
+        }
+    };
+    if !ctx.is_empty() {
+        return Err(field_err(
+            ctx,
+            "let",
+            "`let:` is the contract file's: write it at the root of the file, not in an \
+             inline include",
+        ));
+    }
+    let names: Vec<String> = hash.keys().map(yaml_str_owned).collect();
+    let mut out: Vec<LetDecl> = Vec::new();
+    for (i, (k, v)) in hash.iter().enumerate() {
+        let name = yaml_str_owned(k);
+        let at = format!("let.{name}");
+        let ok_name = name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !ok_name {
+            return Err(field_err(
+                "let",
+                &name,
+                &format!("`{name}` is not a name: letters, digits and `_`"),
+            ));
+        }
+        let text = match v {
+            Yaml::String(t) | Yaml::Real(t) => t.clone(),
+            Yaml::Integer(n) => n.to_string(),
+            other => {
+                return Err(type_err("let", &name, "a value (`8.33 m/s`)", other));
+            }
+        };
+        let expr = values::parse_expr(&text).map_err(|m| ParseError::Field {
+            path: at.clone(),
+            message: format!("value-syntax: `{text}`: {m}"),
+        })?;
+        {
+            for used in expr.lets() {
+                if used == name {
+                    return Err(field_err(
+                        "let",
+                        &name,
+                        &format!("`{name}: {text}` reads itself: a cycle has no value"),
+                    ));
+                }
+                match names.iter().position(|n| n == used) {
+                    Some(j) if j > i => {
+                        return Err(field_err(
+                            "let",
+                            &name,
+                            &format!(
+                                "`{name}: {text}` reads `{used}`, declared after it: an entry \
+                                 reads only the entries before it (move `{used}` up; two \
+                                 entries that read each other are a cycle and have no value)"
+                            ),
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        return Err(field_err(
+                            "let",
+                            &name,
+                            &format!(
+                                "`$(let {used})` in `{name}: {text}` names no entry of `let:`"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(r) = expr.unitless_refs().first() {
+            return Err(field_err(
+                "let",
+                &name,
+                &format!(
+                    "value-syntax: `{r}` needs a unit: a parameter or launch configuration \
+                     carries none (`{r} s`, `{r} Hz`)"
+                ),
+            ));
+        }
+        out.push(LetDecl {
+            name: name.clone(),
+            written: text,
+            expr,
+        });
+        VALUE_PASS.with(|p| p.borrow_mut().lets.push(name));
+    }
+    Ok(out)
 }
 
 /// `acknowledged:` (play_launch phase 85 D8): a list of `{ rule, at, reason }`,
@@ -483,6 +750,10 @@ fn yaml_bound(
         .form;
     let v = &doc[key];
     let Yaml::Hash(_) = v else {
+        if ref_text(v).is_some() {
+            return Ok(yaml_duration_at(doc, key, ctx, false)?
+                .map(|d| spelled(context, key, Quantity::Duration(d))));
+        }
         return Ok(yaml_duration(doc, key)?.map(|d| spelled(context, key, Quantity::Duration(d))));
     };
     if form == crate::bound::Form::Bare {
@@ -491,15 +762,20 @@ fn yaml_bound(
     }
     let bctx = &format_path(ctx, key);
     reject_unknown_keys(v, bctx, Context::Budget)?;
-    let d = yaml_duration(v, "duration")
-        .map_err(|e| reframe(e, bctx))?
-        .ok_or_else(|| {
-            field_err(
-                bctx,
-                "duration",
-                "required: the budget itself, with a unit (`149ms`)",
-            )
-        })?;
+    source_on_reference(v, "duration", bctx)?;
+    let read = ref_text(&v["duration"]).is_some();
+    let Some(d) = yaml_duration_at(v, "duration", bctx, true)? else {
+        if read {
+            // A value read from the launch tree that has none yet: unknown,
+            // as an undeclared bound (the reference is kept).
+            return Ok(None);
+        }
+        return Err(field_err(
+            bctx,
+            "duration",
+            "required: the budget itself, with a unit (`149ms`)",
+        ));
+    };
     let param = yaml_string(v, "param", bctx)?;
     if param.is_some() && form != crate::bound::Form::MapParam {
         return Err(field_err(
@@ -617,7 +893,7 @@ fn yaml_rate_bound(
     ctx: &str,
     context: Context,
 ) -> Result<Option<Bound>, ParseError> {
-    Ok(yaml_f64(doc, key, ctx)?.map(|v| spelled(context, key, Quantity::Hz(v))))
+    Ok(yaml_rate_at(doc, key, ctx)?.map(|v| spelled(context, key, Quantity::Hz(v))))
 }
 
 /// `source:` (phase 10 B7): `requirement | measured | derived | analysed`,
@@ -1135,23 +1411,30 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
     match section {
         Yaml::BadValue => Ok(None),
         Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) => {
-            let d = yaml_duration(doc, "window")
-                .map_err(|e| reframe(e, ctx))?
-                .expect("a scalar window parses or errors");
+            let read = ref_text(section).is_some();
+            let Some(d) = yaml_duration_at(doc, "window", ctx, true)? else {
+                if read {
+                    return Ok(None);
+                }
+                unreachable!("a scalar window parses or errors")
+            };
             Ok(Some(window(positive(d, "window")?)))
         }
         Yaml::Hash(_) => {
             let wctx = &format_path(ctx, "window");
             reject_unknown_keys(section, wctx, Context::Budget)?;
-            let d = yaml_duration(section, "duration")
-                .map_err(|e| reframe(e, wctx))?
-                .ok_or_else(|| {
-                    field_err(
-                        wctx,
-                        "duration",
-                        "required: how long the rung may last, with a unit (`10s`)",
-                    )
-                })?;
+            source_on_reference(section, "duration", wctx)?;
+            let read = ref_text(&section["duration"]).is_some();
+            let Some(d) = yaml_duration_at(section, "duration", wctx, true)? else {
+                if read {
+                    return Ok(None);
+                }
+                return Err(field_err(
+                    wctx,
+                    "duration",
+                    "required: how long the rung may last, with a unit (`10s`)",
+                ));
+            };
             let param = yaml_string(section, "param", wctx)?
                 .map(|raw| parse_param_ref(&raw, wctx, "param"))
                 .transpose()?;
@@ -1544,7 +1827,14 @@ fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseErro
         ));
     }
     reject_unknown_keys(section, ctx, Context::Ingress)?;
-    let rate_hz = yaml_f64(section, "rate_hz", ctx)?.ok_or_else(|| {
+    let read = ref_text(&section["rate_hz"]).is_some() || ref_text(&section["burst"]).is_some();
+    let rate = yaml_rate_at(section, "rate_hz", ctx)?;
+    let burst = yaml_count_at(section, "burst", ctx)?;
+    if read && (rate.is_none() || burst.is_none()) {
+        // Read from the launch tree, no value yet: unknown.
+        return Ok(None);
+    }
+    let rate_hz = rate.ok_or_else(|| {
         field_err(
             ctx,
             "rate_hz",
@@ -1558,7 +1848,7 @@ fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseErro
             &format!("must be a finite number > 0, got {rate_hz}"),
         ));
     }
-    let burst = yaml_u32(section, "burst", ctx)?.ok_or_else(|| {
+    let burst = burst.ok_or_else(|| {
         field_err(
             ctx,
             "burst",
@@ -1591,7 +1881,7 @@ fn parse_input_release(doc: &Yaml, ctx: &str) -> Result<InputRelease, ParseError
         return Ok((None, None, None));
     }
     let positive = |key: &str| -> Result<Option<Duration>, ParseError> {
-        let d = yaml_duration(doc, key).map_err(|e| reframe(e, ctx))?;
+        let d = yaml_duration_at(doc, key, ctx, true)?;
         if let Some(d) = d
             && d.as_nanos() <= 0
         {
@@ -1725,7 +2015,10 @@ fn parse_nodes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, NodeDecl>, Pars
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         let path = format_path(ctx, &format!("nodes.{name}"));
-        let node = parse_node_decl(v, &path)?;
+        let outer = VALUE_PASS.with(|p| p.borrow_mut().node.replace(name.clone()));
+        let node = parse_node_decl(v, &path);
+        VALUE_PASS.with(|p| p.borrow_mut().node = outer);
+        let node = node?;
         // Validate endpoint uniqueness
         validate_endpoint_uniqueness(&node, &path)?;
         nodes.insert(name, node);
@@ -1833,7 +2126,30 @@ fn parse_params(doc: &Yaml, ctx: &str) -> Result<Option<BTreeMap<String, ParamDe
                 ),
             )
         })?;
-        out.insert(name, ParamDecl { ty });
+        let default = match &v["default"] {
+            Yaml::BadValue | Yaml::Null => None,
+            Yaml::Integer(n) => Some(n.to_string()),
+            Yaml::Real(r) => Some(r.clone()),
+            Yaml::Boolean(b) => Some(b.to_string()),
+            Yaml::String(t) => Some(t.clone()),
+            other => {
+                return Err(type_err(&path, "default", "a scalar value", other));
+            }
+        };
+        if let Some(d) = &default
+            && matches!(ty, ParamType::Integer | ParamType::Double)
+            && d.parse::<f64>().is_err()
+        {
+            return Err(field_err(
+                &path,
+                "default",
+                &format!(
+                    "`{d}` is not a number, and the parameter is {}",
+                    ty.as_str()
+                ),
+            ));
+        }
+        out.insert(name, ParamDecl { ty, default });
     }
     Ok(Some(out))
 }
@@ -2215,7 +2531,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         publishers: yaml_string_list(yaml, "pub", ctx)?,
         subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        rate_hz: yaml_f64(yaml, "rate_hz", ctx)?,
+        rate_hz: yaml_rate_at(yaml, "rate_hz", ctx)?,
         max_transport: yaml_bound(yaml, "max_transport", ctx, Context::Topic)?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external: parse_external_side(yaml, "external", ctx)?,
@@ -2556,7 +2872,11 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         safe_state: parse_safe_state(yaml, ctx)?,
         timer_param: parse_timer_param(yaml, ctx)?,
         timer_rate_source: match &yaml["trigger"]["timer"] {
-            t @ Yaml::Hash(_) => timer_rate(t, ctx)?.and_then(|(_, src)| src),
+            t @ Yaml::Hash(_)
+                if t["rate_hz"].is_hash() && ref_text(&t["rate_hz"]["value"]).is_none() =>
+            {
+                timer_rate(t, ctx)?.and_then(|(_, src)| src)
+            }
             _ => None,
         },
     };
@@ -2623,7 +2943,21 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     match key.as_str() {
         "timer" => {
             reject_unknown_keys(v, ctx, Context::TriggerTimer)?;
-            let rate_hz = timer_rate(v, ctx)?
+            let read =
+                ref_text(&v["rate_hz"]).is_some() || ref_text(&v["rate_hz"]["value"]).is_some();
+            let rate = timer_rate(v, ctx)?;
+            if read && rate.is_none() {
+                // The rate is read from the launch tree and has no value
+                // yet: the trigger is unknown, never a guessed timer.
+                let _ = yaml_bound(
+                    v,
+                    "jitter",
+                    &format_path(ctx, "trigger.timer"),
+                    Context::TriggerTimer,
+                )?;
+                return Ok(None);
+            }
+            let rate_hz = rate
                 .map(|(hz, _)| hz)
                 .ok_or_else(|| field_err(ctx, "trigger.timer", "requires 'rate_hz'"))?;
             if rate_hz <= 0.0 {
@@ -2672,10 +3006,20 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
 fn timer_rate(timer: &Yaml, ctx: &str) -> Result<Option<(f64, Option<BudgetSource>)>, ParseError> {
     let v = &timer["rate_hz"];
     let Yaml::Hash(_) = v else {
+        if ref_text(v).is_some() {
+            return Ok(
+                yaml_rate_at(timer, "rate_hz", &format_path(ctx, "trigger.timer"))?
+                    .map(|hz| (hz, None)),
+            );
+        }
         return Ok(yaml_f64(timer, "rate_hz", ctx)?.map(|hz| (hz, None)));
     };
     let rctx = &format_path(ctx, "trigger.timer.rate_hz");
     reject_unknown_keys(v, rctx, Context::TimerRate)?;
+    source_on_reference(v, "value", rctx)?;
+    if ref_text(&v["value"]).is_some() {
+        return Ok(yaml_rate_at(v, "value", rctx)?.map(|hz| (hz, None)));
+    }
     let hz = yaml_f64(v, "value", rctx)?.ok_or_else(|| {
         field_err(
             rctx,
@@ -2745,8 +3089,8 @@ fn parse_sync(doc: &Yaml, ctx: &str) -> Result<Option<Sync>, ParseError> {
             ));
         }
     };
-    let max_interval = yaml_duration(section, "max_interval")?;
-    let timeout = yaml_duration(section, "timeout")?;
+    let max_interval = yaml_duration_at(section, "max_interval", ctx, false)?;
+    let timeout = yaml_duration_at(section, "timeout", ctx, false)?;
     match policy {
         SyncPolicy::TimeoutAny => {
             if timeout.is_none() {
@@ -2987,7 +3331,7 @@ fn parse_drop_spec(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<DropSpec>,
         })
         .transpose()?
         .map(|c| count_bound(Context::Drop, "max_count", c));
-    let max_consecutive = yaml_u32(section, "max_consecutive", ctx)?
+    let max_consecutive = yaml_count_at(section, "max_consecutive", ctx)?
         .map(|n| spelled(Context::Drop, "max_consecutive", Quantity::Count(n)));
 
     Ok(Some(DropSpec {
@@ -3014,10 +3358,10 @@ fn parse_qos(doc: &Yaml, ctx: &str) -> Result<Option<QosDecl>, ParseError> {
         durability: yaml_string(section, "durability", ctx)?,
         depth: yaml_u32(section, "depth", ctx)?,
         history: yaml_string(section, "history", ctx)?,
-        lifespan: yaml_duration(section, "lifespan")?,
+        lifespan: yaml_duration_at(section, "lifespan", ctx, false)?,
         liveliness: yaml_string(section, "liveliness", ctx)?,
-        deadline: yaml_duration(section, "deadline")?,
-        lease_duration: yaml_duration(section, "lease_duration")?,
+        deadline: yaml_duration_at(section, "deadline", ctx, false)?,
+        lease_duration: yaml_duration_at(section, "lease_duration", ctx, false)?,
     }))
 }
 
@@ -3144,7 +3488,7 @@ fn parse_miss_spec(doc: &Yaml, ctx: &str) -> Result<Option<MissSpec>, ParseError
     };
     Ok(Some(MissSpec {
         tolerate,
-        consecutive: yaml_u32(section, "consecutive", ctx)?
+        consecutive: yaml_count_at(section, "consecutive", ctx)?
             .map(|n| spelled(Context::Miss, "consecutive", Quantity::Count(n))),
         action,
     }))

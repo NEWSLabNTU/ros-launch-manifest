@@ -1,6 +1,7 @@
 # Contract values read from the launch tree
 
-Status: design, accepted 2026-10-27. Implementation: play_launch phase 94
+Status: design, accepted 2026-10-27; wave 1 implemented in rlm v0.2.4.
+Implementation: play_launch phase 94
 (`docs/roadmap/phase-94-contract-values.md` in play_launch), which is
 play_launch phase 85's D9.
 

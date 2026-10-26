@@ -6,6 +6,76 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.2.4 - 2026-10-27
+
+Contract values read from the launch tree (play_launch phase 94 wave 1;
+design `docs/design/contract-values.md`). GRAMMAR_VERSION 0.2.4. Additive
+for every contract that parsed before it: a value with no reference is the
+literal it always was. **Workspace Cargo version `0.2.1` -> `0.2.2`**:
+`Manifest`, `ParamDecl` and seven model contract structs have new fields,
+and `types` depends on `rlx` (without z3).
+
+### Added
+
+- Contract: a quantity may READ its number. `$(param [<node>] <name>)
+  <unit>` reads a node's effective parameter, `$(var <name> [@<node>])
+  <unit>` a launch configuration, `$(let <name>)` an entry of the new root
+  `let:`; `+ - * /` and parentheses combine them (`3 / $(let lidar_rate)`).
+  Accepted on every bound key and its braces form's `duration:`, a timer's
+  and a topic's `rate_hz` (and `{ value }`), QoS `deadline`,
+  `lease_duration`, `lifespan`, a mode's `window`, `drop.max_consecutive`,
+  `miss.consecutive`, `ingress`, `min_interarrival`, `budget`,
+  `budget_period`, `sync`'s durations, and an extension key's value.
+  Not on a measurement record (`source: { measured }`) or `supervision:`.
+- `types::values`: the expression (`Expr`, `parse_expr`), the static check
+  (`check_static`), and evaluation against a consumer's `Lookup`
+  (`Manifest::resolve_values`, `Manifest::evaluate_text`,
+  `resolve_manifest_str`: parse, evaluate, parse again with the numbers in
+  place). Units and dimensions are rlx's (`rlx::units`, `rlx::dim`): one
+  unit table for the extension language and the core grammar.
+- `Manifest.lets` (the root `let:`, in order) and `Manifest.value_refs`
+  (every reference-bearing value by the dotted path of its scalar, with
+  its expression and, once resolved, its value and every read behind it).
+- `params.<p>.default`: what `$(param <p>)` reads when no launch source
+  sets the parameter. A non-number for an `integer`/`double` is refused.
+- Model: `sources:` on `PathContract`, `SubContract`, `PubContract`,
+  `SrvContract`, `TopicContract`, `HazardContract`, `ModeContract`: per
+  model field (`rate_hz`, `max_age_ms`, `qos.lease_duration_ms`), the value
+  as written and each read (`ValueSource`, `ValueRead { kind: param | var |
+  let }`). The number stays in its field: a reader of the model is
+  unchanged, and an entry with nothing read serializes as before.
+- `migrate`: `ext-param-read` rewrites a bundled extension's `param` key
+  holding a bare parameter name (`decel: target_acceleration`) to the read
+  form (`decel: $(param target_acceleration) m/s^2`). The bare form stays
+  legal.
+
+### Refused at parse time
+
+- a `$(param)`/`$(var)` without a unit, except on a count (which has none);
+  a `$(let)` with one; a unit not on rlx's table; a malformed reference
+  (`$(env …)` included); a `$(let)` naming no earlier entry; a `let:` entry
+  reading itself or a later entry; `let:` in an inline include;
+- `source:` beside a reference (`source-on-reference`): the reference is
+  the value's source.
+
+### Decided where the design is silent
+
+- A count takes a reference with no unit; everywhere else the unit is
+  required.
+- The dimension check is the consumer's (`param-dimension`), so its message
+  names the value and its source and a wrong dimension does not drop the
+  file the way a grammar error does. A value outside its key's range is
+  `value-range`.
+- Without a launch tree a reference is unknown and its key absent; an
+  unknown timer rate leaves the path's trigger unknown, never a guessed
+  timer. A `$(let)` of literals evaluates without one.
+
+### Changed (API)
+
+- `Manifest` has `lets` and `value_refs`; `ParamDecl` has `default`; the
+  model structs above have `sources`. A struct literal without
+  `..Default::default()` needs them.
+
 ## v0.2.3 - 2026-10-26
 
 Acknowledging a finding in the contract (play_launch phase 85 D8).

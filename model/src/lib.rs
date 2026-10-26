@@ -958,6 +958,12 @@ pub struct ModeContract {
     /// The success exit of a windowed rung (v0.1.46).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<ExitContract>,
+    /// Where each number of this entry read from the launch tree came from
+    /// (play_launch phase 94), keyed by the model field it fills
+    /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
+    /// its field as any written one; absent for a written number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
 }
 
 /// `modes.<m>.window` after merge (v0.1.46).
@@ -1119,6 +1125,49 @@ pub struct HazardContract {
     /// Where `detection_ms` came from when an extension derived it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detection_derived: Option<DerivedSource>,
+    /// Where each number of this entry read from the launch tree came from
+    /// (play_launch phase 94), keyed by the model field it fills
+    /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
+    /// its field as any written one; absent for a written number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
+}
+
+/// Where a number read from the launch tree came from (play_launch phase
+/// 94): the value as the contract wrote it, and every read behind it. The
+/// number itself is in its field, read as any written one; this record is
+/// for a reviewer.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ValueSource {
+    /// The value as written (`$(param update_rate) Hz`).
+    pub written: String,
+    /// Each reference it read, in order (a `$(let)` first, then what that
+    /// entry read).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<ValueRead>,
+}
+
+/// One read behind a [`ValueSource`], tagged by `kind:` (a YAML-tag-free
+/// form every model reader parses).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ValueRead {
+    /// `$(param …)`: the node's effective parameter, and where its value was
+    /// set (a launch file, a parameter file, `default:` in the contract).
+    Param {
+        node: String,
+        name: String,
+        value: String,
+        at: String,
+    },
+    /// `$(var …)`: a launch configuration, and where it was set.
+    Var {
+        name: String,
+        value: String,
+        at: String,
+    },
+    /// `$(let …)`: an entry of the contract's `let:`.
+    Let { name: String, value: String },
 }
 
 /// The source of a bound an extension derived (phase 91 E10). The model
@@ -1521,6 +1570,12 @@ pub struct PubContract {
     /// endpoints when its contract had to give them a 10 Hz floor.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub on_demand: bool,
+    /// Where each number of this entry read from the launch tree came from
+    /// (play_launch phase 94), keyed by the model field it fills
+    /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
+    /// its field as any written one; absent for a written number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
 }
 
 /// Subscriber assumption.
@@ -1591,6 +1646,12 @@ pub struct SubContract {
     /// The server period P of [`Self::budget_ms`], ms (since v0.1.68).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_period_ms: Option<f64>,
+    /// Where each number of this entry read from the launch tree came from
+    /// (play_launch phase 94), keyed by the model field it fills
+    /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
+    /// its field as any written one; absent for a written number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
 }
 
 /// A subscriber's ingress bound (since v0.1.64). See [`SubContract::ingress`].
@@ -1633,6 +1694,12 @@ pub struct SrvContract {
     /// The server period of `budget_ms`, ms (since v0.1.68).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_period_ms: Option<f64>,
+    /// Where each number of this entry read from the launch tree came from
+    /// (play_launch phase 94), keyed by the model field it fills
+    /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
+    /// its field as any written one; absent for a written number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
 }
 
 /// A client's facts (since v0.1.69): a service client (`cli.<e>`) or an
@@ -1755,6 +1822,12 @@ pub struct PathContract {
     /// paths only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supervise: Option<SuperviseContract>,
+    /// Where each number of this entry read from the launch tree came from
+    /// (play_launch phase 94), keyed by the model field it fills
+    /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
+    /// its field as any written one; absent for a written number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
 }
 
 impl PathContract {
@@ -1809,6 +1882,12 @@ pub struct TopicContract {
     pub drop: Option<DropContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qos: Option<Qos>,
+    /// Where each number of this entry read from the launch tree came from
+    /// (play_launch phase 94), keyed by the model field it fills
+    /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
+    /// its field as any written one; absent for a written number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
 }
 
 /// Drop budget, resolved to a fraction (the manifest's `N / W` form is
@@ -2024,6 +2103,46 @@ mod order_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Phase 94: a number read from the launch tree carries its provenance
+    /// beside it, and a reader of the number is unchanged: the field reads
+    /// as before, and an entry with no source serializes as before.
+    #[test]
+    fn a_read_value_carries_its_source_beside_the_number() {
+        let mut p = PathContract {
+            output: vec!["/o".into()],
+            trigger: Some(ros_launch_manifest_sched::EffectiveTrigger::Timer { rate_hz: 10.0 }),
+            ..Default::default()
+        };
+        let plain = serde_yaml_ng::to_string(&p).unwrap();
+        assert!(!plain.contains("sources"), "{plain}");
+        p.sources.insert(
+            "rate_hz".into(),
+            ValueSource {
+                written: "$(param update_rate) Hz".into(),
+                reads: vec![ValueRead::Param {
+                    node: "/mrm_handler".into(),
+                    name: "update_rate".into(),
+                    value: "10 Hz".into(),
+                    at: "mrm_handler.param.yaml".into(),
+                }],
+            },
+        );
+        let text = serde_yaml_ng::to_string(&p).unwrap();
+        assert!(text.contains("sources:\n  rate_hz:\n    written: $(param update_rate) Hz\n    reads:\n    - kind: param\n      node: /mrm_handler"), "{text}");
+        let back: PathContract = serde_yaml_ng::from_str(&text).unwrap();
+        assert_eq!(back, p);
+        // A reader that predates the field: the number is where it was.
+        #[derive(serde::Deserialize)]
+        struct Old {
+            trigger: ros_launch_manifest_sched::EffectiveTrigger,
+        }
+        let old: Old = serde_yaml_ng::from_str(&text).unwrap();
+        assert_eq!(
+            old.trigger,
+            ros_launch_manifest_sched::EffectiveTrigger::Timer { rate_hz: 10.0 }
+        );
+    }
 
     /// `meta.inputs` paths must be portable.
     ///

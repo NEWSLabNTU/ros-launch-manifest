@@ -422,6 +422,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Findings the author has read and keeps: a list of `{ rule, at, reason }`, at the contract's root only. The consumer reports a warning or info whose rule id and path match an entry as acknowledged, with the reason, and counts it apart from the warnings; an entry matching an error is itself an error (errors cannot be acknowledged), and one matching nothing is a warning, so an acknowledgement cannot outlive its finding.",
     ),
+    live(
+        "let",
+        Context::Manifest,
+        Kind::Meta,
+        "Names for values, stated once and read as `$(let <name>)`: a mapping of name to value, in order, at the contract's root. An entry may read earlier entries (and `$(param)`, `$(var)`); a forward reference or a cycle is an error. Separate from launch configurations: `$(var)` never reads it.",
+    ),
     // ── nodes.<name> ──
     live(
         "if",
@@ -1061,6 +1067,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "ROS 2 parameter type: bool | integer | double | string | byte_array | bool_array | integer_array | double_array | string_array. Required; an unknown type is an error.",
     ),
+    live(
+        "default",
+        Context::Param,
+        Kind::Fact,
+        "The value a `$(param <name>)` reads when no launch source sets the parameter (the code's compiled-in default, stated). Without it, reading an unset parameter is `param-unset`.",
+    ),
     // ── hazards.<name> ──
     live(
         "severity",
@@ -1579,8 +1591,39 @@ pub fn render_markdown() -> String {
         out.push('\n');
     }
     out.push_str(&render_bounds());
+    out.push_str(&render_values());
     out.push_str(&crate::severity::render_markdown());
     out
+}
+
+/// The "Values read from the launch tree" section (play_launch phase 94).
+fn render_values() -> String {
+    "## Values read from the launch tree\n\n\
+     A quantity may READ a number instead of restating it: a duration, a rate, \
+     a count, the `duration:` or `value:` of a braces form, a QoS duration, and \
+     an extension key typed `param`. The value is an expression:\n\n\
+     ```text\n\
+     value  := term (('+' | '-') term)*\n\
+     term   := factor (('*' | '/') factor)*\n\
+     factor := number unit? | ref unit | '$(let' name ')' | '(' value ')'\n\
+     ref    := '$(param' [node] name ')' | '$(var' name ['@' node] ')'\n\
+     ```\n\n\
+     | reference | reads |\n|---|---|\n\
+     | `$(param [<node>] <name>)` | the node's effective parameter value; one argument: the node the key sits under; a bare node: a node key of this contract; `/<fqn>`: any node of the launch tree |\n\
+     | `$(var <name> [@<node>])` | a launch configuration, at the end of the contract's launch file (or where `<node>` was declared) |\n\
+     | `$(let <name>)` | an entry of the root `let:` |\n\n\
+     A `$(param)` or `$(var)` takes a **unit, always** (`$(param watchdog_ms) ms`): \
+     a parameter carries none, and reading it in SI would make a 100 ms lease a \
+     100 s one. On a count it takes none. A `$(let)` carries its entry's unit. \
+     Units are rlx's ([extension-reference.md](extension-reference.md)); a \
+     value of the wrong dimension for its key is `param-dimension`. \
+     `source:` beside a reference is a parse error (`source-on-reference`): \
+     the reference is the value's source. A value with no reference is the \
+     literal it always was.\n\n\
+     The consumer that holds the launch tree evaluates every reference per \
+     scope instance and hands each rule a plain number; a contract read alone \
+     leaves the value unknown (the key absent), never zero.\n\n"
+        .to_string()
 }
 
 /// The "Bounds" section of the Format Reference (phase 90 G2): every bound
@@ -1679,6 +1722,8 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Acknowledged, "rule", "0.2.3"),
     (Context::Acknowledged, "at", "0.2.3"),
     (Context::Acknowledged, "reason", "0.2.3"),
+    (Context::Manifest, "let", "0.2.4"),
+    (Context::Param, "default", "0.2.4"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].
