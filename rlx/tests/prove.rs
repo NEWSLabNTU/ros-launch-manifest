@@ -102,23 +102,15 @@ fn a_missing_sign_is_refuted_and_the_sign_is_suggested() {
     );
 }
 
-/// The rail example at the contract's table keys (0 and 100 km/h): the
-/// settle's six claims are proved, and so is the check's claim over the
-/// table; its claims over the speeds and times square a speed that grows
-/// with acceleration times the dead time, which Z3 does not decide, so they
-/// may be unknown, and are never refuted.
+/// The rail example at the contract's table keys (0 and 100 km/h): all
+/// twelve claims are proved. The check's claims over the speeds and times
+/// square a speed that grows with acceleration times the dead time, which
+/// Z3 decided only once the prover orders the `where` bindings first.
 #[test]
 fn the_rail_claims_are_proved_at_the_written_keys() {
-    let mut opts = Options::default();
-    opts.table_keys
-        .insert("settle.a_safe".into(), vec![0.0, 100.0 / 3.6]);
-    let claims = prove_text(&accepted("ebd.rlx"), &opts);
+    let claims = prove_text(&accepted("ebd.rlx"), &rail_options());
     assert_eq!(claims.len(), 12);
-    let (settle, check): (Vec<_>, Vec<_>) = claims
-        .iter()
-        .partition(|c| c.report().starts_with("settle.duration"));
-    assert_eq!(settle.len(), 6);
-    for c in &settle {
+    for c in &claims {
         assert_eq!(c.verdict, Verdict::Proved, "{}", c.report());
         assert!(
             c.report().ends_with("(for a_safe's 2 keys as written)"),
@@ -126,14 +118,75 @@ fn the_rail_claims_are_proved_at_the_written_keys() {
             c.report()
         );
     }
-    for c in &check {
-        let over_table = c.report().contains("decreasing in a_safe");
-        match &c.verdict {
-            Verdict::Proved => {}
-            Verdict::Unknown(_) if !over_table => {}
-            v => panic!("{v:?}: {}", c.report()),
-        }
+}
+
+/// The same check with the braking distance written inline, as rail.ebd
+/// 1.0.0 wrote it: no binding names the sum, and the claims are still
+/// proved, through the bindings that remain.
+#[test]
+fn the_rail_check_is_proved_with_the_braking_distance_inline() {
+    let src = accepted("ebd.rlx").replace(
+        "    and braking = sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)\n    and stopping_distance = v0 * dead + acceleration * dead^2 / 2 + braking\n",
+        "    and stopping_distance =\n      v0 * dead + acceleration * dead^2 / 2\n      + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)\n",
+    );
+    assert!(!src.contains("braking ="), "the replacement missed");
+    let claims = prove_text(&src, &rail_options());
+    let check: Vec<_> = claims
+        .iter()
+        .filter(|c| c.report().starts_with("check stop_before_svl"))
+        .collect();
+    assert_eq!(check.len(), 6);
+    for c in check {
+        assert_eq!(c.verdict, Verdict::Proved, "{}", c.report());
     }
+}
+
+/// A wrong direction on the rail check is refuted, not left unknown: the
+/// binding facts make a true claim provable and must not hide a false one,
+/// and the counterexample is the model of the last satisfiable query (one
+/// read after an assertion or a timed-out query was absent or stale, which
+/// reported "Z3 gave no model" or one the evaluator did not reproduce).
+#[test]
+fn a_wrong_direction_on_the_rail_check_is_refuted() {
+    let src = accepted("ebd.rlx");
+    let check = src.find("check stop_before_svl").expect("the check");
+    let (head, tail) = src.split_at(check);
+    let tail = tail.replacen(
+        "    increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up\n    decreasing in a_safe\n",
+        "    decreasing in acceleration\n",
+        1,
+    );
+    assert!(
+        tail.contains("decreasing in acceleration\n"),
+        "the replacement missed"
+    );
+    // A short budget: after the refutation the prover looks for a domain
+    // that would make the claim hold, and for a backwards claim there is
+    // none, so every candidate runs its budget out.
+    let opts = Options {
+        timeout_ms: 1000,
+        ..rail_options()
+    };
+    let claims = prove_text(&format!("{head}{tail}"), &opts);
+    let c = claims
+        .iter()
+        .find(|c| c.report().starts_with("check stop_before_svl"))
+        .expect("the check's claim");
+    let Verdict::Refuted(cex) = &c.verdict else {
+        panic!("{}", c.report())
+    };
+    assert_eq!(
+        (cex.at_lo.as_str(), cex.at_hi.as_str()),
+        ("PASS", "FAIL"),
+        "{cex:?}"
+    );
+}
+
+fn rail_options() -> Options {
+    let mut opts = Options::default();
+    opts.table_keys
+        .insert("settle.a_safe".into(), vec![0.0, 100.0 / 3.6]);
+    opts
 }
 
 fn uav_point() -> Inputs {

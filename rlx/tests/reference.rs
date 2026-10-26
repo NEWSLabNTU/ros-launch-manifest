@@ -132,19 +132,14 @@ fn every_reference_extension_loads_and_proves_its_worst_case() {
         let claims = prove_all(&checked, &options(file));
         assert!(!claims.is_empty(), "{file} states no worst case");
         for c in &claims {
-            // rail.ebd 1.0.0's distance check squares a speed that grows
-            // with acceleration times the dead time, which Z3 does not
-            // decide: those claims may come back unknown (the file says
-            // so), never refuted. Everything else is proved.
-            let undecidable = file == "ebd.rlx" && c.report().starts_with("check stop_before_svl");
-            if undecidable && matches!(c.verdict, Verdict::Unknown(_)) {
-                continue;
-            }
             assert_eq!(c.verdict, Verdict::Proved, "{file}: {}", c.report());
             proved += 1;
         }
     }
-    assert!(proved >= 14, "{proved}");
+    assert_eq!(
+        proved, 24,
+        "every claim of every reference extension is proved"
+    );
 }
 
 #[allow(dead_code)]

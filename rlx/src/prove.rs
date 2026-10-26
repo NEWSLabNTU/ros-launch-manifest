@@ -36,6 +36,13 @@
 //! unroll over the entries. A power with a non-integer or non-constant
 //! exponent is beyond the encoding: unknown, never a guess.
 //!
+//! Before the final query each `where` binding that is a quantity is
+//! ordered between the two copies, in order: where Z3 proves it moves with
+//! the claim's key or against it, that is added as a fact. Such a fact
+//! follows from the copies, so it changes no verdict, but a product of two
+//! keys inside a square (rail's speed at full braking) is decided only
+//! with it.
+//!
 //! # Verdicts
 //!
 //! - Proved: Z3 reports the violation unsatisfiable.
@@ -822,6 +829,8 @@ fn const_int(e: &Expr) -> Option<i64> {
 struct Copy<'c> {
     value: T<'c>,
     ok: Bool<'c>,
+    /// The `where` bindings that are quantities, in order.
+    binds: Vec<Real<'c>>,
 }
 
 /// A simple domain constraint a suggestion may add.
@@ -914,9 +923,18 @@ impl Problem<'_> {
         let mut scope = Scope::default();
         let bd = enc.bindings(&self.body.bindings, &mut scope)?;
         let (value, vd) = enc.enc(&self.body.value, &mut scope)?;
+        let binds = scope
+            .binds
+            .iter()
+            .filter_map(|(_, t)| match t {
+                T::R(r) => Some(r.clone()),
+                _ => None,
+            })
+            .collect();
         Ok(Copy {
             value,
             ok: and(ctx, &[&dom, &bd, &vd]),
+            binds,
         })
     }
 
@@ -986,6 +1004,7 @@ impl Problem<'_> {
             }
             _ => unreachable!("one key, two copies of one kind"),
         }
+        self.binding_lemmas(ctx, &mut base, &lo.binds, &hi.binds);
         let worse = self.violation(&lo.value, &hi.value);
 
         let solver = self.solver(ctx, self.opts.timeout_ms);
@@ -1000,11 +1019,17 @@ impl Problem<'_> {
         let mut result = bounded(ctx, ms, || {
             solver.check_assumptions(std::slice::from_ref(&positive))
         });
+        // Read before any further assertion, which discards the model.
+        let mut first = None;
         if result == SatResult::Sat {
+            first = solver.get_model();
             // Keep the counterexample physical while it is made readable.
             solver.assert(&positive);
         } else {
             result = bounded(ctx, ms, || solver.check());
+            if result == SatResult::Sat {
+                first = solver.get_model();
+            }
         }
         match result {
             SatResult::Unsat => {
@@ -1041,8 +1066,9 @@ impl Problem<'_> {
                 None,
             )),
             SatResult::Sat => {
-                self.round(ctx, &solver, &lo_keys, &hi_keys);
-                let model = solver.get_model().ok_or("Z3 gave no model")?;
+                let model = self
+                    .round(ctx, &solver, &lo_keys, &hi_keys, first)
+                    .ok_or("Z3 gave no model")?;
                 let (p1, p2) = (
                     self.point_of(&model, &lo_keys)?,
                     self.point_of(&model, &hi_keys)?,
@@ -1064,15 +1090,18 @@ impl Problem<'_> {
     /// Make the counterexample readable: pin each key, one at a time, to
     /// the contract's value or a small whole number in SI when a violation
     /// still exists with it, so the report reads `descent_speed = 1 m/s`
-    /// rather than `0.4547 m/s`. Leaves the solver satisfiable, with the
-    /// pins asserted.
+    /// rather than `0.4547 m/s`. Returns the model of the last query that
+    /// answered satisfiable: one asked again after the pins can time out
+    /// under load, and its model is then stale or absent, which read as a
+    /// counterexample the evaluator does not reproduce.
     fn round<'c>(
         &self,
         ctx: &'c Context,
         solver: &Solver<'c>,
         lo_keys: &[KeyVar<'c>],
         hi_keys: &[KeyVar<'c>],
-    ) {
+        mut model: Option<z3::Model<'c>>,
+    ) -> Option<z3::Model<'c>> {
         let budget = (self.opts.timeout_ms / 10).max(200);
         let env = &self.checked.env;
         let mut vars: Vec<(Real<'c>, Option<f64>)> = Vec::new();
@@ -1099,13 +1128,43 @@ impl Problem<'_> {
                     solver.check_assumptions(std::slice::from_ref(&pin))
                 }) == SatResult::Sat
                 {
+                    model = solver.get_model().or(model);
                     solver.assert(&pin);
                     break;
                 }
             }
         }
-        // The model the caller reads must be the last satisfiable one.
-        let _ = bounded(ctx, budget.max(self.opts.timeout_ms), || solver.check());
+        model
+    }
+
+    /// How each `where` binding moves between the two copies, proved one at
+    /// a time in order, each with the ones before it: a binding that moves
+    /// with the claim's key (`lo <= hi`), against it (`lo >= hi`), or
+    /// neither. A proved direction is a fact of the two copies, so adding
+    /// it changes no verdict; it only spares the final query from deriving
+    /// it inside a product (`acceleration * dead` in rail's speed at full
+    /// braking), which Z3 did not do within minutes.
+    fn binding_lemmas<'c>(
+        &self,
+        ctx: &'c Context,
+        base: &mut Vec<Bool<'c>>,
+        lo: &[Real<'c>],
+        hi: &[Real<'c>],
+    ) {
+        let budget = (self.opts.timeout_ms / 4).max(200);
+        for (a, b) in lo.iter().zip(hi) {
+            for (holds, broken) in [(a.le(b), a.gt(b)), (a.ge(b), a.lt(b))] {
+                let s = self.solver(ctx, budget);
+                for f in base.iter() {
+                    s.assert(f);
+                }
+                s.assert(&broken);
+                if bounded(ctx, budget, || s.check()) == SatResult::Unsat {
+                    base.push(holds);
+                    break;
+                }
+            }
+        }
     }
 
     fn solver<'c>(&self, ctx: &'c Context, timeout_ms: u32) -> Solver<'c> {

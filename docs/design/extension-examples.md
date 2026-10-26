@@ -351,8 +351,8 @@ counterexample and a fix.
 ## 5. Rail: emergency braking against a supervision table
 
 The deceleration depends on speed band, given as a table; the settle is a
-bounded sum over it, and a distance check stands beside the FTTI. Version
-1.0.0 follows ERA SUBSET-026-3 section 3.13 where 0.1.0 simplified it
+bounded sum over it, and a distance check stands beside the FTTI. Since
+1.0.0 it follows ERA SUBSET-026-3 section 3.13 where 0.1.0 simplified it
 ([reference-extensions-verification.md](reference-extensions-verification.md)):
 traction cut-off and brake build-up run from one command, so the dead time
 is the larger of the two, not their sum; the train may keep accelerating
@@ -364,7 +364,7 @@ not the end of authority.
 
 ```
 -- share/rlm_ext_rail/rlm/ebd.rlx
-extension rail.ebd 1.0.0
+extension rail.ebd 1.0.1
 requires rlm >= 0.2.0
 
 key hazard.entry_speed      : Velocity      "the highest speed supervised at intervention"
@@ -391,9 +391,8 @@ check stop_before_svl: stopping_distance <= distance_to_svl
   where dead  = max(traction_cut_off, brake_build_up)
     and v0    = entry_speed + speed_error
     and v_bec = v0 + acceleration * dead
-    and stopping_distance =
-      v0 * dead + acceleration * dead^2 / 2
-      + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)
+    and braking = sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)
+    and stopping_distance = v0 * dead + acceleration * dead^2 / 2 + braking
   worst_case:
     increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up
     decreasing in a_safe
@@ -429,20 +428,26 @@ nodes:
 ```
 
 ```
-info[settle-derived]: settle = 76.02 s   derived by rail.ebd 1.0.0
+info[settle-derived]: settle = 76.02 s   derived by rail.ebd 1.0.1
     dead = max(1.0, 2.5) = 2.5 s;  v_bec = 44.44 + 0.56 + 0.5 x 2.5 = 46.25 m/s
     2.5 s + (27.78 m/s)/0.65 + (18.47 m/s)/0.60 = 2.5 + 42.74 + 30.79 s
   worst case: proved increasing in entry_speed, speed_error, acceleration,
     traction_cut_off, brake_build_up; decreasing in a_safe (for a_safe's 2 keys as written)
 info[check]: rail.ebd/stop_before_svl PASS
-    114.06 + 593.54 + 1139.55 = 1847.15 m <= 2000 m   (margin 152.85 m)
-  worst case: proved decreasing in a_safe; the others unknown (Z3 does not
-    decide a square of acceleration x dead time)
+    braking = 593.54 + 1139.55 = 1733.09 m
+    114.06 + 1733.09 = 1847.15 m <= 2000 m   (margin 152.85 m)
+  worst case: proved increasing in entry_speed, speed_error, acceleration,
+    traction_cut_off, brake_build_up; decreasing in a_safe (for a_safe's 2 keys as written)
 ```
 
 What it shows: a table input with a bounded sum, two requirements on one
-hazard (a time and a distance), and a claim the prover cannot decide,
-reported as unknown rather than assumed.
+hazard (a time and a distance), and claims the prover decides only one
+step at a time. The braking distance squares a speed that grows with
+acceleration times the dead time; Z3 did not decide the whole stopping
+distance in one query, so the prover first proves how each `where` binding
+moves (`v_bec` up with `acceleration`, then `braking` up with `v_bec`) and
+gives the final query those facts. 1.0.1 names `braking` for that reason;
+1.0.0 wrote the same formula inline.
 
 ---
 

@@ -244,7 +244,7 @@ check energy_reserve:
   domain: hover_power > 0 W
 ```
 
-## `rail.ebd 1.0.0`
+## `rail.ebd 1.0.1`
 
 **Reference, illustrative.**
 
@@ -269,7 +269,7 @@ What it produces:
 | derive | `settle.duration` | Time | increasing in `entry_speed`, `speed_error`, `acceleration`, `traction_cut_off`, `brake_build_up`; decreasing in `a_safe` |
 | check | `stop_before_svl` | verdict | increasing in `entry_speed`, `speed_error`, `acceleration`, `traction_cut_off`, `brake_build_up`; decreasing in `a_safe` |
 
-sha256 of the canonical form: `9b6efcac3c094cfe50f40f09c704a29ecc025d0cb67fd8cbbb2d2cffa4110478`. Source (`types/extensions/reference/ebd.rlx`):
+sha256 of the canonical form: `6d65754efbde9f22138294de46e7cb857c85d884022b93231fffdcdbf7a4750c`. Source (`types/extensions/reference/ebd.rlx`):
 
 ```
 -- Reference extension (rail): emergency brake deceleration supervision, after ERA SUBSET-026-3 section 3.13.
@@ -279,11 +279,10 @@ sha256 of the canonical form: `9b6efcac3c094cfe50f40f09c704a29ecc025d0cb67fd8cbb
 -- gives it in the examples is an example value. 1.0.0 overlaps the two dead
 -- times, lets the train accelerate through them from its under-read speed,
 -- takes the table as A_safe (gradient included) and stops short of the
--- supervised location. The settle's worst cases are proved; the distance
--- check's are past what Z3 decides (the braking distance squares a speed
--- that grows with acceleration times the dead time) and come back unknown,
--- never refuted.
-extension rail.ebd 1.0.0
+-- supervised location. Every worst case is proved. 1.0.1 names the braking
+-- distance, which the prover then orders between its two points before the
+-- whole stopping distance.
+extension rail.ebd 1.0.1
 requires rlm >= 0.2.0
 
 key hazard.entry_speed      : Velocity      "the highest speed supervised at intervention"
@@ -310,9 +309,8 @@ check stop_before_svl: stopping_distance <= distance_to_svl
   where dead  = max(traction_cut_off, brake_build_up)
     and v0    = entry_speed + speed_error
     and v_bec = v0 + acceleration * dead
-    and stopping_distance =
-      v0 * dead + acceleration * dead^2 / 2
-      + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)
+    and braking = sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value)
+    and stopping_distance = v0 * dead + acceleration * dead^2 / 2 + braking
   worst_case:
     increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up
     decreasing in a_safe

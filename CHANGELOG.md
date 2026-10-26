@@ -6,6 +6,36 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.2.2 - 2026-10-26
+
+Every worst-case claim of every reference extension is proved, `rail.ebd`'s
+distance check included. GRAMMAR_VERSION 0.2.2 (it names the release); no
+grammar or API change, so the workspace version stays 0.2.0.
+
+### Changed
+
+- `rlx::prove` orders the `where` bindings before the final query. For
+  each binding that is a quantity, in order, it tries to prove that the
+  binding moves with the claim's key between the two points (`lo <= hi`)
+  or against it (`lo >= hi`), each query given the directions already
+  proved, and adds what it proves as a fact. A proved direction follows
+  from the two copies, so it changes no verdict Z3 could reach; it spares
+  the final query from deriving it inside a product. `rail.ebd`'s four
+  unknown distance claims (over `speed_error`, `acceleration`,
+  `traction_cut_off` and `brake_build_up`) are proved in 2.8 s, where each
+  had run out its time before.
+- A refutation reads the model of the last query that answered
+  satisfiable. The prover asserted the positivity assumption, which
+  discards Z3's model, and then pinned keys and asked once more; under
+  load that last query timed out and the model was absent or stale, so a
+  wrong direction on `rail.ebd`'s check came back as "Z3 gave no model" or
+  "a counterexample the evaluator does not reproduce" in about half the
+  runs. Measured on two deliberately wrong claims: 18 of 18 refuted after,
+  3 of 6 before.
+- `rail.ebd 1.0.1` names the braking distance (`braking`), which brings
+  its distance check to 0.2 s. The formula and every number are those of
+  1.0.0, which the prover now also proves.
+
 ## v0.2.1 - 2026-10-24
 
 The reference extension `rail.ebd` moves to 1.0.0, after ERA SUBSET-026-3
