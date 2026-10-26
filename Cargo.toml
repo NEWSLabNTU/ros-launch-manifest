@@ -4,6 +4,6 @@ members = ["types", "check", "sched", "model", "derive", "rlx"]
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.2.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/NEWSLabNTU/ros-launch-manifest"

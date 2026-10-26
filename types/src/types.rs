@@ -95,6 +95,13 @@ pub struct Manifest {
     /// stated once per contract. `None` when the file states none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supervision: Option<SupervisionPlatform>,
+    /// Findings the author has read and keeps (play_launch phase 85 D8), in
+    /// the order written: `acknowledged: [{ rule, at, reason }]`. Only at a
+    /// contract's root. The consumer reports a matching warning or info as
+    /// acknowledged rather than dropping it, refuses an entry that matches an
+    /// error, and warns on one that matches nothing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub acknowledged: Vec<AckDecl>,
     // Where each budget comes from (phase 10 B7) is the `source` of its
     // [`crate::Bound`] (phase 90 G2); [`Manifest::budget_sources`] lists
     // them by dotted contract path.
@@ -297,6 +304,19 @@ impl std::fmt::Display for BudgetLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// One entry of `acknowledged:` (play_launch phase 85 D8): a finding the
+/// author keeps, named by its rule id and the dotted path the diagnostic
+/// reports, with why. All three are required and non-empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct AckDecl {
+    /// The rule id, as the diagnostic prints it (`reaction-unguarded`).
+    pub rule: String,
+    /// The diagnostic's dotted path (`hazards.lost_pose.reaction`).
+    pub at: String,
+    /// Why the finding is kept. Printed beside it.
+    pub reason: String,
 }
 
 /// `policy:` (phase 93): project policy for the consumer's rules.

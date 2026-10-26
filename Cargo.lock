@@ -407,7 +407,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "ros-launch-manifest-check"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "codespan-reporting",
  "petgraph",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-derive"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "indexmap",
  "ros-launch-manifest-model",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-model"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "indexmap",
  "pretty_assertions",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-rlx"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ros-launch-manifest-types",
  "sha2",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-sched"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ros-launch-manifest-types",
  "serde",
@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-types"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",

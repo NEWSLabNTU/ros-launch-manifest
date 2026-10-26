@@ -122,6 +122,9 @@ pub enum Context {
     Supervision,
     /// The map form of a timer's `rate_hz` (phase 93).
     TimerRate,
+    /// One entry of `acknowledged:` at a contract's root (play_launch
+    /// phase 85 D8).
+    Acknowledged,
 }
 
 impl Context {
@@ -165,6 +168,7 @@ impl Context {
             Context::Policy => "policy",
             Context::Supervision => "supervision",
             Context::TimerRate => "trigger.timer.rate_hz (map form)",
+            Context::Acknowledged => "acknowledged[]",
         }
     }
 }
@@ -411,6 +415,12 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         Kind::Fact,
         "The platform terms of a supervised budget's detection delay, stated once: `{ tick, switch }`. Read by the consumer's overrun case (`supervised-fit`); required once any budget states `supervise:`.",
+    ),
+    live(
+        "acknowledged",
+        Context::Manifest,
+        Kind::Meta,
+        "Findings the author has read and keeps: a list of `{ rule, at, reason }`, at the contract's root only. The consumer reports a warning or info whose rule id and path match an entry as acknowledged, with the reason, and counts it apart from the warnings; an entry matching an error is itself an error (errors cannot be acknowledged), and one matching nothing is a warning, so an acknowledgement cannot outlive its finding.",
     ),
     // ── nodes.<name> ──
     live(
@@ -1447,6 +1457,25 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget.",
     ),
+    // -- acknowledged (play_launch phase 85 D8) --
+    live(
+        "rule",
+        Context::Acknowledged,
+        Kind::Meta,
+        "The rule id of the finding, as the diagnostic prints it (`reaction-unguarded`). Required, non-empty.",
+    ),
+    live(
+        "at",
+        Context::Acknowledged,
+        Kind::Meta,
+        "The dotted path the diagnostic reports (`hazards.<h>.reaction`; `check --format json` prints it as `path`). Required, non-empty. Two entries naming the same rule and path are refused.",
+    ),
+    live(
+        "reason",
+        Context::Acknowledged,
+        Kind::Meta,
+        "Why the finding is kept, printed beside it. Required, non-empty.",
+    ),
     // -- policy (phase 93) --
     live(
         "unsupervised_measured",
@@ -1646,6 +1675,10 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::TimerRate, "source", "0.1.61"),
     (Context::Endpoint, "call", "0.1.69"),
     (Context::Action, "call", "0.1.69"),
+    (Context::Manifest, "acknowledged", "0.2.3"),
+    (Context::Acknowledged, "rule", "0.2.3"),
+    (Context::Acknowledged, "at", "0.2.3"),
+    (Context::Acknowledged, "reason", "0.2.3"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

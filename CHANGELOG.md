@@ -6,6 +6,38 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.2.3 - 2026-10-26
+
+Acknowledging a finding in the contract (play_launch phase 85 D8).
+GRAMMAR_VERSION 0.2.3. Additive for every contract that parsed before it.
+**Workspace Cargo version `0.2.0` -> `0.2.1`**: `Manifest` has a new
+field.
+
+### Added
+
+- Contract: a root `acknowledged:` list of `{ rule, at, reason }`
+  (`Manifest.acknowledged: Vec<AckDecl>`, field-table context
+  `acknowledged[]`). Each entry names a finding by its rule id and the
+  dotted path the diagnostic reports, with why it is kept. Refused:
+  - a missing or empty `rule`, `at` or `reason` (an acknowledgement
+    without a reason only hides the finding);
+  - an unknown key, a value that is not a string, a list element that is
+    not a map, a value that is not a list;
+  - two entries naming the same rule and path (the second could never
+    match);
+  - the key in an inline include: the list is the file's.
+
+  The grammar only carries the list. Matching it against diagnostics is
+  the consumer's (play_launch `check`): a matching warning or info is
+  printed as acknowledged and counted apart, an entry matching an error is
+  an error (`ack-error`), and an entry matching nothing is a warning
+  (`ack-stale`).
+
+### Changed (API)
+
+- `Manifest` has `acknowledged`: a struct literal without
+  `..Default::default()` needs it.
+
 ## v0.2.2 - 2026-10-26
 
 Every worst-case claim of every reference extension is proved, `rail.ebd`'s

@@ -33,6 +33,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `unless` | meta |  | Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest. |
 | `policy` | meta | since v0.1.61 | Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults. |
 | `supervision` | fact | since v0.1.61 | The platform terms of a supervised budget's detection delay, stated once: `{ tick, switch }`. Read by the consumer's overrun case (`supervised-fit`); required once any budget states `supervise:`. |
+| `acknowledged` | meta | since v0.2.3 | Findings the author has read and keeps: a list of `{ rule, at, reason }`, at the contract's root only. The consumer reports a warning or info whose rule id and path match an entry as acknowledged, with the reason, and counts it apart from the warnings; an entry matching an error is itself an error (errors cannot be acknowledged), and one matching nothing is a warning, so an acknowledgement cannot outlive its finding. |
 
 ## `nodes.<name>`
 
@@ -373,6 +374,14 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `enters` | fact | since v0.1.61 | The mode a miss enters; its `reaction:` scope path is what runs. Exactly one of `reaction` and `enters`. |
 | `mechanism` | fact | since v0.1.61 | What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`). |
 | `observes` | fact | since v0.1.62 | A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget. |
+
+## `acknowledged[]`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `rule` | meta | since v0.2.3 | The rule id of the finding, as the diagnostic prints it (`reaction-unguarded`). Required, non-empty. |
+| `at` | meta | since v0.2.3 | The dotted path the diagnostic reports (`hazards.<h>.reaction`; `check --format json` prints it as `path`). Required, non-empty. Two entries naming the same rule and path are refused. |
+| `reason` | meta | since v0.2.3 | Why the finding is kept, printed beside it. Required, non-empty. |
 
 ## `policy`
 

@@ -332,8 +332,82 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         modes: parse_modes(doc, ctx)?,
         policy: parse_policy(doc, ctx)?,
         supervision: parse_supervision_platform(doc, ctx)?,
+        acknowledged: parse_acknowledged(doc, ctx)?,
     };
     Ok(manifest)
+}
+
+/// `acknowledged:` (play_launch phase 85 D8): a list of `{ rule, at, reason }`,
+/// each key required and a non-empty string. Only at a contract's root: the
+/// list is the file's, and an inline include is part of the same file. Two
+/// entries naming the same rule and path are refused, since the second could
+/// never match anything.
+fn parse_acknowledged(doc: &Yaml, ctx: &str) -> Result<Vec<AckDecl>, ParseError> {
+    let section = &doc["acknowledged"];
+    if section.is_badvalue() {
+        return Ok(Vec::new());
+    }
+    if !ctx.is_empty() {
+        return Err(field_err(
+            ctx,
+            "acknowledged",
+            "an acknowledgement list belongs at the contract's root, not in an inline \
+             include -- write the entry there, with the path the diagnostic reports",
+        ));
+    }
+    let Yaml::Array(items) = section else {
+        return Err(type_err(
+            ctx,
+            "acknowledged",
+            "a list of `{ rule, at, reason }`",
+            section,
+        ));
+    };
+    let mut out: Vec<AckDecl> = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let actx = &format!("acknowledged[{i}]");
+        if !item.is_hash() {
+            return Err(ParseError::Field {
+                path: actx.clone(),
+                message: format!(
+                    "expected a map `{{ rule, at, reason }}`, got {}",
+                    yaml_kind(item)
+                ),
+            });
+        }
+        reject_unknown_keys(item, actx, Context::Acknowledged)?;
+        let field = |key: &str, what: &str| -> Result<String, ParseError> {
+            match yaml_string(item, key, actx)? {
+                Some(s) if !s.trim().is_empty() => Ok(s),
+                Some(_) => Err(field_err(actx, key, &format!("must not be empty: {what}"))),
+                None => Err(field_err(actx, key, &format!("required: {what}"))),
+            }
+        };
+        let rule = field(
+            "rule",
+            "the rule id the diagnostic prints, e.g. `reaction-unguarded`",
+        )?;
+        let at = field(
+            "at",
+            "the dotted path the diagnostic reports, e.g. `hazards.<h>.reaction`",
+        )?;
+        let reason = field(
+            "reason",
+            "why the finding is kept; an acknowledgement without one hides it",
+        )?;
+        if let Some(j) = out.iter().position(|a| a.rule == rule && a.at == at) {
+            return Err(field_err(
+                actx,
+                "at",
+                &format!(
+                    "acknowledged[{j}] already names rule `{rule}` at `{at}`; a second entry \
+                     could never match anything"
+                ),
+            ));
+        }
+        out.push(AckDecl { rule, at, reason });
+    }
+    Ok(out)
 }
 
 /// `policy:` (phase 93): `{ unsupervised_measured: warn | error }`.
@@ -3460,6 +3534,76 @@ hazards:
             assert!(ours > released, "{ours:?} must be after {released:?}");
         } else {
             assert_eq!(ours, released, "GRAMMAR_VERSION must be the newest release");
+        }
+    }
+
+    /// `acknowledged:` (v0.2.3, play_launch phase 85 D8): a root list of
+    /// `{ rule, at, reason }`, every key required and non-empty, unknown keys
+    /// and wrong types refused like everywhere else.
+    #[test]
+    fn acknowledged_is_a_root_list_of_rule_at_reason() {
+        let m = super::parse_manifest_str(
+            "acknowledged:\n  - { rule: reaction-unguarded, at: hazards.h.reaction, reason: kept on purpose }\n  - rule: derivable-rate\n    at: topics./a.rate_hz\n    reason: the island keeps it\n",
+        )
+        .unwrap();
+        assert_eq!(m.acknowledged.len(), 2);
+        assert_eq!(
+            m.acknowledged[0],
+            crate::AckDecl {
+                rule: "reaction-unguarded".into(),
+                at: "hazards.h.reaction".into(),
+                reason: "kept on purpose".into(),
+            }
+        );
+        assert_eq!(m.acknowledged[1].at, "topics./a.rate_hz");
+        assert!(
+            super::parse_manifest_str("version: 1\n")
+                .unwrap()
+                .acknowledged
+                .is_empty()
+        );
+
+        for (bad, needle) in [
+            (
+                "acknowledged:\n  - { rule: r, at: p }\n",
+                "acknowledged[0].reason': required",
+            ),
+            (
+                "acknowledged:\n  - { rule: r, at: p, reason: \"  \" }\n",
+                "acknowledged[0].reason': must not be empty",
+            ),
+            (
+                "acknowledged:\n  - { at: p, reason: x }\n",
+                "acknowledged[0].rule': required",
+            ),
+            (
+                "acknowledged:\n  - { rule: r, at: p, reason: x, why: y }\n",
+                "unknown key in `acknowledged[]`",
+            ),
+            (
+                "acknowledged:\n  - { rule: r, at: p, reasn: x }\n",
+                "did you mean `reason`",
+            ),
+            (
+                "acknowledged: { rule: r, at: p, reason: x }\n",
+                "expected a list",
+            ),
+            ("acknowledged:\n  - r\n", "expected a map"),
+            (
+                "acknowledged:\n  - { rule: 3, at: p, reason: x }\n",
+                "expected a string",
+            ),
+            (
+                "acknowledged:\n  - { rule: r, at: p, reason: x }\n  - { rule: r, at: p, reason: y }\n",
+                "acknowledged[0] already names rule `r` at `p`",
+            ),
+            (
+                "includes:\n  child:\n    acknowledged:\n      - { rule: r, at: p, reason: x }\n",
+                "belongs at the contract's root",
+            ),
+        ] {
+            let err = super::parse_manifest_str(bad).unwrap_err().to_string();
+            assert!(err.contains(needle), "{bad}: {err}");
         }
     }
 

@@ -1231,6 +1231,7 @@ complete top-level vocabulary, and nothing else, is:
 | `hazards` | [Fault detection and reaction](#fault-detection-and-reaction) |
 | `severity_levels` | [Severity scale](#severity-scale) |
 | `functions`, `modes` | [Operational modes](#operational-modes) |
+| `acknowledged` | [Acknowledged findings](#acknowledged-findings) |
 
 > `exclude_patterns` was accepted here until phase 70. It had three
 > mentions in the entire codebase — the grammar row, the struct field and
@@ -1796,6 +1797,31 @@ top-level manifest cover the entire repo. Per-leaf duplication is not
 required — the loader resolves every scope's contract across the whole
 launch tree (via the overlay/provider channels), so a single external
 declaration in any ancestor suffices.
+
+### Acknowledged findings
+
+A warning the author has read and decided to keep (a reaction that nothing
+guards, say, because the guard is out of scope) is named once, with why,
+in a root `acknowledged:` list (since v0.2.3):
+
+```yaml
+acknowledged:
+  - rule: reaction-unguarded
+    at: hazards.lost_pose.reaction
+    reason: the MRM operator is supervised by the vehicle's own watchdog
+```
+
+`rule` is the rule id the diagnostic prints and `at` the dotted path it
+reports; all three keys are required and non-empty, and two entries naming
+the same rule and path are refused. The list is the file's: it is refused
+in an inline include.
+
+The grammar carries the list; the consumer matches it. In play_launch's
+`check`, a warning or info whose rule and path match an entry is printed
+as acknowledged with the reason and counted apart from the warnings; an
+entry matching an error is itself an error, since errors cannot be
+acknowledged; and an entry that matches nothing is a warning, so an
+acknowledgement cannot outlive its finding.
 
 ## Vocabulary v2
 
