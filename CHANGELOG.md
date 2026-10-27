@@ -6,6 +6,49 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.2.5 - 2026-10-27
+
+Service calls on a reaction route (play_launch phase 95 wave 1; design
+`docs/design/service-contracts.md`). GRAMMAR_VERSION 0.2.5. Additive for
+every contract that parsed before it. Workspace Cargo version unchanged:
+the new struct fields are additive and the structs are built with
+`..Default::default()` everywhere outside this repository.
+
+### Added
+
+- Contract, on a client (`cli.<e>`): `timeout:` (how long the code waits
+  before it gives up; a duration, `$(param …)`-capable), `on_timeout:`
+  (`{ reaction: <mode | scope path> }`, or `{ retry: { attempts, backoff },
+  then: { reaction } }`), `on_rejected: { reaction }` (what the code does on
+  `success: false`). `max_transport:` on a client is now documented as the
+  request leg's cost.
+- Contract, on a server (`srv.<e>`): `idempotent:` (a repeated request has
+  the effect of one; licenses a retry) and `stale_after:` (requests older
+  than this, by source timestamp, are refused).
+- Contract, on a service (`services.<s>`): `max_transport:`, the request
+  leg for every client that states none of its own.
+- Types: `CallTimeout` (a reference with no number yet keeps the key's
+  presence: the code gives up, how soon is unknown), `OnTimeout`,
+  `RetryDecl`; field-table contexts `OnTimeout`, `Retry`, `CallReaction`.
+- Model: `CliContract.{timeout_ms, on_timeout, on_rejected,
+  max_transport_ms, sources}` (`OnTimeoutContract { reaction, attempts,
+  backoff_ms }`), `SrvContract.{idempotent, stale_after_ms}`. Serde-defaulted
+  and skipped when absent: a model written before them reads, and a model
+  without them serializes as before.
+
+### Refused at parse time
+
+- `timeout`/`on_timeout`/`on_rejected` under `pub:`/`sub:`; `idempotent`/
+  `stale_after` anywhere but `srv:`; a `timeout:` or `stale_after:` <= 0 or
+  without a unit; `on_timeout` that is not a mapping, states neither
+  `reaction:` nor `retry:`, states `reaction:` beside `retry:`/`then:`, or
+  `then:` without `retry:`; `retry.attempts: 0`; a negative `backoff`; a
+  `{ reaction }` map without `reaction`.
+
+Kept for the consumer, not refused: a `retry:` with no `attempts` or no
+`then:` (play_launch reports `call-retry-unbounded`, and only for a call on
+a reaction route).
+
 ## v0.2.4 - 2026-10-27
 
 Contract values read from the launch tree (play_launch phase 94 wave 1;

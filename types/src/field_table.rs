@@ -125,6 +125,13 @@ pub enum Context {
     /// One entry of `acknowledged:` at a contract's root (play_launch
     /// phase 85 D8).
     Acknowledged,
+    /// `cli.<endpoint>.on_timeout` (v0.2.5).
+    OnTimeout,
+    /// `cli.<endpoint>.on_timeout.retry` (v0.2.5).
+    Retry,
+    /// A client's `{ reaction }` map: `on_rejected` and `on_timeout.then`
+    /// (v0.2.5).
+    CallReaction,
 }
 
 impl Context {
@@ -169,6 +176,9 @@ impl Context {
             Context::Supervision => "supervision",
             Context::TimerRate => "trigger.timer.rate_hz (map form)",
             Context::Acknowledged => "acknowledged[]",
+            Context::OnTimeout => "cli.<endpoint>.on_timeout",
+            Context::Retry => "cli.<endpoint>.on_timeout.retry",
+            Context::CallReaction => "on_rejected / on_timeout.then",
         }
     }
 }
@@ -541,7 +551,7 @@ pub const FIELDS: &[Field] = &[
         "max_transport",
         Context::Endpoint,
         Kind::Requirement,
-        "Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
+        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
     ),
     removed(
         "max_transport_ms",
@@ -583,6 +593,24 @@ pub const FIELDS: &[Field] = &[
         Context::Endpoint,
         Kind::Fact,
         "Client: how the code waits for the response. `blocking`: the callback that sends the request waits for it, so under a preemptive executor the server must run at a more urgent level (a less urgent one is a priority inversion, its own level a deadlock). `async`: the request is sent and a later callback takes the response. Absent means not stated: a consumer checks a stated call and reports an unstated one. Refused under `pub:`/`sub:`.",
+    ),
+    live(
+        "timeout",
+        Context::Endpoint,
+        Kind::Fact,
+        "Client: how long the code waits for the response before it gives up (a duration, `$(param …)`-capable): `spin_until_future_complete` with a timeout, a pending-request prune, a tick-counting poll. A fact about the code, not a requirement. Absent means the client may wait forever (rclcpp's default), so a reaction route through the call is unbounded unless the rung is supervised (`call-unbounded`). Refused under `pub:`/`sub:`.",
+    ),
+    live(
+        "on_timeout",
+        Context::Endpoint,
+        Kind::Fact,
+        "Client: what the code does when `timeout` passes, `{ reaction: <mode | scope path> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`.",
+    ),
+    live(
+        "on_rejected",
+        Context::Endpoint,
+        Kind::Fact,
+        "Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | scope path> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`.",
     ),
     live(
         "buffer",
@@ -630,6 +658,18 @@ pub const FIELDS: &[Field] = &[
         Context::SrvEndpoint,
         Kind::Requirement,
         "The server period P of `budget`. Only beside `budget`.",
+    ),
+    live(
+        "idempotent",
+        Context::SrvEndpoint,
+        Kind::Fact,
+        "A repeated request has the effect of one. Licenses a client's `on_timeout.retry` (`call-retry-not-idempotent`): a retry after a lost response runs the operation twice.",
+    ),
+    live(
+        "stale_after",
+        Context::SrvEndpoint,
+        Kind::Fact,
+        "The server refuses a request older than this, by the request's source timestamp. Without it a request the client timed out on may still act after the client's fallback (`call-late-effect`).",
     ),
     removed(
         "max_response_ms",
@@ -753,6 +793,12 @@ pub const FIELDS: &[Field] = &[
         Context::Service,
         Kind::Meta,
         "Mark one side of this service as provided by an external system: server | client | both.",
+    ),
+    live(
+        "max_transport",
+        Context::Service,
+        Kind::Requirement,
+        "The request leg's worst-case transport for every client of this service that states none of its own (`cli.<e>.max_transport`). Charged on a reaction route's success branch through the call.",
     ),
     // ── actions.<name> ──
     live(
@@ -1488,6 +1534,43 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Why the finding is kept, printed beside it. Required, non-empty.",
     ),
+    // -- cli.<endpoint>.on_timeout (v0.2.5) --
+    live(
+        "reaction",
+        Context::OnTimeout,
+        Kind::Meta,
+        "The mode the hazard falls to, or the scope path that runs, when the wait passes. Without `retry:`.",
+    ),
+    live(
+        "retry",
+        Context::OnTimeout,
+        Kind::Fact,
+        "The code asks again: `{ attempts, backoff }`. Sound only when every server declares `idempotent: true` (`call-retry-not-idempotent`), and bounded only with `attempts` and `then:` (`call-retry-unbounded`).",
+    ),
+    live(
+        "then",
+        Context::OnTimeout,
+        Kind::Meta,
+        "What the code does after the last attempt, `{ reaction }`. Only beside `retry:`.",
+    ),
+    live(
+        "attempts",
+        Context::Retry,
+        Kind::Fact,
+        "The tries in all, the first included (>= 1). Absent: the code retries without a bound.",
+    ),
+    live(
+        "backoff",
+        Context::Retry,
+        Kind::Fact,
+        "The wait between two tries (a duration, `$(param …)`-capable).",
+    ),
+    live(
+        "reaction",
+        Context::CallReaction,
+        Kind::Meta,
+        "The mode the hazard falls to, or the scope path that runs. Required.",
+    ),
     // -- policy (phase 93) --
     live(
         "unsupervised_measured",
@@ -1724,6 +1807,18 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Acknowledged, "reason", "0.2.3"),
     (Context::Manifest, "let", "0.2.4"),
     (Context::Param, "default", "0.2.4"),
+    (Context::Endpoint, "timeout", "0.2.5"),
+    (Context::Endpoint, "on_timeout", "0.2.5"),
+    (Context::Endpoint, "on_rejected", "0.2.5"),
+    (Context::SrvEndpoint, "idempotent", "0.2.5"),
+    (Context::SrvEndpoint, "stale_after", "0.2.5"),
+    (Context::Service, "max_transport", "0.2.5"),
+    (Context::OnTimeout, "reaction", "0.2.5"),
+    (Context::OnTimeout, "retry", "0.2.5"),
+    (Context::OnTimeout, "then", "0.2.5"),
+    (Context::Retry, "attempts", "0.2.5"),
+    (Context::Retry, "backoff", "0.2.5"),
+    (Context::CallReaction, "reaction", "0.2.5"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

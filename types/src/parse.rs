@@ -2215,6 +2215,25 @@ fn parse_endpoints(
                          `async`); a publisher or a subscriber sends or takes no response",
                     ));
                 }
+                if key != "cli" {
+                    for (set, k) in [
+                        (props.timeout.is_some(), "timeout"),
+                        (props.on_timeout.is_some(), "on_timeout"),
+                        (props.on_rejected.is_some(), "on_rejected"),
+                    ] {
+                        if set {
+                            return Err(field_err(
+                                &path,
+                                k,
+                                &format!(
+                                    "`{k}` says what a CLIENT does while it waits for a \
+                                     response; a publisher or a subscriber waits for none (a \
+                                     subscriber's failure edge is `on_violation`)"
+                                ),
+                            ));
+                        }
+                    }
+                }
                 if key != "pub" && props.on_demand.is_some() {
                     return Err(field_err(
                         &path,
@@ -2306,6 +2325,9 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         budget,
         budget_period,
         call: parse_call_mode(yaml, ctx)?,
+        timeout: parse_call_timeout(yaml, ctx)?,
+        on_timeout: parse_on_timeout(yaml, ctx)?,
+        on_rejected: parse_call_reaction(yaml, "on_rejected", ctx)?,
     };
     if let (Some(gap), Some(need)) = (
         props.min_interarrival,
@@ -2378,6 +2400,160 @@ fn parse_criticality(doc: &Yaml, ctx: &str) -> Result<Option<String>, ParseError
             ),
         )),
     }
+}
+
+/// `timeout:` on a client (since v0.2.5): a duration > 0, or a reference
+/// whose number may not be known yet (the key's presence is kept).
+fn parse_call_timeout(doc: &Yaml, ctx: &str) -> Result<Option<CallTimeout>, ParseError> {
+    let v = &doc["timeout"];
+    if v.is_badvalue() {
+        return Ok(None);
+    }
+    let read = ref_text(v).map(str::to_string);
+    let duration = yaml_duration_at(doc, "timeout", ctx, true)?;
+    if read.is_none() && duration.is_none() {
+        return Err(field_err(
+            ctx,
+            "timeout",
+            "expected a duration with a unit (`10ms`, `$(param <name>) s`): how long the code \
+             waits for the response before it gives up",
+        ));
+    }
+    if let Some(d) = duration
+        && d.as_nanos() <= 0
+    {
+        return Err(field_err(
+            ctx,
+            "timeout",
+            &format!(
+                "must be a duration > 0, got {d}: a client that gives up at once never takes a \
+                 response"
+            ),
+        ));
+    }
+    Ok(Some(CallTimeout { duration, read }))
+}
+
+/// A client's `{ reaction: <mode | scope path> }` at `doc[key]` (since
+/// v0.2.5): `on_rejected`, and `on_timeout.then`.
+fn parse_call_reaction(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String>, ParseError> {
+    let section = &doc[key];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let rctx = &format_path(ctx, key);
+    if !matches!(section, Yaml::Hash(_)) {
+        return Err(field_err(
+            ctx,
+            key,
+            "expected a mapping `{ reaction: <mode | scope path> }`",
+        ));
+    }
+    reject_unknown_keys(section, rctx, Context::CallReaction)?;
+    let reaction = yaml_string(section, "reaction", rctx)?.filter(|r| !r.is_empty());
+    reaction.map(Some).ok_or_else(|| {
+        field_err(
+            rctx,
+            "reaction",
+            "required: the mode the hazard falls to, or the scope path that runs",
+        )
+    })
+}
+
+/// `on_timeout:` on a client (since v0.2.5): `{ reaction }`, or `{ retry: {
+/// attempts, backoff }, then: { reaction } }`. A retry with no `attempts` or
+/// no `then:` parses: whether it bounds a route is the consumer's question
+/// (`call-retry-unbounded`), asked only of a call on a reaction route.
+fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseError> {
+    let section = &doc["on_timeout"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let octx = &format_path(ctx, "on_timeout");
+    if !matches!(section, Yaml::Hash(_)) {
+        return Err(field_err(
+            ctx,
+            "on_timeout",
+            "expected a mapping `{ reaction: <mode | scope path> }` or `{ retry: { attempts, \
+             backoff }, then: { reaction } }`",
+        ));
+    }
+    reject_unknown_keys(section, octx, Context::OnTimeout)?;
+    let reaction = yaml_string(section, "reaction", octx)?;
+    let has_retry = !section["retry"].is_badvalue();
+    let has_then = !section["then"].is_badvalue();
+    if reaction.is_some() && (has_retry || has_then) {
+        return Err(field_err(
+            octx,
+            "reaction",
+            "`reaction:` is what the code does when the first wait passes; with `retry:` the \
+             reaction comes after the last attempt, so write it as `then: { reaction }`",
+        ));
+    }
+    if has_then && !has_retry {
+        return Err(field_err(
+            octx,
+            "then",
+            "`then:` is what the code does after its retries; without `retry:` write \
+             `reaction:` directly",
+        ));
+    }
+    if !has_retry {
+        let Some(r) = reaction.filter(|r| !r.is_empty()) else {
+            return Err(field_err(
+                octx,
+                "reaction",
+                "required: the mode the hazard falls to, or the scope path that runs, when \
+                 the wait passes (or `retry:` with `then:`)",
+            ));
+        };
+        return Ok(Some(OnTimeout {
+            reaction: Some(r),
+            retry: None,
+        }));
+    }
+    let rsec = &section["retry"];
+    let rctx = &format_path(octx, "retry");
+    let retry = match rsec {
+        Yaml::Hash(_) => {
+            reject_unknown_keys(rsec, rctx, Context::Retry)?;
+            let attempts = yaml_count_at(rsec, "attempts", rctx)?;
+            if attempts == Some(0) {
+                return Err(field_err(
+                    rctx,
+                    "attempts",
+                    "counts the tries in all, the first included: at least 1",
+                ));
+            }
+            let backoff = yaml_duration_at(rsec, "backoff", rctx, true)?;
+            if let Some(b) = backoff
+                && b.as_nanos() < 0
+            {
+                return Err(field_err(
+                    rctx,
+                    "backoff",
+                    &format!("must be a duration >= 0, got {b}"),
+                ));
+            }
+            RetryDecl { attempts, backoff }
+        }
+        Yaml::Null => RetryDecl {
+            attempts: None,
+            backoff: None,
+        },
+        _ => {
+            return Err(field_err(
+                octx,
+                "retry",
+                "expected a mapping `{ attempts: <n>, backoff: <duration> }`",
+            ));
+        }
+    };
+    let then = parse_call_reaction(section, "then", octx)?;
+    Ok(Some(OnTimeout {
+        reaction: then,
+        retry: Some(retry),
+    }))
 }
 
 /// `call: blocking | async` on a client (since v0.1.69). A closed set: an
@@ -2455,6 +2631,27 @@ fn parse_srv_endpoints(
                     min_interarrival,
                     budget,
                     budget_period,
+                    idempotent: if v.is_null() || v.is_badvalue() {
+                        None
+                    } else {
+                        yaml_bool(v, "idempotent", &format_path(ctx, &format!("{key}.{name}")))?
+                    },
+                    stale_after: if v.is_null() || v.is_badvalue() {
+                        None
+                    } else {
+                        let sctx = format_path(ctx, &format!("{key}.{name}"));
+                        let d = yaml_duration_at(v, "stale_after", &sctx, true)?;
+                        if let Some(d) = d
+                            && d.as_nanos() <= 0
+                        {
+                            return Err(field_err(
+                                &sctx,
+                                "stale_after",
+                                &format!("must be a duration > 0, got {d}"),
+                            ));
+                        }
+                        d
+                    },
                 };
                 eps.insert(name, props);
             }
@@ -2647,6 +2844,12 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
     for (k, v) in hash {
         let name = yaml_str_owned(k);
         reject_unknown_keys(v, ctx, Context::Service)?;
+        let max_transport = yaml_bound(
+            v,
+            "max_transport",
+            &format_path(ctx, &format!("services.{name}")),
+            Context::Service,
+        )?;
         out.insert(
             name,
             ServiceDecl {
@@ -2656,6 +2859,7 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
                 server: yaml_string_list(v, "server", ctx)?,
                 client: yaml_string_list(v, "client", ctx)?,
                 external: parse_external_endpoint_side(v, "external", ctx)?,
+                max_transport,
             },
         );
     }
@@ -4105,6 +4309,127 @@ hazards:
             (
                 "nodes:\n  n:\n    srv:\n      s: { call: blocking }\n",
                 "call",
+            ),
+        ] {
+            let err = super::parse_manifest_str(bad).unwrap_err().to_string();
+            assert!(err.contains(needle), "{bad}: {err}");
+        }
+    }
+
+    /// A client's facts about the wait (v0.2.5, play_launch phase 95):
+    /// `timeout`, `on_timeout` in both shapes, `on_rejected`; a server's
+    /// `idempotent` and `stale_after`; a service's `max_transport`. Every
+    /// malformed shape is refused, and a retry missing its bound parses (the
+    /// consumer judges it, on a reaction route only).
+    #[test]
+    fn a_clients_wait_and_fallback_parse() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  n:\n    cli:\n\
+             \x20     a: { call: blocking, timeout: 10ms, on_timeout: { reaction: stop }, \
+             on_rejected: { reaction: stop }, max_transport: 1.5ms }\n\
+             \x20     b: { timeout: 2s, on_timeout: { retry: { attempts: 3, backoff: 5ms }, \
+             then: { reaction: estop } } }\n\
+             \x20     c: { on_timeout: { retry: {} } }\n\
+             \x20     d: { on_timeout: { retry: { attempts: 2 } } }\n\
+             \x20 s:\n    srv:\n      op: { idempotent: true, stale_after: 50ms }\n\
+             \x20     plain: {}\n\
+             services:\n  op:\n    type: x/srv/Op\n    server: [s/op]\n    client: [n/a]\n\
+             \x20   max_transport: 2ms\n",
+        )
+        .unwrap();
+        let n = &m.nodes["n"];
+        let a = &n.cli["a"];
+        assert_eq!(a.timeout.as_ref().and_then(CallTimeout::ms), Some(10.0));
+        assert_eq!(
+            a.on_timeout.as_ref().and_then(|o| o.reaction.as_deref()),
+            Some("stop")
+        );
+        assert_eq!(a.on_timeout.as_ref().and_then(OnTimeout::attempts), Some(1));
+        assert_eq!(a.on_rejected.as_deref(), Some("stop"));
+        assert_eq!(a.max_transport.ms(), Some(1.5));
+        let b = n.cli["b"].on_timeout.as_ref().unwrap();
+        assert_eq!(b.attempts(), Some(3));
+        assert_eq!(b.backoff_ms(), 5.0);
+        assert_eq!(b.reaction.as_deref(), Some("estop"));
+        let c = n.cli["c"].on_timeout.as_ref().unwrap();
+        assert_eq!(c.attempts(), None);
+        assert_eq!(c.reaction, None);
+        assert_eq!(n.cli["d"].on_timeout.as_ref().unwrap().reaction, None);
+        let op = &m.nodes["s"].srv["op"];
+        assert_eq!(op.idempotent, Some(true));
+        assert_eq!(op.stale_after.map(|d| d.as_secs_f64() * 1000.0), Some(50.0));
+        assert_eq!(m.nodes["s"].srv["plain"].idempotent, None);
+        assert_eq!(m.services["op"].max_transport.ms(), Some(2.0));
+        for (bad, needle) in [
+            (
+                "nodes:\n  n:\n    pub:\n      o: { timeout: 1s }\n",
+                "a CLIENT does",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      i: { on_timeout: { reaction: x } }\n",
+                "a CLIENT does",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      i: { on_rejected: { reaction: x } }\n",
+                "a CLIENT does",
+            ),
+            ("nodes:\n  n:\n    cli:\n      a: { timeout: 0ms }\n", "> 0"),
+            ("nodes:\n  n:\n    cli:\n      a: { timeout: 10 }\n", "unit"),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: stop }\n",
+                "expected a mapping",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: {} }\n",
+                "required: the mode",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: { reaction: x, retry: { attempts: 2 } } }\n",
+                "then: { reaction }",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: { then: { reaction: x } } }\n",
+                "without `retry:`",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: { retry: { attempts: 0 } } }\n",
+                "at least 1",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: { retry: 3 } }\n",
+                "expected a mapping",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: { retry: { tries: 3 } } }\n",
+                "attempts",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_timeout: { retry: { attempts: 2 }, then: {} } }\n",
+                "required: the mode",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_rejected: x }\n",
+                "expected a mapping",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { on_rejected: { mode: x } }\n",
+                "reaction",
+            ),
+            (
+                "nodes:\n  n:\n    srv:\n      s: { idempotent: \"yes\" }\n",
+                "idempotent",
+            ),
+            (
+                "nodes:\n  n:\n    srv:\n      s: { stale_after: 0s }\n",
+                "> 0",
+            ),
+            (
+                "nodes:\n  n:\n    srv:\n      s: { timeout: 1s }\n",
+                "timeout",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      a: { idempotent: true }\n",
+                "idempotent",
             ),
         ] {
             let err = super::parse_manifest_str(bad).unwrap_err().to_string();

@@ -63,7 +63,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `state` | fact |  | Subscriber: read-latest rather than causal. The node caches the message and a timer path reads it, so a reaction arriving here waits for that timer: the walk charges one period (the timer's `jitter` too, when stated) as a sampling hop, shown as `(+Nms sampling)` in a route. |
 | `required` | fact |  | Subscriber: this endpoint must be connected. |
 | `qos` | fact |  | QoS overrides for this endpoint. |
-| `max_transport` | requirement |  | Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`). |
+| `max_transport` | requirement |  | Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`). |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
 | `ingress` | requirement | since v0.1.64 | Subscriber: what this endpoint is made to ABSORB, a token bucket `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`. |
@@ -71,6 +71,9 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `budget` | requirement | since v0.1.68 | Subscriber: the execution time its callback may use per `budget_period`. Its callback is then served (a server of budget Q per period P, analysed as a periodic task). Requires `budget_period`, and may not exceed it. Refused under `pub:`/`cli:`. |
 | `budget_period` | requirement | since v0.1.68 | Subscriber: the server period P of `budget`. Only beside `budget`. |
 | `call` | fact | since v0.1.69 | Client: how the code waits for the response. `blocking`: the callback that sends the request waits for it, so under a preemptive executor the server must run at a more urgent level (a less urgent one is a priority inversion, its own level a deadlock). `async`: the request is sent and a later callback takes the response. Absent means not stated: a consumer checks a stated call and reports an unstated one. Refused under `pub:`/`sub:`. |
+| `timeout` | fact | since v0.2.5 | Client: how long the code waits for the response before it gives up (a duration, `$(param …)`-capable): `spin_until_future_complete` with a timeout, a pending-request prune, a tick-counting poll. A fact about the code, not a requirement. Absent means the client may wait forever (rclcpp's default), so a reaction route through the call is unbounded unless the rung is supervised (`call-unbounded`). Refused under `pub:`/`sub:`. |
+| `on_timeout` | fact | since v0.2.5 | Client: what the code does when `timeout` passes, `{ reaction: <mode | scope path> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`. |
+| `on_rejected` | fact | since v0.2.5 | Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | scope path> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
 | `on_demand` | fact | since v0.1.49 | Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
@@ -84,6 +87,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `min_interarrival` | requirement | since v0.1.68 | The least time between two requests. The server's callback is then a sporadic task (T_min). See `min_interarrival` on a subscriber. |
 | `budget` | requirement | since v0.1.68 | The execution time the server's callback may use per `budget_period` (a served callback). Requires `budget_period`, and may not exceed it. |
 | `budget_period` | requirement | since v0.1.68 | The server period P of `budget`. Only beside `budget`. |
+| `idempotent` | fact | since v0.2.5 | A repeated request has the effect of one. Licenses a client's `on_timeout.retry` (`call-retry-not-idempotent`): a retry after a lost response runs the operation twice. |
+| `stale_after` | fact | since v0.2.5 | The server refuses a request older than this, by the request's source timestamp. Without it a request the client timed out on may still act after the client's fallback (`call-late-effect`). |
 | `max_response_ms` |  | **removed** | Removed in phase 70 — write `max_response: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 
 ## `topics.<name>`
@@ -121,6 +126,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `server` | meta |  | Server endpoints, as `node/endpoint`. |
 | `client` | meta |  | Client endpoints, as `node/endpoint`. |
 | `external` | meta |  | Mark one side of this service as provided by an external system: server | client | both. |
+| `max_transport` | requirement | since v0.2.5 | The request leg's worst-case transport for every client of this service that states none of its own (`cli.<e>.max_transport`). Charged on a reaction route's success branch through the call. |
 
 ## `actions.<name>`
 
@@ -385,6 +391,27 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `at` | meta | since v0.2.3 | The dotted path the diagnostic reports (`hazards.<h>.reaction`; `check --format json` prints it as `path`). Required, non-empty. Two entries naming the same rule and path are refused. |
 | `reason` | meta | since v0.2.3 | Why the finding is kept, printed beside it. Required, non-empty. |
 
+## `cli.<endpoint>.on_timeout`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the scope path that runs, when the wait passes. Without `retry:`. |
+| `retry` | fact | since v0.2.5 | The code asks again: `{ attempts, backoff }`. Sound only when every server declares `idempotent: true` (`call-retry-not-idempotent`), and bounded only with `attempts` and `then:` (`call-retry-unbounded`). |
+| `then` | meta | since v0.2.5 | What the code does after the last attempt, `{ reaction }`. Only beside `retry:`. |
+
+## `cli.<endpoint>.on_timeout.retry`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `attempts` | fact | since v0.2.5 | The tries in all, the first included (>= 1). Absent: the code retries without a bound. |
+| `backoff` | fact | since v0.2.5 | The wait between two tries (a duration, `$(param …)`-capable). |
+
+## `on_rejected / on_timeout.then`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the scope path that runs. Required. |
+
 ## `policy`
 
 | key | kind | status | meaning |
@@ -420,6 +447,7 @@ Every key below is a spelling of one bound: a value with a unit, what it limits 
 | `max_age` | `pub/sub/cli.<endpoint>` | age | at most | duration | `{ duration, source, param }`; `param`: a parameter of the subscriber's node, seconds (`max-age-param`) |
 | `max_transport` | `pub/sub/cli.<endpoint>` | transport | at most | duration | `{ duration, source }` |
 | `max_transport` | `topics.<name>` | transport | at most | duration | `{ duration, source }` **deprecated** (phase 90 G3) |
+| `max_transport` | `services.<name>` | transport | at most | duration | `{ duration, source }` |
 | `max_response` | `srv.<endpoint>` | response | at most | duration | `{ duration, source }` |
 | `within` | `on_violation` | deadline | at most | duration | `{ duration, source }` |
 | `ftti` | `hazards.<name>` | deadline | at most | duration | `{ duration, source }` |

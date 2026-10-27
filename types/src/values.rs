@@ -1309,6 +1309,30 @@ mod tests {
         crate::parse_manifest_str(src).unwrap()
     }
 
+    /// A client's `timeout:` reads its node's parameter (v0.2.5); with no
+    /// value yet the key stays present, so "gives up, how soon unknown" is
+    /// never read as "waits forever".
+    #[test]
+    fn a_clients_timeout_reads_a_parameter() {
+        let src = "nodes:\n  h:\n    cli:\n      c: { timeout: $(param update_rate) ms }\n\
+                   \x20     d: { timeout: $(param nope) s, on_timeout: { retry: { attempts: 2, \
+                   backoff: $(param update_rate) ms }, then: { reaction: x } } }\n";
+        let first = manifest(src);
+        let t = first.nodes["h"].cli["c"].timeout.as_ref().unwrap();
+        assert_eq!(t.duration, None);
+        assert_eq!(t.read.as_deref(), Some("$(param update_rate) ms"));
+        let (pr, res) = resolve_manifest_str(src, &Tree).unwrap();
+        let cli = &pr.manifest.nodes["h"].cli;
+        assert_eq!(cli["c"].timeout.as_ref().and_then(|t| t.ms()), Some(10.0));
+        assert!(cli["d"].timeout.as_ref().unwrap().duration.is_none());
+        assert_eq!(cli["d"].on_timeout.as_ref().unwrap().backoff_ms(), 10.0);
+        assert!(
+            res.errors.iter().any(|e| e.code == "param-unset"),
+            "{:?}",
+            res.errors
+        );
+    }
+
     #[test]
     fn evaluates_with_units_and_provenance() {
         let m = manifest(

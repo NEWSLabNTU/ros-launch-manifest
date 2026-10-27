@@ -458,6 +458,14 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         Form::Map,
     ),
     bk(
+        "max_transport",
+        Context::Service,
+        BoundKind::Transport,
+        Limit::Max,
+        "duration",
+        Form::Map,
+    ),
+    bk(
         "max_response",
         Context::SrvEndpoint,
         BoundKind::Response,

@@ -1694,6 +1694,14 @@ pub struct SrvContract {
     /// The server period of `budget_ms`, ms (since v0.1.68).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_period_ms: Option<f64>,
+    /// A repeated request has the effect of one (contract
+    /// `srv.<e>.idempotent`, since v0.2.5): what licenses a client's retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotent: Option<bool>,
+    /// The server refuses a request older than this, ms, by the request's
+    /// source timestamp (contract `srv.<e>.stale_after`, since v0.2.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after_ms: Option<f64>,
     /// Where each number of this entry read from the launch tree came from
     /// (play_launch phase 94), keyed by the model field it fills
     /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
@@ -1712,6 +1720,45 @@ pub struct CliContract {
     /// stated call and reports an unstated one (nano-ros RFC-0108 D8.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call: Option<CallMode>,
+    /// How long the code waits for the response before it gives up, ms
+    /// (contract `cli.<e>.timeout`, since v0.2.5). Absent: not stated, which
+    /// for rclcpp means forever. A fact about the code; a consumer derives no
+    /// deadline or monitor from it beyond what a subscriber's `on_violation`
+    /// derives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<f64>,
+    /// What the code does when the wait passes (contract `cli.<e>.on_timeout`,
+    /// since v0.2.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_timeout: Option<OnTimeoutContract>,
+    /// The mode or scope path the code falls to when the server refuses
+    /// (contract `cli.<e>.on_rejected`, since v0.2.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_rejected: Option<String>,
+    /// The request leg's worst-case transport, ms: the client's own
+    /// `max_transport`, else its service's (since v0.2.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_transport_ms: Option<f64>,
+    /// Where each number of this entry read from the launch tree came from
+    /// (`timeout_ms`, `on_timeout.backoff_ms`), as on the other endpoint
+    /// contracts (play_launch phase 94).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, ValueSource>,
+}
+
+/// A client's timeout fallback (since v0.2.5).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OnTimeoutContract {
+    /// The mode the hazard falls to, or the scope path that runs, after the
+    /// last attempt. Absent when a retry states no `then:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+    /// The tries in all, the first included. Absent: a retry with no bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u32>,
+    /// The wait between two tries, ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_ms: Option<f64>,
 }
 
 /// How a client waits for its response (since v0.1.69).
@@ -2332,12 +2379,14 @@ mod tests {
             "/n/ask".into(),
             CliContract {
                 call: Some(CallMode::Blocking),
+                ..Default::default()
             },
         );
         c.action_cli_endpoints.insert(
             "/n/goal".into(),
             CliContract {
                 call: Some(CallMode::Async),
+                ..Default::default()
             },
         );
         assert!(!c.is_empty());
@@ -2345,6 +2394,38 @@ mod tests {
         assert!(y.contains("call: blocking"), "{y}");
         assert!(y.contains("call: async"), "{y}");
         assert_eq!(serde_yaml_ng::from_str::<Contracts>(&y).unwrap(), c);
+        // v0.2.5: a client's wait and fallback, and a server's idempotence
+        // and staleness bound, round-trip; one written before them reads.
+        let cli = CliContract {
+            call: Some(CallMode::Blocking),
+            timeout_ms: Some(10.0),
+            on_timeout: Some(OnTimeoutContract {
+                reaction: Some("emergency_stop".into()),
+                attempts: Some(3),
+                backoff_ms: Some(5.0),
+            }),
+            on_rejected: Some("emergency_stop".into()),
+            max_transport_ms: Some(1.5),
+            sources: BTreeMap::new(),
+        };
+        let y = serde_yaml_ng::to_string(&cli).unwrap();
+        assert!(
+            y.contains("timeout_ms: 10.0") && y.contains("attempts: 3"),
+            "{y}"
+        );
+        assert_eq!(serde_yaml_ng::from_str::<CliContract>(&y).unwrap(), cli);
+        let old: CliContract = serde_yaml_ng::from_str("call: async\n").unwrap();
+        assert_eq!((old.timeout_ms, old.on_timeout.clone()), (None, None));
+        assert_eq!(serde_yaml_ng::to_string(&old).unwrap(), "call: async\n");
+        let srv = SrvContract {
+            idempotent: Some(true),
+            stale_after_ms: Some(50.0),
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&srv).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<SrvContract>(&y).unwrap(), srv);
+        let old: SrvContract = serde_yaml_ng::from_str("max_response_ms: 5.0\n").unwrap();
+        assert_eq!((old.idempotent, old.stale_after_ms), (None, None));
         let old: Contracts = serde_yaml_ng::from_str("srv_endpoints: {}\n").unwrap();
         assert!(old.cli_endpoints.is_empty() && old.action_cli_endpoints.is_empty());
         assert!(

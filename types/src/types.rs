@@ -1310,6 +1310,88 @@ pub struct EndpointProps {
     /// and reports an unstated one. Refused under `pub:`/`sub:`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call: Option<CallMode>,
+    /// Client only (since v0.2.5, play_launch phase 95): how long the code
+    /// waits for the response before it gives up (`spin_until_future_complete`
+    /// with a timeout, a pending-request prune, a tick-counting poll). A FACT
+    /// about the code, `$(param …)`-capable. Absent means the client may wait
+    /// forever, which is rclcpp's default: a reaction route through such a
+    /// call is unbounded unless the rung is supervised (`call-unbounded`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<CallTimeout>,
+    /// Client only (since v0.2.5): what the code does when `timeout` passes,
+    /// the client's counterpart of a subscriber's `on_violation`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_timeout: Option<OnTimeout>,
+    /// Client only (since v0.2.5): what the code does when the server
+    /// answers and refuses (`success: false`), as `{ reaction }`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_rejected: Option<String>,
+}
+
+/// A client's `timeout:` (since v0.2.5). A value read from the launch tree
+/// that has no number yet keeps the key's presence: the code DOES give up,
+/// and how soon is unknown, which is not the same as waiting forever.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CallTimeout {
+    /// The wait, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<crate::duration::Duration>,
+    /// The reference as written, when the value reads the launch tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read: Option<String>,
+}
+
+impl CallTimeout {
+    /// The wait in milliseconds, when known.
+    pub fn ms(&self) -> Option<f64> {
+        self.duration.map(|d| d.as_secs_f64() * 1000.0)
+    }
+}
+
+/// A client's `on_timeout:` (since v0.2.5): `{ reaction }`, or `{ retry: {
+/// attempts, backoff }, then: { reaction } }`. The parser keeps a retry with
+/// no `attempts` or no `then:`: the consumer reports it
+/// (`call-retry-unbounded`) when the call is on a reaction route, and only
+/// there.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OnTimeout {
+    /// The mode the hazard falls to, or the scope path that runs: `reaction:`
+    /// directly, or `then: { reaction }` after the retries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+    /// The retries before the reaction, when stated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RetryDecl>,
+}
+
+/// `on_timeout.retry` (since v0.2.5).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RetryDecl {
+    /// The tries in all, the first included (>= 1). Absent: unbounded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u32>,
+    /// The wait between two tries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backoff: Option<crate::duration::Duration>,
+}
+
+impl OnTimeout {
+    /// The tries in all: 1 without a retry, `None` when a retry states no
+    /// bound.
+    pub fn attempts(&self) -> Option<u32> {
+        match &self.retry {
+            None => Some(1),
+            Some(r) => r.attempts,
+        }
+    }
+
+    /// The backoff in milliseconds (0 when not stated).
+    pub fn backoff_ms(&self) -> f64 {
+        self.retry
+            .as_ref()
+            .and_then(|r| r.backoff)
+            .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
+    }
 }
 
 /// How a client waits for its response (`cli.<e>.call`, and
@@ -1367,6 +1449,15 @@ pub struct SrvEndpointProps {
     /// The server period of `budget` (since v0.1.68).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_period: Option<crate::duration::Duration>,
+    /// A repeated request has the effect of one (since v0.2.5): what licenses
+    /// a client's `on_timeout.retry` (`call-retry-not-idempotent`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotent: Option<bool>,
+    /// The server refuses a request older than this, by the request's source
+    /// timestamp (since v0.2.5): a request the client has probably given up
+    /// on cannot act after the client's fallback (`call-late-effect`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_after: Option<crate::duration::Duration>,
 }
 
 /// Topic declaration.
@@ -1484,6 +1575,11 @@ pub struct ServiceDecl {
     /// or to leave the service out of the contract entirely.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalEndpointSide>,
+    /// The request leg's worst-case transport for every client of this
+    /// service that states none of its own (since v0.2.5): the counterpart of
+    /// a client's `cli.<e>.max_transport`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_transport: Option<crate::bound::Bound>,
 }
 
 /// Action declaration.

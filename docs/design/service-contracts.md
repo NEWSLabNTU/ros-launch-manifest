@@ -1,7 +1,8 @@
 # Service calls on a reaction route
 
-Status: proposed, 2026-10-27. Replaces play_launch phase 85's D2 (which
-proposed an edge cost alone). Not yet scheduled.
+Status: grammar and model implemented in v0.2.5 (2026-10-27); the checker
+and the runtime companion are play_launch phase 95. Replaces play_launch
+phase 85's D2 (which proposed an edge cost alone).
 
 ## The problem
 
