@@ -6,6 +6,17 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.2.6 - 2026-10-27
+
+### Fixed
+
+- `Manifest::bounds` lists `services.<s>.max_transport` (added in v0.2.5),
+  so a consumer's budget book sees it like every other bound.
+- The v0.2.5 notes said the new struct fields were built with
+  `..Default::default()` everywhere outside this repository: play_launch's
+  model builder named every `CliContract`/`SrvContract` field and had to be
+  updated. The fields are still additive (serde-defaulted).
+
 ## v0.2.5 - 2026-10-27
 
 Service calls on a reaction route (play_launch phase 95 wave 1; design

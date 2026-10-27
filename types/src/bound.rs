@@ -703,6 +703,14 @@ impl crate::types::Manifest {
                 put(&mut out, &at, "drop.max_consecutive", &dr.max_consecutive);
             }
         }
+        for (sv, d) in &self.services {
+            put(
+                &mut out,
+                &format!("services.{sv}"),
+                "max_transport",
+                &d.max_transport,
+            );
+        }
         for (p, pd) in &self.paths {
             path(&mut out, &format!("paths.{p}"), pd);
         }
@@ -808,6 +816,7 @@ mod tests {
              modes:\n  m: { requires: [/a], window: { duration: 10s, param: n.t } }\n\
              topics:\n  /a: { type: std_msgs/msg/Empty, max_transport: 2ms, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\
+             services:\n  /s: { type: x/srv/S, max_transport: 1ms }\n\
              nodes:\n  n:\n    pub:\n      o: { min_rate_hz: 10, max_rate_hz: 20 }\n\
              \x20   sub:\n      a: { max_age: { duration: 500ms, param: t }, max_transport: 3ms, \
              on_violation: { reaction: r, within: 20ms } }\n\
@@ -849,7 +858,8 @@ mod tests {
                 row.key
             );
         }
-        assert_eq!(bounds.len(), 21, "{spelled:?}");
+        assert_eq!(bounds.len(), 22, "{spelled:?}");
+        assert!(bounds.iter().any(|(p, _)| p == "services./s.max_transport"));
         let get = |k: &str| bounds.iter().find(|(p, _)| p == k).unwrap().1;
         assert_eq!(
             get("modes.m.window").param,
