@@ -183,14 +183,7 @@ pub(crate) fn derive_from_view(
         .map(|n| mapper_node(n, facts, &mut report))
         .collect();
     let chains = chains_from_view(view, facts, &mut report);
-    (
-        MapperInput {
-            nodes,
-            legacy: None,
-            chains,
-        },
-        report,
-    )
+    (MapperInput { nodes, chains }, report)
 }
 
 fn mapper_node(node: &NodeView, facts: &DeriveFacts, report: &mut DeriveReport) -> MapperNode {

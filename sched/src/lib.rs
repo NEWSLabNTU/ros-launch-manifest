@@ -5,18 +5,15 @@
 //! platform-independent and carries no priority numbers; per-platform
 //! placement lives in `[tiers.<name>.<target>]` sub-tables.
 
-pub mod parse;
 pub mod resolve;
 pub mod types;
 
-pub use parse::parse_system_sched;
 pub use resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError, SchedNode, resolve};
-pub use types::{AssignRule, ReservedBand, SystemSched, TierDef, TierPlatformSpec};
+pub use types::{AssignRule, ReservedBand, TierDef, TierPlatformSpec};
 
 // --- v2 (derived) model: platform-file schema, SchedMapper, legacy bridge,
 // conflict-semantics validation (Phase 41.1). Additive: everything above
 // keeps compiling and passing unchanged. ---
-pub mod bridge;
 pub mod mapper;
 pub mod platform;
 pub mod validate;
@@ -31,7 +28,6 @@ pub mod chain_aware_mapper;
 // consumers migrate without a lockstep bump. ---
 pub mod posix;
 
-pub use bridge::parse_legacy_toml;
 pub use chain::{
     ChainAwareDetail, ChainElement, ChainSemantics, ConcurrencyContract, EffectiveTrigger,
     MapDiagnostics, MapWarning, MapperMiss, MapperMissAction, MapperPath, ResolvedChain,

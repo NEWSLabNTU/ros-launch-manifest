@@ -882,7 +882,6 @@ mod tests {
                 node("/a", None, vec![timer_path("p", 10.0)]),
                 node("/b", None, vec![timer_path("p", 10.0)]),
             ],
-            legacy: None,
             chains: Vec::new(),
         }
     }
@@ -977,7 +976,6 @@ mod tests {
                 node("/a", None, vec![once_path("p")]),
                 node("/b", None, vec![once_path("p")]),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let (rr, warns) = rr_policy_for_ties(
@@ -1049,7 +1047,6 @@ mod tests {
 
         MapperInput {
             nodes,
-            legacy: None,
             chains: vec![chain],
         }
     }
@@ -1210,7 +1207,6 @@ mod tests {
                     vec![input_path("p", Some(5.0))],
                 ),
             ],
-            legacy: None,
             chains: vec![],
         };
         let facts = posix_facts(10, 40);
@@ -1252,7 +1248,6 @@ mod tests {
                 node("/hi_sink", Some(Criticality::High), vec![]),
                 node("/lo_sink", Some(Criticality::Low), vec![]),
             ],
-            legacy: None,
             chains: vec![chain_hi, chain_lo],
         };
         let facts = posix_facts(5, 45);
@@ -1304,7 +1299,6 @@ mod tests {
                 Some(Criticality::High),
                 vec![timer_path("p_ekf", 50.0)],
             )],
-            legacy: None,
             chains: vec![chain],
         };
         let facts = posix_facts(10, 40);
@@ -1346,7 +1340,6 @@ mod tests {
                 Some(Criticality::High),
                 vec![timer_path("p_ekf", 50.0)],
             )],
-            legacy: None,
             chains: vec![chain],
         };
         let facts = posix_facts(10, 40);
@@ -1378,7 +1371,6 @@ mod tests {
                 Some(Criticality::High),
                 vec![timer_path("p_ekf", 50.0)],
             )],
-            legacy: None,
             chains: vec![chain],
         };
         let facts = posix_facts(10, 40);
@@ -1507,7 +1499,6 @@ mod tests {
                     vec![timer_path("p", 100.0)],
                 ),
             ],
-            legacy: None,
             chains: vec![],
         };
         let facts = posix_facts(10, 40);

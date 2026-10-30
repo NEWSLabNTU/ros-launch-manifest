@@ -20,8 +20,7 @@ use crate::{
     chain::{MapDiagnostics, MapWarning, ResolvedChain},
     chain_aware_mapper::rr_policy_for_ties,
     platform::{PlatformResources, PriorityBand},
-    resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError, SchedNode, resolve},
-    types::SystemSched,
+    resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError},
 };
 
 /// Mapper hint: platform-agnostic criticality (design §2.1, contract
@@ -86,16 +85,10 @@ pub struct MapperNode {
     pub claims_concurrency: bool,
 }
 
-/// The mapper's input: every node's timing facts, plus (bridge path only) a
-/// legacy tiers+assign spec for the `manual` mapper.
+/// The mapper's input: every node's timing facts.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MapperInput {
     pub nodes: Vec<MapperNode>,
-    /// Present only when driving the `manual` mapper via the legacy `.toml`
-    /// bridge ([`crate::bridge::parse_legacy_toml`]) — the `manual` mapper
-    /// requires this and errors ([`MapError::MissingLegacySpec`]) without
-    /// it. Other built-in mappers ignore this field.
-    pub legacy: Option<SystemSched>,
     /// Resolved `chains:` (Phase 44.3, additive), already flattened by the
     /// caller (W4) against the launch DAG: `via` scopes resolved, and each
     /// segment's `nodes_in_topo_order` already computed (fan-in
@@ -127,10 +120,6 @@ pub enum MapError {
         max: i64,
         reason: String,
     },
-    #[error(
-        "mapper `manual` requires a legacy tiers+assign spec (only reachable via the `.toml` bridge)"
-    )]
-    MissingLegacySpec,
     #[error("manual mapper resolve error: {0}")]
     Resolve(#[from] SchedError),
 }
@@ -167,12 +156,12 @@ pub trait SchedMapper {
     }
 }
 
-/// `manual` — the legacy semantics: consumes `input.legacy` (tiers +
-/// `[[assign]]`) and delegates to [`crate::resolve::resolve`] for `posix`,
-/// reproducing today's output exactly. This is the bridge path's mapper;
-/// `facts` is ignored (the legacy schema carries no separate platform
-/// facts — priority numbers live in the tier's own `[tiers.<name>.posix]`
-/// sub-table).
+/// `manual`: derives nothing. Every node is placed in the synthesized
+/// default tier, so the platform file's `overrides:` are the only placement
+/// (rlm v0.3.0, play_launch phase 41.6). Until v0.3.0 `manual` reproduced
+/// the legacy `system.toml` tiers + `[[assign]]` resolution and was
+/// reachable only through the `.toml` bridge, which is gone; `facts` is
+/// ignored.
 #[derive(Debug, Default)]
 pub struct ManualMapper;
 
@@ -182,17 +171,10 @@ impl SchedMapper for ManualMapper {
     }
 
     fn map(&self, input: &MapperInput, _facts: &PlatformFacts) -> Result<SchedPlan, MapError> {
-        let legacy = input.legacy.as_ref().ok_or(MapError::MissingLegacySpec)?;
-        let nodes: Vec<SchedNode> = input
-            .nodes
-            .iter()
-            .map(|n| SchedNode {
-                name: n.name.clone(),
-                scope: n.scope.clone(),
-            })
-            .collect();
-        let table = resolve(&legacy.tiers, &legacy.assign, &nodes, "posix")?;
-        Ok(table)
+        let members: Vec<String> = input.nodes.iter().map(|n| n.name.clone()).collect();
+        Ok(ResolvedTierTable {
+            tiers: vec![ResolvedTier::default_tier(members)],
+        })
     }
 }
 
@@ -607,7 +589,6 @@ mod tests {
                 node("/fast", Some(100.0), None),
                 node("/mid", Some(50.0), None),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -633,7 +614,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", Some(50.0), None), node("/a", Some(50.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -681,7 +661,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", Some(50.0), None), node("/a", Some(50.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         // 1 ms against a 20 ms period: rotating actually rotates.
@@ -702,7 +681,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", Some(10.0), None), node("/a", Some(10.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         // Linux's default 100 ms slice against a 10 Hz (100 ms) period.
@@ -725,7 +703,6 @@ mod tests {
                 node("/fast_a", Some(30.0), None),
                 node("/slow_a", Some(10.0), None),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -759,7 +736,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/rt", Some(100.0), None), node("/bg", None, None)],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -780,7 +756,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/only", Some(10.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -793,7 +768,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(None);
@@ -806,7 +780,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = PlatformFacts::Raw(serde_yaml_ng::Value::Null);
@@ -829,7 +802,6 @@ mod tests {
                 node("/n40", Some(40.0), None),
                 node("/n20", Some(20.0), None),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 12)));
@@ -885,7 +857,6 @@ mod tests {
                 node("/d4", None, Some(4_000)),
                 node("/d5", None, Some(5_000)),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 12)));
@@ -913,7 +884,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         // 0 is not a legal SCHED_FIFO/SCHED_RR priority.
@@ -935,7 +905,6 @@ mod tests {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/a", Some(10.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((40, 10)));
@@ -952,7 +921,6 @@ mod tests {
                 node("/tight", None, Some(5_000)),
                 node("/mid", None, Some(50_000)),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -969,7 +937,6 @@ mod tests {
         let mapper = DeadlineMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/rt", None, Some(1_000)), node("/bg", None, None)],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -987,7 +954,6 @@ mod tests {
         let mapper = DeadlineMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", None, Some(5_000)), node("/a", None, Some(5_000))],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = posix_facts(Some((10, 40)));
@@ -1020,7 +986,6 @@ mod tests {
                 node("/n40", Some(40.0), None),
                 node("/n20", Some(20.0), None),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         // 1 ms slice, shortest compressed-tie period 1/80 Hz = 12.5 ms.
@@ -1047,15 +1012,21 @@ mod tests {
     }
 
     #[test]
-    fn manual_mapper_requires_legacy_spec() {
+    fn manual_mapper_derives_nothing() {
+        // v0.3.0: `manual` places every node in the default tier, so the
+        // platform file's `overrides:` are the only placement, and it needs
+        // no priority band.
         let mapper = ManualMapper;
         let input = MapperInput {
-            nodes: vec![node("/a", None, None)],
-            legacy: None,
+            nodes: vec![node("/a", Some(100.0), None), node("/b", None, Some(5000))],
             chains: Vec::new(),
         };
-        let facts = posix_facts(None);
-        let err = mapper.map(&input, &facts).unwrap_err();
-        assert!(matches!(err, MapError::MissingLegacySpec));
+        let plan = mapper.map(&input, &posix_facts(None)).unwrap();
+        assert!(plan.is_single_tier());
+        assert_eq!(
+            plan.tiers[0].members,
+            vec!["/a".to_string(), "/b".to_string()]
+        );
+        assert_eq!(plan.tiers[0].priority, 0);
     }
 }

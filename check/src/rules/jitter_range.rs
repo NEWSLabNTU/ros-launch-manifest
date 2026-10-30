@@ -24,8 +24,7 @@
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
-use ros_launch_manifest_types::OptBound;
-use ros_launch_manifest_types::{Manifest, PathDecl};
+use ros_launch_manifest_types::{Manifest, OptBound, PathDecl};
 
 pub struct JitterRangeRule;
 

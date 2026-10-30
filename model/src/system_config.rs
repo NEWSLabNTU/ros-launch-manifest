@@ -37,7 +37,7 @@ pub struct SystemConfigToml {
     #[serde(default, rename = "bridge")]
     pub bridges: Vec<BridgeBlock>,
     /// `[tiers.<name>]` scheduling tiers. The block is the shared-schema
-    /// `sched::TierDef` verbatim — `spin_period_us` + per-RTOS sub-tables —
+    /// `sched::TierDef` verbatim — `spin_period` + per-RTOS sub-tables —
     /// so it deserializes straight into `execution.tiers`. (A system may
     /// instead supply tiers through a scheduling platform file; one that
     /// authors them inline here has them consumed by the resolver.)
@@ -520,13 +520,13 @@ class = "telem_pkg::Telem"
 name = "telem_node"
 group_tiers = { telem = "low" }
 [tiers.high]
-spin_period_us = 1000
+spin_period = "1000us"
 [tiers.high.posix]
 priority = 80
 [tiers.high.zephyr]
 priority = 5
 [tiers.low]
-spin_period_us = 10000
+spin_period = "10000us"
 [tiers.low.posix]
 priority = 10
 "#;

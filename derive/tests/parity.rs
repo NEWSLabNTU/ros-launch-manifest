@@ -17,8 +17,7 @@
 //! ros-launch-manifest-derive --test parity`, then review the diff. Both
 //! consumers' gates move with it, which is the point.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use ros_launch_manifest_derive::{ChainSkip, DeriveFacts, SkippedChain, mapper_input_from_model};
 use ros_launch_manifest_model::{
@@ -182,10 +181,6 @@ fn the_fixture_ranks_to_the_golden_snapshot() {
         Some(ros_launch_manifest_sched::Criticality::High)
     );
     assert!(input.nodes.iter().all(|n| !n.claims_concurrency));
-    assert_eq!(
-        input.legacy, None,
-        "the .toml bridge sets it, not the derivation"
-    );
 }
 
 /// The snapshot file is what the fixture ranks to and nothing stale: the

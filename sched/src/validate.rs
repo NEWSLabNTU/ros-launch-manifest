@@ -235,7 +235,6 @@ mod tests {
                 node("/fast", Some(100.0), None),
                 node("/slow", Some(1.0), None),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let violations = rate_priority_contradictions(&input, &plan);
@@ -256,7 +255,6 @@ mod tests {
                 node("/b", Some(50.0), None),
                 node("/c", Some(100.0), None),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let facts = PlatformResources::Posix(PosixResources {
@@ -291,7 +289,6 @@ mod tests {
                 node("/tight", None, Some(1_000)),
                 node("/loose", None, Some(100_000)),
             ],
-            legacy: None,
             chains: Vec::new(),
         };
         let violations = deadline_priority_contradictions(&input, &plan);
@@ -313,7 +310,6 @@ mod tests {
         };
         let input = MapperInput {
             nodes: vec![node("/a", Some(100.0), None), node("/b", Some(1.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         // Equal priority is not treated as a contradiction (only a strict
@@ -326,7 +322,6 @@ mod tests {
         let plan = ResolvedTierTable { tiers: vec![] };
         let input = MapperInput {
             nodes: vec![node("/a", Some(100.0), None), node("/b", Some(1.0), None)],
-            legacy: None,
             chains: Vec::new(),
         };
         assert!(rate_priority_contradictions(&input, &plan).is_empty());

@@ -6,16 +6,13 @@
 //! validates its own vocabulary, this crate only guarantees the file parses and
 //! the `posix` shape is well-formed.
 //!
-//! Legacy `system.toml` documents (see [`crate::types::SystemSched`]) parse
-//! through a separate path ([`crate::bridge`]) into the same [`PlatformFile`]
-//! shape, with `mapper: "manual"` and the legacy spec carried in
-//! [`PlatformFile::legacy`].
+//! The legacy `system.toml` scheduling schema (tiers + `[[assign]]`) and its
+//! `.toml` bridge were removed in rlm v0.3.0 (play_launch phase 41.6): a
+//! `.toml` platform file is refused with the v2 form.
 
 use std::{collections::BTreeMap, path::Path};
 
 use serde::{Deserialize, Serialize};
-
-use crate::types::SystemSched;
 
 /// Errors parsing a platform file (either schema).
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -32,12 +29,16 @@ pub enum PlatformError {
     EmptyTarget,
     #[error("platform file `mapper` must be non-empty")]
     EmptyMapper,
-    #[error(
-        "unsupported platform file extension: {0:?} (expected `.yaml`/`.yml` or legacy `.toml`)"
-    )]
+    #[error("unsupported platform file extension: {0:?} (expected `.yaml`/`.yml`)")]
     UnknownExtension(Option<String>),
-    #[error("legacy TOML bridge failed to parse: {0}")]
-    Legacy(String),
+    #[error(
+        "{path}: the legacy `system.toml` scheduling schema (`[tiers.*]` + `[[assign]]`) was \
+         removed in rlm v0.3.0. Write a v2 platform file `<stem>.system.posix.yaml`: \
+         `target: posix`, `mapper: manual`, and one `overrides:` entry per node with its \
+         `priority`, `sched_class` and `cpus`; or let a mapper derive priorities \
+         (`mapper: rate_monotonic` with `resources.rt_priority_band`)"
+    )]
+    LegacyToml { path: String },
     #[error(
         "`resources.rt_priority_band` {{ min: {min}, max: {max} }} is invalid for target \
          `posix`: {reason}"
@@ -81,12 +82,7 @@ pub struct PosixResources {
     /// of the campaign — this is a field whose whole job is to be compared
     /// against a node's period, and a bare six-digit integer is exactly where
     /// a factor-of-1000 slip hides.
-    #[serde(
-        default,
-        alias = "rr_timeslice_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rr_timeslice: Option<ros_launch_manifest_types::duration::Duration>,
 }
 
@@ -189,12 +185,7 @@ pub struct PosixOverride {
     /// rejected outright: `deny_unknown_fields` turned `budget:` into
     /// "unknown field", so a measured budget could not be pasted into the
     /// platform file it was generated for.
-    #[serde(
-        default,
-        alias = "budget_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<ros_launch_manifest_types::duration::Duration>,
 }
 
@@ -243,8 +234,7 @@ pub enum ReservationMode {
     Required,
 }
 
-/// A parsed platform file — either authored directly as v2 YAML, or
-/// produced by the legacy TOML bridge ([`crate::bridge::parse_legacy_toml`]).
+/// A parsed v2 platform file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformFile {
     pub target: String,
@@ -255,11 +245,6 @@ pub struct PlatformFile {
     /// Explicit per-node pins, keyed by node selector (same selector
     /// vocabulary as `[[assign]]`'s `nodes`: full FQN or bare name).
     pub overrides: BTreeMap<String, PlatformOverrideEntry>,
-    /// Present only when this file originated from the legacy `.toml`
-    /// bridge: the `manual` mapper consumes this to reproduce today's
-    /// `resolve()` output exactly. `None` for files authored directly in
-    /// the v2 YAML schema.
-    pub legacy: Option<SystemSched>,
 }
 
 /// Raw top-level shape, deserialized before per-target validation of
@@ -443,13 +428,12 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
         reservations: raw.reservations,
         resources,
         overrides,
-        legacy: None,
     })
 }
 
 /// Parse a platform file from disk, dispatching on extension: `.yaml`/`.yml`
-/// selects the v2 schema, `.toml` selects the legacy bridge
-/// ([`crate::bridge::parse_legacy_toml`]).
+/// selects the v2 schema; `.toml` (the legacy schema, removed in v0.3.0) is
+/// refused with the v2 form.
 pub fn parse_platform_file(path: &Path) -> Result<PlatformFile, PlatformError> {
     let text = std::fs::read_to_string(path).map_err(|e| PlatformError::Io {
         path: path.display().to_string(),
@@ -458,8 +442,9 @@ pub fn parse_platform_file(path: &Path) -> Result<PlatformFile, PlatformError> {
 
     match path.extension().and_then(|e| e.to_str()) {
         Some("yaml") | Some("yml") => parse_platform_file_yaml(&text),
-        Some("toml") => crate::bridge::parse_legacy_toml(&text)
-            .map_err(|e| PlatformError::Legacy(e.to_string())),
+        Some("toml") => Err(PlatformError::LegacyToml {
+            path: path.display().to_string(),
+        }),
         other => Err(PlatformError::UnknownExtension(other.map(str::to_string))),
     }
 }
@@ -495,17 +480,16 @@ overrides:
         };
         assert_eq!(ov.priority, Some(20));
         assert_eq!(ov.core, Some(0));
-        assert!(file.legacy.is_none());
     }
 
-    /// Both spellings of the RR slice parse to the same duration.
+    /// The RR slice parses with a unit; the legacy spelling is refused.
     ///
     /// This field's whole job is to be compared against a node's period, so a
     /// factor-of-1000 slip here does not crash — it silently decides that RR
     /// is or is not worth deriving. `100ms` says out loud what `100000` only
     /// implies.
     #[test]
-    fn an_rr_timeslice_parses_in_both_spellings() {
+    fn an_rr_timeslice_needs_a_unit() {
         let slice = |body: &str| {
             let src = format!("target: posix\nmapper: chain_aware\nresources:\n{body}");
             let file = parse_platform_file_yaml(&src).expect("must parse");
@@ -515,11 +499,12 @@ overrides:
             res.rr_timeslice.map(|d| d.as_micros())
         };
         assert_eq!(slice("  rr_timeslice: 100ms\n"), Some(100_000));
-        assert_eq!(
-            slice("  rr_timeslice_us: 100000\n"),
-            Some(100_000),
-            "the deprecated spelling still parses"
-        );
+        // v0.3.0 (phase 63 W6): the `_us` spelling and a bare number are
+        // refused, the first as an unknown field, the second asking for a unit.
+        for refused in ["  rr_timeslice_us: 100000\n", "  rr_timeslice: 100000\n"] {
+            let src = format!("target: posix\nmapper: chain_aware\nresources:\n{refused}");
+            assert!(parse_platform_file_yaml(&src).is_err(), "{refused}");
+        }
         assert_eq!(slice("  rr_timeslice: 100000us\n"), Some(100_000));
         // Absent stays absent — the mapper declines to derive RR rather than
         // assuming the 100 ms kernel default, and a zero would be a different
@@ -527,7 +512,7 @@ overrides:
         assert_eq!(slice("  isolated_cpus: [2]\n"), None);
     }
 
-    /// Both spellings of a budget parse to the same cost.
+    /// A budget parses with its unit; the legacy spelling is refused.
     ///
     /// The unit-suffixed form is not cosmetic here: a measuring tool
     /// emits `budget: <n>us`, and while this struct carried only `budget_us`
@@ -535,7 +520,7 @@ overrides:
     /// field — a verb whose whole purpose is to produce a pasteable fragment
     /// produced one the loader refused. Neither spelling may regress.
     #[test]
-    fn a_budget_parses_in_both_spellings() {
+    fn a_budget_parses_with_a_unit_and_the_legacy_spelling_is_refused() {
         let with_unit = r#"
 target: posix
 mapper: chain_aware
@@ -557,10 +542,12 @@ overrides:
             ov.budget.map(|d| d.as_micros())
         };
         assert_eq!(cost(with_unit), Some(8000));
-        assert_eq!(
-            cost(legacy),
-            Some(8000),
-            "the deprecated spelling still parses"
+        // v0.3.0 (phase 63 W6): the `budget_us` spelling is refused, naming
+        // the canonical one.
+        let err = parse_platform_file_yaml(legacy).unwrap_err().to_string();
+        assert!(
+            err.contains("budget_us") && err.contains("`budget`"),
+            "{err}"
         );
 
         // Milliseconds are the same cost written differently — a unit is read,
@@ -582,7 +569,7 @@ overrides:
 target: posix
 mapper: chain_aware
 overrides:
-  obstacle_detector: { budget_us: 8000 }
+  obstacle_detector: { budget: 8000us }
 "#;
         let file = parse_platform_file_yaml(src).expect("must parse");
         let PlatformOverrideEntry::Posix(ov) = file.overrides.get("obstacle_detector").unwrap()
@@ -609,10 +596,10 @@ reservations: required
 resources:
   rt_priority_band: { min: 10, max: 40 }
   isolated_cpus: [2, 3]
-  rr_timeslice_us: 100000
+  rr_timeslice: 100ms
 overrides:
   obstacle_detector:
-    budget_us: 8000
+    budget: 8000us
     uclamp_max: 800
   telemetry_logger:
     sched_class: SCHED_BATCH
@@ -708,7 +695,7 @@ overrides:
 
     #[test]
     fn zero_budget_is_rejected_because_absent_and_zero_differ() {
-        let e = override_err("    budget_us: 0\n");
+        let e = override_err("    budget: 0us\n");
         assert!(e.contains("Absent and zero"), "{e}");
     }
 
@@ -863,14 +850,15 @@ resources:
         std::fs::write(&yaml_path, "target: posix\nmapper: manual\n").unwrap();
         let file = parse_platform_file(&yaml_path).expect("yaml parses");
         assert_eq!(file.mapper, "manual");
-        assert!(file.legacy.is_none());
 
+        // The legacy schema is refused, naming the v2 form (v0.3.0).
         let toml_path = dir.join("system.toml");
-        std::fs::write(&toml_path, "").unwrap();
-        let file = parse_platform_file(&toml_path).expect("toml parses via bridge");
-        assert_eq!(file.mapper, "manual");
-        assert_eq!(file.target, "posix");
-        assert!(file.legacy.is_some());
+        std::fs::write(&toml_path, "[tiers.control]\n").unwrap();
+        let err = parse_platform_file(&toml_path).unwrap_err();
+        assert!(matches!(err, PlatformError::LegacyToml { .. }), "{err}");
+        let msg = err.to_string();
+        assert!(msg.contains("removed in rlm v0.3.0"), "{msg}");
+        assert!(msg.contains("mapper: manual"), "{msg}");
 
         let bogus_path = dir.join("bringup.json");
         std::fs::write(&bogus_path, "{}").unwrap();

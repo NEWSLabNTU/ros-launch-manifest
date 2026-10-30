@@ -14,8 +14,7 @@
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
-use petgraph::Direction;
-use petgraph::graph::NodeIndex;
+use petgraph::{Direction, graph::NodeIndex};
 use ros_launch_manifest_types::{Manifest, OptBound};
 use std::collections::{BTreeSet, HashSet, VecDeque};
 

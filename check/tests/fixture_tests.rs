@@ -1,9 +1,9 @@
 //! Integration tests that load YAML fixture files and run the static checker.
 
 use ros_launch_manifest_check::{Severity, run_checks};
-use ros_launch_manifest_types::OptBound;
 use ros_launch_manifest_types::{
-    filter_manifest, parse_manifest, parse_manifest_str, resolve_args, substitute_manifest,
+    OptBound, filter_manifest, parse_manifest, parse_manifest_str, resolve_args,
+    substitute_manifest,
 };
 use std::{collections::HashMap, path::PathBuf};
 

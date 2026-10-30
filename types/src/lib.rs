@@ -32,6 +32,6 @@ pub use span::{SpanIndex, Spanned};
 /// [`parse_manifest_str`] refuses one newer than this before reading a key
 /// of the body, naming both. Kept equal to the newest released heading of
 /// `CHANGELOG.md` by a test, so a release cannot forget it.
-pub const GRAMMAR_VERSION: &str = "0.2.6";
+pub const GRAMMAR_VERSION: &str = "0.3.0";
 pub use subst::{SubstError, resolve_args, substitute_manifest, substitute_str};
 pub use types::*;

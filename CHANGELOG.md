@@ -6,6 +6,50 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.0 - 2026-10-31
+
+Breaking for Rust consumers and for authored scheduling files; no contract
+changes meaning (the contract grammar already refused a bare duration).
+GRAMMAR_VERSION 0.3.0, workspace Cargo version 0.3.0.
+play_launch phase 96.
+
+### Removed
+
+- The legacy `system.toml` scheduling schema and its `.toml` bridge
+  (play_launch phase 41.6): `bridge.rs`, `parse_legacy_toml`,
+  `parse_system_sched`, `SystemSched`, `PlatformFile.legacy`,
+  `MapperInput.legacy`, `MapError::MissingLegacySpec`,
+  `PlatformError::Legacy`. `parse_platform_file` refuses a `.toml` file
+  with `PlatformError::LegacyToml`, which names the v2 form. `TierDef`,
+  `TierPlatformSpec`, `AssignRule` and `resolve()` remain: nano-ros's own
+  `system.toml` `[tiers.*]` and the model's `execution.tiers` use them.
+- The duration aliases and the bare-number leniency (play_launch phase 63
+  W6): `deadline_us`, `period_us`, `budget_us`, `spin_period_us`,
+  `time_slice_us`, `rr_timeslice_us`, `lifespan_ms`, `tolerance_ms`,
+  `max_interval_ms`, `timeout_ms` are unknown fields, and a bare number
+  under a duration key asks for a unit, in a platform file, a `system.toml`
+  `[tiers.*]` table, and every other serde path. `duration::compat`
+  (`opt_micros`, `opt_millis`, `millis`, `micros`), `LegacyUnit` and
+  `from_legacy_scalar` are gone: deserialize `Option<Duration>` directly,
+  which is strict.
+
+### Changed
+
+- `mapper: manual` derives nothing: every node goes to the default tier,
+  and the platform file's `overrides:` are the only placement. It is now
+  reachable from a v2 YAML file and needs no priority band.
+
+### Added
+
+- `HazardContract.rungs: Vec<RungRoute>` (play_launch phase 85 D4): per
+  rung of the reaction, the checker's route (`rung`, `role`
+  rung/window/floor, `route_ms`, `starts_at`, `output`), a consequence the
+  resolver writes, so an image can monitor the same quantity the checker
+  charged. Additive.
+- `SystemModel::from_yaml_str` still loads a model written before the
+  Duration migration: it rewrites `execution.tiers`' legacy `_us` keys (a
+  bare number there was microseconds) before the typed read.
+
 ## v0.2.6 - 2026-10-27
 
 ### Fixed

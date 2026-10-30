@@ -3625,7 +3625,6 @@ fn yaml_string(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String>, Parse
     }
 }
 fn yaml_duration(doc: &Yaml, key: &str) -> Result<Option<Duration>, ParseError> {
-    use crate::duration::{LegacyUnit, from_legacy_scalar};
     let no_unit = |shown: String| {
         field_err(
             "",
@@ -3637,8 +3636,10 @@ fn yaml_duration(doc: &Yaml, key: &str) -> Result<Option<Duration>, ParseError> 
         )
     };
     match &doc[key] {
-        Yaml::String(text) => from_legacy_scalar(Some(text), None, LegacyUnit::Millis)
-            .map_err(|e| field_err("", key, &e.to_string())),
+        Yaml::String(text) => text
+            .parse()
+            .map(Some)
+            .map_err(|e: crate::duration::DurationParseError| field_err("", key, &e.to_string())),
         Yaml::Integer(i) => Err(no_unit(i.to_string())),
         Yaml::Real(r) => Err(no_unit(r.clone())),
         _ => Ok(None),

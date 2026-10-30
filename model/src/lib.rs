@@ -69,7 +69,9 @@ impl SystemModel {
     /// parameter whose `Str` is YAML flow text (`[a, b]`) meant a list then,
     /// and becomes a [`ParamValue::StrList`] (see [`SCHEMA_VERSION`]).
     pub fn from_yaml_str(s: &str) -> Result<Self, ModelError> {
-        let mut model: SystemModel = serde_yaml_ng::from_str(s)?;
+        let mut value: serde_yaml_ng::Value = serde_yaml_ng::from_str(s)?;
+        upgrade_legacy_tier_keys(&mut value);
+        let mut model: SystemModel = serde_yaml_ng::from_value(value)?;
         if model.meta.version > SCHEMA_VERSION {
             return Err(ModelError::UnsupportedVersion {
                 found: model.meta.version,
@@ -107,6 +109,56 @@ impl SystemModel {
     /// Canonical YAML form (deterministic: all maps are ordered).
     pub fn to_yaml_string(&self) -> Result<String, ModelError> {
         Ok(serde_yaml_ng::to_string(self)?)
+    }
+}
+
+/// A model written before the Duration migration spelled `execution.tiers`
+/// durations as `<name>_us: <bare number of microseconds>`. The aliases
+/// that read them were removed in v0.3.0 (play_launch phase 63 W6), where
+/// an authored file is refused; a MODEL is read backward-compatibly, so the
+/// legacy keys are rewritten here before the typed read, on the tier head
+/// and on each platform sub-table.
+fn upgrade_legacy_tier_keys(doc: &mut serde_yaml_ng::Value) {
+    use serde_yaml_ng::Value;
+    const KEYS: [(&str, &str); 5] = [
+        ("deadline_us", "deadline"),
+        ("period_us", "period"),
+        ("budget_us", "budget"),
+        ("spin_period_us", "spin_period"),
+        ("time_slice_us", "time_slice"),
+    ];
+    fn rewrite(table: &mut serde_yaml_ng::Mapping) {
+        for (old, new) in KEYS {
+            let Some(v) = table.remove(old) else {
+                continue;
+            };
+            let v = match v {
+                Value::Number(n) => match n.as_i64() {
+                    Some(us) => Value::String(format!("{us}us")),
+                    None => Value::String(format!("{}us", n.as_f64().unwrap_or_default())),
+                },
+                other => other,
+            };
+            table.entry(Value::String(new.to_string())).or_insert(v);
+        }
+    }
+    let Some(tiers) = doc
+        .get_mut("execution")
+        .and_then(|e| e.get_mut("tiers"))
+        .and_then(Value::as_mapping_mut)
+    else {
+        return;
+    };
+    for (_, tier) in tiers.iter_mut() {
+        let Some(head) = tier.as_mapping_mut() else {
+            continue;
+        };
+        rewrite(head);
+        for (_, sub) in head.iter_mut() {
+            if let Some(sub) = sub.as_mapping_mut() {
+                rewrite(sub);
+            }
+        }
     }
 }
 
@@ -1131,6 +1183,54 @@ pub struct HazardContract {
     /// its field as any written one; absent for a written number.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, ValueSource>,
+    /// The checker's route per rung of the hazard's reaction, top rung
+    /// first (play_launch phase 85 D4, rlm v0.3.0): a CONSEQUENCE written by
+    /// the resolver, never authored. A node path's `max_latency` is one
+    /// dispatch, which is what an image's latency monitor measures; a rung's
+    /// route is detection fire to the rung's first output (the tick wait,
+    /// the link and the work), which no single dispatch shows. A consumer
+    /// that wants the runtime half to state the same quantity stamps the
+    /// fire and the first publish on `output` and judges the gap against
+    /// `route_ms`.
+    /// Empty when the hazard reaches no rung the checker could walk.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rungs: Vec<RungRoute>,
+}
+
+/// One rung's route (play_launch phase 85 D4), as the checker charged it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RungRoute {
+    /// The rung: a mode name, or the scope path of a one-rung reaction.
+    pub rung: String,
+    pub role: RungRole,
+    /// Detection fire to the rung's first output, ms: what the checker
+    /// charged as the rung's ROUTE (not its detection, window or settle).
+    /// For a call on the route, the worse of its success and failure
+    /// branches. Absent when the route is unbounded or unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_ms: Option<f64>,
+    /// The node whose detection starts the route (the walk's first hop).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starts_at: Option<String>,
+    /// The topics the route ends on: the rung's first output, published by
+    /// the last node of the walk (its safe state's `emits`, or the rung's
+    /// reaction scope path's outputs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<String>,
+}
+
+/// What kind of rung a [`RungRoute`] is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RungRole {
+    /// A rung with a lower rung beneath it.
+    #[default]
+    Rung,
+    /// A windowed rung: it lasts at least its window; the route is to its
+    /// first output, and the window is not part of it.
+    Window,
+    /// The ladder's last rung.
+    Floor,
 }
 
 /// Where a number read from the launch tree came from (play_launch phase
@@ -2150,6 +2250,32 @@ mod order_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Phase 63 W6 (v0.3.0): the tier aliases are gone, and a model saved
+    /// before the Duration migration still loads, its legacy keys read as
+    /// microseconds, head and platform sub-table alike.
+    #[test]
+    fn a_model_with_legacy_tier_keys_still_loads() {
+        let mut doc: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&SystemModel::default().to_yaml_string().unwrap()).unwrap();
+        let tiers: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+            "high:\n  class: real_time\n  spin_period_us: 1000\n  budget_us: 5000\n  posix:\n    priority: 80\n    deadline_us: 40000\n",
+        )
+        .unwrap();
+        doc["execution"]["tiers"] = tiers;
+        let old = serde_yaml_ng::to_string(&doc).unwrap();
+        let m = SystemModel::from_yaml_str(&old).expect("an old model loads");
+        let t = &m.execution.tiers["high"];
+        assert_eq!(t.spin_period.unwrap().as_micros(), 1_000);
+        assert_eq!(t.budget.unwrap().as_micros(), 5_000);
+        assert_eq!(
+            t.posix.as_ref().unwrap().deadline.unwrap().as_micros(),
+            40_000
+        );
+        let out = m.to_yaml_string().unwrap();
+        assert!(out.contains("spin_period: 1ms"), "{out}");
+        assert!(!out.contains("_us"), "{out}");
+    }
 
     /// Phase 94: a number read from the launch tree carries its provenance
     /// beside it, and a reader of the number is unchanged: the field reads

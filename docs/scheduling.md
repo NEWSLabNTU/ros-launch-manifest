@@ -17,14 +17,12 @@ realization (OS priority numbers, scheduler classes, cores). The shared
 part is the **algorithm**, not the output — each consumer runs its own
 realizer over the same ranking core.
 
-Two schemas coexist:
-
-- **v2 platform file** (`<stem>.system.<target>.yaml`) — the current
-  default: mapper name + platform facts + overrides. This is what ships
-  through the contract discovery channels.
-- **v1 `system.toml`** (hand-written tiers + `[[assign]]`) — legacy,
-  still fully supported via a bridge to the `manual` mapper. Explicit
-  `--sched <path>.toml` only; never discovered through channels.
+One schema: the **v2 platform file** (`<stem>.system.<target>.yaml`):
+mapper name + platform facts + overrides. This is what ships through the
+contract discovery channels. The v1 `system.toml` scheduling schema
+(hand-written tiers + `[[assign]]`) and its `.toml` bridge were removed in
+v0.3.0 (play_launch phase 41.6); a `.toml` platform file is refused with
+the v2 form. Its replacement is `mapper: manual` plus `overrides:`.
 
 ## Where scheduling facts come from
 
@@ -153,8 +151,8 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
 
   `budget` is the **declared execution cost** — the only legitimate
   source for a `SCHED_DEADLINE` reservation's runtime, and the field
-  `play_launch measure` emits. Written `8000us`/`8ms`, with `budget_us:
-  8000` accepted as a deprecated alias. It is not a proven WCET; it is a
+  `play_launch measure` emits. Written `8000us`/`8ms`; a bare number and
+  the old `budget_us` spelling are refused (v0.3.0). It is not a proven WCET; it is a
   declared high-percentile observed cost used *as* an upper bound.
   `budget: 0us` is rejected: absent and zero are different answers, and a
   declared zero would silently mean "free".
@@ -169,7 +167,7 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   rule into a hard error nobody asked for.
 
 - **`rr_timeslice`**: the host's `SCHED_RR` slice, written `100ms`
-  (`rr_timeslice_us: 100000` is a deprecated alias). A platform *fact*,
+  (the old `rr_timeslice_us` spelling is refused since v0.3.0). A platform *fact*,
   which is why it sits in `resources:` — on Linux the slice is a global
   sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`, default **100 ms**),
   not a per-task value, so the per-tier `TierPlatformSpec::time_slice`
@@ -184,8 +182,8 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   consumer to validate.
 - Entry point: `parse_platform_file(path) -> Result<PlatformFile,
   PlatformError>` dispatches on extension — `.yaml`/`.yml` → this schema
-  (`parse_platform_file_yaml`), `.toml` → the
-  [legacy bridge](#legacy-toml-bridge).
+  (`parse_platform_file_yaml`); `.toml` → `PlatformError::LegacyToml`,
+  naming the v2 form.
 
 ```rust
 pub struct PlatformFile {
@@ -194,7 +192,6 @@ pub struct PlatformFile {
     pub reservations: ReservationMode,
     pub resources: PlatformResources,
     pub overrides: BTreeMap<String, PlatformOverrideEntry>,
-    pub legacy: Option<SystemSched>,   // Some only via the .toml bridge
 }
 ```
 
@@ -226,7 +223,6 @@ pub trait SchedMapper {
   }
   pub struct MapperInput {
       pub nodes: Vec<MapperNode>,
-      pub legacy: Option<SystemSched>,     // manual mapper only (.toml bridge)
       pub chains: Vec<ResolvedChain>,      // chain_aware only
   }
   ```
@@ -251,14 +247,15 @@ pub trait SchedMapper {
   `rate_monotonic`, `deadline_monotonic`, `chain_aware`. Consumers
   register additional mappers at link time; no dynamic loading.
 - **`MapError`** — `MissingPriorityBand`, `InvalidPriorityBand`,
-  `MissingLegacySpec`, `Resolve(SchedError)`.
+  `Resolve(SchedError)`.
 
 ## Built-in Mappers
 
-- **`manual`** — legacy semantics. Requires `input.legacy` (populated
-  only by the `.toml` bridge); delegates to `resolve()` against the v1
-  tiers + `[[assign]]` for `target = "posix"`, reproducing v1 output
-  exactly. Ignores `facts`.
+- **`manual`** — derives nothing: every node is placed in `DEFAULT_TIER`,
+  so the file's `overrides:` are the only placement. Needs no priority
+  band; ignores `facts`. (Until v0.3.0 it reproduced the v1 tiers +
+  `[[assign]]` resolution and was reachable only through the `.toml`
+  bridge.)
 - **`rate_monotonic`** — higher `rate_hz` → higher priority, spread
   linearly across `resources.rt_priority_band` (rank 0 → `band.max`,
   last → `band.min`; a narrow band produces ties, never inversions).
@@ -566,30 +563,23 @@ warn-vs-strict and presentation (`--sched-apply`, `--explain`):
   those as chain-intended; hand-authored overrides and the `manual`
   mapper's independent tiers can trigger it as genuine mistakes.
 
-## Legacy v1 Schema (`system.toml`)
+## Tier types (`TierDef`)
 
-Hand-written tiers + sparse node binding. Still fully supported; sole
-implementation of the `manual` mapper. Scheduled for retirement (Phase
-41.6) only after nano-ros migrates off it — no flag day.
+A tier's portable head and its per-platform sub-tables. The v1
+`system.toml` file that authored them with `[[assign]]` rules is gone
+(v0.3.0); the types remain because nano-ros's own `system.toml` `[tiers.*]`
+block and the SystemModel's `execution.tiers` use them:
 
 ```toml
 # ===== GENERIC (portable — byte-identical across platforms) =====
 [tiers.control]
 class = "real_time"        # best_effort | real_time | time_triggered | interrupt
-deadline    = "50ms"       # deadline_us = 50000 is the deprecated alias
-period      = "20ms"       # period_us
-budget      = "5ms"        # budget_us
+deadline    = "50ms"
+period      = "20ms"
+budget      = "5ms"
 deadline_policy = "warn"   # ignore | warn | skip | fault
-spin_period = "1ms"        # spin_period_us
+spin_period = "1ms"
 # above = "transport"      # optional: placed above the reserved transport band
-
-[[assign]]
-tier  = "control"
-nodes = ["ndt_localizer", "ekf_localizer"]   # FQN or bare-name selectors
-[[assign]]
-tier  = "perception"
-scope = "/perception/lidar"                  # launch-scope subtree selector
-# unmatched nodes → synthesized "default" tier (priority 0, non-RT)
 
 # ===== PLATFORM (same shape per target, values differ) =====
 [tiers.control.posix]      # `native` accepted as alias
@@ -602,15 +592,17 @@ stack_bytes = 8192
 deadline    = "40ms"       # optional per-platform tighten
 ```
 
-Every duration field above is written with a unit (`ns`/`us`/`ms`/`s`); a
-bare number is read as MICROSECONDS, and the `<name>_us` spellings
-(`deadline_us`, `period_us`, `budget_us`, `spin_period_us`, `time_slice_us`,
-and `rr_timeslice_us` in the v2 file) are accepted as deprecated aliases.
+Every duration field is written with a unit (`ns`/`us`/`ms`/`s`). Since
+v0.3.0 a bare number is an error asking for one, and the `<name>_us`
+spellings (`deadline_us`, `period_us`, `budget_us`, `spin_period_us`,
+`time_slice_us`, `rr_timeslice_us`) are unknown fields. A SystemModel
+written before the Duration migration still loads:
+`SystemModel::from_yaml_str` rewrites those keys in `execution.tiers` (a
+bare number there was microseconds).
 
-- **`SystemSched { tiers: BTreeMap<String, TierDef>, assign:
-  Vec<AssignRule> }`**, `deny_unknown_fields` on the generic `TierDef`
-  head — a stray `priority` on the head is a parse error; that is what
-  enforces "no priority leakage" portability.
+- `deny_unknown_fields` on the generic `TierDef` head — a stray
+  `priority` on the head is a parse error; that is what enforces "no
+  priority leakage" portability.
 - **`above = "transport"`** on the head (`ReservedBand`, a closed set whose
   one member is `transport`; anything else is a parse error, and the key is
   refused in a platform sub-table). It states a system fact, not a number:
@@ -629,7 +621,8 @@ and `rr_timeslice_us` in the v2 file) are accepted as deprecated aliases.
   ThreadX-only today, ignored elsewhere — on Linux the slice is the global
   `resources.rr_timeslice`, not a per-tier value).
 - **`resolve(tiers, assigns, nodes, target) -> ResolvedTierTable`**
-  (`resolve.rs`): explicit `nodes` selectors win over `scope` selectors
+  (`resolve.rs`), for a caller that builds tiers and `AssignRule`s in
+  memory: explicit `nodes` selectors win over `scope` selectors
   (silently); a same-level double-claim for two *different* tiers →
   `SchedError::NodeMatchedByMultipleTiers` (duplicate claims for the
   same tier are accepted); missing
@@ -641,24 +634,14 @@ and `rr_timeslice_us` in the v2 file) are accepted as deprecated aliases.
   `posix: Option<PosixPlacement>`); its duration fields are microseconds
   (`period_us`, `budget_us`, `deadline_us`, `spin_period_us`) because it is
   the wire to play_launch and nano-ros, while `TierDef` carries `Duration`.
-  **`SCHED_DEADLINE` is not authorable in v1**: the tier schema has no
-  per-tier runtime, so a `sched_class = "SCHED_DEADLINE"` sub-table is a
-  `PosixError::UnknownSchedClass` naming the v2 platform file instead of a
-  reservation invented from nothing.
+  **`SCHED_DEADLINE` is not authorable on a tier**: the tier schema has
+  no per-tier runtime, so a `sched_class = "SCHED_DEADLINE"` sub-table is
+  a `PosixError::UnknownSchedClass` naming the v2 platform file instead of
+  a reservation invented from nothing.
 - These types do double duty: the SystemModel's `execution.tiers`
   reuses `TierDef`/`TierPlatformSpec` (re-exported through the `model`
-  crate), so one schema serves v1 authoring, the model's applied-tier
-  layer, and the mapper pipeline.
-
-### Legacy `.toml` bridge
-
-`parse_legacy_toml` (`bridge.rs`) wraps a v1 document into a v2
-`PlatformFile { target: "posix", mapper: "manual", legacy: Some(sched),
-resources/overrides: empty }`. Reached via `parse_platform_file`'s
-`.toml` dispatch. Equivalence is test-asserted: TOML → bridge → `manual`
-mapper output equals calling `resolve()` directly. RTOS targets don't go
-through the bridge — nano-ros calls `resolve(..., target)` directly when
-it consumes v1 tiers.
+  crate), so one schema serves nano-ros's `system.toml` tiers, the
+  model's applied-tier layer, and the mapper pipeline.
 
 ## Consumers
 
@@ -724,7 +707,7 @@ play_launch `docs/guide/rt-scheduling.md`.
   play_launch launch <pkg> <launch_file>                   # derive + apply (warn on failure)
   play_launch launch <pkg> <launch_file> --sched-apply strict   # abort if apply fails
 
-  # Explicit platform file (also the only way to use a legacy .toml):
+  # Explicit platform file:
   play_launch check --sched bringup.system.posix.yaml --explain <pkg> <launch_file>
   ```
 

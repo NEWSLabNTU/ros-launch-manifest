@@ -185,7 +185,7 @@ pub struct ResolvedTier {
 }
 
 impl ResolvedTier {
-    fn default_tier(members: Vec<String>) -> Self {
+    pub(crate) fn default_tier(members: Vec<String>) -> Self {
         ResolvedTier {
             name: DEFAULT_TIER.to_string(),
             members,
@@ -446,7 +446,22 @@ mod bind_tests {
 #[cfg(test)]
 mod resolve_tests {
     use super::*;
-    use crate::parse::parse_system_sched;
+
+    /// A tiers + assign spec, as the tests write it in TOML. The file
+    /// format itself was removed in v0.3.0; `resolve` keeps the selector
+    /// binding for callers that build tiers and rules in memory.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Spec {
+        #[serde(default)]
+        tiers: BTreeMap<String, TierDef>,
+        #[serde(default)]
+        assign: Vec<AssignRule>,
+    }
+
+    fn parse_system_sched(input: &str) -> Result<Spec, toml::de::Error> {
+        toml::from_str(input)
+    }
 
     fn node(name: &str, scope: &str) -> SchedNode {
         SchedNode {
@@ -469,13 +484,13 @@ mod resolve_tests {
         let src = r#"
 [tiers.control]
 class = "real_time"
-deadline_us = 50000
+deadline = "50000us"
 
 [tiers.control.posix]
 priority = 80
 sched_class = "SCHED_FIFO"
 core = 1
-deadline_us = 40000
+deadline = "40000us"
 
 [[assign]]
 tier = "control"
@@ -546,7 +561,7 @@ nodes = ["/a"]
     fn deadline_falls_back_to_generic_head_when_platform_omits_it() {
         let src = r#"
 [tiers.rt]
-deadline_us = 50000
+deadline = "50000us"
 
 [tiers.rt.posix]
 priority = 40

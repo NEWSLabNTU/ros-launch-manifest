@@ -1,20 +1,8 @@
-//! On-disk scheduling schema (TOML).
-
-use std::collections::BTreeMap;
+//! Scheduling tier types: a tier's portable head and per-platform
+//! sub-tables (`system.toml` `[tiers.*]`, the model's `execution.tiers`),
+//! and the selector rule that binds nodes to a tier.
 
 use serde::{Deserialize, Serialize};
-
-/// Top-level system scheduling document.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SystemSched {
-    /// Symbolic tiers keyed by name.
-    #[serde(default)]
-    pub tiers: BTreeMap<String, TierDef>,
-    /// Sparse node→tier binding rules.
-    #[serde(default)]
-    pub assign: Vec<AssignRule>,
-}
 
 /// `[tiers.<name>]` — the generic (portable) head plus per-platform sub-tables.
 /// The head carries NO priority number; placement lives in the sub-tables.
@@ -25,39 +13,19 @@ pub struct TierDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
     /// Generic relative deadline; a platform sub-table may tighten it.
-    #[serde(
-        default,
-        alias = "deadline_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<ros_launch_manifest_types::duration::Duration>,
     /// Callback period for periodic / time_triggered.
-    #[serde(
-        default,
-        alias = "period_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period: Option<ros_launch_manifest_types::duration::Duration>,
     /// Execution-time budget (µs) — EDF/sporadic.
-    #[serde(
-        default,
-        alias = "budget_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<ros_launch_manifest_types::duration::Duration>,
     /// `ignore | warn | skip | fault`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_policy: Option<String>,
     /// Executor spin period (µs).
-    #[serde(
-        default,
-        alias = "spin_period_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spin_period: Option<ros_launch_manifest_types::duration::Duration>,
     /// `above = "transport"`: this tier is placed above a reserved SYSTEM
     /// band rather than in the application pool (nano-ros RFC-0079 section
@@ -137,44 +105,24 @@ pub struct TierPlatformSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preempt_threshold: Option<i64>,
     /// Per-platform deadline override (µs), tighter than the generic head.
-    #[serde(
-        default,
-        alias = "deadline_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<ros_launch_manifest_types::duration::Duration>,
     /// Per-platform sporadic execution budget (µs): lets ONE platform's kernel
     /// sporadic server (NuttX SCHED_SPORADIC) engage without flipping every
     /// other platform's executor into cooperative Sporadic gating (a GENERIC
     /// head budget applies everywhere). Same sub-table-override precedent as
     /// `deadline_us`.
-    #[serde(
-        default,
-        alias = "budget_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<ros_launch_manifest_types::duration::Duration>,
     /// Per-platform sporadic replenishment period (µs) — pairs with
     /// `budget_us` (both required for a sporadic policy).
-    #[serde(
-        default,
-        alias = "period_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period: Option<ros_launch_manifest_types::duration::Duration>,
     /// Per-platform round-robin time slice (µs): requests
     /// time-slicing among same-priority tiers. ThreadX-only today (its
     /// `tx_thread_create` takes a per-thread slice); ignored elsewhere.
     /// Same sub-table-scoped precedent as `preempt_threshold`.
-    #[serde(
-        default,
-        alias = "time_slice_us",
-        deserialize_with = "ros_launch_manifest_types::duration::compat::opt_micros",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_slice: Option<ros_launch_manifest_types::duration::Duration>,
 }
 

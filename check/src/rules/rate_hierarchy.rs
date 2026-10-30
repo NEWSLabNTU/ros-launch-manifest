@@ -11,8 +11,7 @@
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
-use ros_launch_manifest_types::Manifest;
-use ros_launch_manifest_types::OptBound;
+use ros_launch_manifest_types::{Manifest, OptBound};
 
 pub struct RateHierarchyRule;
 

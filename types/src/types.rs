@@ -1670,12 +1670,7 @@ pub struct QosDecl {
     pub depth: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history: Option<String>,
-    #[serde(
-        default,
-        alias = "lifespan_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifespan: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub liveliness: Option<String>,
@@ -1751,12 +1746,7 @@ pub struct PathDecl {
     /// that the callback will still treat as one set. A window the
     /// synchroniser may wait for, so `sync-budget` checks it against
     /// `max_latency`.
-    #[serde(
-        default,
-        alias = "tolerance_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tolerance: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
@@ -1902,21 +1892,11 @@ pub struct Sync {
     pub policy: SyncPolicy,
     /// Match window for `exact`/`approximate` (required for those
     /// policies).
-    #[serde(
-        default,
-        alias = "max_interval_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_interval: Option<crate::duration::Duration>,
     /// Collect-until-timeout duration for `timeout_any` (required for
     /// that policy).
-    #[serde(
-        default,
-        alias = "timeout_ms",
-        deserialize_with = "crate::duration::compat::opt_millis",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<crate::duration::Duration>,
 }
 
