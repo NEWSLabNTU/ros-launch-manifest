@@ -164,7 +164,8 @@ which `supervised-fit` already computes.
 
 | Rule | Severity | Fires when |
 |---|---|---|
-| `call-unbounded` | error | a reaction route crosses a call with no `timeout:` + `on_timeout:`, and the rung is not supervised |
+| `call-unbounded` | error | a reaction route crosses a call with no `timeout:` + `on_timeout:`, the rung is not supervised, and the rung has a lower rung for `on_timeout:` to fall to |
+| `call-unbounded-floor` | warning | the same on a ladder's floor, where no timeout can bound the call (nothing lower to fall to): supervise its effect or guard its output; `--strict` leaves it a warning so a contract can acknowledge it |
 | `call-retry-not-idempotent` | error | `retry:` on a call whose server does not declare `idempotent: true` |
 | `call-retry-unbounded` | error | `retry:` without `attempts`, or without `then:` |
 | `call-late-effect` | warning | `on_timeout:` falls to a reaction that is NOT a lower rung of the call's own ladder, and the server declares no `stale_after:` (a late request can act after the fallback) |
@@ -284,18 +285,33 @@ warn: two reactions are now acting.
 - Deadline propagation (gRPC) needed no rule: S5 showed the existing rung
   budget already carries it, provided the timeout is a term of the route.
 
-## Open questions
+## Decided at evaluation (2026-10-30)
 
-- `stale_after:` needs the request's source timestamp at the server
-  (`rmw_service_info_t.source_timestamp`). Confirm every RMW in use fills it,
-  and what nano-ros offers.
-- Whether `call-deadlock` should be an error when the node is known to run a
-  single-threaded executor (play_launch can see a stock container's
-  executable; a contract cannot).
-- Actions (goal, cancel, result) share most of this; whether they get the same
-  keys under `act:` in the same phase.
-- nano-ros's agreement that `timeout:`/`on_timeout:` derive no deadline or
-  monitor beyond what a subscriber's `on_violation` does.
+The open questions of the first draft, decided on the implementation
+(play_launch phase 95):
+
+- `stale_after:` stays a fact the checker trusts. Fast DDS and Cyclone fill
+  `rmw_service_info_t.source_timestamp` on requests and responses, for
+  rclcpp and rclpy; `measure` reports it per server for any other
+  middleware. nano-ros is asked.
+- `call-deadlock` stays a warning. The executor does not decide a deadlock,
+  the callback group does: rclcpp's default group is mutually exclusive, so
+  a multi-threaded executor deadlocks too, and the safe case (the wait
+  spins an executor of its own) is invisible to a contract.
+- `call-unbounded` is split. Checked as an error everywhere, it refused a
+  floor that crosses an async call with no timeout (the safety island's
+  emergency stop), which no timeout can bound, and which an error would
+  leave with no fix an author can write. The floor's case is
+  `call-unbounded-floor`, a warning naming the fixes that do bound it.
+- Actions are deferred until a contract has one on a reaction route. The
+  likely shape: `act.<e>` with the client keys on the goal request
+  (`timeout`, `on_timeout`, `on_rejected` for a refused goal), a
+  `result_timeout` with its own fallback for the result wait, and a late
+  effect after cancel judged like `call-late-effect` (a server's
+  `stale_after` has a counterpart in refusing a goal past its deadline).
+- `timeout:`/`on_timeout:` derive no deadline or monitor on our side: the
+  timeout is a term of the failure branch and Health's `call_unanswered`
+  threshold, nothing else. nano-ros's agreement is asked.
 
 ## Sources
 
