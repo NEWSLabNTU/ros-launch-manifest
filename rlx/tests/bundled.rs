@@ -87,6 +87,66 @@ fn vehicle_braking_reproduces_the_islands_numbers() {
     );
 }
 
+/// The speed shed by `elapsed` s after the command, m/s (rlm v0.3.1).
+fn speed_lost(a: f64, j: f64, response: f64, elapsed: f64) -> f64 {
+    let checked = check_source(braking().as_bytes()).unwrap();
+    let ty = |p: &str| checked.env.key(p).unwrap().ty.clone();
+    let q = |si: f64, dim: &str| Value::Quantity {
+        si,
+        dim: rlx::dim::builtin(dim).unwrap(),
+        written: None,
+    };
+    let param = |raw: f64, p: &str| param_value(raw, &ty(p)).unwrap();
+    let inputs: Inputs = BTreeMap::from([
+        ("settle.decel".into(), param(a, "settle.decel")),
+        ("settle.jerk".into(), param(j, "settle.jerk")),
+        ("settle.response".into(), q(response, "Time")),
+        ("elapsed".into(), q(elapsed, "Time")),
+    ]);
+    eval_derive(&checked, "settle.speed_lost", &inputs)
+        .unwrap()
+        .si
+}
+
+/// The island's emergency profile (2.5 m/s^2, 1.5 m/s^3, response 319 ms):
+/// nothing during the response, j t^2 / 2 on the ramp (1 s into it: 0.75
+/// m/s), v_r + a (t - a/j) after it, continuous at the ramp's end; and the
+/// shed speed at the settle's end is the entry speed.
+#[test]
+fn vehicle_braking_sheds_speed_as_its_settle_brakes() {
+    assert_eq!(speed_lost(-2.5, -1.5, 0.319, 0.2), 0.0);
+    assert_eq!(speed_lost(-2.5, -1.5, 0.319, 0.319), 0.0);
+    assert!((speed_lost(-2.5, -1.5, 0.319, 1.319) - 0.75).abs() < 1e-9);
+    let ramp = 2.5 / 1.5;
+    let v_r = 2.5 * 2.5 / 3.0;
+    assert!((speed_lost(-2.5, -1.5, 0.0, ramp) - v_r).abs() < 1e-9);
+    assert!((speed_lost(-2.5, -1.5, 0.0, ramp + 1e-9) - v_r).abs() < 1e-6);
+    let settle = settle_ms(8.33, -2.5, -1.5, Some(0.319)) / 1000.0;
+    assert!((speed_lost(-2.5, -1.5, 0.319, settle) - 8.33).abs() < 1e-6);
+}
+
+/// `elapsed` is bound only while `settle.speed_lost` is evaluated, so no
+/// other derive may read it.
+#[test]
+fn only_speed_lost_reads_elapsed() {
+    let src = "extension x.y 1.0.0\nrequires rlm >= 0.3.1\nkey settle.d : Time \"d\"\nderive settle.duration : Time = d + elapsed\n";
+    let Err(e) = check_source(src.as_bytes()) else {
+        panic!("loaded")
+    };
+    assert!(
+        e.iter().any(|d| d.message.contains("reads `elapsed`")),
+        "{e:?}"
+    );
+    let src = "extension x.y 1.0.0\nrequires rlm >= 0.3.1\nkey settle.d : Time \"d\"\nderive settle.speed_lost : Time = d\n";
+    let Err(e) = check_source(src.as_bytes()) else {
+        panic!("loaded")
+    };
+    assert!(
+        e.iter().any(|d| d.message.contains("is a Velocity")),
+        "{e:?}"
+    );
+}
+
 #[cfg(feature = "smt")]
 #[test]
 fn vehicle_braking_worst_case_is_proved() {

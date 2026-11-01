@@ -109,16 +109,22 @@ A key may have a default (`= 0 s`), so a contract may leave it out, and a
 string documenting it, which `extension-reference.md` prints.
 
 **Inputs** are core values the extension reads: `settle.response` (the
-response written on the safe state's settle) and `reaction_total` (the
+response written on the safe state's settle), `reaction_total` (the
 hazard's detection + route + settle, from the core walk; a check that reads
-it runs after the walk).
+it runs after the walk) and `elapsed` (since rlm v0.3.1: the time since the
+safe state's command, bound only while the consumer evaluates
+`settle.speed_lost`, so only that derive may read it).
 
 **Items.** What the file produces:
 
-- `derive <target> : <Dim> = <expr>` fills a core bound. Three targets
+- `derive <target> : <Dim> = <expr>` fills a core bound. Four targets
   exist: `settle.duration` (per hazard, since it may read the hazard's
   keys), `hazard.detection` (a physical detection time, charged before the
-  detectors') and `hazard.ftti` (the interval itself, from the process).
+  detectors'), `hazard.ftti` (the interval itself, from the process) and,
+  since rlm v0.3.1, `settle.speed_lost` (a Velocity: the speed the same
+  settle has shed by `elapsed` after the command; the consumer checks a
+  settle's response check, `supervise: { early: { within, drop } }`,
+  against it at `elapsed = within`, as `vehicle.braking` 1.1.0 does).
   A contract may not also write a bound an extension derives
   (`derive-conflict`); a measured settle beside a derived one is compared
   (`settle-conflict`) and the derived one charged.

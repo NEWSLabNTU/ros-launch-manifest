@@ -294,7 +294,7 @@ fn identity_is_spelling_independent() {
     let u = identity(&check_source(&unicode).unwrap());
     assert_eq!(a, u);
     assert_eq!(a.name, "vehicle.braking");
-    assert_eq!(a.version, "1.0.0");
+    assert_eq!(a.version, "1.1.0");
     assert_eq!(a.sha256.len(), 64);
     // The hash is of the canonical form itself.
     let canonical = format_source(&unicode, Style::Ascii).unwrap();

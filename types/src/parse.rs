@@ -879,11 +879,101 @@ fn parse_supervise(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Supervisi
             ));
         }
     }
+    let early = parse_early(section, sctx, settle)?;
     Ok(Some(Supervision {
         reaction,
         mechanism,
         observes,
+        early,
     }))
+}
+
+/// `early: { within: <duration>, drop: <speed> }` under a settle's
+/// `supervise:` (v0.3.1). `None` when absent.
+fn parse_early(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<EarlyCheck>, ParseError> {
+    let section = &v["early"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    if !settle {
+        return Err(field_err(
+            ctx,
+            "early",
+            "is a settle's response check (the vehicle has started to slow by `within`); \
+             only a settle's `supervise:` takes it (`safe_state.settle: { ..., supervise: { \
+             reaction, mechanism, observes, early: { within, drop } } }`)",
+        ));
+    }
+    let ectx = &format_path(ctx, "early");
+    let Yaml::Hash(_) = section else {
+        return Err(type_err(
+            ctx,
+            "early",
+            "`{ within: <duration>, drop: <speed> }`",
+            section,
+        ));
+    };
+    reject_unknown_keys(section, ectx, Context::SuperviseEarly)?;
+    let within = yaml_duration(section, "within")
+        .map_err(|e| reframe(e, ectx))?
+        .ok_or_else(|| {
+            field_err(
+                ectx,
+                "within",
+                "required: when the check runs, from the safe state's command (`within: 1019ms`)",
+            )
+        })?;
+    if within.as_millis_f64() <= 0.0 {
+        return Err(field_err(ectx, "within", "must be positive"));
+    }
+    let drop_text = match &section["drop"] {
+        Yaml::String(t) => t.clone(),
+        Yaml::BadValue | Yaml::Null => {
+            return Err(field_err(
+                ectx,
+                "drop",
+                "required: the least speed shed by `within` (`drop: 0.15 m/s`)",
+            ));
+        }
+        Yaml::Integer(i) => {
+            return Err(field_err(
+                ectx,
+                "drop",
+                &format!("`drop: {i}` has no unit -- write `drop: {i} m/s` (or km/h)"),
+            ));
+        }
+        Yaml::Real(r) => {
+            return Err(field_err(
+                ectx,
+                "drop",
+                &format!("`drop: {r}` has no unit -- write `drop: {r} m/s` (or km/h)"),
+            ));
+        }
+        other => return Err(type_err(ectx, "drop", "a speed (`0.15 m/s`)", other)),
+    };
+    let drop_mps = parse_speed(&drop_text).ok_or_else(|| {
+        field_err(
+            ectx,
+            "drop",
+            &format!("`{drop_text}` is not a speed: a positive number and `m/s` or `km/h`"),
+        )
+    })?;
+    Ok(Some(EarlyCheck {
+        within,
+        drop_mps,
+        drop_text,
+    }))
+}
+
+/// A positive, finite speed written with `m/s` or `km/h`, in m/s.
+fn parse_speed(text: &str) -> Option<f64> {
+    let t = text.trim();
+    let (num, scale) = match t.strip_suffix("km/h") {
+        Some(n) => (n, 1.0 / 3.6),
+        None => (t.strip_suffix("m/s")?, 1.0),
+    };
+    let v: f64 = num.trim().parse().ok()?;
+    (v.is_finite() && v > 0.0).then_some(v * scale)
 }
 
 /// A rate bound (phase 90 G2): a number of Hz under `key` of `context`.
@@ -6213,6 +6303,7 @@ nodes:
                 reaction: SuperviseReaction::Reaction("brake".into()),
                 mechanism: SuperviseMechanism::Timer,
                 observes: None,
+                early: None,
             })
         );
         assert_eq!(p.level(), Some(BudgetLevel::Supervised));
@@ -6384,6 +6475,57 @@ nodes:
             ),
         ] {
             let e = node(extra).unwrap_err();
+            assert!(e.contains(needle), "{extra}: {e}");
+        }
+    }
+
+    /// v0.3.1: a settle's `supervise:` takes a response check, `early: {
+    /// within, drop }`; both are required and carry units, and no other
+    /// budget takes it.
+    #[test]
+    fn a_supervised_settle_takes_an_early_check() {
+        use crate::types::EarlyCheck;
+        let m = super::parse_manifest_str(
+            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            decel: d\n            jerk: j\n            response: 319ms\n            supervise:\n              reaction: r\n              mechanism: timer\n              observes: h/kinematic_state\n              early: { within: 1019ms, drop: 0.15 m/s }\n",
+        )
+        .unwrap();
+        let ss = m.nodes["op"].paths["operate"].safe_state.as_ref().unwrap();
+        let early: &EarlyCheck = ss
+            .settle_supervise
+            .as_ref()
+            .and_then(|s| s.early.as_ref())
+            .unwrap();
+        assert!((early.within.as_millis_f64() - 1019.0).abs() < 1e-9);
+        assert!((early.drop_mps - 0.15).abs() < 1e-12);
+        assert_eq!(early.drop_text, "0.15 m/s");
+        let kmh = super::parse_speed("3.6 km/h").unwrap();
+        assert!((kmh - 1.0).abs() < 1e-12);
+        let node = |extra: &str| {
+            super::parse_manifest_str(&format!(
+                "nodes:\n  n:\n    paths:\n      p:\n        trigger: {{ input: [a] }}\n        output: [o]\n{extra}"
+            ))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        let settle = |early: &str| {
+            format!(
+                "        safe_state: {{ emits: o, settle: {{ decel: d, jerk: j, supervise: {{ reaction: r, mechanism: timer, observes: h/k, early: {early} }} }} }}\n"
+            )
+        };
+        for (extra, needle) in [
+            (
+                "        max_latency: { duration: 5ms, supervise: { reaction: r, mechanism: timer, early: { within: 1s, drop: 1 m/s } } }\n".to_string(),
+                "only a settle's",
+            ),
+            (settle("{ drop: 0.1 m/s }"), "required"),
+            (settle("{ within: 1s }"), "required"),
+            (settle("{ within: 1000, drop: 0.1 m/s }"), "no unit"),
+            (settle("{ within: 1s, drop: 0.1 }"), "no unit"),
+            (settle("{ within: 1s, drop: 0.1 m/s^2 }"), "not a speed"),
+            (settle("{ within: 1s, drop: -1 m/s }"), "not a speed"),
+            (settle("{ within: 1s, drop: 1 m/s, at: x }"), "at"),
+        ] {
+            let e = node(&extra).unwrap_err();
             assert!(e.contains(needle), "{extra}: {e}");
         }
     }

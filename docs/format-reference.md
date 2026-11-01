@@ -382,6 +382,14 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `enters` | fact | since v0.1.61 | The mode a miss enters; its `reaction:` scope path is what runs. Exactly one of `reaction` and `enters`. |
 | `mechanism` | fact | since v0.1.61 | What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`). |
 | `observes` | fact | since v0.1.62 | A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget. |
+| `early` | requirement | since v0.3.1 | A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the rung up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget. |
+
+## `safe_state.settle.supervise.early`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `within` | requirement | since v0.3.1 | When the check runs, from the safe state's command (a duration, positive). Past the settle's `response` and before the settle's end; the observation is added, as on the settle's own due. Required. |
+| `drop` | requirement | since v0.3.1 | The least speed the vehicle must have shed by `within`, against the speed the platform saw when it armed (a speed with `m/s` or `km/h`, positive). The consumer refuses a `drop` above what the nominal profile sheds by `within` (an extension's `derive settle.speed_lost`, as `vehicle.braking` 1.1 states), which would call a nominal stop a fault. Required. |
 
 ## `acknowledged[]`
 

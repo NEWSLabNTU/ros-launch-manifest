@@ -67,10 +67,32 @@ use std::collections::{BTreeSet, HashMap};
 pub const BUILTIN_FNS: &[&str] = &["min", "max", "abs", "sqrt"];
 
 /// Core values every extension can read without declaring them.
-pub const CORE_INPUTS: &[(&str, &str)] = &[("reaction_total", "Time")];
+/// `elapsed` (rlm v0.3.1) is the time since the safe state's command, which
+/// the consumer binds only when it evaluates `settle.speed_lost`, so only
+/// that derive may read it ([`ELAPSED_READERS`]).
+pub const CORE_INPUTS: &[(&str, &str)] = &[("reaction_total", "Time"), ("elapsed", "Time")];
 
-/// The core bounds an extension may derive (design section 4), all times.
-pub const DERIVE_TARGETS: &[&str] = &["settle.duration", "hazard.detection", "hazard.ftti"];
+/// The derives that may read the core input `elapsed`.
+pub const ELAPSED_READERS: &[&str] = &["settle.speed_lost"];
+
+/// The core bounds an extension may derive (design section 4). Each is a
+/// Time but `settle.speed_lost` (rlm v0.3.1), the speed the nominal settle
+/// sheds by `elapsed`, a Velocity: the consumer checks a settle's response
+/// check (`supervise: { early: { within, drop } }`) against it.
+pub const DERIVE_TARGETS: &[&str] = &[
+    "settle.duration",
+    "hazard.detection",
+    "hazard.ftti",
+    "settle.speed_lost",
+];
+
+/// The dimension of derive target `target`, by name.
+pub fn derive_target_dim(target: &str) -> &'static str {
+    match target {
+        "settle.speed_lost" => "Velocity",
+        _ => "Time",
+    }
+}
 
 /// A key's or input's declared type, resolved.
 #[derive(Debug, Clone, PartialEq)]
@@ -783,7 +805,8 @@ impl Cx {
                 Item::Derive(d) => {
                     let target = d.target.dotted();
                     let declared = self.resolve_product(&d.dim);
-                    let time = dim::builtin("Time").expect("built in");
+                    let want_name = derive_target_dim(&target);
+                    let time = dim::builtin(want_name).expect("built in");
                     if !DERIVE_TARGETS.contains(&target.as_str()) {
                         self.err(
                             code::DERIVE_TARGET,
@@ -804,13 +827,29 @@ impl Cx {
                         && dd != time
                     {
                         let msg = format!(
-                            "`{target}` is a Time, but this derive declares {}",
+                            "`{target}` is a {want_name}, but this derive declares {}",
                             self.name(dd)
                         );
                         self.err(code::DIMENSION, d.dim.span, msg);
                     }
                     targets.push(target.clone());
                     let (got, span, used) = self.body(&d.body, declared, "derive");
+                    if !ELAPSED_READERS.contains(&target.as_str())
+                        && used.iter().any(|&i| {
+                            self.env.keys[i].path == "elapsed"
+                                && self.env.keys[i].kind == KeyKind::Core
+                        })
+                    {
+                        self.err(
+                            code::TYPE,
+                            span,
+                            format!(
+                                "derive `{target}` reads `elapsed`, the time since the safe \
+                                 state's command, which is bound only for {}",
+                                ELAPSED_READERS.join(", ")
+                            ),
+                        );
+                    }
                     self.env.reads.push((ItemRef::Derive(target.clone()), used));
                     if let (Some(want), Ty::Q(g)) = (declared, got)
                         && want != g

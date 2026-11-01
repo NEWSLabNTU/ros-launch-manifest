@@ -116,6 +116,8 @@ pub enum Context {
     Derived,
     /// `supervise:` in a budget's map form (phase 93).
     Supervise,
+    /// `early:` under a settle's `supervise:` (v0.3.1).
+    SuperviseEarly,
     /// `policy:` at a manifest's top (phase 93).
     Policy,
     /// `supervision:` at a manifest's top (phase 93).
@@ -172,6 +174,7 @@ impl Context {
             Context::MeasuredTerm => "source.measured.terms.<name>",
             Context::Derived => "source.derived",
             Context::Supervise => "<budget>.supervise",
+            Context::SuperviseEarly => "safe_state.settle.supervise.early",
             Context::Policy => "policy",
             Context::Supervision => "supervision",
             Context::TimerRate => "trigger.timer.rate_hz (map form)",
@@ -1515,6 +1518,25 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget.",
     ),
+    live(
+        "early",
+        Context::Supervise,
+        Kind::Requirement,
+        "A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the rung up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget.",
+    ),
+    // -- safe_state.settle.supervise.early (v0.3.1) --
+    live(
+        "within",
+        Context::SuperviseEarly,
+        Kind::Requirement,
+        "When the check runs, from the safe state's command (a duration, positive). Past the settle's `response` and before the settle's end; the observation is added, as on the settle's own due. Required.",
+    ),
+    live(
+        "drop",
+        Context::SuperviseEarly,
+        Kind::Requirement,
+        "The least speed the vehicle must have shed by `within`, against the speed the platform saw when it armed (a speed with `m/s` or `km/h`, positive). The consumer refuses a `drop` above what the nominal profile sheds by `within` (an extension's `derive settle.speed_lost`, as `vehicle.braking` 1.1 states), which would call a nominal stop a fault. Required.",
+    ),
     // -- acknowledged (play_launch phase 85 D8) --
     live(
         "rule",
@@ -1794,6 +1816,9 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Supervise, "enters", "0.1.61"),
     (Context::Supervise, "mechanism", "0.1.61"),
     (Context::Supervise, "observes", "0.1.62"),
+    (Context::Supervise, "early", "0.3.1"),
+    (Context::SuperviseEarly, "within", "0.3.1"),
+    (Context::SuperviseEarly, "drop", "0.3.1"),
     (Context::Policy, "unsupervised_measured", "0.1.61"),
     (Context::Supervision, "tick", "0.1.61"),
     (Context::Supervision, "switch", "0.1.61"),

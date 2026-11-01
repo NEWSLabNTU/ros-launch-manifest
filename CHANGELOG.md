@@ -6,6 +6,46 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.1 - 2026-11-02
+
+A supervised settle's response check (island phase 16; play_launch
+0.22.0). GRAMMAR_VERSION 0.3.1. Additive for every contract that parsed
+before it. Workspace Cargo version unchanged; `Supervision` and
+`SettleSuperviseContract` have one new field each (play_launch's model
+builder names the latter's fields and is updated with it).
+
+### Added
+
+- Contract: `safe_state.settle.supervise.early: { within, drop }`. The
+  platform arms a second, earlier due over the same settle, command +
+  `within` + the observation (`observes`), and judges it against the speed
+  it saw when it armed: met when the vehicle has shed at least `drop` (a
+  speed, `m/s` or `km/h`) or is at standstill; a miss starts the
+  supervision's `reaction`/`enters`, as the settle's miss does. A command
+  that never took effect is caught at `within` instead of at the end of
+  the whole settle. Types: `Supervision.early: Option<EarlyCheck { within,
+  drop_mps, drop_text }>`; field-table context `SuperviseEarly`.
+- Model: `SettleSuperviseContract.early: Option<EarlyCheckContract {
+  within_ms, drop_mps }>`, serde-defaulted and skipped when absent.
+- rlx: the derive target `settle.speed_lost : Velocity` (the speed the
+  settle sheds by `elapsed` after its command) and the core input
+  `elapsed : Time`, readable only by that derive.
+- `vehicle.braking` 1.1.0 (requires rlm >= 0.3.1): `derive
+  settle.speed_lost`, the same profile's shed speed (nothing during the
+  response, then the jerk ramp, then the held deceleration). Its
+  `settle.duration` is unchanged.
+
+### Refused at parse time
+
+- `early:` under any `supervise:` but a settle's; `early:` that is not a
+  mapping, lacks `within` or `drop`, has an unknown key, a `within` <= 0 or
+  without a unit, or a `drop` that is not a positive speed with `m/s` or
+  `km/h`.
+
+Kept for the consumer: whether `within` lies past the response and before
+the settle's end, and whether the nominal profile sheds `drop` by then
+(play_launch `supervised-early`).
+
 ## v0.3.0 - 2026-10-31
 
 Breaking for Rust consumers and for authored scheduling files; no contract

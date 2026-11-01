@@ -220,7 +220,37 @@ pub struct Supervision {
     /// deadline. Refused on any other budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observes: Option<String>,
+    /// A settle's supervision only (v0.3.1): an earlier, weaker check of
+    /// the same settle. At `within` after the command (+ the observation)
+    /// the vehicle must have shed at least `drop` of its speed, or be at
+    /// standstill; a vehicle that has not starts the same reaction, at that
+    /// earlier due instead of the settle's end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub early: Option<EarlyCheck>,
 }
+
+/// `supervise: { ..., early: { within, drop } }` on a settle (v0.3.1): the
+/// response check. The platform arms a second due, command + `within` +
+/// the observation, and at it judges the speed against the one it saw when
+/// it armed: met when the vehicle has shed at least `drop`, or is at
+/// standstill. A miss starts the supervision's reaction, as the settle's
+/// miss does, so a command that never took effect is caught at `within`
+/// rather than at the end of the whole settle. The consumer charges an
+/// overrun row for it and checks `drop` against the speed the nominal
+/// profile sheds by `within` (an extension's `derive settle.speed_lost`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EarlyCheck {
+    /// From the safe state's command to the check (the observation is
+    /// added by the consumer, as on the settle's own due).
+    pub within: crate::duration::Duration,
+    /// The least speed shed by then, m/s, positive.
+    pub drop_mps: f64,
+    /// `drop` as written (`0.15 m/s`), for messages.
+    pub drop_text: String,
+}
+
+// `drop_mps` is parsed from a finite, positive literal, never NaN.
+impl Eq for EarlyCheck {}
 
 /// What a supervised budget's miss starts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

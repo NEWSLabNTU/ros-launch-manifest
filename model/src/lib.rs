@@ -1440,6 +1440,23 @@ pub struct SettleSuperviseContract {
     pub reaction: String,
     /// What checks the deadline.
     pub mechanism: SuperviseMechanism,
+    /// The response check (v0.3.1), when the contract states one: a second,
+    /// earlier due over the same settle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub early: Option<EarlyCheckContract>,
+}
+
+/// A supervised settle's response check (v0.3.1). The realizer arms a
+/// second due = the safe state's command + `within_ms` + `observe_ms` (the
+/// settle's), and judges it against the speed it saw when it armed: met
+/// when the vehicle has shed at least `drop_mps` or is at standstill; a miss
+/// starts the settle's `reaction`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EarlyCheckContract {
+    /// From the command to the check, ms (the observation not included).
+    pub within_ms: f64,
+    /// The least speed shed by then, m/s.
+    pub drop_mps: f64,
 }
 
 impl Contracts {
@@ -2588,13 +2605,28 @@ mod tests {
                 observes: "/h/kinematic_state".into(),
                 reaction: "island.emergency_stop".into(),
                 mechanism: SuperviseMechanism::Timer,
+                early: None,
             }),
             ..ss.clone()
         };
         let y = serde_yaml_ng::to_string(&sv).unwrap();
+        assert!(!y.contains("early"), "{y}");
         assert_eq!(
             serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
             sv
+        );
+        // v0.3.1: its response check round-trips too.
+        let mut sv2 = sv.clone();
+        if let Some(s) = sv2.supervise.as_mut() {
+            s.early = Some(EarlyCheckContract {
+                within_ms: 1019.0,
+                drop_mps: 0.15,
+            });
+        }
+        let y = serde_yaml_ng::to_string(&sv2).unwrap();
+        assert_eq!(
+            serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),
+            sv2
         );
         // Absent keys stay absent: a model with none of them is unchanged.
         let plain = serde_yaml_ng::to_string(&HazardContract::default()).unwrap();

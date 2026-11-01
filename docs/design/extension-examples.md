@@ -51,8 +51,8 @@ The island's emergency stop, as it would read after the move.
 
 ```
 -- share/rlm_ext_vehicle/rlm/braking.rlx
-extension vehicle.braking 1.0.0
-requires rlm >= 0.2.0
+extension vehicle.braking 1.1.0
+requires rlm >= 0.3.1
 
 key hazard.entry_speed : Velocity              "speed bound of the operating domain"
 key settle.decel       : param Acceleration magnitude  "node parameter: the deceleration held"
@@ -71,7 +71,19 @@ fn braking_time(v0: Velocity, a: Acceleration, j: Jerk) -> Time =
     if v0 > v_r then a / j + (v0 - v_r) / a
     else sqrt(2 v0 / j)
   where v_r = a^2 / (2 j)                      -- speed shed during the jerk ramp
+
+derive settle.speed_lost : Velocity =
+    if elapsed <= response then 0 m/s
+    else shed(elapsed - response, decel, jerk)
+
+fn shed(t: Time, a: Acceleration, j: Jerk) -> Velocity =
+    if t < a / j then j * t^2 / 2
+    else a^2 / (2 j) + a * (t - a / j)
 ```
+
+(`settle.speed_lost`, since 1.1.0 and rlm v0.3.1, is the speed the same
+profile has shed by `elapsed` after the command; a settle's response check,
+`supervise: { early: { within, drop } }`, is checked against it.)
 
 ```yaml
 use: { vehicle.braking: "^1", iso26262: "^1" }

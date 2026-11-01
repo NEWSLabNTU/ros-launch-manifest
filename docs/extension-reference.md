@@ -7,11 +7,11 @@ The core grammar is [format-reference.md](format-reference.md); a key not listed
 - **Bundled** extensions ship inside the checker and resolve for any `use:` entry with no file on disk.
 - **Reference** extensions are the worked examples of [design/extension-examples.md](design/extension-examples.md) as files. They are not bundled: a contract that wants one ships a copy in its package's `rlm/` directory. They are illustrative: [design/reference-extensions-verification.md](design/reference-extensions-verification.md) compares each with the standard it models and lists what each leaves out.
 
-## `vehicle.braking 1.0.0`
+## `vehicle.braking 1.1.0`
 
 **Bundled.** The keys were core grammar from rlm v0.1.46 to v0.1.71. play_launch 0.19 loaded this extension implicitly, with a warning, for a contract that writes them without `use:`; later releases refuse such a contract (`deprecated-implicit-extension`).
 
-Requires: `rlm >= 0.2.0`.
+Requires: `rlm >= 0.3.1`.
 
 Keys a contract writes:
 
@@ -32,8 +32,9 @@ What it produces:
 | item | name | result | worst case |
 |---|---|---|---|
 | derive | `settle.duration` | Time | increasing in `entry_speed`, `response`; decreasing in `decel`, `jerk` |
+| derive | `settle.speed_lost` | Velocity | none stated |
 
-sha256 of the canonical form: `349731db33beff03738e0b25a67301edb5910930a67bbfd62c4ec974e1db1b8f`. Source (`types/extensions/vehicle.braking.rlx`):
+sha256 of the canonical form: `5441e622d5c478c1da4cc3186d8083b877da267e012a5e9b3b7b56c35472c8d7`. Source (`types/extensions/vehicle.braking.rlx`):
 
 ```
 -- vehicle.braking: the settle of a vehicle that ramps its deceleration up
@@ -42,8 +43,11 @@ sha256 of the canonical form: `349731db33beff03738e0b25a67301edb5910930a67bbfd62
 -- v0.1.46 to v0.1.71 (`hazards.<h>.entry_speed`, `settle: { decel, jerk }`).
 -- A contract writes the node's own parameters (`decel: target_acceleration`),
 -- so the settle charged is the one the image runs.
-extension vehicle.braking 1.0.0
-requires rlm >= 0.2.0
+-- 1.1.0 (rlm v0.3.1): `settle.speed_lost`, the speed the same profile has
+-- shed by `elapsed` after the command; a settle's response check
+-- (`supervise: { early: { within, drop } }`) is checked against it.
+extension vehicle.braking 1.1.0
+requires rlm >= 0.3.1
 
 key hazard.entry_speed : Velocity              "speed bound of the operating domain"
 key settle.decel       : param Acceleration magnitude  "node parameter: the deceleration held"
@@ -62,6 +66,19 @@ fn braking_time(v0: Velocity, a: Acceleration, j: Jerk) -> Time =
     if v0 > v_r then a / j + (v0 - v_r) / a
     else sqrt(2 v0 / j)
   where v_r = a^2 / (2 j)                      -- speed shed during the jerk ramp
+
+-- The speed shed by `elapsed` after the braking command: nothing during
+-- the response, then the jerk ramp, then the held deceleration. Not capped
+-- at the entry speed: a vehicle slower than that has stopped, which the
+-- response check counts as met. No worst case is claimed: decel and jerk
+-- are the node's own parameters, read as the image runs them.
+derive settle.speed_lost : Velocity =
+    if elapsed <= response then 0 m/s
+    else shed(elapsed - response, decel, jerk)
+
+fn shed(t: Time, a: Acceleration, j: Jerk) -> Velocity =
+    if t < a / j then j * t^2 / 2
+    else a^2 / (2 j) + a * (t - a / j)
 ```
 
 ## `machine.iso13855 0.3.0`
