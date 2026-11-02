@@ -370,7 +370,8 @@ does still reads. nano-ros reads the numbers and never evaluates rlx.
 |---|---|
 | Language | Own the extension format and the expression core (E0: Numbat cannot be embedded as published, section 13) |
 | Unicode | Allowed under 5.3; canonical form ASCII |
-| Bare or qualified keys | Bare unless two used extensions collide |
+| Bare or qualified keys | Bare unless two used extensions collide (in the contract: `<extension>/<key>`); in an expression, a key's last segment is unique within its file (v0.3.2) |
+| A supervision's resume gap | A core key, `supervise.resume: { after }` (v0.3.2), not a derive target |
 | Core `detection` bound | Yes |
 | `reaction_total` as an input | Yes; core timing first, extension checks after |
 | A hazard with no `ftti` | Yes, with `deadline_by` naming the check |
@@ -378,6 +379,62 @@ does still reads. nano-ros reads the numbers and never evaluates rlx.
 | Unproved worst case | Warning; error under `--strict`; refuted is an error |
 | Lean, KeYmaera X | Optional, in an extension's CI, recorded by hash |
 | Migration of the vehicle keys | Bundled `vehicle.braking`, implicit for one minor release |
+
+### A supervision's resume gap: a core key, not a derive target (v0.3.2)
+
+The safety island's direct path (a supervision's reaction) hands the
+braking command back to the emergency operator once the operator's tick
+publishes it again, and takes it back if that tick then stays silent for
+three of its periods. Until v0.3.2 the gap this leaves (up to 99 ms of
+silence, plus the supervisor's tick) was added by hand beside the
+checker's overrun rows. Two places could charge it: an extension derive
+target (`derive supervise.resume_gap : Time = ...`) or a core key on
+`supervise:`. It is the core key, `supervise: { ..., resume: { after } }`,
+for these reasons:
+
+- **Where it is charged is core.** The gap exists only after a
+  supervision's reaction has run, so it belongs on the overrun rows the
+  consumer builds per supervised budget, once per row. An extension
+  computes a value from its inputs (`settle.duration`, `hazard.detection`,
+  `hazard.ftti`); it has no notion of a latch or of which rows follow one.
+  A derive target would still need the core walk to know where to add it.
+- **Its inputs are core facts, not domain physics.** `after` counts the
+  periods of the path that publishes the reaction's output, a timer the
+  contract already states (`rate_hz: $(param update_rate) Hz`), and the
+  detection delay is the supervision's own (`supervision: { tick, switch
+  }` for a `timer`). An extension would have to be handed both, which is
+  the core walk restated in rlx.
+- **The fact is the platform's behaviour.** A reaction that hands back and
+  resumes is a property of how the supervisor's reaction runs, as
+  `mechanism:` and `observes:` are; stating it beside them keeps one place
+  per fact. Absent, the reaction keeps its output and nothing is charged.
+- **It does not misstate the model.** The key states what the platform
+  does (the island's `CONFIG_ISLAND_SUPERVISOR_RESUME_PERIODS 3`); the
+  checker derives the milliseconds. It charges the whole gap as added time
+  on the fallback's settle, as the hand sum did: a conservative reading of
+  a pause in the braking command. The checker's period is the timer's
+  (33.33 ms at 30 Hz); a platform that truncates it to whole milliseconds
+  (the island's 33) resumes earlier, never later.
+
+### How an expression names a key (decided, v0.3.2)
+
+Section 12 left open what an expression means when two contexts declare
+the same key name. The rule, as the checker already enforces it:
+
+- **Inside one extension file a key's last segment is unique.** `key
+  hazard.decel` beside `key settle.decel` is refused at load
+  (`rlx-ambiguous-key`), as is a key ending in a core input's name
+  (`elapsed`, `reaction_total`). So a bare name in an
+  expression never has two meanings; the full path (`settle.response`) is
+  also accepted, and is the spelling to use where it helps the reader.
+- **Across extensions there is no collision in an expression.** An
+  expression sees only its own file's keys and inputs and the core inputs.
+  A second extension beside `vehicle.braking` may declare `settle.decel`
+  again; neither file's expressions change.
+- **The contract is where two extensions meet.** A contract that uses both
+  must write the qualified key, `vehicle.braking/decel:`; a bare key that
+  two used extensions declare is `extension-key-ambiguous` (phase 91 E7).
+  This is the "bare unless two used extensions collide" decision above.
 
 ## 12. Open
 
@@ -389,9 +446,9 @@ Found while building the front end (E2, `rlx/`), for E3 and later:
 - One script per identifier refuses `Δt` and `ω_max`, the most natural
   physics names, though `Δ` and `ω` are allowed letters. Decide whether a
   Greek letter may lead a Latin tail.
-- How expressions name keys is unspecified. E2 reads the last segment
-  (`settle.response` is `response`), which collides when two contexts
-  declare the same key name; E3 needs a rule.
+- ~~How expressions name keys is unspecified.~~ Decided in section 11
+  (v0.3.2): a last segment is unique within a file, so a bare name never
+  collides; two extensions meet only in the contract, which qualifies.
 - Units and variables: after a number, a name on the unit list is a unit,
   any other name a factor (`30 km/h` a quantity, `2 v0` a product). The
   design never says implicit multiplication exists; the examples need it.

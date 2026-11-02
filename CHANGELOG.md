@@ -6,6 +6,41 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.2 - 2026-11-02
+
+A supervision's reaction that hands its output back and resumes it
+(safety island phase 15 S6, rtss-work-2026-demo phase 10 G1; play_launch
+charges it). GRAMMAR_VERSION 0.3.2. Additive for every contract that
+parsed before it. Workspace Cargo version unchanged; `Supervision` has one
+new field. The model is unchanged: the gap is a term of the checker's
+overrun rows, and no realizer reads it yet.
+
+### Added
+
+- Contract: `<budget>.supervise.resume: { after }`, on any `supervise:`
+  (a node path's `max_latency` or a safe state's settle). Once the
+  supervision's reaction has run, the path that normally publishes the
+  reaction's output takes it over again when it next runs; if that path
+  then stays silent for `after`, the reaction resumes the output, once and
+  for good. `after` is `<n> periods` (of the path that publishes the
+  reaction's output: the consumer reads its timer's period) or a duration.
+  The consumer charges the gap, `after` + the supervision's detection
+  delay, once on every overrun row whose fallback is this reaction. Types:
+  `Supervision.resume: Option<Resume { after: ResumeAfter::Periods(u32) |
+  Duration(Duration) }>`; field-table context `SuperviseResume`.
+
+### Refused at parse time
+
+- `resume:` that is not a mapping, lacks `after`, has an unknown key, or an
+  `after` that is a bare number, zero or negative, or neither `<n> periods`
+  nor a duration.
+
+### Decided (docs/design/extension-system.md section 11)
+
+- Why the gap is a core key and not an extension derive target.
+- How an rlx expression names a key when two contexts declare the same
+  name (section 12's open item): the rule already enforced, now stated.
+
 ## v0.3.1 - 2026-11-02
 
 A supervised settle's response check (island phase 16; play_launch

@@ -383,6 +383,13 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `mechanism` | fact | since v0.1.61 | What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`). |
 | `observes` | fact | since v0.1.62 | A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget. |
 | `early` | requirement | since v0.3.1 | A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the rung up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget. |
+| `resume` | fact | since v0.3.2 | The reaction hands its output back and resumes it, `{ after }`: once the reaction has run, the path that normally publishes the reaction's output takes it over again when it next runs; if that path then stays silent for `after`, the reaction resumes the output, once and for good. The consumer charges the gap (`after` + this supervision's detection delay) once on every overrun row whose fallback is this reaction (`supervised-fit`). Absent: the reaction keeps its output, and no gap is charged. |
+
+## `<budget>.supervise.resume`
+
+| key | kind | status | meaning |
+|---|---|---|---|
+| `after` | fact | since v0.3.2 | How long the handed-back output may stay silent before the reaction resumes it: `<n> periods` of the path that publishes the reaction's output in the normal case (the consumer reads its timer's period), or a duration. Positive. Required. |
 
 ## `safe_state.settle.supervise.early`
 

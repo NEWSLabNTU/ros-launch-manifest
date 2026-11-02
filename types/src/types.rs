@@ -227,6 +227,32 @@ pub struct Supervision {
     /// earlier due instead of the settle's end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub early: Option<EarlyCheck>,
+    /// v0.3.2: the reaction hands its output back and resumes it. Once the
+    /// reaction has run, the path that normally publishes the reaction's
+    /// output takes it over again when it next runs; if that path then
+    /// stays silent for `after`, the reaction resumes the output, once and
+    /// for good. The consumer charges the gap (`after` + the supervision's
+    /// detection delay) once on every overrun row whose fallback is this
+    /// supervision's reaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<Resume>,
+}
+
+/// `supervise: { ..., resume: { after } }` (v0.3.2): how long the output
+/// the reaction handed back may stay silent before the reaction resumes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Resume {
+    pub after: ResumeAfter,
+}
+
+/// `resume.after`: a count of the handing-back path's own periods
+/// (`3 periods`: the consumer reads the period from that path's timer), or
+/// a duration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeAfter {
+    Periods(u32),
+    Duration(crate::duration::Duration),
 }
 
 /// `supervise: { ..., early: { within, drop } }` on a settle (v0.3.1): the

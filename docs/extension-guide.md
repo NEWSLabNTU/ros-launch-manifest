@@ -144,7 +144,12 @@ bounded `sum over b in <table>.bands(lo, hi): ...` over a table's bands
 (`2 v0`); a name on the unit list after a number is a unit (`30 km/h`).
 There are no loops, recursion, IO, clock or randomness: an extension always
 terminates and cannot see anything but its inputs. An expression names a
-key by its last segment (`belt_speed`).
+key by its last segment (`belt_speed`) or its full path
+(`settle.belt_speed`). A last segment is unique within a file (two keys
+ending in the same name are refused, `rlx-ambiguous-key`), so a bare name
+never has two meanings; another extension's keys are not visible, so two
+extensions that declare the same key meet only in the contract, which then
+writes the qualified `<extension>/<key>:`.
 
 ## Worst cases
 

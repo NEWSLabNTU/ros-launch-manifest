@@ -880,12 +880,81 @@ fn parse_supervise(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Supervisi
         }
     }
     let early = parse_early(section, sctx, settle)?;
+    let resume = parse_resume(section, sctx)?;
     Ok(Some(Supervision {
         reaction,
         mechanism,
         observes,
         early,
+        resume,
     }))
+}
+
+/// `resume: { after: <n> periods | <duration> }` under a `supervise:`
+/// (v0.3.2). `None` when absent.
+fn parse_resume(v: &Yaml, ctx: &str) -> Result<Option<Resume>, ParseError> {
+    let section = &v["resume"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let rctx = &format_path(ctx, "resume");
+    let Yaml::Hash(_) = section else {
+        return Err(type_err(
+            ctx,
+            "resume",
+            "`{ after: <n> periods }` or `{ after: <duration> }`",
+            section,
+        ));
+    };
+    reject_unknown_keys(section, rctx, Context::SuperviseResume)?;
+    let required = || {
+        field_err(
+            rctx,
+            "after",
+            "required: how long the handed-back output may stay silent before the reaction \
+             resumes it -- a count of the handing-back path's periods (`after: 3 periods`) or a \
+             duration (`after: 100ms`)",
+        )
+    };
+    let after = match &section["after"] {
+        Yaml::BadValue | Yaml::Null => return Err(required()),
+        Yaml::String(t) if t.trim().ends_with("periods") || t.trim().ends_with("period") => {
+            let n = t
+                .trim()
+                .trim_end_matches("periods")
+                .trim_end_matches("period")
+                .trim();
+            match n.parse::<u32>() {
+                Ok(n) if n > 0 => ResumeAfter::Periods(n),
+                _ => {
+                    return Err(field_err(
+                        rctx,
+                        "after",
+                        &format!(
+                            "`{t}`: the count of periods is a positive whole number (`3 periods`)"
+                        ),
+                    ));
+                }
+            }
+        }
+        Yaml::Integer(i) => {
+            return Err(field_err(
+                rctx,
+                "after",
+                &format!("`after: {i}` has no unit -- write `{i} periods` or a duration (`{i}ms`)"),
+            ));
+        }
+        _ => {
+            let d = yaml_duration(section, "after")
+                .map_err(|e| reframe(e, rctx))?
+                .ok_or_else(required)?;
+            if d.as_millis_f64() <= 0.0 {
+                return Err(field_err(rctx, "after", "must be positive"));
+            }
+            ResumeAfter::Duration(d)
+        }
+    };
+    Ok(Some(Resume { after }))
 }
 
 /// `early: { within: <duration>, drop: <speed> }` under a settle's
@@ -6304,6 +6373,7 @@ nodes:
                 mechanism: SuperviseMechanism::Timer,
                 observes: None,
                 early: None,
+                resume: None,
             })
         );
         assert_eq!(p.level(), Some(BudgetLevel::Supervised));
@@ -6476,6 +6546,52 @@ nodes:
         ] {
             let e = node(extra).unwrap_err();
             assert!(e.contains(needle), "{extra}: {e}");
+        }
+    }
+
+    /// v0.3.2: any `supervise:` takes `resume: { after }`, a count of
+    /// periods or a duration; a bare number, zero periods and an unknown
+    /// key are refused.
+    #[test]
+    fn a_supervision_takes_a_resume() {
+        let doc = |after: &str| {
+            format!(
+                "nodes:\n  op:\n    paths:\n      p:\n        trigger: {{ input: [a] }}\n        output: [o]\n        max_latency:\n          duration: 10ms\n          source: requirement\n          supervise:\n            reaction: r\n            mechanism: timer\n            resume: {after}\n"
+            )
+        };
+        let sv = |after: &str| {
+            parse_manifest_str(&doc(after)).map(|m| {
+                m.nodes["op"].paths["p"]
+                    .max_latency
+                    .clone()
+                    .unwrap()
+                    .supervise
+                    .unwrap()
+            })
+        };
+        assert_eq!(
+            sv("{ after: 3 periods }").unwrap().resume,
+            Some(Resume {
+                after: ResumeAfter::Periods(3)
+            })
+        );
+        match sv("{ after: 100ms }").unwrap().resume {
+            Some(Resume {
+                after: ResumeAfter::Duration(d),
+            }) => {
+                assert!((d.as_millis_f64() - 100.0).abs() < 1e-9)
+            }
+            other => panic!("{other:?}"),
+        }
+        for bad in [
+            "{ after: 3 }",
+            "{ after: 0 periods }",
+            "{}",
+            "{ after: 3 periods, x: 1 }",
+            "3",
+        ] {
+            let e = sv(bad).expect_err(bad);
+            assert!(e.to_string().contains("resume"), "{bad}: {e}");
         }
     }
 

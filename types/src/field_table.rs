@@ -118,6 +118,8 @@ pub enum Context {
     Supervise,
     /// `early:` under a settle's `supervise:` (v0.3.1).
     SuperviseEarly,
+    /// `resume:` under a `supervise:` (v0.3.2).
+    SuperviseResume,
     /// `policy:` at a manifest's top (phase 93).
     Policy,
     /// `supervision:` at a manifest's top (phase 93).
@@ -175,6 +177,7 @@ impl Context {
             Context::Derived => "source.derived",
             Context::Supervise => "<budget>.supervise",
             Context::SuperviseEarly => "safe_state.settle.supervise.early",
+            Context::SuperviseResume => "<budget>.supervise.resume",
             Context::Policy => "policy",
             Context::Supervision => "supervision",
             Context::TimerRate => "trigger.timer.rate_hz (map form)",
@@ -1524,6 +1527,19 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the rung up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget.",
     ),
+    live(
+        "resume",
+        Context::Supervise,
+        Kind::Fact,
+        "The reaction hands its output back and resumes it, `{ after }`: once the reaction has run, the path that normally publishes the reaction's output takes it over again when it next runs; if that path then stays silent for `after`, the reaction resumes the output, once and for good. The consumer charges the gap (`after` + this supervision's detection delay) once on every overrun row whose fallback is this reaction (`supervised-fit`). Absent: the reaction keeps its output, and no gap is charged.",
+    ),
+    // -- <budget>.supervise.resume (v0.3.2) --
+    live(
+        "after",
+        Context::SuperviseResume,
+        Kind::Fact,
+        "How long the handed-back output may stay silent before the reaction resumes it: `<n> periods` of the path that publishes the reaction's output in the normal case (the consumer reads its timer's period), or a duration. Positive. Required.",
+    ),
     // -- safe_state.settle.supervise.early (v0.3.1) --
     live(
         "within",
@@ -1819,6 +1835,8 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Supervise, "early", "0.3.1"),
     (Context::SuperviseEarly, "within", "0.3.1"),
     (Context::SuperviseEarly, "drop", "0.3.1"),
+    (Context::Supervise, "resume", "0.3.2"),
+    (Context::SuperviseResume, "after", "0.3.2"),
     (Context::Policy, "unsupervised_measured", "0.1.61"),
     (Context::Supervision, "tick", "0.1.61"),
     (Context::Supervision, "switch", "0.1.61"),
