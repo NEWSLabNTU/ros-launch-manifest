@@ -966,15 +966,15 @@ fn fixture_endpoint_transport_declares_both_values() {
     );
 }
 
-/// No ERRORS on the fixture. It does carry `chain-latency` warnings, and
-/// that is the third reader design issue #55 left undecided: the
-/// per-manifest rule is a flat sum over every node and every topic in the
-/// scope, with no route, reading only the deprecated topic-level transport
-/// (phase 90 G3 moved this fixture's onto its subscribers, so the sum now
-/// carries none): it reports 35ms (10 + 20 + 5 nodes) against both budgets
-/// where the routes are 30 and 25. Deliberately pinned: when that rule
-/// converges on the shared derivation, this assertion is the one that says
-/// so.
+/// No ERRORS on the fixture. It does carry `chain-latency` warnings: the
+/// per-manifest rule is a flat sum over every node and every topic hop in
+/// the scope, with no route, so it is pessimistic by design. Since phase 97
+/// P1 it reads each hop's transport by the one precedence (the subscriber's
+/// own value, else the topic's; the largest edge per hop), as the shared
+/// derivation does: 35 (10 + 20 + 5 nodes) + 10 (the remote subscriber's
+/// edge) = 45 against both budgets. Before P1 it read the deprecated
+/// topic-level value only, which this fixture no longer writes, and summed
+/// no transport at all (35).
 #[test]
 fn fixture_endpoint_transport_has_no_errors_and_the_flat_sum_is_pessimistic() {
     let m = parse_manifest(&fixture_path("manifest_endpoint_transport")).unwrap();
@@ -997,8 +997,9 @@ fn fixture_endpoint_transport_has_no_errors_and_the_flat_sum_is_pessimistic() {
     assert!(
         budget.iter().all(|d| d.severity == Severity::Warning
             && d.message.contains("sum of node latencies (35)")
-            && d.message.contains("= 35.")),
-        "the flat sum reads the topic level only: {budget:?}"
+            && d.message.contains("declared topic transport (10)")
+            && d.message.contains("= 45.")),
+        "the flat sum reads each hop by the edge precedence: {budget:?}"
     );
 }
 

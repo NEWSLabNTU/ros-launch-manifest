@@ -423,6 +423,7 @@ dependencies = [
  "indexmap",
  "ros-launch-manifest-model",
  "ros-launch-manifest-sched",
+ "ros-launch-manifest-types",
 ]
 
 [[package]]

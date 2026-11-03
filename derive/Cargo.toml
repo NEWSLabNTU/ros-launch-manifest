@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 ros-launch-manifest-model = { path = "../model" }
 ros-launch-manifest-sched = { path = "../sched" }
+ros-launch-manifest-types = { path = "../types" }
 
 [dev-dependencies]
 indexmap = "2"

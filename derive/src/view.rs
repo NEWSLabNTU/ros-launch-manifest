@@ -172,7 +172,8 @@ impl TopicView {
     /// The transport charged for the edge that ENDS at `sub_ep`: the
     /// subscriber's own value if it declared one, else the topic's.
     ///
-    /// THE one copy of this precedence (issue #44). The reason it is per
+    /// The precedence itself is `types::edge_transport_ms`, which the
+    /// per-manifest `chain-latency` fallback reads too (phase 97 P1). The reason it is per
     /// subscriber is placement: a subscriber in the publisher's process pays a
     /// pointer handoff where one across the network pays the network, on the
     /// same topic (design issue #55).
@@ -187,10 +188,10 @@ impl TopicView {
     /// consumers, a FORK so the override decides which
     /// branch is the critical path rather than only shifting a total.
     pub fn transport_ms(&self, sub_ep: &str) -> Option<f64> {
-        self.sub_max_transport_ms
-            .get(sub_ep)
-            .copied()
-            .or(self.max_transport_ms)
+        ros_launch_manifest_types::edge_transport_ms(
+            self.sub_max_transport_ms.get(sub_ep).copied(),
+            self.max_transport_ms,
+        )
     }
 }
 

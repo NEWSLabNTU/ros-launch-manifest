@@ -2,7 +2,8 @@
 //!
 //! This is a per-manifest fallback that runs when checking a single
 //! manifest in isolation (no cross-scope merge). It uses a flat sum
-//! of all node latencies plus declared topic transport, which is a
+//! of all node latencies plus each topic hop's declared transport (its
+//! largest edge, subscriber's own value else the topic's), which is a
 //! conservative upper bound — correct for series chains but
 //! pessimistic for parallel (fork-join) topologies where the actual
 //! critical path is `max(branches) + fusion`.
@@ -56,17 +57,17 @@ impl ValidationRule for ScopeBudgetRule {
             // For external includes, we can't check without loading them
         }
 
-        // Sum max_transport_ms across topics in this scope
-        let topic_transport: f64 = manifest
+        // The transport each topic hop is charged: its largest edge, by the
+        // one precedence (a subscriber's own value, else the topic's;
+        // play_launch phase 97 P1). Before, only the topic's own value was
+        // summed, so per-subscriber values never reached this total.
+        let per_topic: Vec<Option<f64>> = manifest
             .topics
-            .values()
-            .filter_map(|t| t.max_transport.ms())
-            .sum();
-        let undeclared_transport_count = manifest
-            .topics
-            .values()
-            .filter(|t| t.max_transport.ms().is_none())
-            .count();
+            .keys()
+            .map(|t| manifest.topic_transport_ms(t))
+            .collect();
+        let topic_transport: f64 = per_topic.iter().flatten().sum();
+        let undeclared_transport_count = per_topic.iter().filter(|t| t.is_none()).count();
 
         // Check scope-level paths
         for (path_name, path) in &manifest.paths {

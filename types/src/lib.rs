@@ -15,6 +15,7 @@ pub mod profile;
 pub mod rule_names;
 pub mod span;
 pub mod subst;
+pub mod transport;
 pub mod types;
 pub mod values;
 
@@ -28,6 +29,7 @@ pub use parse::{
     parse_manifest_with_spans,
 };
 pub use span::{SpanIndex, Spanned};
+pub use transport::edge_transport_ms;
 
 /// The contract grammar this crate reads: the rlm release it is. A contract's `rlm:` header names the release it needs, and
 /// [`parse_manifest_str`] refuses one newer than this before reading a key
