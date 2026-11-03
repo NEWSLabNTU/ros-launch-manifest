@@ -34,6 +34,26 @@ are an API break, so the workspace Cargo version moves.
   profiles are 1.1.0 and require rlm >= 0.3.3: their files changed, so
   their sha256 did; an `rlm.lock` naming 1.0.0 reports drift until
   `check --update-lock`.
+- **rung, ladder, floor and window are degradation level, fallback
+  sequence, minimal risk condition and dwell** (S2-S4). A mode's
+  `window:` is `min_dwell:` (`ModeDecl.min_dwell` + `spelled_window`;
+  bound key `min_dwell`; rewrite `window-min-dwell`). The model's
+  `HazardContract.rungs` is `degradation_levels` of `LevelRoute { level,
+  role: LevelRole::{Level, Dwell, Mrc} }` and `ModeContract.window` is
+  `min_dwell: DwellContract`; the schema-2 names and the role values
+  `rung`/`window`/`floor` are read too. Field-table prose and parse
+  messages use the new words.
+- **Renamed rule ids keep their old ids for one release**
+  (`types::rule_names::RENAMED_RULES`): `severity-unknown` ->
+  `integrity-unknown`, `severity-scale-conflict` ->
+  `integrity-scale-conflict`, `ladder-rung-budget` ->
+  `degradation-level-budget`, `ladder-unterminated` ->
+  `fallback-without-mrc`, `ladder-window-floor` -> `dwell-at-mrc`,
+  `call-unbounded-floor` -> `call-unbounded-mrc`, `window-expiry` ->
+  `dwell-expiry`, `window-param` -> `dwell-param`, `window-unbound` ->
+  `dwell-unbound`. An `acknowledged:` entry naming an old id, or a path
+  through a renamed key (`rule_names::RENAMED_KEYS`, `current_path`),
+  still matches; rewrite `rule-id-renamed` moves both.
 - SystemModel schema 3 (`SCHEMA_VERSION`): a model written now carries only
   the new names, so an older reader refuses it by its version instead of
   dropping the renamed fields in silence. Versions 1 and 2 are read and

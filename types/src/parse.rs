@@ -1558,11 +1558,26 @@ fn parse_predicate(doc: &Yaml, ctx: &str) -> Result<Option<ValuePredicate>, Pars
     Ok(Some(ValuePredicate { field, op, value }))
 }
 
-/// `modes.<m>.window` (v0.1.46): a bare duration (unbound), or the map
-/// form of a budget, `{ duration, param: <node>.<parameter>, source }`
-/// (phase 90 G2: a least-time bound, no context of its own).
-fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
-    let section = &doc["window"];
+/// `modes.<m>.min_dwell` (v0.1.46 as `window`, renamed in v0.3.3, phase
+/// 98): a bare duration (unbound), or the map form of a budget,
+/// `{ duration, param: <node>.<parameter>, source }` (phase 90 G2: a
+/// least-time bound, no context of its own). The old key reads for one
+/// release; the second value says it was the one written.
+fn parse_min_dwell(doc: &Yaml, ctx: &str) -> Result<(Option<Bound>, bool), ParseError> {
+    let spelled_window = !doc["window"].is_badvalue();
+    if spelled_window && !doc["min_dwell"].is_badvalue() {
+        return Err(field_err(
+            ctx,
+            "window",
+            "`window:` is the old spelling of `min_dwell:` -- write `min_dwell:` alone",
+        ));
+    }
+    let key = if spelled_window { "window" } else { "min_dwell" };
+    parse_dwell_at(doc, ctx, key).map(|b| (b, spelled_window))
+}
+
+fn parse_dwell_at(doc: &Yaml, ctx: &str, key: &str) -> Result<Option<Bound>, ParseError> {
+    let section = &doc[key];
     let positive = |d: crate::duration::Duration, at: &str| {
         if d.as_millis_f64() > 0.0 {
             Ok(d)
@@ -1570,26 +1585,26 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
             Err(field_err(
                 ctx,
                 at,
-                "a window of zero is no window -- the rung would be left the moment it was \
+                "a dwell of zero is no dwell -- the level would be left the moment it was \
                  entered",
             ))
         }
     };
-    let window = |d| spelled(Context::Mode, "window", Quantity::Duration(d));
+    let dwell = |d| spelled(Context::Mode, "min_dwell", Quantity::Duration(d));
     match section {
         Yaml::BadValue => Ok(None),
         Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) => {
             let read = ref_text(section).is_some();
-            let Some(d) = yaml_duration_at(doc, "window", ctx, true)? else {
+            let Some(d) = yaml_duration_at(doc, key, ctx, true)? else {
                 if read {
                     return Ok(None);
                 }
-                unreachable!("a scalar window parses or errors")
+                unreachable!("a scalar dwell parses or errors")
             };
-            Ok(Some(window(positive(d, "window")?)))
+            Ok(Some(dwell(positive(d, key)?)))
         }
         Yaml::Hash(_) => {
-            let wctx = &format_path(ctx, "window");
+            let wctx = &format_path(ctx, key);
             reject_unknown_keys(section, wctx, Context::Budget)?;
             source_on_reference(section, "duration", wctx)?;
             let read = ref_text(&section["duration"]).is_some();
@@ -1600,7 +1615,7 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
                 return Err(field_err(
                     wctx,
                     "duration",
-                    "required: how long the rung may last, with a unit (`10s`)",
+                    "required: how long the level lasts at least, with a unit (`10s`)",
                 ));
             };
             let param = yaml_string(section, "param", wctx)?
@@ -1615,17 +1630,18 @@ fn parse_window(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
                 return Err(field_err(
                     wctx,
                     "supervise",
-                    "a window is a least time the rung lasts, not a budget something can                      overrun: there is nothing to supervise",
+                    "a dwell is a least time the level lasts, not a budget something can \
+                     overrun: there is nothing to supervise",
                 ));
             }
-            let mut b = window(positive(d, "window.duration")?);
+            let mut b = dwell(positive(d, &format!("{key}.duration"))?);
             b.param = param.map(ParamBinding::Node);
             b.source = source;
             Ok(Some(b))
         }
         other => Err(type_err(
             ctx,
-            "window",
+            key,
             "a duration or `{ duration, param }`",
             other,
         )),
@@ -1683,14 +1699,14 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
         field_err(
             ectx,
             "holds",
-            "required: the function whose holding ends the ladder",
+            "required: the function whose holding ends the fallback sequence",
         )
     })?;
     let to = yaml_string(section, "to", ectx)?.ok_or_else(|| {
         field_err(
             ectx,
             "to",
-            "required: the mode the ladder ends in when the exit is taken",
+            "required: the mode the fallback sequence ends in when the exit is taken",
         )
     })?;
     Ok(Some(ModeExit {
@@ -1748,18 +1764,18 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
         let mctx = format_path(ctx, &format!("modes.{name}"));
         reject_unknown_keys(v, &mctx, Context::Mode)?;
         let overrides = parse_mode_overrides(v, &mctx)?;
-        let window = parse_window(v, &mctx)?;
+        let (min_dwell, spelled_window) = parse_min_dwell(v, &mctx)?;
         let exit = parse_exit(v, &mctx)?;
-        // An exit is the one way out of a TIMED rung. On a rung with no
-        // window it would be a general mode transition, which the grammar
+        // An exit is the one way out of a TIMED level. On a level with no
+        // dwell it would be a general mode transition, which the grammar
         // deliberately does not have (`operational-modes.md`: transitions
         // are not folded in).
-        if exit.is_some() && window.is_none() {
+        if exit.is_some() && min_dwell.is_none() {
             return Err(field_err(
                 &mctx,
                 "exit",
-                "an exit is only for a windowed rung -- add the `window:` this rung waits \
-                 out, or drop the exit. A general mode transition is not in the grammar",
+                "an exit is only for a level with a `min_dwell:` -- add the dwell this level \
+                 waits out, or drop the exit. A general mode transition is not in the grammar",
             ));
         }
         out.insert(
@@ -1770,7 +1786,8 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
                 fallback: parse_string_or_list(v, "fallback", &mctx)?,
                 reaction: yaml_string(v, "reaction", &mctx)?,
                 overrides,
-                window,
+                min_dwell,
+                spelled_window,
                 exit,
             },
         );
@@ -1936,7 +1953,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
             return Err(field_err(
                 &hctx,
                 "enters",
-                "a hazard either enters a mode (`enters: <mode>`, the fallback ladder) or \
+                "a hazard either enters a mode (`enters: <mode>`, its fallback sequence) or \
                  reacts by one scope path (`reaction: <path>`), not both -- keep one",
             ));
         }
@@ -5594,12 +5611,12 @@ modes:
   takeover_request:
     requires: [hpc_alive]
     reaction: island.tor
-    window: { duration: 10s, param: mrm_handler.takeover_request_timeout }
+    min_dwell: { duration: 10s, param: mrm_handler.takeover_request_timeout }
     exit: { holds: driver_took_over, to: manual }
   comfortable_stop:
     requires: [hpc_alive]
     reaction: island.comfortable_stop
-    window: 30s
+    min_dwell: 30s
   manual: {}
 nodes:
   op:
@@ -5648,7 +5665,7 @@ nodes:
         assert_eq!(h.when.as_ref().unwrap().field, "autonomous");
 
         let tor = &m.modes["takeover_request"];
-        let win = tor.window.as_ref().unwrap();
+        let win = tor.min_dwell.as_ref().unwrap();
         assert_eq!(win.ms(), Some(10_000.0));
         assert_eq!(win.kind, crate::BoundKind::LeastTime);
         assert_eq!(
@@ -5667,7 +5684,7 @@ nodes:
             })
         );
         // The scalar form is a window with no parameter: unbound.
-        let bare = m.modes["comfortable_stop"].window.as_ref().unwrap();
+        let bare = m.modes["comfortable_stop"].min_dwell.as_ref().unwrap();
         assert_eq!((bare.ms(), &bare.param), (Some(30_000.0), &None));
 
         let ss = m.nodes["op"].paths["on_timer"].safe_state.as_ref().unwrap();
@@ -5772,31 +5789,46 @@ nodes:
         assert!(m.functions["f"].group.all_of && m.functions["f"].when.is_none());
     }
 
+    /// Phase 98 S4: `window:` reads as `min_dwell:` for one release, with
+    /// the flag the consumer warns from; both together are refused.
     #[test]
-    fn a_window_is_positive_and_names_its_parameter() {
+    fn the_old_window_key_reads_as_min_dwell() {
+        let doc = "version: 1\nmodes:\n  m:\n    window: 10s\n";
+        let ok = parse_manifest_str(doc).unwrap();
+        let m = &ok.modes["m"];
+        assert!(m.spelled_window);
+        assert_eq!(m.min_dwell.as_ref().unwrap().duration().unwrap().as_millis_f64(), 10_000.0);
+        let new = parse_manifest_str("version: 1\nmodes:\n  m:\n    min_dwell: 10s\n").unwrap();
+        assert!(!new.modes["m"].spelled_window);
+        let e = err_of("version: 1\nmodes:\n  m:\n    window: 10s\n    min_dwell: 10s\n");
+        assert!(e.contains("old spelling of `min_dwell:`"), "{e}");
+    }
+
+    #[test]
+    fn a_dwell_is_positive_and_names_its_parameter() {
         let m = |mode: &str| format!("version: 1\nmodes:\n  m:\n{mode}");
-        let e = err_of(&m("    window: 10\n"));
-        assert!(e.contains("modes.m.window") && e.contains("no unit"), "{e}");
-        let e = err_of(&m("    window: 0s\n"));
-        assert!(e.contains("a window of zero is no window"), "{e}");
-        let e = err_of(&m("    window: { param: h.p }\n"));
+        let e = err_of(&m("    min_dwell: 10\n"));
+        assert!(e.contains("modes.m.min_dwell") && e.contains("no unit"), "{e}");
+        let e = err_of(&m("    min_dwell: 0s\n"));
+        assert!(e.contains("a dwell of zero is no dwell"), "{e}");
+        let e = err_of(&m("    min_dwell: { param: h.p }\n"));
         assert!(
-            e.contains("modes.m.window.duration") && e.contains("required"),
+            e.contains("modes.m.min_dwell.duration") && e.contains("required"),
             "{e}"
         );
         let e = err_of(&m(
-            "    window: { duration: 10s, param: takeover_request_timeout }\n",
+            "    min_dwell: { duration: 10s, param: takeover_request_timeout }\n",
         ));
         assert!(e.contains("<node>.<parameter>"), "{e}");
-        let e = err_of(&m("    window: { duration: 10s, parameter: h.p }\n"));
+        let e = err_of(&m("    min_dwell: { duration: 10s, parameter: h.p }\n"));
         assert!(e.contains("accepted here: duration, param"), "{e}");
         // A parameter name may itself contain dots; the node is the first
         // segment.
         let ok = parse_manifest_str(&m(
-            "    window: { duration: 500ms, param: mrm_handler.turning_hazard_on.emergency }\n",
+            "    min_dwell: { duration: 500ms, param: mrm_handler.turning_hazard_on.emergency }\n",
         ))
         .unwrap();
-        let p = ok.modes["m"].window.clone().unwrap().param.unwrap();
+        let p = ok.modes["m"].min_dwell.clone().unwrap().param.unwrap();
         assert_eq!(
             (p.node().unwrap(), p.name()),
             ("mrm_handler", "turning_hazard_on.emergency")
@@ -5807,18 +5839,18 @@ nodes:
     fn an_exit_needs_a_window_and_both_ends() {
         let m = |mode: &str| format!("version: 1\nmodes:\n  m:\n{mode}");
         let e = err_of(&m("    exit: { holds: driver, to: manual }\n"));
-        assert!(e.contains("only for a windowed rung"), "{e}");
-        let e = err_of(&m("    window: 10s\n    exit: { holds: driver }\n"));
+        assert!(e.contains("only for a level with a `min_dwell:`"), "{e}");
+        let e = err_of(&m("    min_dwell: 10s\n    exit: { holds: driver }\n"));
         assert!(
             e.contains("modes.m.exit.to") && e.contains("required"),
             "{e}"
         );
-        let e = err_of(&m("    window: 10s\n    exit: { to: manual }\n"));
+        let e = err_of(&m("    min_dwell: 10s\n    exit: { to: manual }\n"));
         assert!(
             e.contains("modes.m.exit.holds") && e.contains("required"),
             "{e}"
         );
-        let e = err_of(&m("    window: 10s\n    exit: manual\n"));
+        let e = err_of(&m("    min_dwell: 10s\n    exit: manual\n"));
         assert!(e.contains("expected a mapping"), "{e}");
     }
 
@@ -5827,7 +5859,7 @@ nodes:
     /// marked for the consumer's warning; both at once is an error.
     #[test]
     fn exit_on_is_the_old_spelling_of_holds() {
-        let m = |exit: &str| format!("version: 1\nmodes:\n  m:\n    window: 10s\n{exit}");
+        let m = |exit: &str| format!("version: 1\nmodes:\n  m:\n    min_dwell: 10s\n{exit}");
         let new = parse_manifest_str(&m("    exit: { holds: driver, to: manual }\n")).unwrap();
         let old = parse_manifest_str(&m("    exit: { on: driver, to: manual }\n")).unwrap();
         let (n, o) = (
@@ -6071,7 +6103,7 @@ hazards:
 modes:
   tor:
     requires: []
-    window: { duration: 10s, param: n.timeout, source: requirement }
+    min_dwell: { duration: 10s, param: n.timeout, source: requirement }
 nodes:
   n:
     params:
@@ -6143,7 +6175,7 @@ nodes:
         let sources = m.budget_sources();
         let src = |k: &str| *sources.get(k).unwrap_or_else(|| panic!("{k}"));
         assert_eq!(src("hazards.h.ftti").kind, SourceKind::Requirement);
-        assert_eq!(src("modes.tor.window").kind, SourceKind::Requirement);
+        assert_eq!(src("modes.tor.min_dwell").kind, SourceKind::Requirement);
         assert_eq!(src("nodes.n.sub.a.max_age").kind, SourceKind::Requirement);
         assert_eq!(
             src("nodes.n.sub.a.on_violation.within").kind,
@@ -6502,7 +6534,7 @@ nodes:
         assert!(e.contains("supervise:"), "{e}");
         // A window is a least time.
         let e = super::parse_manifest_str(
-            "modes:\n  m: { requires: [/a], window: { duration: 10s, supervise: { reaction: r, mechanism: timer } } }\n",
+            "modes:\n  m: { requires: [/a], min_dwell: { duration: 10s, supervise: { reaction: r, mechanism: timer } } }\n",
         )
         .unwrap_err()
         .to_string();

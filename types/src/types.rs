@@ -530,22 +530,29 @@ pub struct ModeDecl {
     /// no requirement becomes a map).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<ModeOverride>,
-    /// A timed, TRANSITIONAL rung (v0.1.46): the system stays in this mode
-    /// `window` (a least-time bound, phase 90 G2) and then takes the next
-    /// rung of the ladder, even while this one is still available. A takeover request is the
-    /// case it exists for. A windowed rung is not a safe state, so it cannot
-    /// be the floor of a ladder (`ladder-window-floor` in the consumer).
+    /// A timed, TRANSITIONAL degradation level (v0.1.46; `window:` before
+    /// v0.3.3): the system stays in this mode at least `min_dwell` (a
+    /// least-time bound, phase 90 G2, the switched-systems dwell time) and
+    /// then takes the next level of the fallback sequence, even while this
+    /// one is still available. A takeover request is the case it exists
+    /// for. A level with a dwell is not a safe state, so it cannot be the
+    /// minimal risk condition (`dwell-at-mrc` in the consumer).
     ///
-    /// `window: 10s` (a bare duration) parses as a window with no parameter
-    /// -- UNBOUND: nothing in the image is tied to the number, which the
-    /// consumer reports (`window-unbound`) rather than refuses. The map form
-    /// `{ duration, param: <node>.<parameter>, source }` is a budget's
-    /// (phase 90 G2); its `param` is a [`crate::ParamBinding::Node`].
+    /// `min_dwell: 10s` (a bare duration) parses as a dwell with no
+    /// parameter -- UNBOUND: nothing in the image is tied to the number,
+    /// which the consumer reports (`dwell-unbound`) rather than refuses.
+    /// The map form `{ duration, param: <node>.<parameter>, source }` is a
+    /// budget's (phase 90 G2); its `param` is a [`crate::ParamBinding::Node`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub window: Option<crate::bound::Bound>,
-    /// The one way out of a windowed rung that is not the next rung
+    pub min_dwell: Option<crate::bound::Bound>,
+    /// Written under its pre-0.3.3 name `window:` (`deprecated-spelling`;
+    /// phase 98).
+    #[serde(skip)]
+    pub spelled_window: bool,
+    /// The one way out of a dwelling level that is not the next level
     /// (v0.1.46): while this mode is active, the named function holding ends
-    /// the ladder successfully in `to`. Only a windowed rung may carry one --
+    /// the fallback sequence successfully in `to`. Only a level with a
+    /// `min_dwell` may carry one --
     /// a parse error otherwise -- which keeps general transitions out of the
     /// grammar.
     #[serde(skip_serializing_if = "Option::is_none")]

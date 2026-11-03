@@ -389,7 +389,7 @@ pub const FIELDS: &[Field] = &[
         "modes",
         Context::Manifest,
         Kind::Meta,
-        "Operational modes: what each requires, and the ordered ladder to fall to when it is lost.",
+        "Operational modes: what each requires, and the fallback sequence (the ordered degradation levels) to fall to when it is lost.",
     ),
     alias("severity_levels", Context::Manifest, "integrity_levels"),
     live(
@@ -558,7 +558,7 @@ pub const FIELDS: &[Field] = &[
         "max_transport",
         Context::Endpoint,
         Kind::Requirement,
-        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a window's deadline, which the window's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
+        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
     ),
     removed(
         "max_transport_ms",
@@ -605,7 +605,7 @@ pub const FIELDS: &[Field] = &[
         "timeout",
         Context::Endpoint,
         Kind::Fact,
-        "Client: how long the code waits for the response before it gives up (a duration, `$(param …)`-capable): `spin_until_future_complete` with a timeout, a pending-request prune, a tick-counting poll. A fact about the code, not a requirement. Absent means the client may wait forever (rclcpp's default), so a reaction route through the call is unbounded unless the rung is supervised (`call-unbounded`). Refused under `pub:`/`sub:`.",
+        "Client: how long the code waits for the response before it gives up (a duration, `$(param …)`-capable): `spin_until_future_complete` with a timeout, a pending-request prune, a tick-counting poll. A fact about the code, not a requirement. Absent means the client may wait forever (rclcpp's default), so a reaction route through the call is unbounded unless the degradation level is supervised (`call-unbounded`). Refused under `pub:`/`sub:`.",
     ),
     live(
         "on_timeout",
@@ -987,7 +987,7 @@ pub const FIELDS: &[Field] = &[
         "jitter",
         Context::TriggerTimer,
         Kind::Fact,
-        "Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `window-expiry`'s notice) instead of a bare period. Absent: ticks are on time. A budget: the map form `{ duration, source }` applies.",
+        "Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `dwell-expiry`'s notice) instead of a bare period. Absent: ticks are on time. A budget: the map form `{ duration, source }` applies.",
     ),
     live(
         "param",
@@ -1162,13 +1162,13 @@ pub const FIELDS: &[Field] = &[
         "enters",
         Context::Hazard,
         Kind::Meta,
-        "The mode the hazard enters: the top of the `fallback:` ladder it walks to a safe state, each rung checked in its own right (`ladder-rung-budget`) and the floor against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
+        "The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-budget`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
     ),
     live(
         "reaction",
         Context::Hazard,
         Kind::Meta,
-        "The scope path whose route reaches the safe state: a one-rung reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
+        "The scope path whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
     ),
     live(
         "when",
@@ -1210,7 +1210,7 @@ pub const FIELDS: &[Field] = &[
         "fallback",
         Context::Mode,
         Kind::Requirement,
-        "Modes to fall to, in order, when this one is lost. The last rung is the floor and must require nothing losable.",
+        "Modes to fall to, in order, when this one is lost: the fallback sequence of degradation levels. The last is the minimal risk condition (MRC) and must require nothing losable.",
     ),
     live(
         "reaction",
@@ -1225,16 +1225,17 @@ pub const FIELDS: &[Field] = &[
         "Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere.",
     ),
     live(
-        "window",
+        "min_dwell",
         Context::Mode,
         Kind::Requirement,
-        "A transitional rung: while it stays available the system stays AT LEAST this long (the time the rung promises whoever it waits for, a driver's takeover time), then takes the next rung. The rung below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`window-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the floor (`ladder-window-floor`); unbound is `window-unbound`.",
+        "A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`.",
     ),
+    alias("window", Context::Mode, "min_dwell"),
     live(
         "exit",
         Context::Mode,
         Kind::Requirement,
-        "`{ holds: <function>, to: <mode> }`: while this rung is active, the function holding ends the ladder in `to`. Only on a windowed rung; `to` is outside every `fallback:` list.",
+        "`{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`; `to` is outside every `fallback:` list.",
     ),
     // ── hazards.<name>.guards[] ──
     removed(
@@ -1360,14 +1361,14 @@ pub const FIELDS: &[Field] = &[
         "holds",
         Context::Exit,
         Kind::Fact,
-        "The function whose holding ends the ladder. Some node implementing the rung must take its topic on a path trigger (`mode-exit-unwired`).",
+        "The function whose holding ends the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-exit-unwired`).",
     ),
     alias("on", Context::Exit, "holds"),
     live(
         "to",
         Context::Exit,
         Kind::Meta,
-        "The mode the ladder ends in. Not a member of any `fallback:` list (`mode-exit-target`).",
+        "The mode the fallback sequence ends in. Not a member of any `fallback:` list (`mode-exit-target`).",
     ),
     // -- safe_state.settle (map form) --
     live(
@@ -1392,20 +1393,20 @@ pub const FIELDS: &[Field] = &[
         "supervise",
         Context::Settle,
         Kind::Requirement,
-        "The runtime supervision of the WHOLE settle (since v0.1.62): from the safe state's command to standstill, the written `duration` or the derived profile plus the `response`. `{ reaction: <path> | enters: <mode>, mechanism: executor | timer, observes: <node>/<subscriber> }`: the platform arms due = command + settle + how late it sees standstill (`observes`: that input's period + its `max_transport`), and a vehicle not at standstill by then starts the reaction. The consumer's overrun case charges the rung up to the settle's end, that observation, the detection and the reaction's route and settle. v0.1.61 took it on a written `duration` only.",
+        "The runtime supervision of the WHOLE settle (since v0.1.62): from the safe state's command to standstill, the written `duration` or the derived profile plus the `response`. `{ reaction: <path> | enters: <mode>, mechanism: executor | timer, observes: <node>/<subscriber> }`: the platform arms due = command + settle + how late it sees standstill (`observes`: that input's period + its `max_transport`), and a vehicle not at standstill by then starts the reaction. The consumer's overrun case charges the level up to the settle's end, that observation, the detection and the reaction's route and settle. v0.1.61 took it on a written `duration` only.",
     ),
     // -- the map form of a budget (phase 10) --
     live(
         "duration",
         Context::Budget,
         Kind::Requirement,
-        "The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter`, a settle's `response` and a mode's `window` (where it is the least time the rung lasts while it stays available: the rung below starts no sooner; positive). See Bounds below.",
+        "The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter`, a settle's `response` and a mode's `min_dwell` (where it is the least time the level lasts while it stays available: the level below starts no sooner; positive). See Bounds below.",
     ),
     live(
         "param",
         Context::Budget,
         Kind::Fact,
-        "The parameter whose resolved launch value, in seconds, must equal `duration`. On `max_age`: a parameter of this subscriber's node (`max-age-param`). On a mode's `window`: `<node>.<parameter>` (`window-param`). No other bound takes one.",
+        "The parameter whose resolved launch value, in seconds, must equal `duration`. On `max_age`: a parameter of this subscriber's node (`max-age-param`). On a mode's `min_dwell`: `<node>.<parameter>` (`dwell-param`). No other bound takes one.",
     ),
     live(
         "source",
@@ -1417,7 +1418,7 @@ pub const FIELDS: &[Field] = &[
         "supervise",
         Context::Budget,
         Kind::Requirement,
-        "The runtime checks the budget while the system runs and a miss starts a fallback: `{ reaction: <path> | enters: <mode>, mechanism: executor | timer }`. The consumer derives the detection delay and checks that the overrun case (the budget + the detection + the fallback's route and settle) fits the hazard's FTTI. A budget's level is derived from this and `source`: analysed -> bound; supervised; measured alone -> unsupervised. Not on a `window` (a least time).",
+        "The runtime checks the budget while the system runs and a miss starts a fallback: `{ reaction: <path> | enters: <mode>, mechanism: executor | timer }`. The consumer derives the detection delay and checks that the overrun case (the budget + the detection + the fallback's route and settle) fits the hazard's FTTI. A budget's level is derived from this and `source`: analysed -> bound; supervised; measured alone -> unsupervised. Not on a `min_dwell` (a least time).",
     ),
     // -- source: { measured: ... } --
     live(
@@ -1527,7 +1528,7 @@ pub const FIELDS: &[Field] = &[
         "early",
         Context::Supervise,
         Kind::Requirement,
-        "A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the rung up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget.",
+        "A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the level up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget.",
     ),
     live(
         "resume",
@@ -1841,6 +1842,7 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::SuperviseResume, "after", "0.3.2"),
     (Context::Hazard, "integrity", "0.3.3"),
     (Context::Manifest, "integrity_levels", "0.3.3"),
+    (Context::Mode, "min_dwell", "0.3.3"),
     (Context::Policy, "unsupervised_measured", "0.1.61"),
     (Context::Supervision, "tick", "0.1.61"),
     (Context::Supervision, "switch", "0.1.61"),

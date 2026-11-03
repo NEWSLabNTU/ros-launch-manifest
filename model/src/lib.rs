@@ -42,7 +42,11 @@ use serde::{Deserialize, Serialize};
 ///   `integrity_levels`. Older names are still READ (serde aliases), so a
 ///   saved model loads for good; a model written now carries only the new
 ///   names, and a reader older than this one refuses it by the version
-///   rather than dropping the renamed fields in silence.
+///   rather than dropping the renamed fields in silence. Likewise a
+///   hazard's `rungs` is `degradation_levels`, each entry's `rung` is
+///   `level`, and its role `rung`/`window`/`floor` is `level`/`dwell`/`mrc`
+///   (the fallback sequence's last level is the minimal risk condition),
+///   and a mode's `window` is `min_dwell`.
 pub const SCHEMA_VERSION: u32 = 3;
 
 /// Errors loading or saving a model.
@@ -1015,14 +1019,15 @@ pub struct ModeContract {
     /// the value it takes in this mode.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<ModeOverrideContract>,
-    /// A transitional rung's window (v0.1.46): the least time the system
-    /// spends here, while the rung stays available, before taking the next
-    /// rung (v0.1.47 corrects "the most": the window is a guarantee to
-    /// whoever the rung waits for, and the rung below's route, charged from
-    /// the deadline, bounds how late it may start).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window: Option<WindowContract>,
-    /// The success exit of a windowed rung (v0.1.46).
+    /// A transitional degradation level's dwell time (v0.1.46; `window`
+    /// before schema 3, read under that name too): the least time the
+    /// system spends here, while the level stays available, before taking
+    /// the next level (v0.1.47 corrects "the most": the dwell is a
+    /// guarantee to whoever the level waits for, and the level below's
+    /// route, charged from the deadline, bounds how late it may start).
+    #[serde(default, alias = "window", skip_serializing_if = "Option::is_none")]
+    pub min_dwell: Option<DwellContract>,
+    /// The success exit of a level with a dwell (v0.1.46).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<ExitContract>,
     /// Where each number of this entry read from the launch tree came from
@@ -1033,12 +1038,12 @@ pub struct ModeContract {
     pub sources: BTreeMap<String, ValueSource>,
 }
 
-/// `modes.<m>.window` after merge (v0.1.46).
+/// `modes.<m>.min_dwell` after merge (v0.1.46 as `window`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct WindowContract {
+pub struct DwellContract {
     pub duration_ms: f64,
-    /// `<node FQN>.<parameter>`: the parameter that enforces the window,
-    /// read in seconds. Absent means the window is unbound.
+    /// `<node FQN>.<parameter>`: the parameter that enforces the dwell,
+    /// read in seconds. Absent means the dwell is unbound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub param: Option<String>,
 }
@@ -1200,28 +1205,32 @@ pub struct HazardContract {
     /// its field as any written one; absent for a written number.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, ValueSource>,
-    /// The checker's route per rung of the hazard's reaction, top rung
-    /// first (play_launch phase 85 D4, rlm v0.3.0): a CONSEQUENCE written by
-    /// the resolver, never authored. A node path's `max_latency` is one
-    /// dispatch, which is what an image's latency monitor measures; a rung's
-    /// route is detection fire to the rung's first output (the tick wait,
-    /// the link and the work), which no single dispatch shows. A consumer
-    /// that wants the runtime half to state the same quantity stamps the
-    /// fire and the first publish on `output` and judges the gap against
-    /// `route_ms`.
-    /// Empty when the hazard reaches no rung the checker could walk.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rungs: Vec<RungRoute>,
+    /// The checker's route per degradation level of the hazard's reaction,
+    /// the first level of the fallback sequence first (play_launch phase 85
+    /// D4, rlm v0.3.0; `rungs` before schema 3, read under that name too):
+    /// a CONSEQUENCE written by the resolver, never authored. A node path's
+    /// `max_latency` is one dispatch, which is what an image's latency
+    /// monitor measures; a level's route is detection fire to the level's
+    /// first output (the tick wait, the link and the work), which no single
+    /// dispatch shows. A consumer that wants the runtime half to state the
+    /// same quantity stamps the fire and the first publish on `output` and
+    /// judges the gap against `route_ms`.
+    /// Empty when the hazard reaches no level the checker could walk.
+    #[serde(default, alias = "rungs", skip_serializing_if = "Vec::is_empty")]
+    pub degradation_levels: Vec<LevelRoute>,
 }
 
-/// One rung's route (play_launch phase 85 D4), as the checker charged it.
+/// One degradation level's route (play_launch phase 85 D4), as the checker
+/// charged it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct RungRoute {
-    /// The rung: a mode name, or the scope path of a one-rung reaction.
-    pub rung: String,
-    pub role: RungRole,
-    /// Detection fire to the rung's first output, ms: what the checker
-    /// charged as the rung's ROUTE (not its detection, window or settle).
+pub struct LevelRoute {
+    /// The level: a mode name, or the event chain (`paths:` entry) of a
+    /// one-level reaction. `rung` before schema 3, read under that name too.
+    #[serde(alias = "rung")]
+    pub level: String,
+    pub role: LevelRole,
+    /// Detection fire to the level's first output, ms: what the checker
+    /// charged as the level's ROUTE (not its detection, dwell or settle).
     /// For a call on the route, the worse of its success and failure
     /// branches. Absent when the route is unbounded or unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1229,25 +1238,29 @@ pub struct RungRoute {
     /// The node whose detection starts the route (the walk's first hop).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub starts_at: Option<String>,
-    /// The topics the route ends on: the rung's first output, published by
-    /// the last node of the walk (its safe state's `emits`, or the rung's
-    /// reaction scope path's outputs).
+    /// The topics the route ends on: the level's first output, published
+    /// by the last node of the walk (its safe state's `emits`, or the
+    /// level's reaction event chain's outputs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
 }
 
-/// What kind of rung a [`RungRoute`] is.
+/// What kind of degradation level a [`LevelRoute`] is. Schema 2 spelled
+/// the variants `rung`, `window` and `floor`; they are read too.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RungRole {
-    /// A rung with a lower rung beneath it.
+pub enum LevelRole {
+    /// A level with a lower level beneath it.
     #[default]
-    Rung,
-    /// A windowed rung: it lasts at least its window; the route is to its
-    /// first output, and the window is not part of it.
-    Window,
-    /// The ladder's last rung.
-    Floor,
+    #[serde(alias = "rung")]
+    Level,
+    /// A level with a minimum dwell: it lasts at least its `min_dwell`; the
+    /// route is to its first output, and the dwell is not part of it.
+    #[serde(alias = "window")]
+    Dwell,
+    /// The last level of the fallback sequence: the minimal risk condition.
+    #[serde(alias = "floor")]
+    Mrc,
 }
 
 /// Where a number read from the launch tree came from (play_launch phase
@@ -2447,7 +2460,7 @@ mod tests {
         }
 
         let m = ModeContract {
-            window: Some(WindowContract {
+            min_dwell: Some(DwellContract {
                 duration_ms: 10_000.0,
                 param: Some("/mrm_handler.takeover_request_timeout".into()),
             }),
@@ -2686,14 +2699,27 @@ mod tests {
         // `integrity_levels`. A saved schema-2 model must load with them
         // and be current once read; a model written now has only the new
         // names.
-        let old = "meta:\n  version: 2\nstructure: {}\ncontracts:\n  severity_levels: [low, high]\n  hazards:\n    h:\n      severity: high\n";
+        let old = "meta:\n  version: 2\nstructure: {}\ncontracts:\n  severity_levels: [low, high]\n  modes:\n    tor:\n      window: { duration_ms: 10000.0 }\n  hazards:\n    h:\n      severity: high\n      rungs:\n        - { rung: stop, role: floor, route_ms: 7.0 }\n        - { rung: slow, role: window }\n        - { rung: warn, role: rung }\n";
         let m = SystemModel::from_yaml_str(old).unwrap();
         assert_eq!(m.meta.version, SCHEMA_VERSION);
         assert_eq!(m.contracts.integrity_levels, vec!["low", "high"]);
         assert_eq!(m.contracts.hazards["h"].integrity.as_deref(), Some("high"));
+        let levels = &m.contracts.hazards["h"].degradation_levels;
+        assert_eq!(
+            levels.iter().map(|l| (l.level.as_str(), l.role)).collect::<Vec<_>>(),
+            vec![
+                ("stop", LevelRole::Mrc),
+                ("slow", LevelRole::Dwell),
+                ("warn", LevelRole::Level)
+            ]
+        );
         let out = m.to_yaml_string().unwrap();
         assert!(out.contains("integrity_levels:") && out.contains("integrity: high"), "{out}");
         assert!(!out.contains("severity"), "{out}");
+        assert!(out.contains("degradation_levels:") && out.contains("role: mrc"), "{out}");
+        assert!(!out.contains("rung") && !out.contains("floor"), "{out}");
+        assert_eq!(m.contracts.modes["tor"].min_dwell.as_ref().unwrap().duration_ms, 10_000.0);
+        assert!(out.contains("min_dwell:") && !out.contains("window"), "{out}");
     }
 
     #[test]

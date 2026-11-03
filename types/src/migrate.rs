@@ -146,6 +146,24 @@ pub const REWRITES: &[Rewrite] = &[
         when: "always (the key holds an integrity level -- an ASIL, SIL or DAL -- not ISO 26262's S0-S3 severity class)",
         find: severity_integrity,
     },
+    Rewrite {
+        id: "window-min-dwell",
+        unit: "98 S4",
+        since: "0.3.3",
+        from: "modes.<m>.window: <d>",
+        to: "modes.<m>.min_dwell: <d>",
+        when: "always (a least time in a mode before the next is the switched-systems dwell time)",
+        find: window_min_dwell,
+    },
+    Rewrite {
+        id: "rule-id-renamed",
+        unit: "98",
+        since: "0.3.3",
+        from: "acknowledged: [{ rule: <old id>, at: <path with an old key>, ... }]",
+        to: "acknowledged: [{ rule: <new id>, at: <path with the new key>, ... }]",
+        when: "the id is the old side of a rename in `rule_names::RENAMED_RULES`, or the path names a key of `rule_names::RENAMED_KEYS` where the grammar puts it (the rule emits under the new names only)",
+        find: rule_id_renamed,
+    },
 ];
 
 /// One textual edit.
@@ -585,6 +603,78 @@ fn severity_integrity(doc: &Doc) -> Vec<Edit> {
             } else {
                 doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
             }
+        }
+    }
+    out
+}
+
+/// Phase 98: an `acknowledged:` entry naming a renamed rule by its old id
+/// names the new one (`rule_names::RENAMED_RULES`). Root level only: an
+/// acknowledgement is a root key.
+fn rule_id_renamed(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "rule-id-renamed";
+    let Some(list) = doc.yaml["acknowledged"].as_vec() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (i, entry) in list.iter().enumerate() {
+        let item = vec!["acknowledged".to_string(), i.to_string()];
+        let renames = [
+            entry["rule"]
+                .as_str()
+                .and_then(|r| crate::rule_names::renamed(r).map(|n| ("rule", r, n.new.to_string()))),
+            entry["at"].as_str().and_then(|a| {
+                let now = crate::rule_names::current_path(a);
+                (now != a).then_some(("at", a, now))
+            }),
+        ];
+        for (key, old, new) in renames.into_iter().flatten() {
+            let path = with(&item, &[key]);
+            let dotted = path.join(".");
+            let Some(&start) = doc.nodes.get(&path) else {
+                doc.skip(ID, &dotted, "value token not found");
+                continue;
+            };
+            // The item is a flow mapping when its value opens with `{`.
+            let in_flow = doc.flow.contains(&item)
+                || doc.nodes.get(&item).is_some_and(|&p| doc.src[p..].starts_with('{'));
+            let end = doc.inline_value_end(start, in_flow);
+            let token = &doc.src[start..end];
+            if token.trim_matches(|c| c == '"' || c == '\'') != old {
+                doc.skip(ID, &dotted, "value spelled in a form the edit does not handle");
+                continue;
+            }
+            let text = match token.chars().next() {
+                Some(q @ ('"' | '\'')) => format!("{q}{new}{q}"),
+                _ => new,
+            };
+            out.push(doc.edit(ID, &dotted, start..end, text));
+        }
+    }
+    out
+}
+
+/// Phase 98 S4: `modes.<m>.window` becomes `min_dwell`, at every manifest
+/// level. A mode that writes both is refused by the parser and left.
+fn window_min_dwell(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "window-min-dwell";
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let Some(modes) = y["modes"].as_hash() else {
+            continue;
+        };
+        for (k, m) in modes {
+            let Some(name) = key_str(k) else { continue };
+            if m["window"].is_badvalue() {
+                continue;
+            }
+            let path = with(&level, &["modes", &name, "window"]);
+            if !m["min_dwell"].is_badvalue() {
+                doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+                continue;
+            }
+            let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+            out.extend(doc.rename_key(ID, &refs, "min_dwell"));
         }
     }
     out
@@ -1861,7 +1951,7 @@ modes:
     requires: [perception]
     fallback: [tor, stop]
   tor:
-    window: 10s
+    min_dwell: 10s
     exit: { on: driver_took_over, to: manual }   # flow form
     reaction: sys.tor
   stop:
@@ -1906,7 +1996,7 @@ hazards:
 
     #[test]
     fn non_ascii_before_a_key_keeps_byte_offsets_right() {
-        let src = "version: 1\n# déjà vu — em dash\nmodes:\n  a:\n    window: 1s\n    exit:\n      on: f\n      to: b\n  b: {}\n";
+        let src = "version: 1\n# déjà vu — em dash\nmodes:\n  a:\n    min_dwell: 1s\n    exit:\n      on: f\n      to: b\n  b: {}\n";
         let m = migrate_str(src).unwrap();
         assert_eq!(m.output, src.replace("      on: f", "      holds: f"));
     }
@@ -1914,7 +2004,7 @@ hazards:
     #[test]
     fn quoted_keys_keep_their_quotes() {
         let src =
-            "version: 1\nmodes:\n  a:\n    window: 1s\n    exit: { \"on\": f, to: b }\n  b: {}\n";
+            "version: 1\nmodes:\n  a:\n    min_dwell: 1s\n    exit: { \"on\": f, to: b }\n  b: {}\n";
         let m = migrate_str(src).unwrap();
         assert_eq!(m.output, src.replace("\"on\"", "\"holds\""));
     }
@@ -2509,6 +2599,34 @@ nodes:
             run(src).output,
             "version: 1\nrlm: v0.1.49\nuse:\n  iso26262: \"^1\"\n\nhazards:\n  h:\n    integrity: ASIL_A\n"
         );
+    }
+
+    /// Phase 98 S4: a mode's `window:` is `min_dwell:`, block or flow, at
+    /// the root and in an inline include.
+    #[test]
+    fn s4_renames_window_to_min_dwell() {
+        let src = "version: 1\nmodes:\n  tor:\n    window: { duration: 10s, param: h.t }\n  slow: { window: 2s, requires: [] }\nincludes:\n  sub:\n    modes:\n      m:\n        window: 1s\n";
+        let m = run(src);
+        assert_eq!(
+            m.output,
+            "version: 1\nmodes:\n  tor:\n    min_dwell: { duration: 10s, param: h.t }\n  slow: { min_dwell: 2s, requires: [] }\nincludes:\n  sub:\n    modes:\n      m:\n        min_dwell: 1s\n"
+        );
+        assert!(m.edits.iter().all(|e| e.rewrite == "window-min-dwell"), "{:?}", m.edits);
+        assert!(!run(&m.output).changed());
+    }
+
+    /// Phase 98: an acknowledgement of a renamed rule follows the rename,
+    /// in block and flow form, quoted or not; other ids are left.
+    #[test]
+    fn an_acknowledged_old_rule_id_is_rewritten() {
+        let src = "version: 1\nacknowledged:\n  - rule: severity-scale-conflict\n    at: integrity_levels\n    reason: kept\n  - { rule: \"severity-unknown\", at: x, reason: y }\n  - { rule: reaction-unguarded, at: modes.m.window, reason: w }\n";
+        let m = run(src);
+        assert_eq!(
+            m.output,
+            "version: 1\nacknowledged:\n  - rule: integrity-scale-conflict\n    at: integrity_levels\n    reason: kept\n  - { rule: \"integrity-unknown\", at: x, reason: y }\n  - { rule: reaction-unguarded, at: modes.m.min_dwell, reason: w }\n"
+        );
+        assert_eq!(m.edits.len(), 3, "{:?} {:?}", m.edits, m.skipped);
+        assert!(!run(&m.output).changed());
     }
 
     /// Phase 98 N1: the integrity level's old key, at the root and in an

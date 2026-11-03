@@ -12,6 +12,7 @@ pub mod migrate;
 pub mod parse;
 pub mod profile;
 pub mod integrity;
+pub mod rule_names;
 pub mod span;
 pub mod subst;
 pub mod types;

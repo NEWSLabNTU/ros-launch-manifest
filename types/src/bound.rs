@@ -1,7 +1,7 @@
 //! One bound type (phase 90 G2).
 //!
 //! A contract writes a bound about fifteen ways: `max_latency`, `max_age`,
-//! `max_transport`, `ftti`, a mode's `window`, a settle's `response`, a
+//! `max_transport`, `ftti`, a mode's `min_dwell`, a settle's `response`, a
 //! drop count, a rate floor. Read by what they mean, every one of them is
 //! the same statement: a value with a unit (a duration, a rate or a count),
 //! what it limits (its [`BoundKind`]), from which side ([`Limit`]), where the
@@ -42,7 +42,8 @@ pub enum BoundKind {
     Count,
     /// A time by which something must have happened (`ftti`, `within`).
     Deadline,
-    /// A least time: a transitional rung stays at least this long (`window`).
+    /// A least time: a degradation level stays at least this long
+    /// (`min_dwell`).
     LeastTime,
 }
 
@@ -82,7 +83,7 @@ impl std::fmt::Display for BoundKind {
 }
 
 /// Which side a bound limits: an upper bound (`max_latency`, `ftti`) or a
-/// lower one (`min_latency`, `min_rate_hz`, a window's least time).
+/// lower one (`min_latency`, `min_rate_hz`, a dwell's least time).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Limit {
@@ -131,12 +132,12 @@ impl Serialize for Quantity {
 /// bare name on the bound's own node (`max_age: { param: <name> }`, and a
 /// timer's `trigger: { timer: { param | period_param } }`, whose
 /// [`crate::TimerParam`] says whether the parameter holds Hz or seconds),
-/// and `<node>.<parameter>` across the contract (`window: { param }`).
+/// and `<node>.<parameter>` across the contract (`min_dwell: { param }`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamBinding {
     /// A parameter of the bound's own node (`max_age: { param: <name> }`).
     Own(String),
-    /// A parameter named across the contract (`window: { param:
+    /// A parameter named across the contract (`min_dwell: { param:
     /// <node>.<parameter> }`).
     Node(ParamRef),
 }
@@ -498,9 +499,9 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         Form::Map,
     ),
     BoundKey {
-        param: "`<node>.<parameter>`, seconds (`window-param`)",
+        param: "`<node>.<parameter>`, seconds (`dwell-param`)",
         ..bk(
-            "window",
+            "min_dwell",
             Context::Mode,
             BoundKind::LeastTime,
             Limit::Min,
@@ -671,7 +672,7 @@ impl crate::types::Manifest {
             put(&mut out, &format!("hazards.{h}"), "detection", &d.detection);
         }
         for (m, d) in &self.modes {
-            put(&mut out, &format!("modes.{m}"), "window", &d.window);
+            put(&mut out, &format!("modes.{m}"), "min_dwell", &d.min_dwell);
         }
         for (n, nd) in &self.nodes {
             for (p, pd) in &nd.paths {
@@ -813,7 +814,7 @@ mod tests {
     fn every_bound_key_parses_to_its_row() {
         let m = crate::parse_manifest_str(
             "hazards:\n  h: { guards: [/a], ftti: { duration: 1s, source: requirement }, detection: 1s }\n\
-             modes:\n  m: { requires: [/a], window: { duration: 10s, param: n.t } }\n\
+             modes:\n  m: { requires: [/a], min_dwell: { duration: 10s, param: n.t } }\n\
              topics:\n  /a: { type: std_msgs/msg/Empty, max_transport: 2ms, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\
              services:\n  /s: { type: x/srv/S, max_transport: 1ms }\n\
@@ -862,7 +863,7 @@ mod tests {
         assert!(bounds.iter().any(|(p, _)| p == "services./s.max_transport"));
         let get = |k: &str| bounds.iter().find(|(p, _)| p == k).unwrap().1;
         assert_eq!(
-            get("modes.m.window").param,
+            get("modes.m.min_dwell").param,
             Some(ParamBinding::Node(ParamRef {
                 node: "n".into(),
                 name: "t".into()

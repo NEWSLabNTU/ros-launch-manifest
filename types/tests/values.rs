@@ -62,13 +62,13 @@ fn let_of_literals_evaluates_in_place() {
     let m = parse_manifest_str(
         "let:\n  odd: 8.33 m/s\n  ftti: 500ms\n  twice: $(let ftti) * 2\n\
          hazards:\n  h: { guards: [/a], ftti: $(let twice), detection: $(let ftti) / 5 }\n\
-         modes:\n  m: { requires: [/a], window: { duration: $(let ftti), param: n.t } }\n",
+         modes:\n  m: { requires: [/a], min_dwell: { duration: $(let ftti), param: n.t } }\n",
     )
     .unwrap();
     assert_eq!(m.lets.len(), 3);
     assert_eq!(m.hazards["h"].ftti.ms(), Some(1000.0));
     assert_eq!(m.hazards["h"].detection.ms(), Some(100.0));
-    let w = m.modes["m"].window.as_ref().unwrap();
+    let w = m.modes["m"].min_dwell.as_ref().unwrap();
     assert_eq!(w.ms(), Some(500.0));
     assert!(w.param.is_some());
     let r = m
@@ -124,7 +124,7 @@ fn every_parse_time_refusal() {
             "source-on-reference",
         ),
         (
-            "modes:\n  m: { requires: [/a], window: { duration: $(param n t) s, source: requirement } }\n",
+            "modes:\n  m: { requires: [/a], min_dwell: { duration: $(param n t) s, source: requirement } }\n",
             "source-on-reference",
         ),
         (
