@@ -212,6 +212,7 @@ pub fn parse_manifest_str_with_values(
     let result = with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""));
     let pass = VALUE_PASS.with(|p| std::mem::replace(&mut *p.borrow_mut(), outer));
     let mut m = result?;
+    crate::transport::apply_links(&mut m, &BTreeMap::new())?;
     let mut seen = std::collections::BTreeSet::new();
     m.value_refs = pass
         .refs
@@ -481,6 +482,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         args: parse_args(doc, ctx)?,
         nodes: parse_nodes(doc, ctx)?,
         topics: parse_topics(doc, ctx)?,
+        links: parse_links(doc, ctx)?,
         services: parse_services(doc, ctx)?,
         actions: parse_actions(doc, ctx)?,
         includes: parse_includes(doc, ctx)?,
@@ -682,6 +684,111 @@ fn parse_acknowledged(doc: &Yaml, ctx: &str) -> Result<Vec<AckDecl>, ParseError>
             ));
         }
         out.push(AckDecl { rule, at, reason });
+    }
+    Ok(out)
+}
+
+/// `links:` (play_launch phase 97): `<name>: { max_transport, clock,
+/// monitor }`.
+fn parse_links(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, LinkDecl>, ParseError> {
+    let mut out = BTreeMap::new();
+    let section = &doc["links"];
+    let hash = match section {
+        Yaml::BadValue => return Ok(out),
+        Yaml::Hash(h) => h,
+        other => {
+            return Err(type_err(
+                ctx,
+                "links",
+                "a mapping of link name -> `{ max_transport, clock, monitor }`",
+                other,
+            ));
+        }
+    };
+    for (k, v) in hash {
+        let name = yaml_str_owned(k);
+        let lctx = &format_path(ctx, &format!("links.{name}"));
+        if !v.is_hash() {
+            return Err(type_err(
+                ctx,
+                &format!("links.{name}"),
+                "`{ max_transport, clock, monitor }`",
+                v,
+            ));
+        }
+        reject_unknown_keys(v, lctx, Context::Link)?;
+        let max_transport =
+            yaml_bound(v, "max_transport", lctx, Context::Link)?.ok_or_else(|| {
+                field_err(
+                    lctx,
+                    "max_transport",
+                    "required: the bound on one message's transport across the link, with its \
+                 `source:` (`{ duration: 56ms, source: { measured: ... } }`)",
+                )
+            })?;
+        let clock = match yaml_string(v, "clock", lctx)?.as_deref() {
+            None | Some("unsynced") => LinkClock::Unsynced,
+            Some("synced") => LinkClock::Synced,
+            Some(other) => {
+                return Err(field_err(
+                    lctx,
+                    "clock",
+                    &format!(
+                        "`{other}` is not a link clock -- accepted: synced (the ends' clocks \
+                         are comparable: a stamp's age is the transport), unsynced (only \
+                         arrivals can be timed; the default)"
+                    ),
+                ));
+            }
+        };
+        let monitor = match &v["monitor"] {
+            Yaml::BadValue => None,
+            m @ Yaml::Hash(_) => {
+                let mctx = &format_path(lctx, "monitor");
+                reject_unknown_keys(m, mctx, Context::LinkMonitor)?;
+                let reaction = match (
+                    yaml_string(m, "reaction", mctx)?,
+                    yaml_string(m, "enters", mctx)?,
+                ) {
+                    (Some(r), None) => SuperviseReaction::Reaction(r),
+                    (None, Some(e)) => SuperviseReaction::Enters(e),
+                    (Some(_), Some(_)) => {
+                        return Err(field_err(
+                            mctx,
+                            "enters",
+                            "a link fault either starts a path (`reaction: <path>`) or enters \
+                             a mode (`enters: <mode>`), not both -- keep one",
+                        ));
+                    }
+                    (None, None) => {
+                        return Err(field_err(
+                            mctx,
+                            "reaction",
+                            "required: what a link fault starts -- a path of the subscriber's \
+                             node or an event chain (`reaction: <path>`), or a mode \
+                             (`enters: <mode>`)",
+                        ));
+                    }
+                };
+                Some(LinkMonitor { reaction })
+            }
+            other => {
+                return Err(type_err(
+                    lctx,
+                    "monitor",
+                    "`{ reaction: <path> }` or `{ enters: <mode> }`",
+                    other,
+                ));
+            }
+        };
+        out.insert(
+            name,
+            LinkDecl {
+                max_transport,
+                clock,
+                monitor,
+            },
+        );
     }
     Ok(out)
 }
@@ -1188,7 +1295,11 @@ fn parse_source(v: &Yaml, ctx: &str) -> Result<BudgetSource, ParseError> {
             };
             Ok(BudgetSource {
                 kind,
-                measured: Some(Measurement { margin, terms }),
+                measured: Some(Measurement {
+                    margin,
+                    terms,
+                    run: yaml_string(body, "run", mctx)?,
+                }),
                 derived: None,
             })
         }
@@ -2430,6 +2541,14 @@ fn parse_endpoints(
                         }
                     }
                 }
+                if key != "sub" && props.link.is_some() {
+                    return Err(field_err(
+                        &path,
+                        "link",
+                        "`link` names the link a SUBSCRIBER's hop crosses: a transport is \
+                         charged on the edge that ends at a subscriber",
+                    ));
+                }
                 if key != "cli" && props.call.is_some() {
                     return Err(field_err(
                         &path,
@@ -2540,6 +2659,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         required: yaml_bool(yaml, "required", ctx)?,
         qos: parse_qos(yaml, ctx)?,
         max_transport: yaml_bound(yaml, "max_transport", ctx, Context::Endpoint)?,
+        link: yaml_string(yaml, "link", ctx)?,
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
         on_demand: yaml_bool(yaml, "on_demand", ctx)?,

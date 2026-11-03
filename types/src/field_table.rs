@@ -120,6 +120,10 @@ pub enum Context {
     SuperviseEarly,
     /// `resume:` under a `supervise:` (v0.3.2).
     SuperviseResume,
+    /// `links.<name>` (play_launch phase 97).
+    Link,
+    /// `links.<name>.monitor` (play_launch phase 97).
+    LinkMonitor,
     /// `policy:` at a manifest's top (phase 93).
     Policy,
     /// `supervision:` at a manifest's top (phase 93).
@@ -178,6 +182,8 @@ impl Context {
             Context::Supervise => "<budget>.supervise",
             Context::SuperviseEarly => "safe_state.settle.supervise.early",
             Context::SuperviseResume => "<budget>.supervise.resume",
+            Context::Link => "links.<name>",
+            Context::LinkMonitor => "links.<name>.monitor",
             Context::Policy => "policy",
             Context::Supervision => "supervision",
             Context::TimerRate => "trigger.timer.rate_hz (map form)",
@@ -428,6 +434,12 @@ pub const FIELDS: &[Field] = &[
         "Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults.",
     ),
     live(
+        "links",
+        Context::Manifest,
+        Kind::Fact,
+        "Named links (play_launch phase 97): `<name>: { max_transport, clock, monitor }`, one transport stated once, with its source and how it is held. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes.",
+    ),
+    live(
         "supervision",
         Context::Manifest,
         Kind::Fact,
@@ -559,6 +571,12 @@ pub const FIELDS: &[Field] = &[
         Context::Endpoint,
         Kind::Requirement,
         "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
+    ),
+    live(
+        "link",
+        Context::Endpoint,
+        Kind::Fact,
+        "Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A written `max_transport` stays legal and is reported as `transport-inline`.",
     ),
     removed(
         "max_transport_ms",
@@ -1446,6 +1464,12 @@ pub const FIELDS: &[Field] = &[
         "The margin over the observed maximum, a fraction (`0.2` = 20 %). Required with `max` or `terms`.",
     ),
     live(
+        "run",
+        Context::Measured,
+        Kind::Meta,
+        "Where the observations were made (since v0.3.4): a run directory, a date, a method, free text. `play_launch measure` writes the run it read.",
+    ),
+    live(
         "terms",
         Context::Measured,
         Kind::Fact,
@@ -1535,6 +1559,37 @@ pub const FIELDS: &[Field] = &[
         Context::Supervise,
         Kind::Fact,
         "The reaction hands its output back and resumes it, `{ after }`: once the reaction has run, the path that normally publishes the reaction's output takes it over again when it next runs; if that path then stays silent for `after`, the reaction resumes the output, once and for good. The consumer charges the gap (`after` + this supervision's detection delay) once on every overrun row whose fallback is this reaction (`supervised-fit`). Absent: the reaction keeps its output, and no gap is charged.",
+    ),
+    // -- links.<name> (phase 97) --
+    live(
+        "max_transport",
+        Context::Link,
+        Kind::Requirement,
+        "The bound on one message's transport across the link, from the publish to the subscriber's take. Required. A best-effort link (serial, TCP, DDS between processes or hosts) has no derivable worst case: state it measured, with `source: { measured: { max, n, margin, run } }` (`link-unsourced` otherwise), and hold it with `monitor:`.",
+    ),
+    live(
+        "clock",
+        Context::Link,
+        Kind::Fact,
+        "`synced` or `unsynced` (the default): whether the two ends' clocks are comparable. Synced: a message's stamp age at the receiver is its transport, so it can be measured and monitored per message. Unsynced: only arrivals can be timed; `measure` cannot propose the bound and the monitor checks the gap between arrivals.",
+    ),
+    live(
+        "monitor",
+        Context::Link,
+        Kind::Fact,
+        "The runtime monitor that holds the bound, `{ reaction: <path> }` or `{ enters: <mode> }`. At each subscriber that names the link: a message older than `max_transport` (synced), or no arrival within the sender's period + `max_transport` (unsynced), is a link fault that starts the reaction (a path of the subscriber's node, else an event chain; or the mode's reaction). The walk charges its detection like any other. A best-effort link on a reaction route with no monitor is `link-unmonitored`.",
+    ),
+    live(
+        "reaction",
+        Context::LinkMonitor,
+        Kind::Fact,
+        "The path a link fault starts: a path of the subscriber's node, else an event chain of the manifest. Exactly one of `reaction` and `enters`.",
+    ),
+    live(
+        "enters",
+        Context::LinkMonitor,
+        Kind::Fact,
+        "The mode a link fault enters; its `reaction:` event chain is what runs. Exactly one of `reaction` and `enters`.",
     ),
     // -- <budget>.supervise.resume (v0.3.2) --
     live(
@@ -1818,6 +1873,7 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Budget, "source", "0.1.58"),
     (Context::Measured, "max", "0.1.58"),
     (Context::Measured, "n", "0.1.58"),
+    (Context::Measured, "run", "0.3.4"),
     (Context::Measured, "period", "0.1.58"),
     (Context::Measured, "margin", "0.1.58"),
     (Context::Measured, "terms", "0.1.58"),
@@ -1841,6 +1897,13 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Supervise, "resume", "0.3.2"),
     (Context::SuperviseResume, "after", "0.3.2"),
     (Context::Hazard, "integrity", "0.3.3"),
+    (Context::Manifest, "links", "0.3.4"),
+    (Context::Endpoint, "link", "0.3.4"),
+    (Context::Link, "max_transport", "0.3.4"),
+    (Context::Link, "clock", "0.3.4"),
+    (Context::Link, "monitor", "0.3.4"),
+    (Context::LinkMonitor, "reaction", "0.3.4"),
+    (Context::LinkMonitor, "enters", "0.3.4"),
     (Context::Manifest, "integrity_levels", "0.3.3"),
     (Context::Mode, "min_dwell", "0.3.3"),
     (Context::Policy, "unsupervised_measured", "0.1.61"),

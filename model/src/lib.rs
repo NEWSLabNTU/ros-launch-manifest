@@ -999,6 +999,43 @@ pub struct Contracts {
     /// same system from different facts.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_criticality: BTreeMap<String, ros_launch_manifest_sched::Criticality>,
+    /// Links (play_launch phase 97), by name: a transport stated once, with
+    /// its source and its monitor. A subscriber names one in
+    /// [`SubContract::link`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub links: BTreeMap<String, LinkContract>,
+}
+
+/// One link after merge (play_launch phase 97, rlm `docs/design/links.md`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LinkContract {
+    /// The bound on one message's transport across the link, ms.
+    pub max_transport_ms: f64,
+    /// The two ends' clocks are comparable (`clock: synced`): a stamp's age
+    /// at the receiver is the transport. Otherwise only arrivals can be
+    /// timed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub synced: bool,
+    /// The bound's source kind as written (`measured`, `analysed`, ...);
+    /// absent when it states none (`link-unsourced`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Where a measured bound was observed (`source.measured.run`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The runtime monitor that holds the bound, when declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monitor: Option<LinkMonitorContract>,
+}
+
+/// What a link fault starts: a path (a node path of the subscriber, else an
+/// event chain), or a mode. Exactly one is set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkMonitorContract {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enters: Option<String>,
 }
 
 /// One mode after merge (phase 75).
@@ -1773,6 +1810,11 @@ pub struct SubContract {
     /// environment nothing here manages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_transport_ms: Option<f64>,
+    /// The link this subscriber's hop crosses (play_launch phase 97), a key
+    /// of [`Contracts::links`]. When set, [`Self::max_transport_ms`] is the
+    /// link's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
     /// What this subscriber is made to ABSORB (since v0.1.64; nano-ros
     /// RFC-0074, issue 0760): a token bucket. Both numbers are always present
     /// when the contract states one -- the grammar requires both -- so a

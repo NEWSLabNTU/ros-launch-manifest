@@ -9,6 +9,7 @@ mod endpoint_unique;
 mod explicit_trigger;
 mod inherited_rate;
 mod jitter_range;
+mod links;
 mod once_durability;
 mod qos_compat;
 mod qos_match;
@@ -73,6 +74,8 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(qos_match::QosMatchRule),
         Box::new(rate_hierarchy::RateHierarchyRule),
         Box::new(scope_budget::ScopeBudgetRule),
+        Box::new(links::LinkSourceRule),
+        Box::new(links::TransportInlineRule),
         Box::new(causal_dag::CausalDagRule),
         Box::new(drop_sanity::DropSanityRule),
         Box::new(service_wiring::ServiceWiringRule),

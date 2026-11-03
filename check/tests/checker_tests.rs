@@ -2695,7 +2695,7 @@ fn test_registry_has_no_placeholder_rules() {
         !ids.iter().any(|id| id == "consistency"),
         "the no-op `consistency` rule must not be registered: {ids:?}"
     );
-    assert_eq!(ids.len(), 20, "registered rules: {ids:?}");
+    assert_eq!(ids.len(), 22, "registered rules: {ids:?}");
     let mut sorted = ids.clone();
     sorted.sort();
     sorted.dedup();
@@ -2734,4 +2734,36 @@ services:
             .any(|d| d.contains("wiring") && d.contains("operate")),
         "{w:?}"
     );
+}
+
+/// v0.3.4 (play_launch phase 97): a link with no `source:` is
+/// `link-unsourced`; a subscriber's own `max_transport` is
+/// `transport-inline`; a subscriber that names a sourced link is neither.
+#[test]
+fn links_are_sourced_and_inline_transport_is_reported() {
+    let yaml = r#"
+version: 1
+links:
+  bare: { max_transport: 20ms }
+  serial:
+    max_transport: { duration: 56ms, source: { measured: { max: 46.42ms, n: 12, margin: 0.2 } } }
+nodes:
+  p:
+    pub: { out: {} }
+  a:
+    sub: { in: { link: serial } }
+  b:
+    sub: { in: { link: bare } }
+  c:
+    sub: { in: { max_transport: 3ms } }
+topics:
+  /t: { type: T, pub: [p/out], sub: [a/in, b/in, c/in] }
+"#;
+    let d = all_diags(yaml);
+    let unsourced: Vec<_> = d.iter().filter(|l| l.contains("link-unsourced")).collect();
+    assert_eq!(unsourced.len(), 1, "{d:?}");
+    assert!(unsourced[0].contains("'bare'"), "{d:?}");
+    let inline: Vec<_> = d.iter().filter(|l| l.contains("transport-inline")).collect();
+    assert_eq!(inline.len(), 1, "{d:?}");
+    assert!(inline[0].contains("'c/in'"), "{d:?}");
 }

@@ -460,6 +460,14 @@ pub const BOUND_KEYS: &[BoundKey] = &[
     ),
     bk(
         "max_transport",
+        Context::Link,
+        BoundKind::Transport,
+        Limit::Max,
+        "duration",
+        Form::Map,
+    ),
+    bk(
+        "max_transport",
         Context::Service,
         BoundKind::Transport,
         Limit::Max,

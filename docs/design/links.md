@@ -1,7 +1,11 @@
 # Links: transport as a measured, sourced, monitored assumption
 
 **Status (2026-11-03): decided; implementation tracked by play_launch phase
-97.** Refines design issue 55 ("Transport Is a Consequence of Placement, and
+97. L1 and L2 in rlm v0.3.4 (`links:`, `sub.<ep>.link`, `link-unsourced`,
+`transport-inline`; the per-manifest chain sum reads the one precedence).
+Only a subscriber names a link, not a topic: a transport is the hop into
+one subscriber (phase 90 G3 deprecated the topic-level `max_transport`).**
+Refines design issue 55 ("Transport Is a Consequence of Placement, and
 Only Sometimes a Guarantee") into a practical form.
 
 ## 1. The rule

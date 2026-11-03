@@ -49,6 +49,12 @@ pub struct Manifest {
     pub nodes: BTreeMap<String, NodeDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<String, TopicDecl>,
+    /// Links (play_launch phase 97, `docs/design/links.md`): a transport
+    /// stated once, with where its number comes from and how the system
+    /// holds it, and named by the topics and subscribers that cross it.
+    /// Visible to this manifest and its inline includes.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub links: BTreeMap<String, LinkDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub services: BTreeMap<String, ServiceDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -439,6 +445,11 @@ pub struct Measurement {
     /// The margin over the observed maximum, as a fraction (`0.2` = 20 %).
     pub margin: f64,
     pub terms: Vec<MeasuredTerm>,
+    /// Where the observations were made (phase 97): a run directory, a
+    /// date, a method -- free text, printed beside the budget. `measure`
+    /// writes the run it read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
 }
 
 /// One measured term of a budget.
@@ -1322,6 +1333,11 @@ pub struct EndpointProps {
     /// `max_transport_ms` when not declared.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_transport: Option<crate::bound::Bound>,
+    /// Sub endpoint: the link this subscriber's hop crosses (phase 97).
+    /// Its `max_transport` is put in [`Self::max_transport`] once the
+    /// manifest is parsed; writing both is refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
     /// Sub endpoint: buffering discipline for a `state: true` subscription
     /// (Vocabulary v2, Phase 44.1 §3). `latest` (default) — staleness is
     /// the failure mode; `queue` — backlog is the failure mode, drained
@@ -1530,6 +1546,57 @@ pub struct SrvEndpointProps {
     /// on cannot act after the client's fallback (`call-late-effect`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_after: Option<crate::duration::Duration>,
+}
+
+/// `links.<name>` (play_launch phase 97, `docs/design/links.md`): one
+/// transport, stated once. A best-effort link (serial, TCP, DDS between
+/// processes or hosts) has no derivable worst case: its `max_transport` is
+/// measured and says so in `source:` (`link-unsourced` otherwise), and a
+/// `monitor:` holds it at run time.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LinkDecl {
+    /// The bound on one message's transport across the link, with its
+    /// `source:`. Required.
+    pub max_transport: crate::bound::Bound,
+    /// Whether the two ends' clocks are synchronised. It decides what can
+    /// be measured and monitored: a stamp's age (synced), or only the gap
+    /// between arrivals (unsynced, the default).
+    pub clock: LinkClock,
+    /// The runtime monitor: a message older than the bound (synced), or a
+    /// gap between arrivals longer than the sender's period + the bound
+    /// (unsynced), is a link fault that starts the reaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monitor: Option<LinkMonitor>,
+}
+
+/// `links.<name>.clock` (phase 97).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkClock {
+    /// One clock, or clocks synchronised across the link: a stamp's age at
+    /// the receiver is the transport.
+    Synced,
+    /// The clocks are not comparable: only arrivals can be timed.
+    #[default]
+    Unsynced,
+}
+
+impl LinkClock {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LinkClock::Synced => "synced",
+            LinkClock::Unsynced => "unsynced",
+        }
+    }
+}
+
+/// `links.<name>.monitor` (phase 97): what a link fault starts, resolved
+/// per subscriber as a supervision's reaction is (a path of the
+/// subscriber's node, else an event chain; or a mode).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkMonitor {
+    #[serde(flatten)]
+    pub reaction: SuperviseReaction,
 }
 
 /// Topic declaration.

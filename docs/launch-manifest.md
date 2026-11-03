@@ -640,6 +640,39 @@ The transport is sub-side only — a publisher does not know which
 subscriber receives data over which transport, but a subscriber knows
 how it consumes. Pub-side `max_transport` is not part of the format.
 
+**Links (since v0.3.4).** A transport that several subscribers cross, or
+one that is an assumption about a platform rather than a promise, is
+stated once as a named link, with where its number comes from and how
+it is held at run time (design: `docs/design/links.md`):
+
+```yaml
+links:
+  host_serial:
+    max_transport:
+      duration: 56ms
+      source: { measured: { max: 46.42ms, n: 12, margin: 0.2, run: "board runs fr-a1..3" } }
+    clock: unsynced                  # the default: only arrivals can be timed
+    monitor: { enters: emergency_stop }
+
+nodes:
+  handler:
+    sub:
+      availability: { link: host_serial }
+```
+
+A subscriber's `link:` puts the link's `max_transport` on that
+subscriber, so the walk, the derivation and the chain sums read it
+exactly as a written one (the precedence above is unchanged). Writing
+both `link:` and `max_transport:` on one subscriber is refused. A
+best-effort link (serial, TCP, DDS between processes or hosts) has no
+derivable worst case; its bound is measured, and a link with no
+`source:` is `link-unsourced` (a warning). A `max_transport` written on
+a subscriber stays legal and is reported as `transport-inline` (info).
+`monitor:` declares the runtime check: with `clock: synced` the
+receiver checks each message's stamp age against the bound, otherwise
+the gap between arrivals against the sender's period plus the bound; a
+miss is a link fault that starts the reaction.
+
 ### Node and Scope Contracts
 
 Contracts are defined at two levels, serving different roles:
@@ -2564,7 +2597,7 @@ The consumer's rules for these keys:
 
 The table below is the rule set registered in this crate's
 `default_rules()` (`check/src/rules/mod.rs`), in registration order —
-**20 rules**, one row each. The cross-scope rules that need the merged
+**22 rules**, one row each. The cross-scope rules that need the merged
 `ManifestIndex` live in the consumer's merge layer and follow in a
 second table.
 
@@ -2575,7 +2608,7 @@ second table.
 | 3 | `qos-compat`        | Invalid QoS values                                             | Error         |
 | 4 | `qos-match`         | Publisher and subscriber QoS incompatible per DDS offered ≥ requested, on `reliability`, `durability`, `liveliness` and `lease_duration` | Error |
 | 5 | `rate-hierarchy`    | Lower bounds `pub.min_rate_hz >= rate_hz >= sub.min_rate_hz`, and (phase 70) upper bounds `pub.max_rate_hz >= rate_hz <= sub.max_rate_hz` | Error |
-| 6 | `chain-latency`      | Conservative flat sum: scope budget < Σ node latencies + declared transport (the consumer runs the topology-aware version) | Warning |
+| 6 | `chain-latency`      | Conservative flat sum: scope budget < Σ node latencies + each topic hop's declared transport (its largest edge, by the one precedence; v0.3.4) (the consumer runs the topology-aware version) | Warning |
 | 7 | `causal-dag`        | Cycles in the dataflow graph (`state:` breaks cycles)          | Error         |
 | 8 | `drop-sanity`       | Effective delivery rate < sub.min_rate_hz; drop values out of range (`n > w`, `max_consecutive: 0`) — on topics and event chains | Error |
 | 9 | `service-wiring`    | Service client with no matching server across tree             | Warning       |
@@ -2590,6 +2623,8 @@ second table.
 | 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |
 | 19 | `jitter-range` (70 W2) | `min_latency` above `max_latency`; both bounds declared and `max_latency - min_latency > max_jitter` (errors); `max_jitter` with no `min_latency`, so the bound is unverifiable (info — an absent floor is unknown, not zero) | Error/Info |
 | 20 | `drop-tightness` (90 G3) | A topic on an event chain's route (in the same manifest) permits a larger drop rate (`max_count`) than the event chain's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
+| 21 | `link-unsourced` (v0.3.4) | A link (`links:`) whose `max_transport` states no `source:`: a best-effort transport has no derivable worst case, so its number is evidence only with the measurement it came from | Warning |
+| 22 | `transport-inline` (v0.3.4) | A `max_transport` written on a subscriber rather than named through a link | Info |
 
 The cross-scope rules run in the consumer's merge layer
 (`ros-launch-resolve`, invoked by `play_launch check`), which has the
