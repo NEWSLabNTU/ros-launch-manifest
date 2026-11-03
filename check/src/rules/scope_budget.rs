@@ -12,7 +12,11 @@
 //! topology-aware critical path is computed from the global dataflow
 //! graph (Phase 35.3) and reported via the cross-scope `chain-latency`
 //! diagnostic. The two diagnostics are deduplicated by their `path`
-//! field.
+//! field: a consumer drops this sum for every chain it traces a route for,
+//! the nominal critical path or, for a reaction chain the nominal graph
+//! does not walk (a service call, a request latched for the server's next
+//! tick), the reaction walk from the chain's inputs (play_launch 0.24.1).
+//! Only a chain no walk reaches keeps the sum.
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};

@@ -1,10 +1,14 @@
-# Links: transport as a measured, sourced, monitored assumption
+# Links: transport as a measured, sourced assumption
 
 **Status (2026-11-03): decided; implementation tracked by play_launch phase
 97. L1 and L2 in rlm v0.3.4 (`links:`, `sub.<ep>.link`, `link-unsourced`,
 `transport-inline`; the per-manifest chain sum reads the one precedence).
 Only a subscriber names a link, not a topic: a transport is the hop into
-one subscriber (phase 90 G3 deprecated the topic-level `max_transport`).**
+one subscriber (phase 90 G3 deprecated the topic-level `max_transport`).
+L3 and L4 in play_launch 0.24.0. L5 (runtime monitor) is NOT adopted, by
+user decision (2026-11-04): links are measured and sourced, and
+`check --against` holds the bound; `monitor:` stays in the grammar,
+parsed and not read.**
 Refines design issue 55 ("Transport Is a Consequence of Placement, and
 Only Sometimes a Guarantee") into a practical form.
 
@@ -16,16 +20,17 @@ is one of two kinds:
 | Kind | Examples | What the contract states | How it is held |
 |---|---|---|---|
 | **Guaranteed by configuration** | TSN with a Qbv schedule; CAN with a fixed schedule; a pointer handoff in one process | a bound derived from the configuration (an extension) | the configuration itself |
-| **Best effort** | serial + zenoh-pico; TCP; DDS between processes or hosts | a **measured** bound with its **source** | **a runtime monitor**: a message older than the bound is a link fault, handled by a declared reaction |
+| **Best effort** | serial + zenoh-pico; TCP; DDS between processes or hosts | a **measured** bound with its **source** | **checked against runs** (`check --against`): a message in a run older than the bound is `transport-exceeded` |
 
 A best-effort link's latency is mostly platform behaviour (batching, flush
 timing, scheduling of the network tasks, gateways, queueing behind other
 traffic). No formula gives its worst case: a derivation from bytes and
 bandwidth yields a lower bound beside the same measured number. So it is not
-derived. It is measured, written down with where it came from, checked
-against later runs, and monitored at run time, so a broken assumption is a
-detected fault rather than a silent one. This is the assume-and-monitor
-pattern of AUTOSAR E2E timeouts and ARINC 653 sampling-port validity.
+derived. It is measured, written down with where it came from, and checked
+against later runs, so a broken assumption shows up in the next run that
+breaks it rather than staying silent. (A runtime monitor, the
+assume-and-monitor pattern of AUTOSAR E2E timeouts, was L5 and is not
+adopted: see L5.)
 
 ## 2. Pieces
 
@@ -36,7 +41,6 @@ links:
   host_serial:
     max_transport: 56ms
     source: "measured: <run>, observed max 46.42 ms + 20 %"
-    monitor: { reaction: <safe state or hazard> }   # best effort only
 topics:
   /system/operation_mode/availability:
     link: host_serial
@@ -75,7 +79,14 @@ says the transport could not be measured.
 in the run took longer than its link's bound) and `link-unmeasured` (a
 warning: the run carries no samples for a declared link).
 
-### L5. Runtime monitor
+### L5. Runtime monitor (NOT adopted)
+
+Not adopted (user decision, play_launch phase 97 P5): on the safety island's
+unsynchronised UART such a monitor could only time the gap between arrivals,
+which would replace the receiver's own 500 ms silence detector and its
+reaction with about 31 ms of margin over the observed gaps. `monitor:` is
+parsed and not read; no `link-unmonitored` rule exists. The design as
+written, kept for reference:
 
 A best-effort link's `monitor:` makes the receiver check each message's age
 against the link's bound (with synchronised clocks), or the gap between
@@ -89,7 +100,7 @@ best-effort link on a reaction route with no monitor is `link-unmonitored`
 
 An extension derives a link's bound from a configuration that guarantees it
 (a TSN gate control list, a CAN schedule). Only these links may omit
-`source:` and `monitor:`. Not built until a consumer has such a link (the
+`source:`. Not built until a consumer has such a link (the
 AUO SGSS project's TSN phase).
 
 ## 3. Not done, on purpose

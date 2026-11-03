@@ -642,8 +642,8 @@ how it consumes. Pub-side `max_transport` is not part of the format.
 
 **Links (since v0.3.4).** A transport that several subscribers cross, or
 one that is an assumption about a platform rather than a promise, is
-stated once as a named link, with where its number comes from and how
-it is held at run time (design: `docs/design/links.md`):
+stated once as a named link, with where its number comes from
+(design: `docs/design/links.md`):
 
 ```yaml
 links:
@@ -652,7 +652,6 @@ links:
       duration: 56ms
       source: { measured: { max: 46.42ms, n: 12, margin: 0.2, run: "board runs fr-a1..3" } }
     clock: unsynced                  # the default: only arrivals can be timed
-    monitor: { enters: emergency_stop }
 
 nodes:
   handler:
@@ -668,10 +667,10 @@ best-effort link (serial, TCP, DDS between processes or hosts) has no
 derivable worst case; its bound is measured, and a link with no
 `source:` is `link-unsourced` (a warning). A `max_transport` written on
 a subscriber stays legal and is reported as `transport-inline` (info).
-`monitor:` declares the runtime check: with `clock: synced` the
-receiver checks each message's stamp age against the bound, otherwise
-the gap between arrivals against the sender's period plus the bound; a
-miss is a link fault that starts the reaction.
+No runtime monitor holds a link: the bound is measured and sourced, and
+`play_launch check --against <run>` holds it (`transport-exceeded`, an
+error, when a message in the run took longer). `monitor:` is parsed and
+not read (play_launch phase 97 P5, not adopted).
 
 ### Node and Scope Contracts
 

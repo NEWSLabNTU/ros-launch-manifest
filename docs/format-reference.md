@@ -33,7 +33,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
 | `unless` | meta |  | Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest. |
 | `policy` | meta | since v0.1.61 | Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults. |
-| `links` | fact | since v0.3.4 | Named links (play_launch phase 97): `<name>: { max_transport, clock, monitor }`, one transport stated once, with its source and how it is held. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes. |
+| `links` | fact | since v0.3.4 | Named links (play_launch phase 97): `<name>: { max_transport, clock, monitor }`, one transport stated once, with its source. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes. |
 | `supervision` | fact | since v0.1.61 | The platform terms of a supervised budget's detection delay, stated once: `{ tick, switch }`. Read by the consumer's overrun case (`supervised-fit`); required once any budget states `supervise:`. |
 | `acknowledged` | meta | since v0.2.3 | Findings the author has read and keeps: a list of `{ rule, at, reason }`, at the contract's root only. The consumer reports a warning or info whose rule id and path match an entry as acknowledged, with the reason, and counts it apart from the warnings; an entry matching an error is itself an error (errors cannot be acknowledged), and one matching nothing is a warning, so an acknowledgement cannot outlive its finding. |
 | `let` | meta | since v0.2.4 | Names for values, stated once and read as `$(let <name>)`: a mapping of name to value, in order, at the contract's root. An entry may read earlier entries (and `$(param)`, `$(var)`); a forward reference or a cycle is an error. Separate from launch configurations: `$(var)` never reads it. |
@@ -395,16 +395,16 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `max_transport` | requirement | since v0.3.4 | The bound on one message's transport across the link, from the publish to the subscriber's take. Required. A best-effort link (serial, TCP, DDS between processes or hosts) has no derivable worst case: state it measured, with `source: { measured: { max, n, margin, run } }` (`link-unsourced` otherwise), and hold it with `monitor:`. |
-| `clock` | fact | since v0.3.4 | `synced` or `unsynced` (the default): whether the two ends' clocks are comparable. Synced: a message's stamp age at the receiver is its transport, so it can be measured and monitored per message. Unsynced: only arrivals can be timed; `measure` cannot propose the bound and the monitor checks the gap between arrivals. |
-| `monitor` | fact | since v0.3.4 | The runtime monitor that holds the bound, `{ reaction: <path> }` or `{ enters: <mode> }`. At each subscriber that names the link: a message older than `max_transport` (synced), or no arrival within the sender's period + `max_transport` (unsynced), is a link fault that starts the reaction (a path of the subscriber's node, else an event chain; or the mode's reaction). The walk charges its detection like any other. A best-effort link on a reaction route with no monitor is `link-unmonitored`. |
+| `max_transport` | requirement | since v0.3.4 | The bound on one message's transport across the link, from the publish to the subscriber's take. Required. A best-effort link (serial, TCP, DDS between processes or hosts) has no derivable worst case: state it measured, with `source: { measured: { max, n, margin, run } }` (`link-unsourced` otherwise). `play_launch check --against <run>` holds it: a message in a run over the bound is `transport-exceeded`. |
+| `clock` | fact | since v0.3.4 | `synced` or `unsynced` (the default): whether the two ends' clocks are comparable. Synced: a message's stamp age at the receiver is its transport, so it can be measured per message. Unsynced: only arrivals can be timed, so `measure` cannot propose the bound. |
+| `monitor` | fact | since v0.3.4 | Reserved, parsed and not read: a runtime link monitor, `{ reaction: <path> }` or `{ enters: <mode> }`. No consumer builds one and no rule reads it (play_launch phase 97 P5, not adopted): a link's bound is measured and sourced, and `check --against` holds it against runs. A best-effort link on an unsynchronised wire could only be monitored by the gap between arrivals, which duplicates the receiver's own silence detector. |
 
 ## `links.<name>.monitor`
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `reaction` | fact | since v0.3.4 | The path a link fault starts: a path of the subscriber's node, else an event chain of the manifest. Exactly one of `reaction` and `enters`. |
-| `enters` | fact | since v0.3.4 | The mode a link fault enters; its `reaction:` event chain is what runs. Exactly one of `reaction` and `enters`. |
+| `reaction` | fact | since v0.3.4 | The path a link fault starts: a path of the subscriber's node, else an event chain of the manifest. Exactly one of `reaction` and `enters`. Reserved: `monitor` is not read. |
+| `enters` | fact | since v0.3.4 | The mode a link fault enters; its `reaction:` event chain is what runs. Exactly one of `reaction` and `enters`. Reserved: `monitor` is not read. |
 
 ## `<budget>.supervise.resume`
 

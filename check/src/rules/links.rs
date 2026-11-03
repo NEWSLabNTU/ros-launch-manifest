@@ -6,8 +6,9 @@
 //!   no derivable worst case: its number is evidence only with a source.
 //! - `transport-inline` (info): a `max_transport` written on a subscriber
 //!   instead of named through a link (a topic's is `deprecated-spelling`). Legal for
-//!   one release of overlap; a link states the number once, with its source
-//!   and its monitor.
+//!   one release of overlap; a link states the number once, with its source.
+//!   No monitor holds a link: `monitor:` is parsed and not read (phase 97
+//!   P5, not adopted); `play_launch check --against <run>` holds the bound.
 
 use super::ValidationRule;
 use crate::{CheckContext, graph::DataflowGraph};
@@ -57,9 +58,9 @@ impl ValidationRule for TransportInlineRule {
                         &format!("nodes.{n}.sub.{ep}.max_transport"),
                         format!(
                             "'{n}/{ep}': `max_transport: {d}` is written on the subscriber; \
-                             name a link instead (`links.<name>: {{ max_transport, monitor }}`, \
-                             then `link: <name>` here), so the number is stated once with its \
-                             source and held by a monitor"
+                             name a link instead (`links.<name>: {{ max_transport }}`, then \
+                             `link: <name>` here), so the number is stated once with its \
+                             source, and `check --against <run>` holds it against runs"
                         ),
                     );
                 }
