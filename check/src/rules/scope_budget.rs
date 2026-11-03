@@ -9,7 +9,7 @@
 //!
 //! When checking a manifest tree via the manifest loader, the precise
 //! topology-aware critical path is computed from the global dataflow
-//! graph (Phase 35.3) and reported via the cross-scope `scope-budget`
+//! graph (Phase 35.3) and reported via the cross-scope `chain-latency`
 //! diagnostic. The two diagnostics are deduplicated by their `path`
 //! field.
 
@@ -21,7 +21,7 @@ pub struct ScopeBudgetRule;
 
 impl ValidationRule for ScopeBudgetRule {
     fn id(&self) -> &str {
-        "scope-budget"
+        "chain-latency"
     }
 
     fn check(&self, manifest: &Manifest, _graph: &DataflowGraph, ctx: &mut CheckContext) {

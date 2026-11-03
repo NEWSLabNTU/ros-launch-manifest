@@ -47,10 +47,10 @@ impl ValidationRule for DropTightnessRule {
                         self.id(),
                         &format!("paths.{path_name}.drop"),
                         format!(
-                            "scope path '{path_name}' permits a loss of {whole} ({:.2}%) end to \
+                            "event chain '{path_name}' permits a loss of {whole} ({:.2}%) end to \
                              end, but topic '{topic}' on its route permits {part} ({:.2}%) on \
                              one hop: a part looser than the whole. Tighten \
-                             `topics.{topic}.drop` or loosen the scope path's",
+                             `topics.{topic}.drop` or loosen the event chain's",
                             whole.drop_rate() * 100.0,
                             part.drop_rate() * 100.0
                         ),

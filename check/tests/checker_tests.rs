@@ -114,15 +114,15 @@ paths:
     // `sub:`/`pub:` blocks, which are not part of the grammar and were
     // silently discarded — so the scope path named two topics that did not
     // exist. Shrinking the budget below the 50 ms the three nodes declare must
-    // produce the `scope-budget` warning; if it does not, this fixture is
+    // produce the `chain-latency` warning; if it does not, this fixture is
     // asserting the absence of a check rather than the success of one.
-    // (`scope-budget` is a WARNING here: the per-manifest form is a
+    // (`chain-latency` is a WARNING here: the per-manifest form is a
     // conservative flat sum, and the precise topology-aware verdict comes from
     // the cross-scope pass in the loader.)
     let tight = yaml.replace("max_latency: 60ms", "max_latency: 40ms");
     let tight_warns = warnings(&tight);
     assert!(
-        tight_warns.iter().any(|w| w.starts_with("[scope-budget]")),
+        tight_warns.iter().any(|w| w.starts_with("[chain-latency]")),
         "a 40 ms budget over a 50 ms pipeline must warn; got {tight_warns:?}"
     );
 }
@@ -714,14 +714,14 @@ paths:
     let budget_warns: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.rule_id == "scope-budget" && d.severity == Severity::Warning)
+        .filter(|d| d.rule_id == "chain-latency" && d.severity == Severity::Warning)
         .collect();
     assert!(!budget_warns.is_empty());
 
     let with_span: Vec<_> = budget_warns.iter().filter(|d| d.span.is_some()).collect();
     assert!(
         !with_span.is_empty(),
-        "expected scope-budget diagnostic with span"
+        "expected chain-latency diagnostic with span"
     );
 }
 

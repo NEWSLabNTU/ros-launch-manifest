@@ -43,6 +43,10 @@ are an API break, so the workspace Cargo version moves.
   `min_dwell: DwellContract`; the schema-2 names and the role values
   `rung`/`window`/`floor` are read too. Field-table prose and parse
   messages use the new words.
+- **A manifest-level `paths:` entry is an event chain** (S5, AUTOSAR
+  TIMEX's term; the academic literature's cause-effect chain), no longer
+  a "scope path": "scope" already names a launch-file scope. The key
+  `paths:` is unchanged; messages and the field table say event chain.
 - **Renamed rule ids keep their old ids for one release**
   (`types::rule_names::RENAMED_RULES`): `severity-unknown` ->
   `integrity-unknown`, `severity-scale-conflict` ->
@@ -51,7 +55,9 @@ are an API break, so the workspace Cargo version moves.
   `fallback-without-mrc`, `ladder-window-floor` -> `dwell-at-mrc`,
   `call-unbounded-floor` -> `call-unbounded-mrc`, `window-expiry` ->
   `dwell-expiry`, `window-param` -> `dwell-param`, `window-unbound` ->
-  `dwell-unbound`. An `acknowledged:` entry naming an old id, or a path
+  `dwell-unbound`, `scope-budget` -> `chain-latency`,
+  `scope-sampling-feasibility` -> `chain-sampling-feasibility` (a
+  per-mode `mode:<rule>` id follows its rule). An `acknowledged:` entry naming an old id, or a path
   through a renamed key (`rule_names::RENAMED_KEYS`, `current_path`),
   still matches; rewrite `rule-id-renamed` moves both.
 - SystemModel schema 3 (`SCHEMA_VERSION`): a model written now carries only

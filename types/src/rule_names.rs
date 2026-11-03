@@ -67,6 +67,16 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
         new: "dwell-unbound",
         since: "0.3.3",
     },
+    RenamedRule {
+        old: "scope-budget",
+        new: "chain-latency",
+        since: "0.3.3",
+    },
+    RenamedRule {
+        old: "scope-sampling-feasibility",
+        new: "chain-sampling-feasibility",
+        since: "0.3.3",
+    },
 ];
 
 /// A renamed key as a diagnostic path spells it: the segment `old` under a
@@ -127,13 +137,22 @@ pub fn current_path(at: &str) -> String {
 }
 
 /// The rule id `id` names now: its new id when it was renamed, else itself.
-pub fn current(id: &str) -> &str {
-    renamed(id).map_or(id, |r| r.new)
+/// A per-mode finding's id (`mode:<rule>`) keeps its prefix.
+pub fn current(id: &str) -> std::borrow::Cow<'_, str> {
+    match renamed(id) {
+        Some(r) => match id.strip_prefix("mode:") {
+            Some(_) => format!("mode:{}", r.new).into(),
+            None => r.new.into(),
+        },
+        None => id.into(),
+    }
 }
 
-/// The rename `id` is the old side of, if any.
+/// The rename `id` is the old side of, if any (a `mode:` prefix is
+/// looked through).
 pub fn renamed(id: &str) -> Option<&'static RenamedRule> {
-    RENAMED_RULES.iter().find(|r| r.old == id)
+    let bare = id.strip_prefix("mode:").unwrap_or(id);
+    RENAMED_RULES.iter().find(|r| r.old == bare)
 }
 
 #[cfg(test)]
@@ -145,6 +164,7 @@ mod tests {
         assert_eq!(current("severity-unknown"), "integrity-unknown");
         assert_eq!(current("integrity-unknown"), "integrity-unknown");
         assert_eq!(current("scope-budget-x"), "scope-budget-x");
+        assert_eq!(current("mode:scope-budget"), "mode:chain-latency");
     }
 
     #[test]

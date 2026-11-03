@@ -43,7 +43,7 @@ impl ValidationRule for ExplicitTriggerRule {
                     Severity::Info,
                     &format!("paths.{path_name}"),
                     format!(
-                        "scope path '{path_name}' has no explicit 'trigger:' — add one of \
+                        "event chain '{path_name}' has no explicit 'trigger:' — add one of \
                          timer/input/once/spontaneous (Vocabulary v2)"
                     ),
                 );

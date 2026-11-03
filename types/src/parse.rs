@@ -839,7 +839,7 @@ fn parse_supervise(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Supervisi
             return Err(field_err(
                 sctx,
                 "reaction",
-                "required: what a miss starts -- a path of this node or a scope path                  (`reaction: <path>`), or a mode (`enters: <mode>`)",
+                "required: what a miss starts -- a path of this node or an event chain                  (`reaction: <path>`), or a mode (`enters: <mode>`)",
             ));
         }
     };
@@ -1954,7 +1954,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 &hctx,
                 "enters",
                 "a hazard either enters a mode (`enters: <mode>`, its fallback sequence) or \
-                 reacts by one scope path (`reaction: <path>`), not both -- keep one",
+                 reacts by one event chain (`reaction: <path>`), not both -- keep one",
             ));
         }
         out.insert(
@@ -2514,7 +2514,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
             "jitter",
             "`jitter:` on an endpoint was removed — nothing ever read it, and \
              jitter is a property of a ROUTE rather than of one endpoint. \
-             Declare it on the path or scope path whose end-to-end variation \
+             Declare it on the path or event chain whose end-to-end variation \
              you mean:\n\
              \x20 paths:\n\
              \x20   <path name>:\n\
@@ -2663,7 +2663,7 @@ fn parse_call_reaction(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String
         return Err(field_err(
             ctx,
             key,
-            "expected a mapping `{ reaction: <mode | scope path> }`",
+            "expected a mapping `{ reaction: <mode | event chain> }`",
         ));
     }
     reject_unknown_keys(section, rctx, Context::CallReaction)?;
@@ -2672,7 +2672,7 @@ fn parse_call_reaction(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String
         field_err(
             rctx,
             "reaction",
-            "required: the mode the hazard falls to, or the scope path that runs",
+            "required: the mode the hazard falls to, or the event chain that runs",
         )
     })
 }
@@ -2691,7 +2691,7 @@ fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseErr
         return Err(field_err(
             ctx,
             "on_timeout",
-            "expected a mapping `{ reaction: <mode | scope path> }` or `{ retry: { attempts, \
+            "expected a mapping `{ reaction: <mode | event chain> }` or `{ retry: { attempts, \
              backoff }, then: { reaction } }`",
         ));
     }
@@ -2720,7 +2720,7 @@ fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseErr
             return Err(field_err(
                 octx,
                 "reaction",
-                "required: the mode the hazard falls to, or the scope path that runs, when \
+                "required: the mode the hazard falls to, or the event chain that runs, when \
                  the wait passes (or `retry:` with `then:`)",
             ));
         };
@@ -3207,7 +3207,7 @@ pub const NODE_PATH_DROP_REMOVED: &str = "Removed in v0.1.60 (phase 90 G3) -- a 
      stated on the topic is: the rate rule, the loss detector's interval and the runtime drop \
      monitor read `topics.<t>.drop`. State it on the topic the path outputs, \
      `topics: { <t>: { drop: ... } }`; `play_launch migrate` moves it when the path has one \
-     output. On a scope path `drop:` stays: the end-to-end loss budget.";
+     output. On an event chain `drop:` stays: the end-to-end loss budget.";
 
 /// `paths:` of a manifest level (`node == false`: scope paths) or of a
 /// node (`node == true`).
@@ -3708,7 +3708,7 @@ fn reject_chains(doc: &Yaml, ctx: &str) -> Result<(), ParseError> {
         ctx,
         "chains",
         "`chains:`/`segments:` were removed — a written route is a second copy \
-         of the graph. State the same requirement as a scope path, which names \
+         of the graph. State the same requirement as an event chain, which names \
          only its two ends and lets the route be derived from the `trigger:` \
          and `output:` facts the nodes already declare:\n\
          \x20 paths:\n\
@@ -4101,7 +4101,7 @@ mod tests {
             .expect_err("`chains:` must not parse")
             .to_string();
         assert!(
-            err.contains("State the same requirement as a scope path"),
+            err.contains("State the same requirement as an event chain"),
             "got: {err}"
         );
 

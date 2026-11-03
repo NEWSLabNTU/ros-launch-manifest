@@ -53,7 +53,7 @@ pub const REWRITES: &[Rewrite] = &[
         since: "0.1.59",
         from: "hazards.<h>.reaction: <mode>",
         to: "hazards.<h>.enters: <mode>",
-        when: "the name is a mode declared in the same file (the checker's lookup: a mode first); a scope path stays `reaction:`",
+        when: "the name is a mode declared in the same file (the checker's lookup: a mode first); an event chain stays `reaction:`",
         find: hazard_reaction_enters,
     },
     Rewrite {
@@ -620,9 +620,10 @@ fn rule_id_renamed(doc: &Doc) -> Vec<Edit> {
     for (i, entry) in list.iter().enumerate() {
         let item = vec!["acknowledged".to_string(), i.to_string()];
         let renames = [
-            entry["rule"]
-                .as_str()
-                .and_then(|r| crate::rule_names::renamed(r).map(|n| ("rule", r, n.new.to_string()))),
+            entry["rule"].as_str().and_then(|r| {
+                crate::rule_names::renamed(r)
+                    .map(|_| ("rule", r, crate::rule_names::current(r).into_owned()))
+            }),
             entry["at"].as_str().and_then(|a| {
                 let now = crate::rule_names::current_path(a);
                 (now != a).then_some(("at", a, now))

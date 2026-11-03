@@ -22,14 +22,14 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `services` | meta |  | Service declarations, keyed by service name. |
 | `actions` | meta |  | Action declarations, keyed by action name. |
 | `includes` | meta |  | Child scopes, each an inline manifest (the file-reference form was removed in v0.1.59). |
-| `paths` | meta |  | Scope paths: end-to-end requirements naming two topics and a budget. |
+| `paths` | meta |  | Event chains: end-to-end requirements naming two topics and a budget. |
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
 | `modes` | meta |  | Operational modes: what each requires, and the fallback sequence (the ordered degradation levels) to fall to when it is lost. |
 | `severity_levels` |  | deprecated — use `integrity_levels` | Deprecated spelling. |
 | `integrity_levels` | meta | since v0.3.3 | The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this. |
 | `external_topics` |  | deprecated — use `topics.<name>.external` | Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release. |
-| `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
+| `chains` |  | **removed** | Removed in phase 68 — state the requirement as an event chain and let the route be derived. |
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
 | `unless` | meta |  | Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest. |
 | `policy` | meta | since v0.1.61 | Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults. |
@@ -73,8 +73,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `budget_period` | requirement | since v0.1.68 | Subscriber: the server period P of `budget`. Only beside `budget`. |
 | `call` | fact | since v0.1.69 | Client: how the code waits for the response. `blocking`: the callback that sends the request waits for it, so under a preemptive executor the server must run at a more urgent level (a less urgent one is a priority inversion, its own level a deadlock). `async`: the request is sent and a later callback takes the response. Absent means not stated: a consumer checks a stated call and reports an unstated one. Refused under `pub:`/`sub:`. |
 | `timeout` | fact | since v0.2.5 | Client: how long the code waits for the response before it gives up (a duration, `$(param …)`-capable): `spin_until_future_complete` with a timeout, a pending-request prune, a tick-counting poll. A fact about the code, not a requirement. Absent means the client may wait forever (rclcpp's default), so a reaction route through the call is unbounded unless the degradation level is supervised (`call-unbounded`). Refused under `pub:`/`sub:`. |
-| `on_timeout` | fact | since v0.2.5 | Client: what the code does when `timeout` passes, `{ reaction: <mode | scope path> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`. |
-| `on_rejected` | fact | since v0.2.5 | Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | scope path> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`. |
+| `on_timeout` | fact | since v0.2.5 | Client: what the code does when `timeout` passes, `{ reaction: <mode | event chain> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`. |
+| `on_rejected` | fact | since v0.2.5 | Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
 | `on_demand` | fact | since v0.1.49 | Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
@@ -161,13 +161,13 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `if` | meta |  | Declare this path only when the condition holds. |
 | `unless` | meta |  | Declare this path unless the condition holds. |
 | `input` |  | deprecated — use `trigger: { input: [...] }` | Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`, read as that trigger when no `trigger:` is written; `play_launch migrate` rewrites it. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified. Removed in the next grammar release. |
-| `output` | fact |  | Endpoints (node path) or topics (scope path) this path produces. |
-| `max_latency` | requirement |  | Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; an embedded realizer may ALSO turn it into a derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a SCOPE path: the NOMINAL end-to-end traversal of the subtree, checked by `scope-budget`; a hazard's fault route is derived separately by walking the reactions, and does not read it. |
+| `output` | fact |  | Endpoints (node path) or topics (event chain) this path produces. |
+| `max_latency` | requirement |  | Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; an embedded realizer may ALSO turn it into a derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a EVENT CHAIN: the NOMINAL end-to-end traversal of the subtree, checked by `chain-latency`; a hazard's fault route is derived separately by walking the reactions, and does not read it. |
 | `max_latency_ms` |  | **removed** | Removed in phase 70 — write `max_latency: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `correlation` |  | **removed** | Removed in phase 70 — nothing ever read it. State fan-in policy with `sync:`. |
 | `tolerance` | fact |  | Max `header.stamp` spread between a fan-in path's inputs still treated as one set. |
 | `tolerance_ms` |  | **removed** | Removed in phase 70 — write `tolerance: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
-| `drop` | requirement |  | Scope path only: the end-to-end loss budget, `max_count: N / W` and `max_consecutive: K` (or the bare `N / W`). No topic on the path's route may permit more loss than the whole (`drop-tightness`). On a node path it is refused since v0.1.60 (phase 90 G3): nothing read it there; the loss belongs on the topic the path outputs (`topics.<t>.drop`), where `play_launch migrate` moves it. |
+| `drop` | requirement |  | Event chain only: the end-to-end loss budget, `max_count: N / W` and `max_consecutive: K` (or the bare `N / W`). No topic on the path's route may permit more loss than the whole (`drop-tightness`). On a node path it is refused since v0.1.60 (phase 90 G3): nothing read it there; the loss belongs on the topic the path outputs (`topics.<t>.drop`), where `play_launch migrate` moves it. |
 | `trigger` | fact |  | What causes this path's output: timer | input | once | spontaneous. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick. |
 | `sync` | fact |  | Fan-in synchronization policy for an input trigger with two or more endpoints. |
 | `max_jitter` | requirement |  | Permitted variation in this path's latency. |
@@ -255,7 +255,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
 | `enters` | meta | since v0.1.59 | The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-budget`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
-| `reaction` | meta |  | The scope path whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
+| `reaction` | meta |  | The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
 | `when` | fact |  | The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`). |
 | `detection` | fact |  | Fault to detection when that is physics, not a detector's timeout (an occlusion building pressure), a duration or `{ duration, source }`. Charged before the detection the consumer derives from the detectors, so stating it never buys slack. Usually derived by an extension (`source: { derived: ... }`). |
 | `deadline_by` | requirement |  | `<extension>/<check>`: the check that is this hazard's requirement when it is not a time (a safety distance). A hazard states `ftti`, `deadline_by`, or both. |
@@ -268,7 +268,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `description` | meta |  | What this mode is. |
 | `requires` | fact |  | Functions (or bare topics) this mode needs; it is available while every one holds. |
 | `fallback` | requirement |  | Modes to fall to, in order, when this one is lost: the fallback sequence of degradation levels. The last is the minimal risk condition (MRC) and must require nothing losable. |
-| `reaction` | meta |  | The scope path that reaches this mode's safe state. |
+| `reaction` | meta |  | The event chain that reaches this mode's safe state. |
 | `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
 | `min_dwell` | requirement | since v0.3.3 | A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`. |
 | `window` |  | deprecated — use `min_dwell` | Deprecated spelling. |
@@ -381,8 +381,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `reaction` | fact | since v0.1.61 | The path a miss starts: a path of the budget's own node (as `on_violation.reaction`), else a scope path of the manifest. Exactly one of `reaction` and `enters`. |
-| `enters` | fact | since v0.1.61 | The mode a miss enters; its `reaction:` scope path is what runs. Exactly one of `reaction` and `enters`. |
+| `reaction` | fact | since v0.1.61 | The path a miss starts: a path of the budget's own node (as `on_violation.reaction`), else an event chain of the manifest. Exactly one of `reaction` and `enters`. |
+| `enters` | fact | since v0.1.61 | The mode a miss enters; its `reaction:` event chain is what runs. Exactly one of `reaction` and `enters`. |
 | `mechanism` | fact | since v0.1.61 | What checks the budget. Required. `executor`: checked in the spin loop, so the detection waits for the longest callback on that executor, and a stuck callback is not caught (slowness, not a hang). `timer`: an independent timer and thread, which catches both and adds the platform's switch (`supervision.switch`). |
 | `observes` | fact | since v0.1.62 | A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget. |
 | `early` | requirement | since v0.3.1 | A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the level up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget. |
@@ -413,7 +413,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the scope path that runs, when the wait passes. Without `retry:`. |
+| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the event chain that runs, when the wait passes. Without `retry:`. |
 | `retry` | fact | since v0.2.5 | The code asks again: `{ attempts, backoff }`. Sound only when every server declares `idempotent: true` (`call-retry-not-idempotent`), and bounded only with `attempts` and `then:` (`call-retry-unbounded`). |
 | `then` | meta | since v0.2.5 | What the code does after the last attempt, `{ reaction }`. Only beside `retry:`. |
 
@@ -428,7 +428,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the scope path that runs. Required. |
+| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the event chain that runs. Required. |
 
 ## `policy`
 

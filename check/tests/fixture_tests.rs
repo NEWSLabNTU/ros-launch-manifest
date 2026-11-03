@@ -233,7 +233,7 @@ fn fixture_violations_scope_budget() {
     let budget_warns: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.rule_id == "scope-budget" && d.severity == Severity::Warning)
+        .filter(|d| d.rule_id == "chain-latency" && d.severity == Severity::Warning)
         .collect();
     assert!(!budget_warns.is_empty(), "expected scope budget warning");
 }
@@ -966,7 +966,7 @@ fn fixture_endpoint_transport_declares_both_values() {
     );
 }
 
-/// No ERRORS on the fixture. It does carry `scope-budget` warnings, and
+/// No ERRORS on the fixture. It does carry `chain-latency` warnings, and
 /// that is the third reader design issue #55 left undecided: the
 /// per-manifest rule is a flat sum over every node and every topic in the
 /// scope, with no route, reading only the deprecated topic-level transport
@@ -987,7 +987,7 @@ fn fixture_endpoint_transport_has_no_errors_and_the_flat_sum_is_pessimistic() {
     let budget: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.rule_id == "scope-budget")
+        .filter(|d| d.rule_id == "chain-latency")
         .collect();
     assert_eq!(
         budget.len(),

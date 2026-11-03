@@ -49,7 +49,7 @@ impl ValidationRule for JitterRangeRule {
             check_path(
                 self.id(),
                 &format!("paths.{path_name}"),
-                &format!("scope path '{path_name}'"),
+                &format!("event chain '{path_name}'"),
                 path,
                 ctx,
             );
@@ -192,7 +192,7 @@ mod tests {
         let yaml = "version: 1\npaths:\n  e2e:\n    input: [/a]\n    output: [/b]\n    max_latency: 80ms\n    min_latency: 20ms\n    max_jitter: 10ms\n";
         let errs = errors(yaml);
         assert_eq!(errs.len(), 1, "{errs:?}");
-        assert!(errs[0].starts_with("scope path 'e2e'"), "{errs:?}");
+        assert!(errs[0].starts_with("event chain 'e2e'"), "{errs:?}");
     }
 
     #[test]

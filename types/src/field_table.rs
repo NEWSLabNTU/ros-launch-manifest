@@ -371,7 +371,7 @@ pub const FIELDS: &[Field] = &[
         "paths",
         Context::Manifest,
         Kind::Meta,
-        "Scope paths: end-to-end requirements naming two topics and a budget.",
+        "Event chains: end-to-end requirements naming two topics and a budget.",
     ),
     live(
         "hazards",
@@ -407,7 +407,7 @@ pub const FIELDS: &[Field] = &[
     removed(
         "chains",
         Context::Manifest,
-        "Removed in phase 68 — state the requirement as a scope path and let the route be derived.",
+        "Removed in phase 68 — state the requirement as an event chain and let the route be derived.",
     ),
     live(
         "if",
@@ -611,13 +611,13 @@ pub const FIELDS: &[Field] = &[
         "on_timeout",
         Context::Endpoint,
         Kind::Fact,
-        "Client: what the code does when `timeout` passes, `{ reaction: <mode | scope path> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`.",
+        "Client: what the code does when `timeout` passes, `{ reaction: <mode | event chain> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`.",
     ),
     live(
         "on_rejected",
         Context::Endpoint,
         Kind::Fact,
-        "Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | scope path> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`.",
+        "Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`.",
     ),
     live(
         "buffer",
@@ -887,13 +887,13 @@ pub const FIELDS: &[Field] = &[
         "output",
         Context::Path,
         Kind::Fact,
-        "Endpoints (node path) or topics (scope path) this path produces.",
+        "Endpoints (node path) or topics (event chain) this path produces.",
     ),
     live(
         "max_latency",
         Context::Path,
         Kind::Requirement,
-        "Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; an embedded realizer may ALSO turn it into a derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a SCOPE path: the NOMINAL end-to-end traversal of the subtree, checked by `scope-budget`; a hazard's fault route is derived separately by walking the reactions, and does not read it.",
+        "Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; an embedded realizer may ALSO turn it into a derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a EVENT CHAIN: the NOMINAL end-to-end traversal of the subtree, checked by `chain-latency`; a hazard's fault route is derived separately by walking the reactions, and does not read it.",
     ),
     removed(
         "max_latency_ms",
@@ -920,7 +920,7 @@ pub const FIELDS: &[Field] = &[
         "drop",
         Context::Path,
         Kind::Requirement,
-        "Scope path only: the end-to-end loss budget, `max_count: N / W` and `max_consecutive: K` (or the bare `N / W`). No topic on the path's route may permit more loss than the whole (`drop-tightness`). On a node path it is refused since v0.1.60 (phase 90 G3): nothing read it there; the loss belongs on the topic the path outputs (`topics.<t>.drop`), where `play_launch migrate` moves it.",
+        "Event chain only: the end-to-end loss budget, `max_count: N / W` and `max_consecutive: K` (or the bare `N / W`). No topic on the path's route may permit more loss than the whole (`drop-tightness`). On a node path it is refused since v0.1.60 (phase 90 G3): nothing read it there; the loss belongs on the topic the path outputs (`topics.<t>.drop`), where `play_launch migrate` moves it.",
     ),
     live(
         "trigger",
@@ -1168,7 +1168,7 @@ pub const FIELDS: &[Field] = &[
         "reaction",
         Context::Hazard,
         Kind::Meta,
-        "The scope path whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
+        "The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
     ),
     live(
         "when",
@@ -1216,7 +1216,7 @@ pub const FIELDS: &[Field] = &[
         "reaction",
         Context::Mode,
         Kind::Meta,
-        "The scope path that reaches this mode's safe state.",
+        "The event chain that reaches this mode's safe state.",
     ),
     live(
         "overrides",
@@ -1504,13 +1504,13 @@ pub const FIELDS: &[Field] = &[
         "reaction",
         Context::Supervise,
         Kind::Fact,
-        "The path a miss starts: a path of the budget's own node (as `on_violation.reaction`), else a scope path of the manifest. Exactly one of `reaction` and `enters`.",
+        "The path a miss starts: a path of the budget's own node (as `on_violation.reaction`), else an event chain of the manifest. Exactly one of `reaction` and `enters`.",
     ),
     live(
         "enters",
         Context::Supervise,
         Kind::Fact,
-        "The mode a miss enters; its `reaction:` scope path is what runs. Exactly one of `reaction` and `enters`.",
+        "The mode a miss enters; its `reaction:` event chain is what runs. Exactly one of `reaction` and `enters`.",
     ),
     live(
         "mechanism",
@@ -1580,7 +1580,7 @@ pub const FIELDS: &[Field] = &[
         "reaction",
         Context::OnTimeout,
         Kind::Meta,
-        "The mode the hazard falls to, or the scope path that runs, when the wait passes. Without `retry:`.",
+        "The mode the hazard falls to, or the event chain that runs, when the wait passes. Without `retry:`.",
     ),
     live(
         "retry",
@@ -1610,7 +1610,7 @@ pub const FIELDS: &[Field] = &[
         "reaction",
         Context::CallReaction,
         Kind::Meta,
-        "The mode the hazard falls to, or the scope path that runs. Required.",
+        "The mode the hazard falls to, or the event chain that runs. Required.",
     ),
     // -- policy (phase 93) --
     live(
