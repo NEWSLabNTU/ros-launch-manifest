@@ -586,7 +586,11 @@ fn severity_integrity(doc: &Doc) -> Vec<Edit> {
             if y["integrity_levels"].is_badvalue() {
                 rename(path, "integrity_levels");
             } else {
-                doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+                doc.skip(
+                    ID,
+                    &path.join("."),
+                    "both spellings written: delete one by hand",
+                );
             }
         }
         let Some(hazards) = y["hazards"].as_hash() else {
@@ -601,7 +605,11 @@ fn severity_integrity(doc: &Doc) -> Vec<Edit> {
             if h["integrity"].is_badvalue() {
                 rename(path, "integrity");
             } else {
-                doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+                doc.skip(
+                    ID,
+                    &path.join("."),
+                    "both spellings written: delete one by hand",
+                );
             }
         }
     }
@@ -638,11 +646,18 @@ fn rule_id_renamed(doc: &Doc) -> Vec<Edit> {
             };
             // The item is a flow mapping when its value opens with `{`.
             let in_flow = doc.flow.contains(&item)
-                || doc.nodes.get(&item).is_some_and(|&p| doc.src[p..].starts_with('{'));
+                || doc
+                    .nodes
+                    .get(&item)
+                    .is_some_and(|&p| doc.src[p..].starts_with('{'));
             let end = doc.inline_value_end(start, in_flow);
             let token = &doc.src[start..end];
             if token.trim_matches(|c| c == '"' || c == '\'') != old {
-                doc.skip(ID, &dotted, "value spelled in a form the edit does not handle");
+                doc.skip(
+                    ID,
+                    &dotted,
+                    "value spelled in a form the edit does not handle",
+                );
                 continue;
             }
             let text = match token.chars().next() {
@@ -671,7 +686,11 @@ fn window_min_dwell(doc: &Doc) -> Vec<Edit> {
             }
             let path = with(&level, &["modes", &name, "window"]);
             if !m["min_dwell"].is_badvalue() {
-                doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+                doc.skip(
+                    ID,
+                    &path.join("."),
+                    "both spellings written: delete one by hand",
+                );
                 continue;
             }
             let refs: Vec<&str> = path.iter().map(String::as_str).collect();
@@ -1524,8 +1543,7 @@ fn use_implicit(doc: &Doc) -> Vec<Edit> {
             hs.values()
                 .any(|h| !h["integrity"].is_badvalue() || !h["severity"].is_badvalue())
         });
-        if integrity && y["integrity_levels"].is_badvalue() && y["severity_levels"].is_badvalue()
-        {
+        if integrity && y["integrity_levels"].is_badvalue() && y["severity_levels"].is_badvalue() {
             let profile = used.iter().find(|u| reference.contains(u));
             let maybe = used
                 .iter()
@@ -2004,8 +2022,7 @@ hazards:
 
     #[test]
     fn quoted_keys_keep_their_quotes() {
-        let src =
-            "version: 1\nmodes:\n  a:\n    min_dwell: 1s\n    exit: { \"on\": f, to: b }\n  b: {}\n";
+        let src = "version: 1\nmodes:\n  a:\n    min_dwell: 1s\n    exit: { \"on\": f, to: b }\n  b: {}\n";
         let m = migrate_str(src).unwrap();
         assert_eq!(m.output, src.replace("\"on\"", "\"holds\""));
     }
@@ -2612,7 +2629,11 @@ nodes:
             m.output,
             "version: 1\nmodes:\n  tor:\n    min_dwell: { duration: 10s, param: h.t }\n  slow: { min_dwell: 2s, requires: [] }\nincludes:\n  sub:\n    modes:\n      m:\n        min_dwell: 1s\n"
         );
-        assert!(m.edits.iter().all(|e| e.rewrite == "window-min-dwell"), "{:?}", m.edits);
+        assert!(
+            m.edits.iter().all(|e| e.rewrite == "window-min-dwell"),
+            "{:?}",
+            m.edits
+        );
         assert!(!run(&m.output).changed());
     }
 
@@ -2640,12 +2661,20 @@ nodes:
             m.output,
             "version: 1\nuse: { iso26262: \"^1\" }\nintegrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]\nhazards:\n  h:\n    integrity: ASIL_B   # kept\nincludes:\n  sub:\n    use: { iso26262: \"^1\" }\n    hazards:\n      g: { integrity: QM }\n"
         );
-        assert!(m.edits.iter().all(|e| e.rewrite == "severity-integrity"), "{:?}", m.edits);
+        assert!(
+            m.edits.iter().all(|e| e.rewrite == "severity-integrity"),
+            "{:?}",
+            m.edits
+        );
         assert!(!run(&m.output).changed());
         // Both spellings: the parser refuses it, migrate leaves it.
         let both = "version: 1\nhazards:\n  h:\n    severity: QM\n    integrity: QM\n";
         let m = run(both);
         assert!(m.edits.iter().all(|e| e.rewrite != "severity-integrity"));
-        assert!(m.skipped.iter().any(|s| s.contains("both spellings")), "{:?}", m.skipped);
+        assert!(
+            m.skipped.iter().any(|s| s.contains("both spellings")),
+            "{:?}",
+            m.skipped
+        );
     }
 }

@@ -1572,7 +1572,11 @@ fn parse_min_dwell(doc: &Yaml, ctx: &str) -> Result<(Option<Bound>, bool), Parse
             "`window:` is the old spelling of `min_dwell:` -- write `min_dwell:` alone",
         ));
     }
-    let key = if spelled_window { "window" } else { "min_dwell" };
+    let key = if spelled_window {
+        "window"
+    } else {
+        "min_dwell"
+    };
     parse_dwell_at(doc, ctx, key).map(|b| (b, spelled_window))
 }
 
@@ -1732,7 +1736,9 @@ fn renamed<T>(
         (false, false) => Err(field_err(
             ctx,
             old_key,
-            &format!("`{old_key}:` is the old spelling of `{new_key}:` -- write `{new_key}:` alone"),
+            &format!(
+                "`{old_key}:` is the old spelling of `{new_key}:` -- write `{new_key}:` alone"
+            ),
         )),
         (true, false) => Ok((old, true)),
         _ => Ok((new, false)),
@@ -5797,7 +5803,15 @@ nodes:
         let ok = parse_manifest_str(doc).unwrap();
         let m = &ok.modes["m"];
         assert!(m.spelled_window);
-        assert_eq!(m.min_dwell.as_ref().unwrap().duration().unwrap().as_millis_f64(), 10_000.0);
+        assert_eq!(
+            m.min_dwell
+                .as_ref()
+                .unwrap()
+                .duration()
+                .unwrap()
+                .as_millis_f64(),
+            10_000.0
+        );
         let new = parse_manifest_str("version: 1\nmodes:\n  m:\n    min_dwell: 10s\n").unwrap();
         assert!(!new.modes["m"].spelled_window);
         let e = err_of("version: 1\nmodes:\n  m:\n    window: 10s\n    min_dwell: 10s\n");
@@ -5808,7 +5822,10 @@ nodes:
     fn a_dwell_is_positive_and_names_its_parameter() {
         let m = |mode: &str| format!("version: 1\nmodes:\n  m:\n{mode}");
         let e = err_of(&m("    min_dwell: 10\n"));
-        assert!(e.contains("modes.m.min_dwell") && e.contains("no unit"), "{e}");
+        assert!(
+            e.contains("modes.m.min_dwell") && e.contains("no unit"),
+            "{e}"
+        );
         let e = err_of(&m("    min_dwell: 0s\n"));
         assert!(e.contains("a dwell of zero is no dwell"), "{e}");
         let e = err_of(&m("    min_dwell: { param: h.p }\n"));

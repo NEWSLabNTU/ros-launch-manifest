@@ -2706,7 +2706,10 @@ mod tests {
         assert_eq!(m.contracts.hazards["h"].integrity.as_deref(), Some("high"));
         let levels = &m.contracts.hazards["h"].degradation_levels;
         assert_eq!(
-            levels.iter().map(|l| (l.level.as_str(), l.role)).collect::<Vec<_>>(),
+            levels
+                .iter()
+                .map(|l| (l.level.as_str(), l.role))
+                .collect::<Vec<_>>(),
             vec![
                 ("stop", LevelRole::Mrc),
                 ("slow", LevelRole::Dwell),
@@ -2714,12 +2717,28 @@ mod tests {
             ]
         );
         let out = m.to_yaml_string().unwrap();
-        assert!(out.contains("integrity_levels:") && out.contains("integrity: high"), "{out}");
+        assert!(
+            out.contains("integrity_levels:") && out.contains("integrity: high"),
+            "{out}"
+        );
         assert!(!out.contains("severity"), "{out}");
-        assert!(out.contains("degradation_levels:") && out.contains("role: mrc"), "{out}");
+        assert!(
+            out.contains("degradation_levels:") && out.contains("role: mrc"),
+            "{out}"
+        );
         assert!(!out.contains("rung") && !out.contains("floor"), "{out}");
-        assert_eq!(m.contracts.modes["tor"].min_dwell.as_ref().unwrap().duration_ms, 10_000.0);
-        assert!(out.contains("min_dwell:") && !out.contains("window"), "{out}");
+        assert_eq!(
+            m.contracts.modes["tor"]
+                .min_dwell
+                .as_ref()
+                .unwrap()
+                .duration_ms,
+            10_000.0
+        );
+        assert!(
+            out.contains("min_dwell:") && !out.contains("window"),
+            "{out}"
+        );
     }
 
     #[test]

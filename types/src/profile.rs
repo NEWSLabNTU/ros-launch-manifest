@@ -32,8 +32,8 @@ use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::{
     VersionReq,
-    parse::{is_dotted_name, is_semver},
     integrity::CRITICALITY_LEVELS,
+    parse::{is_dotted_name, is_semver},
 };
 
 /// One profile, as parsed.

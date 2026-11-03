@@ -172,12 +172,18 @@ mod tests {
         assert_eq!(current_path("hazards.h.severity"), "hazards.h.integrity");
         assert_eq!(current_path("severity_levels"), "integrity_levels");
         assert_eq!(current_path("modes.tor.window"), "modes.tor.min_dwell");
-        assert_eq!(current_path("modes.tor.window.param"), "modes.tor.min_dwell.param");
+        assert_eq!(
+            current_path("modes.tor.window.param"),
+            "modes.tor.min_dwell.param"
+        );
         assert_eq!(
             current_path("includes.sub.hazards.h.severity"),
             "includes.sub.hazards.h.integrity"
         );
-        assert_eq!(current_path("includes.sub.severity_levels"), "includes.sub.integrity_levels");
+        assert_eq!(
+            current_path("includes.sub.severity_levels"),
+            "includes.sub.integrity_levels"
+        );
         // A node or topic that happens to be named like a key is not one.
         assert_eq!(current_path("nodes.window.paths.p"), "nodes.window.paths.p");
         assert_eq!(current_path("topics.severity"), "topics.severity");
