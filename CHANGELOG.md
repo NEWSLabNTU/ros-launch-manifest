@@ -6,6 +6,28 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.5 - 2026-11-04
+
+Links follow-up (play_launch phase 97). GRAMMAR_VERSION 0.3.5; no key
+added or removed, the model's schema stays 3 and the workspace Cargo
+version 0.4.0.
+
+### Changed
+
+- **No monitor holds a link.** The runtime link monitor (phase 97 P5) is
+  not adopted, by user decision: a link's bound is measured and sourced,
+  and `play_launch check --against <run>` holds it
+  (`transport-exceeded`). `transport-inline` no longer says the number is
+  "held by a monitor" and suggests `links.<name>: { max_transport }`.
+  `links.<name>.monitor` stays in the grammar, documented as reserved,
+  parsed and not read; the field table, `format-reference.md`,
+  `launch-manifest.md` and `design/links.md` say so (L5 marked not
+  adopted).
+- **`chain-latency`'s per-manifest flat sum** documents where a consumer
+  drops it: every chain it traces a route for, which play_launch 0.24.1
+  extends to a reaction chain the nominal graph does not walk (judged on
+  the reaction walk from the chain's inputs).
+
 ## v0.3.4 - 2026-11-03
 
 play_launch phase 97, `docs/design/links.md`: links, a transport measured,
