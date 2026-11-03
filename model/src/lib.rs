@@ -37,7 +37,13 @@ use serde::{Deserialize, Serialize};
 ///   `value="[a, b]"`) could not be told from one, and was spawned as a list
 ///   (history: CHANGELOG). [`SystemModel::from_yaml_str`] upgrades a
 ///   version-1 model on read, giving it the meaning it had then.
-pub const SCHEMA_VERSION: u32 = 2;
+/// - **3** (v0.3.3, phase 98): the vocabulary takes the standards' words. A
+///   hazard's `severity` is `integrity` and `contracts.severity_levels` is
+///   `integrity_levels`. Older names are still READ (serde aliases), so a
+///   saved model loads for good; a model written now carries only the new
+///   names, and a reader older than this one refuses it by the version
+///   rather than dropping the renamed fields in silence.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Errors loading or saving a model.
 #[derive(Debug, thiserror::Error)]
@@ -82,6 +88,10 @@ impl SystemModel {
         // writes, and treating it as old would change a model in memory.
         if model.meta.version == 1 {
             model.upgrade_v1_lists();
+        }
+        // Versions 1 and 2 read their renamed fields through the serde
+        // aliases; nothing else differs, so they are current once read.
+        if (1..SCHEMA_VERSION).contains(&model.meta.version) {
             model.meta.version = SCHEMA_VERSION;
         }
         Ok(model)
@@ -959,14 +969,19 @@ pub struct Contracts {
     /// that schedules per mode.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, ModeContract>,
-    /// The severity scale `hazards.<h>.severity` is drawn from, ascending
-    /// (design issue #52). Empty means the ISO 26262 default
+    /// The integrity scale `hazards.<h>.integrity` is drawn from, ascending
+    /// (design issue #52; `severity_levels` before schema 3, read under
+    /// that name too). Empty means the ISO 26262 default
     /// `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; the first entry is "no
     /// safety requirement" and derives no criticality. Carried so a
     /// consumer can explain a `node_criticality` entry from the hazard
     /// that produced it without re-reading the manifest.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub severity_levels: Vec<String>,
+    #[serde(
+        default,
+        alias = "severity_levels",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub integrity_levels: Vec<String>,
     /// The EFFECTIVE criticality of each node after the phase-72
     /// derivation, keyed by node FQN (design issue #52): a hazard whose
     /// reaction route reaches the node decides first, the authored label
@@ -1136,8 +1151,10 @@ pub enum OverrideTable {
 /// A hazard after merge (phase 71).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct HazardContract {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub severity: Option<String>,
+    /// The HARA's integrity level (`severity` before schema 3, read under
+    /// that name too).
+    #[serde(default, alias = "severity", skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<String>,
     /// Each entry is one fault: one topic, or a redundant set that faults
     /// only when every member does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1475,7 +1492,7 @@ impl Contracts {
             && self.modes.is_empty()
             && self.node_params.is_empty()
             && self.node_concurrency.is_empty()
-            && self.severity_levels.is_empty()
+            && self.integrity_levels.is_empty()
             && self.node_criticality.is_empty()
     }
 }
@@ -2661,6 +2678,22 @@ mod tests {
         let none: HazardContract = serde_yaml_ng::from_str("ftti_ms: 5.0\n").unwrap();
         assert!(none.on.is_empty());
         assert!(!serde_yaml_ng::to_string(&none).unwrap().contains("on:"));
+    }
+
+    #[test]
+    fn schema_2_names_read_as_schema_3() {
+        // Phase 98: `severity`/`severity_levels` were renamed `integrity`/
+        // `integrity_levels`. A saved schema-2 model must load with them
+        // and be current once read; a model written now has only the new
+        // names.
+        let old = "meta:\n  version: 2\nstructure: {}\ncontracts:\n  severity_levels: [low, high]\n  hazards:\n    h:\n      severity: high\n";
+        let m = SystemModel::from_yaml_str(old).unwrap();
+        assert_eq!(m.meta.version, SCHEMA_VERSION);
+        assert_eq!(m.contracts.integrity_levels, vec!["low", "high"]);
+        assert_eq!(m.contracts.hazards["h"].integrity.as_deref(), Some("high"));
+        let out = m.to_yaml_string().unwrap();
+        assert!(out.contains("integrity_levels:") && out.contains("integrity: high"), "{out}");
+        assert!(!out.contains("severity"), "{out}");
     }
 
     #[test]

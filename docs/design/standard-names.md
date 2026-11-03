@@ -1,7 +1,7 @@
 # Standard names: the contract vocabulary in the terms its readers know
 
-**Status (2026-11-03): decided in principle; each replacement below is a
-proposal until play_launch phase 98 unit N0 fixes the final table.**
+**Status (2026-11-03): decided; the names in §2 are final (phase 98 N0, the
+table in §2.6), those in §3 are proposals until their area is touched.**
 Implementation is tracked by play_launch phase 98. Design issue 57 records the
 decision.
 
@@ -57,10 +57,14 @@ No standard says rung. AUTOSAR speaks of degradation modes; the graceful
 degradation literature of **degradation levels**; the contract's own key
 already says fallback.
 
-**Proposal:** **degradation level** (a level) and **degradation chain** (the
-ordered list); `RungRoute` becomes `LevelRoute`, `rungs[]` becomes
-`levels[]`, `ladder-rung-budget` becomes `level-budget`,
-`ladder-unterminated` becomes `chain-without-mrc` (see S3).
+**Proposal:** **degradation level** (a level) and **fallback sequence** (the
+ordered list, after the key that states it); `RungRoute` becomes
+`LevelRoute`, `RungRole` becomes `LevelRole`, the model's `rungs[]` becomes
+`degradation_levels[]`, `ladder-rung-budget` becomes
+`degradation-level-budget`, `ladder-unterminated` becomes
+`fallback-without-mrc` (see S3). "Degradation chain" was considered and
+rejected: S5 gives "chain" to the event chain, and two chains in one rule
+vocabulary is the clash this document removes.
 
 ### S3. `floor` is a minimal risk condition
 
@@ -111,6 +115,25 @@ id before then. Reusing "chain" for the requirement is right by the standards
 but means the `chains:` removal message must keep saying what it removed (a
 written route) and point at `paths:`, and the reused rule id must not be read
 as the old one's return.
+
+### 2.6 Decided (N0)
+
+| Old | New | Where |
+|---|---|---|
+| `hazards.<h>.severity` | `integrity` | key |
+| `severity_levels` | `integrity_levels` | key |
+| `severity-unknown` | `integrity-unknown` | rule |
+| rung / ladder | degradation level / fallback sequence | prose, messages |
+| `RungRole`, `RungRoute`, `rungs[]` | `LevelRole`, `LevelRoute`, `degradation_levels[]` | types, model |
+| `ladder-rung-budget` | `degradation-level-budget` | rule |
+| `ladder-unterminated` | `fallback-without-mrc` | rule |
+| floor | minimal risk condition (MRC) | prose, messages |
+| `call-unbounded-floor` | `call-unbounded-mrc` | rule |
+| `modes.<m>.window` | `min_dwell` | key |
+| `window-expiry`, `window-param` | `dwell-expiry`, `dwell-param` | rules |
+| scope path | event chain | prose, messages |
+| `scope-budget` | `chain-latency` | rule |
+| `scope-sampling-feasibility` | `chain-sampling-feasibility` | rule |
 
 ## 3. Imprecise: a standard term exists
 

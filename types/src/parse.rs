@@ -487,7 +487,16 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         paths: parse_paths(doc, ctx, false)?,
         external_topics: parse_external_topics(doc, ctx)?,
         hazards: parse_hazards(doc, ctx)?,
-        severity_levels: yaml_string_list(doc, "severity_levels", ctx)?,
+        integrity_levels: renamed(
+            yaml_string_list(doc, "integrity_levels", ctx)?,
+            yaml_string_list(doc, "severity_levels", ctx)?,
+            Vec::is_empty,
+            ctx,
+            "severity_levels",
+            "integrity_levels",
+        )?
+        .0,
+        spelled_severity_levels: !doc["severity_levels"].is_badvalue(),
         functions: parse_functions(doc, ctx)?,
         modes: parse_modes(doc, ctx)?,
         policy: parse_policy(doc, ctx)?,
@@ -1691,6 +1700,29 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
     }))
 }
 
+/// A key read under its new name or its old one (phase 98: one release of
+/// the old spelling, warned by the consumer as `deprecated-spelling`).
+/// Both written is an error naming the new key. Returns the value and
+/// whether the old spelling supplied it.
+fn renamed<T>(
+    new: T,
+    old: T,
+    absent: fn(&T) -> bool,
+    ctx: &str,
+    old_key: &str,
+    new_key: &str,
+) -> Result<(T, bool), ParseError> {
+    match (absent(&new), absent(&old)) {
+        (false, false) => Err(field_err(
+            ctx,
+            old_key,
+            &format!("`{old_key}:` is the old spelling of `{new_key}:` -- write `{new_key}:` alone"),
+        )),
+        (true, false) => Ok((old, true)),
+        _ => Ok((new, false)),
+    }
+}
+
 /// `yaml_duration` reports with an empty context; put the real one back.
 fn reframe(e: ParseError, ctx: &str) -> ParseError {
     match e {
@@ -1911,7 +1943,16 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
         out.insert(
             name,
             HazardDecl {
-                severity: yaml_string(v, "severity", &hctx)?,
+                integrity: renamed(
+                    yaml_string(v, "integrity", &hctx)?,
+                    yaml_string(v, "severity", &hctx)?,
+                    Option::is_none,
+                    &hctx,
+                    "severity",
+                    "integrity",
+                )?
+                .0,
+                spelled_severity: !v["severity"].is_badvalue(),
                 description: yaml_string(v, "description", &hctx)?,
                 guards,
                 on,

@@ -252,7 +252,7 @@ fn contracts_carry_the_checker_facts_a_scheduler_reads() {
     // spelling. The detector has no label on its NodeInstance; its entry
     // here is what a hazard derived for it.
     assert_eq!(
-        c.severity_levels,
+        c.integrity_levels,
         vec!["QM", "ASIL_A", "ASIL_B", "ASIL_C", "ASIL_D"]
     );
     assert_eq!(c.node_criticality["/sensing/imu_node"], Criticality::High);
@@ -331,6 +331,8 @@ fn a_model_without_the_issue_52_fields_still_parses_and_ranks_nothing() {
         "sync:",
         "min_latency_ms:",
         "buffer:",
+        // The golden file is schema 1 and spells it `severity_levels:`,
+        // read through the schema-3 alias (`integrity_levels:` today).
         "severity_levels:",
         "node_criticality:",
     ];
@@ -393,7 +395,7 @@ fn a_model_without_the_issue_52_fields_still_parses_and_ranks_nothing() {
     assert_eq!(main.effective_trigger(), EffectiveTrigger::Unclassified);
     assert!(main.sync.is_none());
     assert_eq!(c.sub_endpoints["/perception/tracker/input"].buffer, None);
-    assert!(c.severity_levels.is_empty());
+    assert!(c.integrity_levels.is_empty());
     assert!(c.node_criticality.is_empty());
 
     // Re-emitting the old model invents none of the new keys.

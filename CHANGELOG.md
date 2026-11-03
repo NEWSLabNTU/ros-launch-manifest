@@ -6,6 +6,39 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+Phase 98 (play_launch), design issue 57, `docs/design/standard-names.md`:
+the vocabulary takes the standards' words. GRAMMAR_VERSION 0.3.3. Every
+renamed key keeps its old spelling for this release (a
+`deprecated-spelling` warning naming the new key; `migrate` rewrites it);
+the next release refuses it with a message naming the new key. A saved
+model loads for good. The model's schema is 3. The renamed public fields
+are an API break, so the workspace Cargo version moves.
+
+### Changed
+
+- **`hazards.<h>.severity` is `integrity`, and `severity_levels` is
+  `integrity_levels`** (N1). The value is an ASIL, SIL or DAL, which is an
+  integrity level; ISO 26262's severity is the S0-S3 class an ASIL is
+  derived from, so the old key named the wrong concept. Types:
+  `HazardDecl.integrity` (+ `spelled_severity`),
+  `Manifest.integrity_levels` (+ `spelled_severity_levels`); model
+  `HazardContract.integrity`, `Contracts.integrity_levels`, read under the
+  old names too (serde aliases). Module `types::severity` is
+  `types::integrity` (`DEFAULT_INTEGRITY_LEVELS`),
+  `Criticality::from_severity` is `from_integrity`. Rewrite
+  `severity-integrity`.
+- A profile's `severity_scale:` is `integrity_scale:` (the old key read for
+  this release, `Profile.spelled_severity_scale`). The seven bundled
+  profiles are 1.1.0 and require rlm >= 0.3.3: their files changed, so
+  their sha256 did; an `rlm.lock` naming 1.0.0 reports drift until
+  `check --update-lock`.
+- SystemModel schema 3 (`SCHEMA_VERSION`): a model written now carries only
+  the new names, so an older reader refuses it by its version instead of
+  dropping the renamed fields in silence. Versions 1 and 2 are read and
+  upgraded.
+
 ## v0.3.2 - 2026-11-02
 
 A supervision's reaction that hands its output back and resumes it

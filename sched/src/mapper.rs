@@ -36,12 +36,12 @@ pub enum Criticality {
 }
 
 impl Criticality {
-    /// The criticality a hazard severity of `rank` on a scale of
+    /// The criticality a hazard integrity level of `rank` on a scale of
     /// `scale_len` entries derives, by the grammar's map
-    /// (`ros_launch_manifest_types::severity::criticality_of`): rank 0 is no
+    /// (`ros_launch_manifest_types::integrity::criticality_of`): rank 0 is no
     /// safety requirement and derives `None`; the rest split into thirds.
-    pub fn from_severity(rank: usize, scale_len: usize) -> Option<Self> {
-        match ros_launch_manifest_types::severity::criticality_of(rank, scale_len)? {
+    pub fn from_integrity(rank: usize, scale_len: usize) -> Option<Self> {
+        match ros_launch_manifest_types::integrity::criticality_of(rank, scale_len)? {
             "low" => Some(Criticality::Low),
             "medium" => Some(Criticality::Medium),
             _ => Some(Criticality::High),

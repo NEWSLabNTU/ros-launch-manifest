@@ -3,9 +3,9 @@
 # requirement, so it derives no scheduling criticality. Identical to the
 # checker's default scale and map; using it changes no derived value.
 profile: iso26262
-version: 1.0.0
-requires: { rlm: ">=0.1.71" }
-severity_scale: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+version: 1.1.0
+requires: { rlm: ">=0.3.3" }
+integrity_scale: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 criticality: { QM: null, ASIL_A: low, ASIL_B: medium, ASIL_C: high, ASIL_D: high }
 # ASIL decomposition (Part 9 clause 5): a requirement may be split over two
 # sufficiently independent elements when their ASILs, as ranks (QM 0, A 1,

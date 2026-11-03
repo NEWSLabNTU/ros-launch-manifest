@@ -137,6 +137,15 @@ pub const REWRITES: &[Rewrite] = &[
         when: "the key is a `param` key of a bundled extension (`vehicle.braking`'s `decel` and `jerk`) and its value is a bare parameter name; a key of an extension the file does not carry is left (its type is the extension's)",
         find: ext_param_read,
     },
+    Rewrite {
+        id: "severity-integrity",
+        unit: "98 N1",
+        since: "0.3.3",
+        from: "hazards.<h>.severity: <level>, severity_levels: [...]",
+        to: "hazards.<h>.integrity: <level>, integrity_levels: [...]",
+        when: "always (the key holds an integrity level -- an ASIL, SIL or DAL -- not ISO 26262's S0-S3 severity class)",
+        find: severity_integrity,
+    },
 ];
 
 /// One textual edit.
@@ -537,6 +546,45 @@ fn hazard_reaction_enters(doc: &Doc) -> Vec<Edit> {
             )
         {
             out.push(e);
+        }
+    }
+    out
+}
+
+/// Phase 98 N1: `hazards.<h>.severity` becomes `integrity` and
+/// `severity_levels` becomes `integrity_levels`, at every manifest level
+/// (the root and each inline include). A level that writes both spellings
+/// is refused by the parser and left for a hand edit.
+fn severity_integrity(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "severity-integrity";
+    let mut out = Vec::new();
+    let mut rename = |path: Vec<String>, new_key: &str| {
+        let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+        out.extend(doc.rename_key(ID, &refs, new_key));
+    };
+    for (level, y) in manifest_levels(doc) {
+        if !y["severity_levels"].is_badvalue() {
+            let path = with(&level, &["severity_levels"]);
+            if y["integrity_levels"].is_badvalue() {
+                rename(path, "integrity_levels");
+            } else {
+                doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+            }
+        }
+        let Some(hazards) = y["hazards"].as_hash() else {
+            continue;
+        };
+        for (k, h) in hazards {
+            let Some(name) = key_str(k) else { continue };
+            if h["severity"].is_badvalue() {
+                continue;
+            }
+            let path = with(&level, &["hazards", &name, "severity"]);
+            if h["integrity"].is_badvalue() {
+                rename(path, "integrity");
+            } else {
+                doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+            }
         }
     }
     out
@@ -1381,8 +1429,12 @@ fn use_implicit(doc: &Doc) -> Vec<Edit> {
                 None => add.push(ext),
             }
         }
-        let severity = hazards.is_some_and(|hs| hs.values().any(|h| !h["severity"].is_badvalue()));
-        if severity && y["severity_levels"].is_badvalue() {
+        let integrity = hazards.is_some_and(|hs| {
+            hs.values()
+                .any(|h| !h["integrity"].is_badvalue() || !h["severity"].is_badvalue())
+        });
+        if integrity && y["integrity_levels"].is_badvalue() && y["severity_levels"].is_badvalue()
+        {
             let profile = used.iter().find(|u| reference.contains(u));
             let maybe = used
                 .iter()
@@ -1817,7 +1869,7 @@ modes:
   manual: {}
 hazards:
   blind:
-    severity: ASIL_D
+    integrity: ASIL_D
     guards: [scan]
     reaction: driving    # a mode: becomes enters
   stale:
@@ -2367,7 +2419,7 @@ version: 1
 # braking
 hazards:
   blind:
-    severity: ASIL_B
+    integrity: ASIL_B
     entry_speed: 8.33   # m/s
     guards: [scan]
 nodes:
@@ -2388,7 +2440,7 @@ use:
 # braking
 hazards:
   blind:
-    severity: ASIL_B
+    integrity: ASIL_B
     entry_speed: 8.33 m/s   # m/s
     guards: [scan]
 nodes:
@@ -2413,31 +2465,31 @@ nodes:
     }
 
     /// An existing `use:` is extended in either form; a used profile, or
-    /// `severity_levels:`, means the scale is named already.
+    /// `integrity_levels:`, means the scale is named already.
     #[test]
     fn e8_extends_a_use_in_both_forms_and_respects_a_named_scale() {
         let flow =
-            "version: 1\nuse: { machine.iso13855: \"^1\" }\nhazards:\n  h:\n    severity: SIL_2\n";
+            "version: 1\nuse: { machine.iso13855: \"^1\" }\nhazards:\n  h:\n    integrity: SIL_2\n";
         assert_eq!(
             run(flow).output,
-            "version: 1\nuse: { machine.iso13855: \"^1\", iso26262: \"^1\" }\nhazards:\n  h:\n    severity: SIL_2\n"
+            "version: 1\nuse: { machine.iso13855: \"^1\", iso26262: \"^1\" }\nhazards:\n  h:\n    integrity: SIL_2\n"
         );
         // Another extension may declare `entry_speed` itself: reported,
         // not guessed.
-        let rail = "version: 1\nuse: { rail.ebd: \"^0.1\", en50129: \"^1\" }\nhazards:\n  h:\n    severity: SIL_4\n    entry_speed: 160 km/h\n";
+        let rail = "version: 1\nuse: { rail.ebd: \"^0.1\", en50129: \"^1\" }\nhazards:\n  h:\n    integrity: SIL_4\n    entry_speed: 160 km/h\n";
         let m = run(rail);
         assert!(!m.changed());
         assert!(m.skipped[0].contains("rail.ebd"), "{:?}", m.skipped);
-        let block = "version: 1\nuse:\n  iec61508: \"^1\"\nhazards:\n  h:\n    severity: SIL_2\n    entry_speed: 3 m/s\n";
+        let block = "version: 1\nuse:\n  iec61508: \"^1\"\nhazards:\n  h:\n    integrity: SIL_2\n    entry_speed: 3 m/s\n";
         assert_eq!(
             run(block).output,
-            "version: 1\nuse:\n  iec61508: \"^1\"\n  vehicle.braking: \"^1\"\nhazards:\n  h:\n    severity: SIL_2\n    entry_speed: 3 m/s\n"
+            "version: 1\nuse:\n  iec61508: \"^1\"\n  vehicle.braking: \"^1\"\nhazards:\n  h:\n    integrity: SIL_2\n    entry_speed: 3 m/s\n"
         );
         let levels =
-            "version: 1\nseverity_levels: [low, high]\nhazards:\n  h:\n    severity: high\n";
+            "version: 1\nintegrity_levels: [low, high]\nhazards:\n  h:\n    integrity: high\n";
         assert!(!run(levels).changed());
         // An undotted name that is not a reference profile may be one.
-        let local = "version: 1\nuse: { site_scale: \"^1\" }\nhazards:\n  h:\n    severity: S2\n";
+        let local = "version: 1\nuse: { site_scale: \"^1\" }\nhazards:\n  h:\n    integrity: S2\n";
         let m = run(local);
         assert!(!m.changed());
         assert!(m.skipped[0].contains("may be a profile"), "{:?}", m.skipped);
@@ -2447,15 +2499,34 @@ nodes:
     /// one with a header gets it after the header's last key.
     #[test]
     fn e8_places_use_before_the_first_key_without_version() {
-        let src = "# c\nhazards:\n  h:\n    severity: ASIL_A\n";
+        let src = "# c\nhazards:\n  h:\n    integrity: ASIL_A\n";
         assert_eq!(
             run(src).output,
-            "# c\nuse:\n  iso26262: \"^1\"\nhazards:\n  h:\n    severity: ASIL_A\n"
+            "# c\nuse:\n  iso26262: \"^1\"\nhazards:\n  h:\n    integrity: ASIL_A\n"
         );
-        let src = "version: 1\nrlm: v0.1.49\n\nhazards:\n  h:\n    severity: ASIL_A\n";
+        let src = "version: 1\nrlm: v0.1.49\n\nhazards:\n  h:\n    integrity: ASIL_A\n";
         assert_eq!(
             run(src).output,
-            "version: 1\nrlm: v0.1.49\nuse:\n  iso26262: \"^1\"\n\nhazards:\n  h:\n    severity: ASIL_A\n"
+            "version: 1\nrlm: v0.1.49\nuse:\n  iso26262: \"^1\"\n\nhazards:\n  h:\n    integrity: ASIL_A\n"
         );
+    }
+
+    /// Phase 98 N1: the integrity level's old key, at the root and in an
+    /// inline include, beside `use-implicit` which reads either spelling.
+    #[test]
+    fn n1_renames_severity_to_integrity() {
+        let src = "version: 1\nuse: { iso26262: \"^1\" }\nseverity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]\nhazards:\n  h:\n    severity: ASIL_B   # kept\nincludes:\n  sub:\n    use: { iso26262: \"^1\" }\n    hazards:\n      g: { severity: QM }\n";
+        let m = run(src);
+        assert_eq!(
+            m.output,
+            "version: 1\nuse: { iso26262: \"^1\" }\nintegrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]\nhazards:\n  h:\n    integrity: ASIL_B   # kept\nincludes:\n  sub:\n    use: { iso26262: \"^1\" }\n    hazards:\n      g: { integrity: QM }\n"
+        );
+        assert!(m.edits.iter().all(|e| e.rewrite == "severity-integrity"), "{:?}", m.edits);
+        assert!(!run(&m.output).changed());
+        // Both spellings: the parser refuses it, migrate leaves it.
+        let both = "version: 1\nhazards:\n  h:\n    severity: QM\n    integrity: QM\n";
+        let m = run(both);
+        assert!(m.edits.iter().all(|e| e.rewrite != "severity-integrity"));
+        assert!(m.skipped.iter().any(|s| s.contains("both spellings")), "{:?}", m.skipped);
     }
 }

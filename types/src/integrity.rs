@@ -1,8 +1,10 @@
-//! Severity to criticality: the map a node's derived scheduling criticality
-//! is read through (phase 90 G5).
+//! Integrity level to criticality: the map a node's derived scheduling
+//! criticality is read through (phase 90 G5; named for severity until phase
+//! 98, which took the standards' word: an ASIL, SIL or DAL is an integrity
+//! level, and ISO 26262's severity is the S0-S3 class it is derived from).
 //!
-//! A hazard declares a `severity` on the contract's ordered
-//! `severity_levels` scale (ISO 26262's ASIL list when none is declared). A
+//! A hazard declares an `integrity` level on the contract's ordered
+//! `integrity_levels` scale (ISO 26262's ASIL list when none is declared). A
 //! node the hazard reaches takes a criticality from it, on the closed set the
 //! scheduler mappers rank by: `low`, `medium`, `high`. The map used to live
 //! only in the consumer's code; it is grammar, so it is stated here, and the
@@ -14,15 +16,15 @@
 //! `high`. On the default scale: QM none, ASIL_A low, ASIL_B medium, ASIL_C
 //! and ASIL_D high.
 
-/// The severity scale a contract that declares no `severity_levels` draws
+/// The integrity scale a contract that declares no `integrity_levels` draws
 /// from, ascending: ISO 26262's. Writing it out changes nothing.
-pub const DEFAULT_SEVERITY_LEVELS: [&str; 5] = ["QM", "ASIL_A", "ASIL_B", "ASIL_C", "ASIL_D"];
+pub const DEFAULT_INTEGRITY_LEVELS: [&str; 5] = ["QM", "ASIL_A", "ASIL_B", "ASIL_C", "ASIL_D"];
 
 /// The criticality labels, ascending: the closed set of
 /// `nodes.<n>.criticality` and of the scheduler mappers' rank.
 pub const CRITICALITY_LEVELS: [&str; 3] = ["low", "medium", "high"];
 
-/// The criticality a severity of `rank` on a scale of `scale_len` entries
+/// The criticality an integrity level of `rank` on a scale of `scale_len` entries
 /// derives, as one of [`CRITICALITY_LEVELS`]; `None` for rank 0 (no safety
 /// requirement) and for a scale of fewer than two entries.
 pub fn criticality_of(rank: usize, scale_len: usize) -> Option<&'static str> {
@@ -48,26 +50,26 @@ pub fn criticality_map<S: AsRef<str>>(scale: &[S]) -> Vec<(&str, Option<&'static
 
 /// The Format Reference section that states the map.
 pub fn render_markdown() -> String {
-    let mut out = String::from("## Severity to criticality\n\n");
+    let mut out = String::from("## Integrity level to criticality\n\n");
     out.push_str(
         "A node a hazard reaches (it feeds, detects for, or reacts for the hazard) \
-         takes a scheduling criticality from the hazard's `severity`, the MAX over \
-         every hazard that reaches it. The first entry of `severity_levels` is \"no \
+         takes a scheduling criticality from the hazard's `integrity`, the MAX over \
+         every hazard that reaches it. The first entry of `integrity_levels` is \"no \
          safety requirement\" and derives nothing; the other `n` entries split into \
          three buckets by `ceil(3 rank / n)` (1 low, 2 medium, 3 high). A written \
          `criticality` on such a node is an error; on a node no hazard reaches it \
-         stands. The default scale (no `severity_levels` declared):\n\n",
+         stands. The default scale (no `integrity_levels` declared):\n\n",
     );
-    out.push_str("| severity | criticality |\n|---|---|\n");
-    for (level, crit) in criticality_map(&DEFAULT_SEVERITY_LEVELS) {
+    out.push_str("| integrity | criticality |\n|---|---|\n");
+    for (level, crit) in criticality_map(&DEFAULT_INTEGRITY_LEVELS) {
         out.push_str(&format!("| `{level}` | {} |\n", crit.unwrap_or("none")));
     }
     out.push('\n');
     out.push_str(
         "A contract that uses a profile (phase 91 E6; `use: { iec61508: \"^1\" }`) draws \
-         severities from the profile's `severity_scale` and takes each level's criticality \
+         integrity levels from the profile's `integrity_scale` and takes each level's criticality \
          from the profile's `criticality` map, stated level by level, instead of the split \
-         above; it may not also write `severity_levels:`. Reference profiles ship with the \
+         above; it may not also write `integrity_levels:`. Reference profiles ship with the \
          checker: ",
     );
     let names: Vec<String> = crate::profile::reference()
@@ -86,7 +88,7 @@ mod tests {
     #[test]
     fn the_default_scale_maps_as_documented() {
         assert_eq!(
-            criticality_map(&DEFAULT_SEVERITY_LEVELS),
+            criticality_map(&DEFAULT_INTEGRITY_LEVELS),
             vec![
                 ("QM", None),
                 ("ASIL_A", Some("low")),

@@ -4,7 +4,7 @@
 # none) read through the iec61508 profile; PL a is still a requirement, so
 # it maps to the lowest criticality rather than none.
 profile: iso13849
-version: 1.0.0
-requires: { rlm: ">=0.1.71" }
-severity_scale: [none, PL_a, PL_b, PL_c, PL_d, PL_e]
+version: 1.1.0
+requires: { rlm: ">=0.3.3" }
+integrity_scale: [none, PL_a, PL_b, PL_c, PL_d, PL_e]
 criticality: { none: null, PL_a: low, PL_b: low, PL_c: low, PL_d: medium, PL_e: high }

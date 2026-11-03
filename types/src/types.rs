@@ -70,13 +70,18 @@ pub struct Manifest {
     /// reaction's route; the FTTI is physics and belongs to the hazard.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub hazards: BTreeMap<String, HazardDecl>,
-    /// The severity scale `hazards.<h>.severity` is drawn from, ascending.
-    /// Declared rather than baked in, so a team working to IEC 61508 or
-    /// DO-178C names its own; absent means ISO 26262's
-    /// `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`. The first entry is "no
-    /// safety requirement" and derives no criticality.
+    /// The integrity scale `hazards.<h>.integrity` is drawn from, ascending
+    /// (ASILs, SILs, DALs: the level a HARA assigns, not ISO 26262's S0-S3
+    /// severity class, which is one of its inputs). Declared rather than
+    /// baked in, so a team working to IEC 61508 or DO-178C names its own;
+    /// absent means ISO 26262's `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`. The
+    /// first entry is "no safety requirement" and derives no criticality.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub severity_levels: Vec<String>,
+    pub integrity_levels: Vec<String>,
+    /// Written under its pre-0.3.3 name `severity_levels:`
+    /// (`deprecated-spelling`; phase 98).
+    #[serde(skip)]
+    pub spelled_severity_levels: bool,
     /// Named guard groups (phase 75). A function is what a set of topics
     /// together provide; a mode requires functions, and a hazard may guard
     /// one by name instead of repeating its members.
@@ -751,10 +756,14 @@ pub struct ModeOverride {
 /// `docs/design/fault-reaction-primitives.md`).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct HazardDecl {
-    /// Severity label from the team's HARA (`ASIL_D`, `SIL_3`, …). Consumed,
+    /// Integrity level from the team's HARA (`ASIL_D`, `SIL_3`, …). Consumed,
     /// never computed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub severity: Option<String>,
+    pub integrity: Option<String>,
+    /// Written under its pre-0.3.3 name `severity:` (`deprecated-spelling`;
+    /// phase 98).
+    #[serde(skip)]
+    pub spelled_severity: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// What is watched. Each group is one fault: a single topic, or an
@@ -1157,7 +1166,7 @@ pub struct NodeDecl {
     /// Since phase 72 the label is a CONSEQUENCE rather than a free
     /// declaration: a node that feeds, detects or reacts to a hazard takes
     /// that hazard's severity (max over hazards, mapped by
-    /// [`crate::severity::criticality_of`]), and `sched_derive` reads the
+    /// [`crate::integrity::criticality_of`]), and `sched_derive` reads the
     /// derivation BEFORE any label. Since v0.1.59 a label on a node a hazard
     /// reaches is an error in the consumer (`derivable-criticality` when it
     /// agrees, `criticality-mismatch` when it does not; the fix is to delete

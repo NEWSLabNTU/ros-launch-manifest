@@ -291,7 +291,7 @@ fn pre_r1_model() -> SystemModel {
     for sc in model.contracts.sub_endpoints.values_mut() {
         sc.buffer = None;
     }
-    model.contracts.severity_levels.clear();
+    model.contracts.integrity_levels.clear();
     model.contracts.node_criticality.clear();
     let yaml = model.to_yaml_string().unwrap();
     for field in [
@@ -299,7 +299,7 @@ fn pre_r1_model() -> SystemModel {
         "sync:",
         "min_latency_ms:",
         "buffer:",
-        "severity_levels:",
+        "integrity_levels:",
         "node_criticality:",
     ] {
         assert!(

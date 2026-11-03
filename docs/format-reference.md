@@ -26,7 +26,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
 | `modes` | meta |  | Operational modes: what each requires, and the ordered ladder to fall to when it is lost. |
-| `severity_levels` | meta |  | The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this. |
+| `severity_levels` |  | deprecated — use `integrity_levels` | Deprecated spelling. |
+| `integrity_levels` | meta | since v0.3.3 | The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this. |
 | `external_topics` |  | deprecated — use `topics.<name>.external` | Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as a scope path and let the route be derived. |
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
@@ -247,7 +248,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `severity` | requirement |  | Severity label from the HARA (`ASIL_D`, `SIL_3`, …). Consumed, never computed. |
+| `integrity` | requirement | since v0.3.3 | Integrity level from the HARA (`ASIL_D`, `SIL_3`, `DAL_A`, …): the level the analysis assigns, not ISO 26262's S0-S3 severity class, which is one of its inputs. Consumed, never computed. |
+| `severity` |  | deprecated — use `integrity` | Deprecated spelling. |
 | `description` | meta |  | What the hazardous event is. |
 | `guards` | meta |  | Topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
 | `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
@@ -497,11 +499,11 @@ A `$(param)` or `$(var)` takes a **unit, always** (`$(param watchdog_ms) ms`): a
 
 The consumer that holds the launch tree evaluates every reference per scope instance and hands each rule a plain number; a contract read alone leaves the value unknown (the key absent), never zero.
 
-## Severity to criticality
+## Integrity level to criticality
 
-A node a hazard reaches (it feeds, detects for, or reacts for the hazard) takes a scheduling criticality from the hazard's `severity`, the MAX over every hazard that reaches it. The first entry of `severity_levels` is "no safety requirement" and derives nothing; the other `n` entries split into three buckets by `ceil(3 rank / n)` (1 low, 2 medium, 3 high). A written `criticality` on such a node is an error; on a node no hazard reaches it stands. The default scale (no `severity_levels` declared):
+A node a hazard reaches (it feeds, detects for, or reacts for the hazard) takes a scheduling criticality from the hazard's `integrity`, the MAX over every hazard that reaches it. The first entry of `integrity_levels` is "no safety requirement" and derives nothing; the other `n` entries split into three buckets by `ceil(3 rank / n)` (1 low, 2 medium, 3 high). A written `criticality` on such a node is an error; on a node no hazard reaches it stands. The default scale (no `integrity_levels` declared):
 
-| severity | criticality |
+| integrity | criticality |
 |---|---|
 | `QM` | none |
 | `ASIL_A` | low |
@@ -509,5 +511,5 @@ A node a hazard reaches (it feeds, detects for, or reacts for the hazard) takes 
 | `ASIL_C` | high |
 | `ASIL_D` | high |
 
-A contract that uses a profile (phase 91 E6; `use: { iec61508: "^1" }`) draws severities from the profile's `severity_scale` and takes each level's criticality from the profile's `criticality` map, stated level by level, instead of the split above; it may not also write `severity_levels:`. Reference profiles ship with the checker: `iso26262`, `iec61508`, `iec61511`, `do178c`, `iec62304`, `iso13849`, `en50129` (`iso26262` is the default scale and map above).
+A contract that uses a profile (phase 91 E6; `use: { iec61508: "^1" }`) draws integrity levels from the profile's `integrity_scale` and takes each level's criticality from the profile's `criticality` map, stated level by level, instead of the split above; it may not also write `integrity_levels:`. Reference profiles ship with the checker: `iso26262`, `iec61508`, `iec61511`, `do178c`, `iec62304`, `iso13849`, `en50129` (`iso26262` is the default scale and map above).
 

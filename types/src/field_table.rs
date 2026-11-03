@@ -391,11 +391,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Operational modes: what each requires, and the ordered ladder to fall to when it is lost.",
     ),
+    alias("severity_levels", Context::Manifest, "integrity_levels"),
     live(
-        "severity_levels",
+        "integrity_levels",
         Context::Manifest,
         Kind::Meta,
-        "The severity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this.",
+        "The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this.",
     ),
     deprecated(
         "external_topics",
@@ -1127,11 +1128,12 @@ pub const FIELDS: &[Field] = &[
     ),
     // ── hazards.<name> ──
     live(
-        "severity",
+        "integrity",
         Context::Hazard,
         Kind::Requirement,
-        "Severity label from the HARA (`ASIL_D`, `SIL_3`, …). Consumed, never computed.",
+        "Integrity level from the HARA (`ASIL_D`, `SIL_3`, `DAL_A`, …): the level the analysis assigns, not ISO 26262's S0-S3 severity class, which is one of its inputs. Consumed, never computed.",
     ),
+    alias("severity", Context::Hazard, "integrity"),
     live(
         "description",
         Context::Hazard,
@@ -1713,7 +1715,7 @@ pub fn render_markdown() -> String {
     }
     out.push_str(&render_bounds());
     out.push_str(&render_values());
-    out.push_str(&crate::severity::render_markdown());
+    out.push_str(&crate::integrity::render_markdown());
     out
 }
 
@@ -1837,6 +1839,8 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::SuperviseEarly, "drop", "0.3.1"),
     (Context::Supervise, "resume", "0.3.2"),
     (Context::SuperviseResume, "after", "0.3.2"),
+    (Context::Hazard, "integrity", "0.3.3"),
+    (Context::Manifest, "integrity_levels", "0.3.3"),
     (Context::Policy, "unsupervised_measured", "0.1.61"),
     (Context::Supervision, "tick", "0.1.61"),
     (Context::Supervision, "switch", "0.1.61"),

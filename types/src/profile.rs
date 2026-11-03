@@ -5,7 +5,7 @@
 //! profile: iec61508
 //! version: 1.0.0
 //! requires: { rlm: ">=0.1.71" }
-//! severity_scale: [none, SIL_1, SIL_2, SIL_3, SIL_4]
+//! integrity_scale: [none, SIL_1, SIL_2, SIL_3, SIL_4]
 //! criticality: { none: null, SIL_1: low, SIL_2: medium, SIL_3: high, SIL_4: high }
 //! functions: |          # optional: rlx `fn` items (ISO 26262 decomposition)
 //!   fn ...
@@ -13,8 +13,8 @@
 //!
 //! A contract that uses a profile draws `hazards.<h>.severity` from its
 //! scale, and a node a hazard reaches takes the criticality the profile's
-//! map names, instead of the `ceil(3 rank / n)` split [`crate::severity`]
-//! applies to a `severity_levels:` scale. The map is the profile author's,
+//! map names, instead of the `ceil(3 rank / n)` split [`crate::integrity`]
+//! applies to an `integrity_levels:` scale. The map is the profile author's,
 //! stated level by level, so a standard whose levels do not split into
 //! thirds (ISO 13849's five PLs, IEC 62304's three classes) says so.
 //!
@@ -33,7 +33,7 @@ use yaml_rust2::{Yaml, YamlLoader};
 use crate::{
     VersionReq,
     parse::{is_dotted_name, is_semver},
-    severity::CRITICALITY_LEVELS,
+    integrity::CRITICALITY_LEVELS,
 };
 
 /// One profile, as parsed.
@@ -45,8 +45,11 @@ pub struct Profile {
     pub version: String,
     /// `requires: { rlm: "<req>" }`, when written.
     pub requires_rlm: Option<VersionReq>,
-    /// The severity levels, ascending.
+    /// The integrity levels, ascending.
     pub scale: Vec<String>,
+    /// The scale was written under its pre-0.3.3 key `severity_scale:`
+    /// (phase 98; accepted for one release, warned by the consumer).
+    pub spelled_severity_scale: bool,
     /// For each level of [`Profile::scale`], in order, the criticality it
     /// derives: one of [`CRITICALITY_LEVELS`], or `None` for no requirement.
     pub criticality: Vec<Option<&'static str>>,
@@ -112,10 +115,11 @@ pub const REFERENCE: [(&str, &str); 7] = [
 /// The file-name suffix a profile is found by beside rlx files.
 pub const FILE_SUFFIX: &str = ".profile.yaml";
 
-const KEYS: [&str; 6] = [
+const KEYS: [&str; 7] = [
     "profile",
     "version",
     "requires",
+    "integrity_scale",
     "severity_scale",
     "criticality",
     "functions",
@@ -181,19 +185,31 @@ pub fn parse_profile(text: &str) -> Result<Profile, String> {
         }
         _ => return Err("`requires:` is a map (`{ rlm: \">=0.1.71\" }`)".into()),
     };
-    let scale: Vec<String> = match &doc["severity_scale"] {
+    let spelled_severity_scale = !doc["severity_scale"].is_badvalue();
+    if spelled_severity_scale && !doc["integrity_scale"].is_badvalue() {
+        return Err(
+            "`severity_scale:` is the old spelling of `integrity_scale:` -- write `integrity_scale:` alone"
+                .into(),
+        );
+    }
+    let scale_yaml = if spelled_severity_scale {
+        &doc["severity_scale"]
+    } else {
+        &doc["integrity_scale"]
+    };
+    let scale: Vec<String> = match scale_yaml {
         Yaml::Array(a) => a
             .iter()
-            .map(|y| scalar(y).ok_or("`severity_scale` holds level names"))
+            .map(|y| scalar(y).ok_or("`integrity_scale` holds level names"))
             .collect::<Result<_, _>>()?,
-        _ => return Err("`severity_scale:` (a list of levels, ascending) is required".into()),
+        _ => return Err("`integrity_scale:` (a list of levels, ascending) is required".into()),
     };
     if scale.len() < 2 {
-        return Err("`severity_scale` needs at least two levels".into());
+        return Err("`integrity_scale` needs at least two levels".into());
     }
     for (i, s) in scale.iter().enumerate() {
         if scale[..i].iter().any(|p| p.eq_ignore_ascii_case(s)) {
-            return Err(format!("`severity_scale` names `{s}` twice"));
+            return Err(format!("`integrity_scale` names `{s}` twice"));
         }
     }
     let Yaml::Hash(cmap) = &doc["criticality"] else {
@@ -256,6 +272,7 @@ pub fn parse_profile(text: &str) -> Result<Profile, String> {
         version,
         requires_rlm,
         scale,
+        spelled_severity_scale,
         criticality,
         functions,
     })
@@ -272,7 +289,7 @@ pub fn reference() -> Vec<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::severity::{DEFAULT_SEVERITY_LEVELS, criticality_map};
+    use crate::integrity::{DEFAULT_INTEGRITY_LEVELS, criticality_map};
 
     #[test]
     fn every_reference_profile_parses_and_requires_this_release() {
@@ -305,8 +322,8 @@ mod tests {
             .into_iter()
             .find(|p| p.name == "iso26262")
             .unwrap();
-        assert_eq!(p.scale, DEFAULT_SEVERITY_LEVELS.map(String::from));
-        let default: Vec<_> = criticality_map(&DEFAULT_SEVERITY_LEVELS)
+        assert_eq!(p.scale, DEFAULT_INTEGRITY_LEVELS.map(String::from));
+        let default: Vec<_> = criticality_map(&DEFAULT_INTEGRITY_LEVELS)
             .into_iter()
             .map(|(_, c)| c)
             .collect();
@@ -315,7 +332,7 @@ mod tests {
 
     #[test]
     fn refusals_name_the_mistake() {
-        let base = "profile: t\nversion: 1.0.0\nseverity_scale: [n, a, b]\n";
+        let base = "profile: t\nversion: 1.0.0\nintegrity_scale: [n, a, b]\n";
         let err = |extra: &str| parse_profile(&format!("{base}{extra}")).unwrap_err();
         assert!(err("criticality: { n: null, a: low }\n").contains("does not name `b`"));
         assert!(
@@ -335,9 +352,9 @@ mod tests {
             err("criticality: { n: null, a: low, b: high }\nrequires: { rosidl: \"^1\" }\n")
                 .contains("only `rlm`")
         );
-        assert!(parse_profile("profile: T\nversion: 1.0.0\nseverity_scale: [a, b]\ncriticality: { a: null, b: high }\n").unwrap_err().contains("dotted lowercase"));
-        assert!(parse_profile("profile: t\nversion: 1\nseverity_scale: [a, b]\ncriticality: { a: null, b: high }\n").unwrap_err().contains("MAJOR.MINOR.PATCH"));
-        assert!(parse_profile("profile: t\nversion: 1.0.0\nseverity_scale: [a, A]\ncriticality: { a: null, A: high }\n").unwrap_err().contains("twice"));
+        assert!(parse_profile("profile: T\nversion: 1.0.0\nintegrity_scale: [a, b]\ncriticality: { a: null, b: high }\n").unwrap_err().contains("dotted lowercase"));
+        assert!(parse_profile("profile: t\nversion: 1\nintegrity_scale: [a, b]\ncriticality: { a: null, b: high }\n").unwrap_err().contains("MAJOR.MINOR.PATCH"));
+        assert!(parse_profile("profile: t\nversion: 1.0.0\nintegrity_scale: [a, A]\ncriticality: { a: null, A: high }\n").unwrap_err().contains("twice"));
         // A map may stay flat: equal neighbours are not a fall.
         assert!(
             parse_profile(&format!(
