@@ -1308,6 +1308,11 @@ Tests: `test_dangling_topic_external_pub_is_accepted`,
 **Status (2026-09-24):** decided; step 1 is play_launch issue #0042, steps 2
 and 3 are not started.
 
+**Status (2026-11-03):** refined by `docs/design/links.md`: a best-effort
+link's bound is measured, sourced and monitored (named `links:`), not derived;
+step 1 stands (play_launch phase 97 P1); step 2's per-class platform figures
+are dropped for now; step 3 becomes `measure` and `check --against`.
+
 ### The defect that started it
 
 `max_transport` is declarable in two places — on a topic, and on a subscriber
