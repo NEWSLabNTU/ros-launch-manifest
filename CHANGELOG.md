@@ -6,7 +6,7 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.3.3 - 2026-11-03
 
 Phase 98 (play_launch), design issue 57, `docs/design/standard-names.md`:
 the vocabulary takes the standards' words. GRAMMAR_VERSION 0.3.3. Every
@@ -14,7 +14,7 @@ renamed key keeps its old spelling for this release (a
 `deprecated-spelling` warning naming the new key; `migrate` rewrites it);
 the next release refuses it with a message naming the new key. A saved
 model loads for good. The model's schema is 3. The renamed public fields
-are an API break, so the workspace Cargo version moves.
+are an API break, so the workspace Cargo version moves to 0.4.0.
 
 ### Changed
 
