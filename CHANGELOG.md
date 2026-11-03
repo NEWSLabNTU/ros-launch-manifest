@@ -6,6 +6,46 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.4 - 2026-11-03
+
+play_launch phase 97, `docs/design/links.md`: links, a transport measured,
+sourced and monitored. GRAMMAR_VERSION 0.3.4. Additive: the model's
+schema stays 3 and the workspace Cargo version 0.4.0.
+
+### Added
+
+- **`links:`** (L1): `links.<name>: { max_transport, clock, monitor }` at
+  a manifest's root, visible to its inline includes. `max_transport` is
+  required, a bound with `source:`; `clock` is `synced` or `unsynced`
+  (the default); `monitor` is `{ reaction: <path> }` or `{ enters:
+  <mode> }`. Types `LinkDecl`, `LinkClock`, `LinkMonitor`,
+  `Manifest.links`; field-table contexts `Link`, `LinkMonitor`.
+- **`sub.<ep>.link: <name>`**: the link a subscriber's hop crosses. Its
+  `max_transport` is put on the subscriber at parse
+  (`types::transport::apply_links`), so every reader of transport reads
+  it unchanged. Refused: an unknown name, `link` beside a written
+  `max_transport`, `link` on a `pub:` or `cli:` endpoint. Only a
+  subscriber names a link (phase 90 G3: a transport is the hop into one
+  subscriber).
+- **`source.measured.run`**: where a measured budget was observed, free
+  text (`Measurement.run`).
+- **Rules** `link-unsourced` (warning: a link whose bound states no
+  `source:`) and `transport-inline` (info: a subscriber's own written
+  `max_transport`, which a link would state once with its source).
+- **Model**: `SubContract.link`, `Contracts.links` (`LinkContract`:
+  the bound, `synced`, the source kind, the run, the monitor as
+  `LinkMonitorContract`), all optional.
+
+### Fixed
+
+- **One transport precedence** (L2, play_launch #0042's last reader):
+  `types::edge_transport_ms` (the subscriber's own value, else the
+  topic's) is called by `derive`'s `TopicView::transport_ms` and by the
+  per-manifest `chain-latency` flat sum, which read only the deprecated
+  topic-level value and so summed no transport for a contract that
+  states it per subscriber. `Manifest::topic_transport_ms` and
+  `topic_edge_transports` give a manifest's per-hop and per-edge values.
+
 ## v0.3.3 - 2026-11-03
 
 Phase 98 (play_launch), design issue 57, `docs/design/standard-names.md`:
