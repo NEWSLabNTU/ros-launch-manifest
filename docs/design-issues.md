@@ -1460,6 +1460,43 @@ External includes are not loaded by the checker
 (`scope_budget.rs:56`), so a condition on one selects an entry the checker
 cannot look inside either way.
 
+## 57. The Vocabulary Takes the Standards' Words — Decided, staged
+
+**Status (2026-11-03):** decided in principle; design of record
+`docs/design/standard-names.md`; implementation is play_launch phase 98.
+
+### The question
+
+The contract, the model and the diagnostics grew a private vocabulary: rung,
+ladder, floor, window, scope path, mapper, tier. Some of these name concepts
+the standards this checker serves already name, and one standard word is
+used for the wrong concept: `hazards.<h>.severity` holds an ASIL, where ISO
+26262's severity is the S0–S3 class an ASIL is derived from.
+
+### The ruling
+
+Where a standard names the concept, the vocabulary takes the standard's
+word; a word of our own stays only where nothing standard fits or the
+standard word would be read as something else here. The wrong and clashing
+names (severity, rung/ladder, floor, window, scope path) move first, in one
+release; the imprecise ones (mapper, guards, the limit sense of budget,
+ingress, on_demand, tier) when their area is next touched.
+
+### Consequences
+
+- Every rename has a scheduled end in three releases: R renames and keeps
+  the old spelling as a warned alias; R+1 refuses it with a message naming
+  the new one; R+2 lists the old word as retired in a `check-terms` gate.
+  R+1 ships only after R has been published and nano-ros has followed.
+- What the past needs is never retired: a saved model loads (the old field
+  names are rewritten on read), an old contract is told where its key went
+  (the `removed` rows), and `migrate` rewrites both.
+- A renamed rule id is an interface too: `acknowledged:` names rule ids, so
+  the old id matches for one release and is refused with the new id after,
+  rather than turning every acknowledged finding into `ack-stale`.
+- nano-ros mirrors the model's level and tier types, so each model rename
+  ships with a nano-ros pull request.
+
 ## Summary
 
 Design issues 1–51, #53 (equal periods, equal priorities) and #54 (the
