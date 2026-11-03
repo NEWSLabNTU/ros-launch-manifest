@@ -50,7 +50,7 @@ Symbols used throughout this document:
 | $T_{\text{FDTI}}$ | Fault-detection time interval — derived from the guards' detectors |
 | $T_{\text{FRTI}}$ | Fault-reaction time interval — derived from the reaction route plus the plant's settle |
 | `budget-overflow` | Verification check: descendant budget exceeds ancestor budget (error) |
-| `scope-budget` | Verification check: sum of children exceeds scope budget (warning) |
+| `chain-latency` | Verification check: sum of children exceeds scope budget (warning) |
 
 ## What is a Contract?
 
@@ -326,7 +326,7 @@ periodic node) is checked independently.
 
 Drops are declared in a `drop:` block — `max_count: N / W`, from which
 the drop rate $d = n/w$ is computed, and `max_consecutive: K`. It sits
-on **topics** (transport drops) and **scope paths** (E2E drops). A node
+on **topics** (transport drops) and **event chains** (E2E drops). A node
 path's `drop:` is refused (v0.1.60, phase 90 G3): it played no role in
 composition and nothing read it. If a node internally drops messages,
 state the loss on the topic it outputs, or model the effect as a lower
@@ -376,7 +376,7 @@ scope tree. Two separate checks apply to latency, drop, and age — each
 with property-specific composition math but the same structural rules.
 
 *As implemented:* Check 1 corresponds to the cross-scope
-`budget-overflow` rule and Check 2 to the `scope-budget` rule, each a
+`budget-overflow` rule and Check 2 to the `chain-latency` rule, each a
 narrower slice of the theory below. `budget-overflow` compares
 **scope-path budgets only**: a child scope's path against an ancestor
 scope's path with matching input/output endpoints — node
@@ -388,7 +388,7 @@ topic `max_transport` (inline includes included, external includes
 skipped). The consumer's cross-scope layer
 (`resolve/src/ros/manifest_loader.rs`) computes a topology-aware critical
 path over the merged tree and then **deletes** the per-manifest warning
-for every scope path a route was found for, so one path never carries two
+for every event chain a route was found for, so one path never carries two
 different totals; a path with no traceable route keeps the flat sum,
 which is then the only estimate there is. The residual INFO reporting
 described below is design, not yet emitted. See
@@ -509,7 +509,7 @@ If E later gets a budget of 25ms: 50 + 30 + 25 = 105 > 100. Warning.
 
 Drop budgets are checked statically for local consistency (sanity) and
 at runtime for actual behavior. Composition is defined over **topics**
-(transport) and **scope paths** (E2E); a node path's `drop:` is refused
+(transport) and **event chains** (E2E); a node path's `drop:` is refused
 (v0.1.60).
 
 ```
@@ -521,7 +521,7 @@ scope S path: drop: { max_count: 10 / 100 }   → d = 0.10
 
 **Tightness check** (`drop-tightness`): T1 drop (3%) <= S drop (10%).
 T2 (3%) <= 10%. OK: no topic on the route permits more loss than the
-scope path.
+event chain.
 
 **Rate-drop check**: if T1 has `rate_hz: 10` and subscriber B has
 `min_rate_hz: 9`: effective delivery = $10 \times (1 - 0.03) = 9.7$ Hz ≥ 9. Passes.
@@ -574,7 +574,7 @@ every `rcl_take` and compares to current time. If
 **Static checking** does not trace the full causal chain (which would
 require every upstream node to have a latency budget). A local
 feasibility check — subscriber `max_age` vs the `max_latency` of
-the scope path feeding it — is possible in principle but not currently
+the event chain feeding it — is possible in principle but not currently
 implemented. Two other rules do read the declaration: `lifespan-age`
 (cross-scope) rejects a `max_age` longer than the topic's `qos.lifespan`,
 since DDS has already discarded a sample that old and no runtime behaviour
@@ -589,7 +589,7 @@ of the matched set. Without it, age follows the triggering input only. See
 
 ## Cross-Scope Chains and Sampling Cost
 
-Scope paths compose budgets *within* one scope subtree, and the same
+Event chains compose budgets *within* one scope subtree, and the same
 spelling names an end-to-end requirement that crosses scope boundaries:
 two ends (`trigger: { input: [...] }` and `output:`) plus one E2E
 `max_latency`. The cause-effect sequence between them is DERIVED from
@@ -626,10 +626,10 @@ back-walk from the sink in `derive/src/graph.rs`, and ported in
 boundary). Two cross-scope rules read $S$, and both state something no
 priority assignment can fix:
 
-- **`scope-sampling-feasibility`** — $S \geq L_{\text{budget}}$. The
+- **`chain-sampling-feasibility`** — $S \geq L_{\text{budget}}$. The
   route spends its whole budget waiting for clocks before any callback
   runs. This is a different and worse claim than a total over budget, so
-  it is emitted **before** `scope-budget`: the budget warning necessarily
+  it is emitted **before** `chain-latency`: the budget warning necessarily
   fires too, and on its own it invites an author to optimise callbacks
   that are not the problem.
 - **`jitter-feasibility`** — $S > \texttt{max\_jitter}$. A clock crossing
@@ -639,14 +639,14 @@ priority assignment can fix:
   jitter requirement that needs no best-case fact, unlike `jitter-range`
   (below), which needs a declared `min_latency`.
 
-`scope-budget` compares the route's full total — causal hops, declared
+`chain-latency` compares the route's full total — causal hops, declared
 transport, and $\sum (P_i + C_i)$ at the boundaries — against the declared
 `max_latency`, and names the
 sampling term separately in its message, because that is the part of the
 overrun the author cannot schedule away.
 
 The scheduling mapper applies the same distinction one level up, on the
-chain it derives from the scope path: `chain_feasibility`
+chain it derives from the event chain: `chain_feasibility`
 (`sched/src/chain_aware_mapper.rs`) sums $P_i + C_i$ over the chain's
 boundaries and calls the chain infeasible when
 
@@ -664,7 +664,7 @@ drive priority derivation — see [scheduling.md](scheduling.md).
 The figure is one route against two declared budgets. At 200 ms the two
 boundaries spend 133.3 ms before any callback runs and the ranking has
 66.7 ms to shape; at 120 ms they have spent the budget already, which is
-the claim `scope-sampling-feasibility` and `ChainInfeasible` each make at
+the claim `chain-sampling-feasibility` and `ChainInfeasible` each make at
 their own layer.
 
 ## Derived Quantities
@@ -774,10 +774,10 @@ it
 
 Over several hazards the node takes the **max**, never a sum.
 
-`severity_levels:` declares the scale, ascending, defaulting to ISO 26262's
+`integrity_levels:` declares the scale, ascending, defaulting to ISO 26262's
 `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; its first entry derives no
 criticality. A `hazards.<h>.severity` outside the scale is
-`severity-unknown`, not a silent `None`. The scale folds into the mapper's
+`integrity-unknown`, not a silent `None`. The scale folds into the mapper's
 three buckets by rank: entry 0 is no requirement, and the rest split evenly
 with the top third to `High` — on the default scale ASIL_A → low,
 ASIL_B → medium, ASIL_C and ASIL_D → high.
@@ -800,7 +800,7 @@ fact, and derives the rest:
   `{ all_of: [...] }` a redundant set), `on:` (the fault classes, one or a
   list: `omission | late | loss | reported`; omitted means every class the
   detectors observe), **`ftti:`** (the requirement), and
-  `reaction:` naming the scope path — or, since phase 75, the mode — that
+  `reaction:` naming the event chain — or, since phase 75, the mode — that
   reaches the safe state.
 - **`sub.<e>.on_violation`** — `{ on, reaction, within, mechanism }` on the
   subscriber that detects. This is the `cmd_vel` timeout of every mobile
@@ -892,22 +892,22 @@ against its own reaction path's `max_latency`.
 
 ### Operational Modes
 
-A hazard's `reaction:` may name a **mode**, and then the fallback ladder is
-the reaction. The single-path form above is the one-rung case, unchanged.
+A hazard's `reaction:` may name a **mode**, and then the fallback sequence is
+the reaction. The single-path form above is the one-degradation level case, unchanged.
 
 `functions.<f>` names a guard group; `modes.<m>` carries `requires` (the
-functions it needs), `fallback` (the ordered ladder), `reaction` and
+functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
 `overrides`. Three rules:
 
-- **`ladder-rung-budget`** (error) — each rung is judged against the FTTI
+- **`degradation-level-budget`** (error) — each degradation level is judged against the FTTI
   **in its own right**: $T_{\text{FDTI}} + \text{route} + \text{settle}$ for
-  that rung's own reaction path. A graded reaction is a promise, not merely
-  a step on the way to the floor. The **last** rung is what
-  `fault-reaction-budget` measures, because it is the floor the system is
+  that degradation level's own reaction path. A graded reaction is a promise, not merely
+  a step on the way to the minimal risk condition. The **last** degradation level is what
+  `fault-reaction-budget` measures, because it is the minimal risk condition the system is
   guaranteed to reach.
-- **`ladder-unterminated`** (error) — a mode with no `fallback:` reaches no
-  safe state, and **a last rung that requires anything this hazard's own
-  guards remove is not a floor**: losing the guard takes the whole ladder
+- **`fallback-without-mrc`** (error) — a mode with no `fallback:` reaches no
+  safe state, and **a last degradation level that requires anything this hazard's own
+  guards remove is not a minimal risk condition**: losing the guard takes the whole fallback sequence
   with it.
 - **`mode-requires-unguarded`** (warning) — a mode requires a function no
   subscriber watches, so its loss would never be observed.

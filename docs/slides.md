@@ -186,7 +186,7 @@ nodes:
         max_latency: 30ms       # REQUIREMENT: this path's budget
 ```
 
-Derived from those: the **route** between two topics (a scope path
+Derived from those: the **route** between two topics (an event chain
 names two ends and a budget — the route is the graph's answer), the
 **total** along it, a topic's **rate** (propagated from the timers that
 drive it), and a node's **criticality**.
@@ -208,7 +208,7 @@ do not.
 - or one that **reacts** (on the walk to the safe state)
 
 takes that hazard's severity — **max** over the hazards that reach it.
-`severity_levels:` declares the scale (default: ISO 26262's
+`integrity_levels:` declares the scale (default: ISO 26262's
 `QM, ASIL_A..ASIL_D`).
 
 The mapper reads the derivation **before** any written label.
@@ -227,11 +227,11 @@ time interval**.
 ```yaml
 hazards:
   drive_blind:
-    severity: ASIL_D
+    integrity: ASIL_D
     guards: [/scan]              # what is watched
     on: omission                 # omission | late | loss | reported
     ftti: 300ms                  # REQUIREMENT: fault -> hazardous event
-    reaction: stop_now           # the scope path reaching the safe state
+    reaction: stop_now           # the event chain reaching the safe state
 paths:                           # a SCOPE path: two ends and a budget
   stop_now:
     trigger: { input: [/scan] }  # `input:` alone is the v1 spelling
@@ -245,8 +245,8 @@ detector among the guard's subscribers that react, plus the walk over
 reaction edges, plus the plant's settle time. `fault-reaction-budget`
 names every term of the sum.
 
-`modes:` make the reaction a **ladder** rather than one step — each rung
-is checked against the ftti in its own right, and the last rung must
+`modes:` make the reaction a **fallback sequence** rather than one step — each degradation level
+is checked against the ftti in its own right, and the last degradation level must
 require nothing losable.
 
 ---
@@ -260,7 +260,7 @@ all at authoring time, before any code runs:
 |------|----------------|----------|
 | `rate-hierarchy` | pub rate < topic rate < sub rate, and the upper bounds too | Error |
 | `budget-overflow`* | Child path budget > ancestor path budget (part > whole) | Error |
-| `scope-budget` | Flat sum > scope budget (cross-scope: derived critical path) | Warning |
+| `chain-latency` | Flat sum > scope budget (cross-scope: derived critical path) | Warning |
 | `drop-sanity` | `drop:` values out of range; effective rate < sub demand | Error |
 | `causal-dag` | Feedback cycle (state: true breaks it) | Error |
 | `satisfiability` | Arg combo produces dangling entities (Z3) | Error/Warning |
@@ -271,8 +271,8 @@ Plus: `endpoint-unique`, `wiring`, `qos-compat`, `qos-match`,
 `explicit-trigger`, `inherited-rate`, `once-durability`,
 `sync-feasibility`, `queue-drain-rate`, `jitter-range`
 (\* = cross-scope, in the consumer's merge layer — with `consistency`,
-`scope-sampling-feasibility`, `jitter-feasibility`, `lifespan-age`,
-`fault-reaction-budget`, `reaction-*`, the mode and `ladder-*` rules,
+`chain-sampling-feasibility`, `jitter-feasibility`, `lifespan-age`,
+`fault-reaction-budget`, `reaction-*`, the mode and `fallback sequence-*` rules,
 the `derivable-*` / `*-mismatch` comparisons, …)
 
 ---
@@ -320,7 +320,7 @@ paced by its **slowest** input. Taking the min in both cases understates
 a fan-in node's load by exactly the factor that decides whether it fits.
 
 Drop composition — one `drop:` block, three places it may sit:
-- **`max_count: N / W`** on a topic (transport), a scope path (E2E) or
+- **`max_count: N / W`** on a topic (transport), an event chain (E2E) or
   a node path (messages the node itself skips)
 - **`max_consecutive: K`** beside it — never K+ in a row
 - A bare `drop: 2 / 100` is shorthand for `max_count` alone
@@ -354,8 +354,8 @@ source, `docs/format-reference.md` is generated from it, and an unknown
 key is a **parse error**
 **Checker**: 19 single-manifest rules (incl. Z3 satisfiability) +
 cross-scope rules in the consumer (`consistency`, `budget-overflow`,
-critical-path `scope-budget`, `scope-sampling-feasibility`,
-`fault-reaction-budget`, the mode and `ladder-*` rules, the
+critical-path `chain-latency`, `chain-sampling-feasibility`,
+`fault-reaction-budget`, the mode and `fallback sequence-*` rules, the
 `derivable-*` comparisons, …)
 **Runtime**: rate/age/latency/drop enforcement via RCL interception
 (`--enforce-rules`, default `warn`), plus the live fault observer —

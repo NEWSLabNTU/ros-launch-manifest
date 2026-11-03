@@ -51,7 +51,7 @@ And a contract that uses it:
 use: { machine.belt: "^0.1", iso13849: "^1" }
 hazards:
   reach_into_nip:
-    severity: PL_d
+    integrity: PL_d
     guards: [/conveyor/guard_switch]
     on: reported
     when: { field: open, equals: true }

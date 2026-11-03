@@ -93,7 +93,7 @@ route through one output is not charged for the cost of another.
 
 Read the spec when writing or reviewing a contract. It covers every top-level
 block, conditions, QoS, drop budgets, hazards with their reaction edges, and
-operational modes with the fallback ladder. It also carries a table of retired
+operational modes with the fallback sequence. It also carries a table of retired
 spellings, each naming its replacement — the vocabulary has been through four
 rounds of subtraction, and that table is how you migrate.
 
@@ -160,11 +160,11 @@ paths:
     max_latency: 70ms
 ```
 
-The two detectors run in parallel, so the budget the scope path must meet is
+The two detectors run in parallel, so the budget the event chain must meet is
 `max(50, 30) + 20 = 70ms`, not the flat sum of `100ms`. A checker that adds up
 node budgets rejects this system; the topology-aware one accepts it. The 70 is
 not written anywhere as a consequence — it is derived, and `max_latency: 70ms`
-on the scope path is the *requirement* it is checked against.
+on the event chain is the *requirement* it is checked against.
 
 ### A fan-in publishes at the sum of its input rates
 

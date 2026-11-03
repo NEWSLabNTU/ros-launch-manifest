@@ -30,7 +30,7 @@ model says "manifest". They are one artifact, not two.
 - **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
 - **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, scope `paths:` and the derived route.
 - **[Fault detection and reaction](#fault-detection-and-reaction)** — `hazards:`, `on_violation:`, `safe_state:`, and the FTTI arithmetic.
-- **[Operational modes](#operational-modes)** — `functions:`, `modes:`, the fallback ladder and per-mode `overrides:`.
+- **[Operational modes](#operational-modes)** — `functions:`, `modes:`, the fallback sequence and per-mode `overrides:`.
 - **[Static Validation](#static-validation)** — checker rules and example diagnostics.
 
 ## From Launch Files to Manifests
@@ -356,7 +356,7 @@ See [Nodes](#nodes) for the full endpoint property tables.
 
 ### Topic Name Resolution
 
-Topic keys, service keys, and scope path `input:`/`output:` follow the
+Topic keys, service keys, and event chain `input:`/`output:` follow the
 same resolution rule:
 
 - **Absolute** (`/localization/kinematic_state`): used as-is
@@ -511,7 +511,7 @@ Latency and age serve different concerns:
 
 **`max_latency`** — the time from when the *triggering input arrives
 at this node/scope* to when the output is published. Declared on node
-paths and scope paths.
+paths and event chains.
 
 ```
 sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→ [detector: 30ms]
@@ -531,7 +531,7 @@ sensor_points ──→ [cropbox: 5ms] ──→ [ground_filter: 15ms] ──→
 A scope budget covers internal transport that individual node budgets do
 not — but it is **not** required to exceed their sum, and the two checks
 that read it differ on exactly this point. The per-manifest
-`scope-budget` rule compares the budget against the flat sum Σ node
+`chain-latency` rule compares the budget against the flat sum Σ node
 latencies + declared transport, which is conservative and wrong for
 parallel branches; the consumer's topology-aware check compares it
 against the critical path, where two branches contribute `max`, not their
@@ -684,7 +684,7 @@ paths:
     drop: 2 / 25                       # at most 2 of every 25 messages lost
 ```
 
-The scope path uses topic names as entry/exit points. The checker
+The event chain uses topic names as entry/exit points. The checker
 traces the dataflow between them, considering only nodes within the
 scope's subtree.
 
@@ -696,8 +696,8 @@ free — the headroom it consumes is real and simply unaccounted. The
 **residual** (how much of the scope budget remains after subtracting the
 declared node budgets) is specified in
 [contract-theory.md](contract-theory.md#partial-decomposition) but is
-**not emitted today**; the only verdicts a checker gives on a scope path
-are `scope-budget`, `scope-sampling-feasibility` and
+**not emitted today**; the only verdicts a checker gives on an event chain
+are `chain-latency`, `chain-sampling-feasibility` and
 `jitter-feasibility`.
 
 See [contract-theory.md](contract-theory.md#what-is-a-contract) for
@@ -712,7 +712,7 @@ network congestion, or QoS mismatch. The manifest lets you declare how
 much loss is acceptable.
 
 Loss is declared in a **`drop:`** block, on **topics** (transport
-drops) and on **scope paths** (E2E drops). It has two keys, and there is
+drops) and on **event chains** (E2E drops). It has two keys, and there is
 no third. (A node path's `drop:` is refused since v0.1.60, phase 90 G3:
 nothing read it there. A node that skips messages states the loss on the
 topic it outputs; `play_launch migrate` moves it when the path has one
@@ -757,8 +757,8 @@ checker verifies: `rate_hz * (1 - n/w) >= sub.min_rate_hz`.
 
 **Static vs runtime:** the static checker validates local consistency
 (`n <= w`, a non-zero `max_consecutive`, effective delivery meets
-subscriber demand), and that no topic on a scope path's route permits a
-larger drop rate than the scope path itself (`drop-tightness`, a
+subscriber demand), and that no topic on an event chain's route permits a
+larger drop rate than the event chain itself (`drop-tightness`, a
 warning: a part looser than its whole). Drop **composition** along a route and
 `max_consecutive` enforcement are **runtime-only** — they depend on
 actual transport conditions that can't be proven statically.
@@ -1180,7 +1180,7 @@ Key features demonstrated:
   dependency in the dataflow graph
 - **`required: true`** — controller needs at least one operation_mode
   message before it can operate
-- **Scope path** — E2E latency budget; `input:`/`output:` reference
+- **Event chain** — E2E latency budget; `input:`/`output:` reference
   topic names (same resolution rules as topic keys)
 
 ## Format Reference
@@ -1226,10 +1226,10 @@ complete top-level vocabulary, and nothing else, is:
 | `topics` | [Topics](#topics) |
 | `services`, `actions` | [Services and Actions](#services-and-actions) |
 | `includes` | [Includes](#includes) |
-| `paths` | [Paths](#paths) — scope paths |
+| `paths` | [Paths](#paths) — event chains |
 | `external_topics` | [External Topics](#external-topics) |
 | `hazards` | [Fault detection and reaction](#fault-detection-and-reaction) |
-| `severity_levels` | [Severity scale](#severity-scale) |
+| `integrity_levels` | [Integrity scale](#integrity-scale) |
 | `functions`, `modes` | [Operational modes](#operational-modes) |
 | `acknowledged` | [Acknowledged findings](#acknowledged-findings) |
 
@@ -1313,7 +1313,7 @@ topics: { ... }
 
 A scope can contain nodes, topics, services, includes (child scopes),
 and paths. When the checker loads a manifest tree, it walks the scope
-hierarchy for budget-overflow and scope-budget checks.
+hierarchy for budget-overflow and chain-latency checks.
 
 ### Nodes
 
@@ -1369,7 +1369,7 @@ reports `derivable-criticality` when it agrees with the derivation and
 `criticality-mismatch` when it does not, and the fix is the same, delete
 it. See
 [Fault detection and reaction](#fault-detection-and-reaction)
-for `hazards:`, and the `severity_levels:` scale they draw from.
+for `hazards:`, and the `integrity_levels:` scale they draw from.
 
 **Subscriber properties:**
 
@@ -1406,7 +1406,7 @@ into the model, and read by nothing — its own row in this table said *"Not
 checked"* for its whole life. Jitter is a property of a ROUTE, not of one
 endpoint: what destabilises a controller is how much the end-to-end latency
 varies, and a single publisher's spread does not determine that. Declare
-`max_jitter:` on the path or scope path you mean; `jitter-feasibility` checks
+`max_jitter:` on the path or event chain you mean; `jitter-feasibility` checks
 it against the sampling jitter the route already carries.
 
 **Service-server properties (`srv:`):**
@@ -1692,7 +1692,7 @@ paths:
       max_consecutive: 5
 ```
 
-Node paths and scope paths share **one** grammar (`paths.<name>` in
+Node paths and event chains share **one** grammar (`paths.<name>` in
 [format-reference.md](format-reference.md)); what differs is what the
 names in `input:`/`output:` refer to — endpoint names on a node,
 topic names on a scope. The fields below are the common ones:
@@ -1707,7 +1707,7 @@ topic names on a scope. The fields below are the common ones:
 | `max_jitter`   | Permitted variation in this path's latency | Not checked |
 | `sync`         | Fan-in policy: `exact`, `approximate` or `timeout_any` with its window | Inputs unsynchronised; each fires the callback |
 | `tolerance`    | Max `header.stamp` spread between inputs still treated as one set | Not checked against the budget |
-| `drop`         | Scope path only: the E2E loss budget, `{ max_count: N / W, max_consecutive: K }`; refused on a node path since v0.1.60 (state it on the output topic) | Drop not checked |
+| `drop`         | Event chain only: the E2E loss budget, `{ max_count: N / W, max_consecutive: K }`; refused on a node path since v0.1.60 (state it on the output topic) | Drop not checked |
 | `miss`         | What a missed deadline costs: `{ tolerate: N / W, consecutive: K, action: continue \| skip_next \| abort }` | Not checked |
 | `safe_state`   | What this path emits when it is a hazard reaction, and the plant's settle time | Path is not a reaction |
 
@@ -1720,9 +1720,9 @@ unclassified path gives the mapper nothing.
 
 Age is declared on **subscriber endpoints** (see
 [Latency and Data Freshness](#latency-and-data-freshness)), not on
-paths. Drops are declared on a topic (transport loss) and on a scope path
+paths. Drops are declared on a topic (transport loss) and on an event chain
 (E2E) — `drop-sanity` checks both, and `drop-tightness` checks that no
-topic on a scope path's route permits more than the path. A node path's
+topic on an event chain's route permits more than the path. A node path's
 `drop:` is refused (v0.1.60).
 
 The checker traces the dataflow between the input and output topics,
@@ -1908,8 +1908,8 @@ thread, and on a small board the lateness is the same order as the work.
 `jitter:` states it, measured (the Autoware Safety Island's handler: ticks
 up to 114.84 ms apart at 10 Hz, so `jitter: 18ms` with the margin). What
 waits for the tick is then charged `period + jitter` instead of a bare
-period: play_launch's reaction walk on a sampling hop, and `window-expiry`
-for the window owner's notice of a deadline. The model carries it as
+period: play_launch's reaction walk on a sampling hop, and `dwell-expiry`
+for the dwell owner's notice of a deadline. The model carries it as
 `PathContract.timer_jitter_ms`, beside the trigger. Without the key the
 island had to fold its 18 ms into a path's `max_latency`, where it also
 became nano-ros's node deadline.
@@ -2030,19 +2030,19 @@ applies — never less conservative than charging by node.
 **Rule severities** (see [Static Validation](#static-validation)), all
 warnings, all cross-scope:
 
-- **`scope-sampling-feasibility`** — `sampling_cost >= max_latency`. This
+- **`chain-sampling-feasibility`** — `sampling_cost >= max_latency`. This
   is a different and worse claim than a total over budget: it is the time
   the route spends *waiting for clocks* rather than running, so no
   priority assignment can reduce it. The only fixes are a faster boundary
-  rate or a looser budget. It is emitted **before** `scope-budget`, so the
+  rate or a looser budget. It is emitted **before** `chain-latency`, so the
   structural verdict reads first — the budget warning necessarily fires
   too, and on its own it invites an author to go optimise callbacks that
   are not the problem.
-- **`scope-budget`** — `critical_path > max_latency`. The message names
+- **`chain-latency`** — `critical_path > max_latency`. The message names
   the route and, when there is one, splits the total into
   `event-segment + sampling_cost`, because the second half is the part the
   author cannot reduce. Computing a route here also **supersedes** the
-  per-manifest flat-sum `scope-budget` for that scope path: the local
+  per-manifest flat-sum `chain-latency` for that event chain: the local
   warning is retracted from the tally, and kept only where no route could
   be traced and the flat sum is the sole estimate available.
 - **`jitter-feasibility`** — `sampling_cost > max_jitter`, strictly. A
@@ -2079,8 +2079,8 @@ key. That is the whole list, and there is no sixteenth:
 
 | Removed | Write instead |
 |---------|---------------|
-| `chains:`, `segments:` | a scope path: two ends and a budget, route derived (phase 68) |
-| `jitter`, `jitter_ms` on an endpoint | `max_jitter` on a path or scope path (phase 68) |
+| `chains:`, `segments:` | an event chain: two ends and a budget, route derived (phase 68) |
+| `jitter`, `jitter_ms` on an endpoint | `max_jitter` on a path or event chain (phase 68) |
 | `correlation` | `sync:`, present or absent (phase 70) |
 | `exclude_patterns` | `external:` on the topic, service or action (phase 70) |
 | `max_latency_ms`, `max_age_ms`, `max_transport_ms`, `max_response_ms`, `tolerance_ms`, `timeout_ms`, `max_interval_ms`, `lifespan_ms` | the same key with a typed duration: `<n>ns \| us \| ms \| s` (phase 70) |
@@ -2110,13 +2110,13 @@ functions:
 
 hazards:
   drive_blind:
-    severity: ASIL_D                      # from the HARA; consumed, never computed
+    integrity: ASIL_D                      # from the HARA; consumed, never computed
     guards:
       - /safety/scan                      # any guard faulting is the hazard …
       - pose_estimation                   # … a function by name: this one faults when ALL its members do
     on: omission                          # omission | late | loss | reported, or a list of them
     ftti: 500ms                           # physics: fault → hazardous event, absent reaction
-    reaction: safety.stop                 # the scope path whose route reaches the safe state
+    reaction: safety.stop                 # the event chain whose route reaches the safe state
 
 nodes:
   brake_controller:
@@ -2213,7 +2213,7 @@ fire. The walk is:
    and otherwise the ordinary **input-triggered** paths — a reaction is a
    real message, and downstream nodes forward it the way they forward
    anything.
-3. It ends at a path that publishes onto one of the reaction scope path's
+3. It ends at a path that publishes onto one of the reaction event chain's
    output topics; a `safe_state` whose `emits` lands there contributes its
    `settle`, and a path that merely publishes there ends the walk with no
    settle -- unless a path upstream on the same branch declared a
@@ -2229,7 +2229,7 @@ reported rather than assumed:
 | Rule | Severity | When |
 |------|----------|------|
 | `fault-reaction-budget` | Error / Info | `FDTI + FRTI > ftti` (error, naming every term); otherwise an info stating the slack |
-| `reaction-unreachable` | Error | An `on_violation.reaction` naming no path on its own node, or one whose trigger does not include the subscription (the violation would never start it); a hazard `reaction:` naming no scope path in its scope; or no chain of `on_violation` reactions leading from the guards to that path's output — the declared `max_latency` is then used as the route |
+| `reaction-unreachable` | Error | An `on_violation.reaction` naming no path on its own node, or one whose trigger does not include the subscription (the violation would never start it); a hazard `reaction:` naming no event chain in its scope; or no chain of `on_violation` reactions leading from the guards to that path's output — the declared `max_latency` is then used as the route |
 | `reaction-unbudgeted` | Warning | No route **and** no declared `max_latency`, or a route that reaches the sink with no `safe_state` settle — the check runs on INCOMPLETE EVIDENCE |
 | `reaction-unguarded` | Warning | No subscriber of the reaction's output declares an `on_violation` — a stalled reaction would go unnoticed |
 | `reaction-within` | Error | An `on_violation.within` smaller than the reaction path's own `max_latency` |
@@ -2241,20 +2241,20 @@ does not enter the FRTI sum, which is derived from the route.
 Design of record: `docs/design/fault-reaction-primitives.md` (in the
 play_launch repository).
 
-### Severity scale
+### Integrity scale
 
-`severity_levels:` declares the scale `hazards.<h>.severity` draws from,
+`integrity_levels:` declares the scale `hazards.<h>.integrity` draws from,
 ascending. Absent, it is ISO 26262's
 `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; a team working to IEC 61508 or
 DO-178C names its own. The **first entry is "no safety requirement"** and
 derives no criticality. A `severity:` outside the declared scale is
-`severity-unknown` — an explicit diagnostic rather than the silent `None`
+`integrity-unknown` — an explicit diagnostic rather than the silent `None`
 the parser used to produce.
 
 <!-- yaml-check: skip — a fragment showing one manifest-level key -->
 
 ```yaml
-severity_levels: [QM, SIL_1, SIL_2, SIL_3, SIL_4]
+integrity_levels: [QM, SIL_1, SIL_2, SIL_3, SIL_4]
 ```
 
 ### Criticality is derived
@@ -2276,7 +2276,7 @@ A hazard reaches a node three ways:
 - **reacts** — every node on the reaction walk to the safe state.
 
 A node takes the **max** over the hazards that reach it, ranked by
-position in `severity_levels:` — never a sum. `sched_derive` reads the
+position in `integrity_levels:` — never a sum. `sched_derive` reads the
 derivation before any label.
 
 The map from a severity to a criticality is grammar, stated in
@@ -2302,11 +2302,11 @@ node exactly as if nothing had been declared.
 
 ## Operational modes
 
-A hazard may **enter a mode** instead of reacting by one scope path, and
-then the fallback ladder *is* the reaction: `enters: <mode>`. Phase 71's
-single-path form, `reaction: <scope path>`, is the one-rung case,
+A hazard may **enter a mode** instead of reacting by one event chain, and
+then the fallback sequence *is* the reaction: `enters: <mode>`. Phase 71's
+single-path form, `reaction: <event chain>`, is the one-degradation level case,
 byte-identical. A hazard writes exactly one of the two. So `reaction`
-names a path wherever it appears: a scope path on a hazard and on a mode, a
+names a path wherever it appears: an event chain on a hazard and on a mode, a
 path of the subscriber's own node on `on_violation`.
 
 Before v0.1.59 a hazard wrote the mode it enters as `reaction: <mode>`. That
@@ -2322,7 +2322,7 @@ rewrites it. `enters:` naming something that is not a mode of the scope is
   which needs at least two members).
 - `modes.<m>` carries `requires:` (the functions, or bare topics, the mode
   needs — it is available while every one holds), `fallback:` (the ordered
-  ladder to fall down when it is lost), `reaction:` (the scope path
+  fallback sequence to fall down when it is lost), `reaction:` (the event chain
   reaching this mode's safe state), `overrides:` and `description:`.
 
 ```yaml
@@ -2355,26 +2355,26 @@ hazards:
     enters: autonomous
 ```
 
-**Each rung is judged in its own right.** A graded reaction is a promise,
-not merely a step toward the floor, so `ladder-rung-budget` (error) checks
-every rung but the last with the same arithmetic the terminal one gets:
-`FDTI + rung route + settle <= ftti`. The last rung is what
-`fault-reaction-budget` measures, because it is the floor the system is
-guaranteed to reach. Autoware's real four-mode ladder proves
+**Each degradation level is judged in its own right.** A graded reaction is a promise,
+not merely a step toward the minimal risk condition, so `degradation-level-budget` (error) checks
+every degradation level but the last with the same arithmetic the terminal one gets:
+`FDTI + degradation level route + settle <= ftti`. The last degradation level is what
+`fault-reaction-budget` measures, because it is the minimal risk condition the system is
+guaranteed to reach. Autoware's real four-mode fallback sequence proves
 `comfortable_stop` cannot cover a 2 s interval (500 + 4000 = 4500 ms) that
-the emergency floor beneath it can.
+the emergency stop beneath it, the minimal risk condition, can.
 
-**A ladder must terminate.** `ladder-unterminated` (error) fires two ways:
+**A fallback sequence must terminate.** `fallback-without-mrc` (error) fires two ways:
 a mode a hazard enters with no `fallback:` at all, and — the one worth
-stating — a **last rung that requires something the hazard's own guards
-can take away**. That is not a floor: losing the guard takes the whole
-ladder with it. A rung naming a mode that does not exist, or a rung with
+stating — a **last degradation level that requires something the hazard's own guards
+can take away**. That is not a minimal risk condition: losing the guard takes the whole
+fallback sequence with it. A degradation level naming a mode that does not exist, or a degradation level with
 no `reaction:` path of its own, is `reaction-unreachable`.
 
 **A mode that cannot fall is not a mode.** `mode-requires-unguarded`
 (error) fires when a mode requires a function no subscriber of which
 declares an `on_violation`: nothing would notice it was lost, so the mode
-can never be declared unavailable and the ladder below it can never be
+can never be declared unavailable and the fallback sequence below it can never be
 taken.
 
 ### Per-mode requirement values (`overrides:`)
@@ -2398,7 +2398,7 @@ declaration and the resolved copies the checks read, re-runs the
 requirement checks (critical path, sync budget, rate hierarchy,
 lifespan/age, fault reaction) and **diffs against the default**. Only what
 the mode introduces is reported, under `mode:<rule>` — a
-`mode:scope-budget`, say, with the message prefixed `in mode '<m>':`.
+`mode:chain-latency`, say, with the message prefixed `in mode '<m>':`.
 A degraded mode's `max_latency: 200ms` is a different contract, and the
 arithmetic that clears the default one says nothing about it.
 
@@ -2406,10 +2406,10 @@ arithmetic that clears the default one says nothing about it.
 > scope-path name may itself contain dots (`safety.stop`). Splitting
 > positionally fired `override-target-missing` on a correct contract.
 
-### The takeover keys: a value fault, a timed rung, an exit, a derived settle
+### The takeover keys: a value fault, a timed degradation level, an exit, a derived settle
 
 Four keys (v0.1.46) make a Drive Pilot-style takeover checkable without a
-transition language: a fault by **value**, a rung that lasts at most a
+transition language: a fault by **value**, a degradation level that lasts at most a
 **window**, the driver's answer as an **exit**, and a **settle derived** from
 the braking profile and the operating domain's speed bound. Since v0.2.0 the
 last is not core grammar: `entry_speed`, `decel` and `jerk` are keys of the
@@ -2441,7 +2441,7 @@ modes:
   takeover_request:
     requires: [hpc_alive]
     reaction: island.tor
-    window: { duration: 10s, param: mrm_handler.takeover_request_timeout }
+    min_dwell: { duration: 10s, param: mrm_handler.takeover_request_timeout }
     exit: { holds: driver_took_over, to: manual }
   comfortable_stop:
     requires: [hpc_alive]
@@ -2478,35 +2478,35 @@ written with the negated operator, as `driver_took_over` is above.
 
 **Which fault removes which function.** A `reported` fault removes the value
 functions on its topic; an omission, late or loss fault removes both kinds,
-because silence also means "not known to be in range". The ladder a hazard
-takes skips every rung that requires a removed function, and neither checks
+because silence also means "not known to be in range". The fallback sequence a hazard
+takes skips every degradation level that requires a removed function, and neither checks
 nor charges it: above, `hpc_loss` (omission) lands straight on
 `emergency_stop`, while `odd_exit` waits out the takeover request.
 
 **`window:`** is `10s` (unbound) or `{ duration, param: <node>.<parameter> }`.
-A windowed rung is transitional: while it stays available the system stays
-AT LEAST `duration`, then takes the next rung even if this one is still
-available. The duration is a guarantee to whoever the rung waits for -- a
-driver's takeover time, Drive Pilot's 10 s -- so the rung below must not
-start before the deadline (the rung's own route to its output, then
-`duration`). How late it may start is not a second number: it is the rung
+A degradation level with a `min_dwell` is transitional: while it stays available the system stays
+AT LEAST `duration`, then takes the next degradation level even if this one is still
+available. The duration is a guarantee to whoever the degradation level waits for -- a
+driver's takeover time, Drive Pilot's 10 s -- so the degradation level below must not
+start before the deadline (the degradation level's own route to its output, then
+`duration`). How late it may start is not a second number: it is the degradation level
 below's own reaction route, charged from the deadline, whose first hop is
 the node that owns the window noticing that the deadline has passed. A node
 that evaluates the deadline on a timer notices it up to one period late, so
-that hop must hold the period (`window-expiry`); a node that arms a one-shot
+that hop must hold the period (`dwell-expiry`); a node that arms a one-shot
 timer at the deadline needs only its call. The window ends where the
 deadline is, not where the node notices it, which is why the notice is never
-charged twice. A rung left early because a function it requires is lost
-(the fault that removes it) is not waited out; its ladder falls to the rung
-that fault lands on. It is never a safe state, so it is never the floor, and
+charged twice. A degradation level left early because a function it requires is lost
+(the fault that removes it) is not waited out; its fallback sequence falls to the degradation level
+that fault lands on. It is never a safe state, so it is never the minimal risk condition, and
 it has no settle; what it costs -- its route plus its window -- is charged to
-every rung below it. Written out: the rung below starts no sooner than
-`duration` after the rung went on, and no later than
+every degradation level below it. Written out: the degradation level below starts no sooner than
+`duration` after the degradation level went on, and no later than
 `route + duration + route below` after the fault was detected.
 
 **`exit: { holds: <function>, to: <mode> }`** is allowed only on a windowed
-rung (a parse error otherwise), so the grammar still has no general
-transitions. While the rung is active, the function holding ends the ladder
+degradation level (a parse error otherwise), so the grammar still has no general
+transitions. While the degradation level is active, the function holding ends the fallback sequence
 in `to`, which is outside every `fallback:` list. Before v0.1.59 the
 function was written `on:`; that spelling still parses for one release, with
 a `deprecated-spelling` warning (`on` names fault classes everywhere else:
@@ -2547,18 +2547,18 @@ The consumer's rules for these keys:
 |------|----------|------|
 | `when-requires-reported` | Error | A hazard's `when:` without `reported` among its `on:` classes |
 | `when-field-unknown` | Error / Warning | The field is not in the topic's `.msg`, is not a scalar, or the constant is not declared there (error); the `.msg` is not on the ament index, so nothing was checked (warning) |
-| `ladder-window-floor` | Error | The last rung of a ladder has a window |
-| `window-param` | Error | The named parameter's resolved launch value, in seconds, is not the window, or it has none |
-| `window-unbound` | Warning | A window with no `param:` |
-| `window-expiry` | Error / Warning | The route of a rung below a window does not start at the node the window's `param:` names, or charges that node less than the period of its timer that publishes the windowed rung's output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the rung's output, so when the deadline is noticed is undeclared (warning) |
-| `mode-exit-target` | Error | `to:` is not a mode, or is a rung of some `fallback:` ladder |
-| `mode-exit-unwired` | Error | No node publishing the rung's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
-| `ladder-rung-budget` | Error | Now cumulative: detection + every windowed rung passed (route + window) + the rung's route + settle, against the interval |
+| `dwell-at-mrc` | Error | The last degradation level of a fallback sequence has a `min_dwell` |
+| `dwell-param` | Error | The named parameter's resolved launch value, in seconds, is not the dwell, or it has none |
+| `dwell-unbound` | Warning | A `min_dwell` with no `param:` |
+| `dwell-expiry` | Error / Warning | The route of a degradation level below a dwelling level does not start at the node the dwell's `param:` names, or charges that node less than the period of its timer that publishes the degradation level with a `min_dwell`'s output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the degradation level's output, so when the deadline is noticed is undeclared (warning) |
+| `mode-exit-target` | Error | `to:` is not a mode, or is a degradation level of some `fallback:` fallback sequence |
+| `mode-exit-unwired` | Error | No node publishing the degradation level's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
+| `degradation-level-budget` | Error | Now cumulative: detection + every degradation level with a `min_dwell` passed (route + dwell) + the degradation level's route + settle, against the interval |
 | `settle-derived` | Info | The derivation's trace, printed (any extension's settle) |
 | `settle-entry-missing` | Warning | A derived settle reached by a hazard that writes no value for a key the derivation needs (a braking profile and no `entry_speed`) |
 | `settle-param-unresolved` | Error | A parameter the derivation reads with no numeric launch value on the node |
 | `settle-conflict` | Warning | A measured settle and the derivation differ by more than 1 % |
-| `deprecated-implicit-extension` | Error | `vehicle.braking`'s keys without `use:`, or hazard severities with no profile and no `severity_levels:` (a warning in play_launch 0.19) |
+| `deprecated-implicit-extension` | Error | `vehicle.braking`'s keys without `use:`, or hazard integrity levels with no profile and no `integrity_levels:` (a warning in play_launch 0.19) |
 
 ## Static Validation
 
@@ -2575,9 +2575,9 @@ second table.
 | 3 | `qos-compat`        | Invalid QoS values                                             | Error         |
 | 4 | `qos-match`         | Publisher and subscriber QoS incompatible per DDS offered ≥ requested, on `reliability`, `durability`, `liveliness` and `lease_duration` | Error |
 | 5 | `rate-hierarchy`    | Lower bounds `pub.min_rate_hz >= rate_hz >= sub.min_rate_hz`, and (phase 70) upper bounds `pub.max_rate_hz >= rate_hz <= sub.max_rate_hz` | Error |
-| 6 | `scope-budget`      | Conservative flat sum: scope budget < Σ node latencies + declared transport (the consumer runs the topology-aware version) | Warning |
+| 6 | `chain-latency`      | Conservative flat sum: scope budget < Σ node latencies + declared transport (the consumer runs the topology-aware version) | Warning |
 | 7 | `causal-dag`        | Cycles in the dataflow graph (`state:` breaks cycles)          | Error         |
-| 8 | `drop-sanity`       | Effective delivery rate < sub.min_rate_hz; drop values out of range (`n > w`, `max_consecutive: 0`) — on topics and scope paths | Error |
+| 8 | `drop-sanity`       | Effective delivery rate < sub.min_rate_hz; drop values out of range (`n > w`, `max_consecutive: 0`) — on topics and event chains | Error |
 | 9 | `service-wiring`    | Service client with no matching server across tree             | Warning       |
 | 10 | `service-type`     | Service with no type; server/client not on node                | Error/Warning |
 | 11 | `dangling-entity`  | Topic with 0 publishers or 0 subscribers (warning); service/action with 0 servers (error) — **unless** the missing side is declared `external:`, which for a service is the normal case, a client and its server often being two images | Error/Warning |
@@ -2589,7 +2589,7 @@ second table.
 | 17 | `sync-feasibility` (44.1/44.2) | `sync:` `max_interval`/`timeout` too narrow for the slowest declared input's inter-arrival period | Warning |
 | 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |
 | 19 | `jitter-range` (70 W2) | `min_latency` above `max_latency`; both bounds declared and `max_latency - min_latency > max_jitter` (errors); `max_jitter` with no `min_latency`, so the bound is unverifiable (info — an absent floor is unknown, not zero) | Error/Info |
-| 20 | `drop-tightness` (90 G3) | A topic on a scope path's route (in the same manifest) permits a larger drop rate (`max_count`) than the scope path's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
+| 20 | `drop-tightness` (90 G3) | A topic on an event chain's route (in the same manifest) permits a larger drop rate (`max_count`) than the event chain's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
 
 The cross-scope rules run in the consumer's merge layer
 (`ros-launch-resolve`, invoked by `play_launch check`), which has the
@@ -2601,23 +2601,23 @@ across manifest files. The ones that bear on this document:
 | `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean | Error |
 | `consistency` | Same resolved topic/service has conflicting `type:`, `rate_hz:`, `max_transport:`, topic-level `qos:` or `drop:` across scopes; or an `external_topics:` `type:` contradicting the internal `topics:` one | Error |
 | `budget-overflow` | Descendant path budget exceeds a matched ancestor path budget (part > whole) | Error |
-| `scope-budget` | A scope path's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency`; supersedes the per-manifest flat sum where a route was traced | Warning |
-| `scope-sampling-feasibility` | A scope path's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it. Emitted before `scope-budget` | Warning |
-| `jitter-feasibility` | A scope path's declared `max_jitter` is below the sampling jitter its route already carries — one whole period per clock boundary crossed | Warning |
+| `chain-latency` | An event chain's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency`; supersedes the per-manifest flat sum where a route was traced | Warning |
+| `chain-sampling-feasibility` | An event chain's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it. Emitted before `chain-latency` | Warning |
+| `jitter-feasibility` | An event chain's declared `max_jitter` is below the sampling jitter its route already carries — one whole period per clock boundary crossed | Warning |
 | `sync-budget` | A `sync:` window wider than the path's own `max_latency` — the synchroniser may wait that long before the callback starts | Warning |
 | `causal-dag-global` | Cycles in the merged graph, including edges derived from launch-file remaps | Error |
 | `lifespan-age` | A topic's `lifespan` is shorter than a subscriber's `max_age` — the age requirement cannot be met | Warning |
 | `response-blocking`, `concurrency-decl`, `path-exclusion` | A service `max_response` promised beside a callback that would block it, and `concurrency:` declarations that contradict each other across the merged tree | Warning |
 | `derivable-rate`, `rate-mismatch` | A declared `topics.<t>.rate_hz` agrees with (info) or contradicts (warning) the rate derived from the timers that drive it | Info/Warning |
 | `derivable-min-rate`, `min-rate-mismatch`, `derived-rate-hierarchy` | The same comparison for a publisher's `min_rate_hz`, and a subscriber asking for more than the derived rate delivers | Info/Warning |
-| `derivable-criticality`, `criticality-mismatch`, `severity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; a `severity:` outside the declared `severity_levels:` scale | Info/Warning/Error |
+| `derivable-criticality`, `criticality-mismatch`, `integrity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale | Info/Warning/Error |
 | `fault-reaction-budget`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
-| `ladder-rung-budget`, `ladder-unterminated`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback rung against the ftti in its own right, a floor that requires nothing losable, and override targets that name a real contract path | Error |
+| `degradation-level-budget`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path | Error |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, re-run after merge | Error/Warning |
 
 A mode with `overrides:` re-runs the requirement checks on the modified
 contract and reports only what that mode introduces, under a `mode:`
-prefix — `mode:scope-budget`, `mode:fault-reaction-budget`, and so on. See
+prefix — `mode:chain-latency`, `mode:fault-reaction-budget`, and so on. See
 [Per-mode requirement values](#per-mode-requirement-values-overrides).
 
 `consistency` has only one implementation. A no-op body of the same id
@@ -2625,10 +2625,10 @@ used to sit in `default_rules()`, reserving the name and being counted in
 the registry, so a reader of the registry — or of a `--rule consistency`
 run — was told a rule ran that did nothing; it was removed in v0.1.38 and
 the id now belongs entirely to the consumer's merge layer.
-`scope-budget` genuinely does exist on both sides: in-crate a
+`chain-latency` genuinely does exist on both sides: in-crate a
 conservative flat sum, in the consumer a topology-aware critical path
 that **supersedes** it — where a route is computed, the local warning for
-that scope path is retracted from the tally.
+that event chain is retracted from the tally.
 
 **Drop checking** is split between static and runtime:
 - **Static (`drop-sanity`)**: validates values are in range and that
@@ -2692,17 +2692,17 @@ error[satisfiability]: topic 'ndt_pose' has 0 publishers when pose_source=gnss
 And from the consumer's merge layer, where the route is known:
 
 ```
-warning[scope-sampling-feasibility]: scope path 'perception' (scope 3) is
+warning[chain-sampling-feasibility]: event chain 'perception' (scope 3) is
   structurally infeasible: sampling cost alone (100.00ms, one period per
   clock boundary crossed: ekf → tracker) meets or exceeds the declared
   max_latency (85ms). No priority assignment can reduce this — raise the
   boundary's rate or the budget
 
-warning[scope-budget]: scope path 'perception' (scope 3) max_latency_ms (85)
+warning[chain-latency]: event chain 'perception' (scope 3) max_latency_ms (85)
   is less than critical path: cropbox → ground_filter → detector = 125.00ms
   (25.00ms event-segment + 100.00ms sampling_cost)
 
-error[budget-overflow]: scope path 'detect' (scope 7) max_latency_ms (60)
+error[budget-overflow]: event chain 'detect' (scope 7) max_latency_ms (60)
   exceeds ancestor path 'perception' (scope 3) max_latency_ms (50) — child
   budget cannot exceed parent budget on the same (input, output) topics
 

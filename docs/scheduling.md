@@ -43,7 +43,7 @@ contract keys behind those facts are in
 | `criticality` | the model's effective (hazard-derived, phase 72) value when it carries one, else the advisory `high`/`medium`/`low` label |
 | `claims_concurrency` | declared `concurrency.exclusive` sets sharing a member merge; concurrency is claimed unless one merged group covers every declared path (`exclusive: []` claims it; an absent declaration, or a single path, does not) |
 | `exec_ms` | `DeriveFacts::path_exec_ms` keyed `"<node FQN>/<path>"`, else `DeriveFacts::node_exec_ms` and only when the node has exactly ONE path — with several, the split is unknown and attributing the whole node's cost to any one of them would overstate it |
-| chains | `resolve_chains`: one per scope path that declares a budget — the longest causal route from the scope's input topics to its output topics within its subtree, timer paths as `Boundary` elements (`period_ms = 1000 / rate_hz`), the rest as `Segment`s; chain criticality = max over members. A scope path that yields none is reported with a reason (`ChainSkip::{NoBudget, NoEndpoints, Cycle, NoRoute, NoPathOnRoute}`) |
+| chains | `resolve_chains`: one per event chain that declares a budget — the longest causal route from the scope's input topics to its output topics within its subtree, timer paths as `Boundary` elements (`period_ms = 1000 / rate_hz`), the rest as `Segment`s; chain criticality = max over members. An event chain that yields none is reported with a reason (`ChainSkip::{NoBudget, NoEndpoints, Cycle, NoRoute, NoPathOnRoute}`) |
 
 **An input's release bound is carried, not ranked** (since v0.1.68). A
 subscriber or a service server may state what bounds its arrivals:
@@ -213,7 +213,7 @@ pub trait SchedMapper {
   ```rust
   pub struct MapperNode {
       pub name: String,                    // FQN
-      pub scope: String,                   // namespace / scope path
+      pub scope: String,                   // namespace / event chain
       pub rate_hz: Option<f64>,
       pub deadline_us: Option<u64>,
       pub criticality: Option<Criticality>, // Low < Medium < High
@@ -338,10 +338,10 @@ derived, always" is mapper-independent logic the caller applies after
 Derives a global priority order from the chains in `MapperInput::chains`
 (PiCAS-style: drain chains toward their sinks), falling back to
 criticality-bucketed rate/deadline ordering for everything else. Those
-chains are *derived* routes, one per scope path with a budget — the
+chains are *derived* routes, one per event chain with a budget — the
 `chains:` vocabulary was removed in phase 68 W4 and nothing authors a route
 by hand. When `input.chains` is empty the mapper degrades gracefully to the
-fallback, which is how a system with no scope paths (and nano-ros today)
+fallback, which is how a system with no event chains (and nano-ros today)
 runs it. Implementation: `sched/src/chain_aware_mapper.rs`.
 
 ![From contract facts to two schedulers: the agnostic core and the two realizers](img/mapper-pipeline.png)
@@ -356,7 +356,7 @@ Algorithm (steps 1–4 platform-agnostic, 5–6 POSIX realization):
    zero — there is nothing better to count — but each such boundary is
    recorded and reported as `MapWarning::ChainFeasibleWithoutWcet`, so a
    `feasible` verdict computed from missing evidence does not read as a
-   measured one. (Same rule as the static `scope-sampling-feasibility` check
+   measured one. (Same rule as the static `chain-sampling-feasibility` check
    — see
    [contract-theory.md](contract-theory.md#cross-scope-chains-and-sampling-cost).)
 2. **Chain order.** Criticality descending (chain criticality = max over
@@ -532,7 +532,7 @@ tagged so their YAML stays plain mappings, no `!tags`:
 **Where the route comes from.** This crate takes chains already resolved:
 it has no launch DAG and no topic graph, by design. `derive::resolve_chains`
 (`derive/src/graph.rs`) builds them from the model — the critical path of
-the subgraph between a scope path's two ends, topologically sorted by
+the subgraph between an event chain's two ends, topologically sorted by
 construction and fork-join correct (`max` over branches, not a sum). Before
 phase 68 W4 the caller instead took an authored `segments:` list verbatim,
 which was already author-linearized — so the fan-in tie-break rule in the

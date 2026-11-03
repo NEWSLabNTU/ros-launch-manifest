@@ -8,7 +8,7 @@ How manifest contracts are verified, as implemented by the `types/` and
 > **Scope note.** This document describes the *per-manifest* checker that
 > lives in this repository. Cross-file checks (cross-scope declaration
 > agreement, cross-scope QoS reconciliation, the topology-aware
-> critical-path budget check, route derivation for a scope path) run in
+> critical-path budget check, route derivation for an event chain) run in
 > the consumer's merge layer (`ros-launch-resolve`, invoked by
 > `play_launch check`) because they need the merged launch tree. So does
 > everything that DERIVES a consequence and grades a declaration against
@@ -97,9 +97,9 @@ in `default_rules()`.
 | 3 | `qos-compat` | Error | Invalid QoS value token (`reliability`, `durability`, `history`, `liveliness`) at topic or endpoint level |
 | 4 | `qos-match` | Error / Warning | Structural: `depth: 0` (E), `keep_all` with depth (W), `best_effort` + `transient_local` (W). DDS pub/sub compatibility on `reliability`, `durability`, `liveliness` and `lease_duration` (E) — offered ≥ requested, checked only when both sides specify (no implicit ROS defaults) |
 | 5 | `rate-hierarchy` | Error | `pub.min_rate_hz < topic.rate_hz`; `topic.rate_hz < sub.min_rate_hz`; and since phase 70 the upper bounds `topic.rate_hz > pub.max_rate_hz` and `topic.rate_hz > sub.max_rate_hz` |
-| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency` < Σ node latencies + declared topic `max_transport` (the deprecated topic-level value only; subscriber transports are read by the consumer's route), each node contributing the **max** over its declared paths. Per-manifest fallback — the topology-aware critical path is the consumer's cross-scope diagnostic, which deletes this warning for every scope path it resolves a route for |
+| 6 | `chain-latency` | Warning | Flat conservative sum: scope `max_latency` < Σ node latencies + declared topic `max_transport` (the deprecated topic-level value only; subscriber transports are read by the consumer's route), each node contributing the **max** over its declared paths. Per-manifest fallback — the topology-aware critical path is the consumer's cross-scope diagnostic, which deletes this warning for every event chain it resolves a route for |
 | 7 | `causal-dag` | Error | Cycle in the causal dataflow graph (`state: true` on feedback endpoints breaks it) |
-| 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; a `drop.max_count` rate outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0`. Checked on topics and scope paths (a node path's `drop:` is a parse error since v0.1.60) |
+| 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; a `drop.max_count` rate outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0`. Checked on topics and event chains (a node path's `drop:` is a parse error since v0.1.60) |
 | 9 | `service-wiring` | Warning | Service client with no matching server |
 | 10 | `service-type` | Error / Warning | Service without `type` (E); server/client ref not declared on its node (W) |
 | 11 | `dangling-entity` | Warning / Error | Topic with 0 pubs or 0 subs (W); service/action with 0 servers (E) — unless that side is declared `external:` |
@@ -111,7 +111,7 @@ in `default_rules()`.
 | 17 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
 | 18 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
 | 19 | `jitter-range` | Error / Info | `min_latency` above `max_latency` (E); `max_latency - min_latency > max_jitter` when both bounds are declared (E); `max_jitter` declared with no `min_latency`, so the bound cannot be checked (Info — an absent floor is unknown, not zero). A `max_latency` at or below `max_jitter` is clean without a floor: whatever it is, the spread cannot exceed the ceiling |
-| 20 | `drop-tightness` | Warning | A topic on a scope path's route, within the path's own manifest, permits a larger drop rate (`max_count`, `n / w`) than the scope path's end-to-end `drop` (phase 90 G3, contract-theory's tightness check). The consumer checks the same on the global route, across scopes |
+| 20 | `drop-tightness` | Warning | A topic on an event chain's route, within the path's own manifest, permits a larger drop rate (`max_count`, `n / w`) than the event chain's end-to-end `drop` (phase 90 G3, contract-theory's tightness check). The consumer checks the same on the global route, across scopes |
 
 Shared helper: `rules/endpoint_topic.rs` resolves `node/endpoint`
 references to their declaring topic (used by `once-durability`,
@@ -161,19 +161,19 @@ invokes. Cross-scope rule ids, emitted from
 |------|----------------|
 | `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean |
 | `consistency` | Topic/QoS/rate declarations agree across the scopes that declare the same topic (the in-crate no-op of the same id was removed in v0.1.38 — this is the only `consistency` rule) |
-| `budget-overflow` | Cross-scope path budgets: a child scope's path budget must not exceed a matched ancestor path's budget (theory doc "Check 1") |
-| `scope-budget` | Topology-aware critical path over the merged dataflow DAG, including per-sink `max_transport` overrides (the local flat-sum rule is the standalone fallback) |
-| `scope-sampling-feasibility` | The derived route's sampling cost alone already meets the budget — structurally infeasible, so no priority assignment can fix it. Emitted before `scope-budget`, so the structural verdict reads first |
-| `jitter-feasibility` | A scope path's `max_jitter` is below the sampling jitter its derived route already carries (one whole period per clock boundary crossed) |
+| `budget-overflow` | Cross-event chain budgets: a child scope's path budget must not exceed a matched ancestor path's budget (theory doc "Check 1") |
+| `chain-latency` | Topology-aware critical path over the merged dataflow DAG, including per-sink `max_transport` overrides (the local flat-sum rule is the standalone fallback) |
+| `chain-sampling-feasibility` | The derived route's sampling cost alone already meets the budget — structurally infeasible, so no priority assignment can fix it. Emitted before `chain-latency`, so the structural verdict reads first |
+| `jitter-feasibility` | An event chain's `max_jitter` is below the sampling jitter its derived route already carries (one whole period per clock boundary crossed) |
 | `sync-budget` | A `sync:` window wider than the path's own `max_latency` — a contradiction in the declaration, not a performance problem |
 | `causal-dag-global` | Cycles in the merged graph, including edges derived from launch-file remaps |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, run after merge |
 | `derivable-rate` / `rate-mismatch`, `derivable-min-rate` / `min-rate-mismatch`, `derived-rate-hierarchy` | A declared rate against the one derived from the timers that drive it: info when they agree, warning when they do not |
 | `sync-feasibility` | The local rule's twin on DERIVED rates, run only where an input's rate is derived but not declared. Deleting a `rate_hz` the `derivable-rate` info calls redundant must not silence the window check that reads it |
 | `graph-from-remaps` | How many topics and endpoints the graph took from the launch file's own remaps rather than from a contract, and how many remaps were too ambiguous to give a direction (counted, never guessed) |
-| `derivable-criticality` / `criticality-mismatch`, `severity-unknown` | A declared `criticality` against the one derived from the hazards reaching the node; a `severity:` outside the declared `severity_levels:` scale |
+| `derivable-criticality` / `criticality-mismatch`, `integrity-unknown` | A declared `criticality` against the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale |
 | `fault-reaction-budget`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for deriving them |
-| `ladder-rung-budget`, `ladder-unterminated`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback rung judged against the ftti in its own right, a floor that requires nothing losable, and override targets that name a real contract path |
+| `degradation-level-budget`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level judged against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path |
 | `lifespan-age`, `response-blocking`, `concurrency-decl`, `path-exclusion` | Declarations that contradict each other across the merged tree |
 
 Two properties of that layer are worth stating, because neither follows

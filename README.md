@@ -63,9 +63,9 @@ Five workspace members:
 Consumers: **play_launch** (via `ros-launch-resolve`) on Linux;
 **nano-ros** for RTOS targets. Checks that need the MERGED tree —
 `consistency`, `budget-overflow`, the critical-path form of
-`scope-budget`, `scope-sampling-feasibility`, `jitter-feasibility`,
+`chain-latency`, `chain-sampling-feasibility`, `jitter-feasibility`,
 `lifespan-age`, `fault-reaction-budget`, the `derivable-*`/`*-mismatch`
-comparisons, the mode and ladder rules — run in the consumer's merge
+comparisons, the mode and fallback sequence rules — run in the consumer's merge
 layer, not here.
 
 ## What a Contract May Say
@@ -77,11 +77,11 @@ topics, a total latency, a downstream rate, a node's criticality. The
 `kind` column of the format reference marks which is which.
 
 Top-level blocks: `version`, `args`, `nodes`, `topics`, `services`,
-`actions`, `includes`, `paths` (scope paths: two topics and a budget),
-`external_topics`, `hazards`, `functions`, `modes`, `severity_levels`.
+`actions`, `includes`, `paths` (event chains: two topics and a budget),
+`external_topics`, `hazards`, `functions`, `modes`, `integrity_levels`.
 
 Retired spellings are parse errors that name their replacement —
-`chains:`/`segments:` (state a scope path, the route is derived),
+`chains:`/`segments:` (state an event chain, the route is derived),
 endpoint `jitter` (use `max_jitter` on a path), `correlation` (use
 `sync:`), `exclude_patterns` (use `external:`), and the nine `_ms`
 name-suffix aliases (write `max_latency: 30ms`, so a unit cannot be
