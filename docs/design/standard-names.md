@@ -148,7 +148,7 @@ the contract keys and the platform-file key take the new spelling, the old
 one reads with a warning and `migrate` rewrites it (M1's platform-file key
 by hand). The model's field names and the Rust types are unchanged until
 nano-ros moves with them. M6 is done in play_launch (`chains.json` format
-2). M3 is at release R in v0.3.8: `fault-reaction-time`, `degradation-level-time`, `latency-bound-overflow`. M7 is undecided.
+2). M3 is at release R in v0.3.8: `fault-reaction-time`, `degradation-level-time`, `latency-bound-overflow`. M7 is decided (2026-11-05): **task**; play_launch phase 99 carries it.
 
 Progress (2026-11-05): v0.3.9 is R+1 for M1-M5. Every old key, the
 `spontaneous` trigger value, the platform file's `mapper:` and the three
@@ -167,7 +167,7 @@ nano-ros follows with its own names too (its phase 534 W3).
 | M4 | `ingress: { rate_hz, burst }` | **arrival curve** (token bucket, σ/ρ) | network calculus (Cruz; Le Boudec & Thiran) | key `arrival_curve:` |
 | M5 | `on_demand`, the `spontaneous` trigger | **aperiodic** | the periodic / sporadic / aperiodic task model | |
 | M6 | play_launch's **carried** edges (beside **sampled**) | **triggered** (event-triggered) vs **sampled** (register, last-is-best) | cause-effect chain analysis | play_launch only: `chains.json`, `/api/chains`, the Chains page |
-| M7 | **tier** (`TierDef`, `ResolvedTier`): one callback group's scheduling policy and placement | **scheduling context** or **task** | AUTOSAR OS / OSEK task; nano-ros's own retired `[[scheduling.contexts]]` | by far the costliest (§7) |
+| M7 | **tier** (`TierDef`, `ResolvedTier`): one callback group's scheduling policy and placement | **task** (decided 2026-11-05; scheduling context was the alternative) | AUTOSAR OS / OSEK task; nano-ros's own retired `[[scheduling.contexts]]` | by far the costliest (§7) |
 
 ## 4. Kept
 
