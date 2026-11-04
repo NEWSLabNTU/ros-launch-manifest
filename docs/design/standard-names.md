@@ -147,7 +147,7 @@ the contract keys and the platform-file key take the new spelling, the old
 one reads with a warning and `migrate` rewrites it (M1's platform-file key
 by hand). The model's field names and the Rust types are unchanged until
 nano-ros moves with them. M6 is done in play_launch (`chains.json` format
-2). M3 waits on its rule ids; M7 is undecided.
+2). M3 is at release R in v0.3.8: `fault-reaction-time`, `degradation-level-time`, `latency-bound-overflow`. M7 is undecided.
 
 | # | Ours | Standard | Source | Notes |
 |---|---|---|---|---|

@@ -41,7 +41,7 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
     },
     RenamedRule {
         old: "ladder-rung-budget",
-        new: "degradation-level-budget",
+        new: "degradation-level-time",
         since: "0.3.3",
         refused: true,
     },
@@ -92,6 +92,27 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
         new: "chain-sampling-feasibility",
         since: "0.3.3",
         refused: true,
+    },
+    // Phase 98 N6 M3 (v0.3.8): "budget" in the sense of a time limit is a
+    // deadline or a bound; `budget` stays the reservation's CPU time.
+    // Accepted for one release.
+    RenamedRule {
+        old: "fault-reaction-budget",
+        new: "fault-reaction-time",
+        since: "0.3.8",
+        refused: false,
+    },
+    RenamedRule {
+        old: "degradation-level-budget",
+        new: "degradation-level-time",
+        since: "0.3.8",
+        refused: false,
+    },
+    RenamedRule {
+        old: "budget-overflow",
+        new: "latency-bound-overflow",
+        since: "0.3.8",
+        refused: false,
     },
 ];
 
@@ -214,6 +235,20 @@ mod tests {
         assert_eq!(current("integrity-unknown"), "integrity-unknown");
         assert_eq!(current("scope-budget-x"), "scope-budget-x");
         assert_eq!(current("mode:scope-budget"), "mode:chain-latency");
+    }
+
+    /// Phase 98 N6 M3: the budget-as-limit ids are accepted this release,
+    /// and the older `ladder-rung-budget` names the newest id directly.
+    #[test]
+    fn the_m3_ids_are_accepted_and_the_older_rename_follows_them() {
+        assert_eq!(accepted("fault-reaction-budget"), "fault-reaction-time");
+        assert_eq!(
+            accepted("mode:degradation-level-budget"),
+            "mode:degradation-level-time"
+        );
+        assert_eq!(accepted("budget-overflow"), "latency-bound-overflow");
+        assert_eq!(current("ladder-rung-budget"), "degradation-level-time");
+        assert_eq!(accepted("ladder-rung-budget"), "ladder-rung-budget");
     }
 
     #[test]

@@ -242,7 +242,7 @@ paths:                           # an event chain: two ends and a budget
 
 **FDTI** (detect) and **FRTI** (react) are *derived*: the fastest
 detector among the guard's subscribers that react, plus the walk over
-reaction edges, plus the plant's settle time. `fault-reaction-budget`
+reaction edges, plus the plant's settle time. `fault-reaction-time`
 names every term of the sum.
 
 `modes:` make the reaction a **fallback sequence** rather than one step — each degradation level
@@ -259,7 +259,7 @@ all at authoring time, before any code runs:
 | Rule | What it catches | Severity |
 |------|----------------|----------|
 | `rate-hierarchy` | pub rate < topic rate < sub rate, and the upper bounds too | Error |
-| `budget-overflow`* | Child path budget > ancestor path budget (part > whole) | Error |
+| `latency-bound-overflow`* | Child path budget > ancestor path budget (part > whole) | Error |
 | `chain-latency` | Flat sum > scope budget (cross-scope: derived critical path) | Warning |
 | `drop-sanity` | `drop:` values out of range; effective rate < sub demand | Error |
 | `causal-dag` | Feedback cycle (state: true breaks it) | Error |
@@ -272,7 +272,7 @@ Plus: `endpoint-unique`, `wiring`, `qos-compat`, `qos-match`,
 `sync-feasibility`, `queue-drain-rate`, `jitter-range`
 (\* = cross-scope, in the consumer's merge layer — with `consistency`,
 `chain-sampling-feasibility`, `jitter-feasibility`, `lifespan-age`,
-`fault-reaction-budget`, `reaction-*`, the mode and `fallback sequence-*` rules,
+`fault-reaction-time`, `reaction-*`, the mode and `fallback sequence-*` rules,
 the `derivable-*` / `*-mismatch` comparisons, …)
 
 ---
@@ -353,9 +353,9 @@ Example: `pose_source: gnss` but no `gnss_node` declared →
 source, `docs/format-reference.md` is generated from it, and an unknown
 key is a **parse error**
 **Checker**: 19 single-manifest rules (incl. Z3 satisfiability) +
-cross-scope rules in the consumer (`consistency`, `budget-overflow`,
+cross-scope rules in the consumer (`consistency`, `latency-bound-overflow`,
 critical-path `chain-latency`, `chain-sampling-feasibility`,
-`fault-reaction-budget`, the mode and `fallback sequence-*` rules, the
+`fault-reaction-time`, the mode and `fallback sequence-*` rules, the
 `derivable-*` comparisons, …)
 **Runtime**: rate/age/latency/drop enforcement via RCL interception
 (`--enforce-rules`, default `warn`), plus the live fault observer —

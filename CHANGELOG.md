@@ -6,6 +6,25 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.8 - 2026-11-04
+
+Phase 98 N6 M3, release R: "budget" in the sense of a time limit. GRAMMAR_VERSION
+0.3.8; no key added or removed, the model's schema stays 3 and the
+workspace Cargo version 0.4.0.
+
+### Changed
+
+- **Three rule ids take the time-limit words**: `fault-reaction-budget` is
+  `fault-reaction-time` (detection plus reaction against the FTTI),
+  `degradation-level-budget` is `degradation-level-time`, and
+  `budget-overflow` (a child chain's bound over its ancestor's) is
+  `latency-bound-overflow`. `budget` keeps its reservation sense, CPU time
+  per server period. `rule_names::RENAMED_RULES` lists the three as
+  accepted: an `acknowledged:` entry naming an old id still matches this
+  release (the consumer warns), and `migrate`'s `rule-id-renamed` rewrites
+  it. `ladder-rung-budget`, refused since v0.3.6, now names
+  `degradation-level-time` directly.
+
 ## v0.3.7 - 2026-11-04
 
 Phase 98 N6, release R for four of the imprecise names (play_launch
@@ -48,7 +67,7 @@ next.
 - The model keeps its field names (`guards`, `ingress`, `on_demand`,
   `Spontaneous`, `execution.sched.mapper`) and the Rust types theirs:
   nano-ros reads them, so they move with its pull request.
-- M3 (`budget` in the time-limit sense) waits on its names.
+- M3 (`budget` in the time-limit sense) followed in v0.3.8.
 
 ## v0.3.6 - 2026-11-04
 

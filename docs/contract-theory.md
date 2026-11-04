@@ -49,7 +49,7 @@ Symbols used throughout this document:
 | $T_{\text{FTTI}}$ | Fault-tolerant time interval — fault to hazardous event, absent any reaction (declared, `hazards.<h>.ftti`) |
 | $T_{\text{FDTI}}$ | Fault-detection time interval — derived from the monitors' detectors |
 | $T_{\text{FRTI}}$ | Fault-reaction time interval — derived from the reaction route plus the plant's settle |
-| `budget-overflow` | Verification check: descendant budget exceeds ancestor budget (error) |
+| `latency-bound-overflow` | Verification check: descendant budget exceeds ancestor budget (error) |
 | `chain-latency` | Verification check: sum of children exceeds scope budget (warning) |
 
 ## What is a Contract?
@@ -376,8 +376,8 @@ scope tree. Two separate checks apply to latency, drop, and age — each
 with property-specific composition math but the same structural rules.
 
 *As implemented:* Check 1 corresponds to the cross-scope
-`budget-overflow` rule and Check 2 to the `chain-latency` rule, each a
-narrower slice of the theory below. `budget-overflow` compares
+`latency-bound-overflow` rule and Check 2 to the `chain-latency` rule, each a
+narrower slice of the theory below. `latency-bound-overflow` compares
 **event-chain budgets only**: a child scope's path against an ancestor
 scope's path with matching input/output endpoints — node
 `max_latency` is not compared against scope budgets by any current
@@ -813,7 +813,7 @@ The budget is the interval declared on the hazard:
 
 $$T_{\text{FDTI}} + T_{\text{FRTI}} \;\leq\; T_{\text{FTTI}}$$
 
-emitted as `fault-reaction-budget` — an error when it fails, an info naming
+emitted as `fault-reaction-time` — an error when it fails, an info naming
 the slack when it holds, and in both cases naming every term.
 
 ### FDTI — detection
@@ -899,11 +899,11 @@ the reaction. The single-path form above is the one-degradation level case, unch
 functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
 `overrides`. Three rules:
 
-- **`degradation-level-budget`** (error) — each degradation level is judged against the FTTI
+- **`degradation-level-time`** (error) — each degradation level is judged against the FTTI
   **in its own right**: $T_{\text{FDTI}} + \text{route} + \text{settle}$ for
   that degradation level's own reaction path. A graded reaction is a promise, not merely
   a step on the way to the minimal risk condition. The **last** degradation level is what
-  `fault-reaction-budget` measures, because it is the minimal risk condition the system is
+  `fault-reaction-time` measures, because it is the minimal risk condition the system is
   guaranteed to reach.
 - **`fallback-without-mrc`** (error) — a mode with no `fallback:` reaches no
   safe state, and **a last degradation level that requires anything this hazard's own

@@ -1185,13 +1185,13 @@ pub const FIELDS: &[Field] = &[
         "ftti",
         Context::Hazard,
         Kind::Requirement,
-        "Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`.",
+        "Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-time`.",
     ),
     live(
         "enters",
         Context::Hazard,
         Kind::Meta,
-        "The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-budget`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
+        "The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
     ),
     live(
         "reaction",

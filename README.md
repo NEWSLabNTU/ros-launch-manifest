@@ -62,9 +62,9 @@ Five workspace members:
 
 Consumers: **play_launch** (via `ros-launch-resolve`) on Linux;
 **nano-ros** for RTOS targets. Checks that need the MERGED tree —
-`consistency`, `budget-overflow`, the critical-path form of
+`consistency`, `latency-bound-overflow`, the critical-path form of
 `chain-latency`, `chain-sampling-feasibility`, `jitter-feasibility`,
-`lifespan-age`, `fault-reaction-budget`, the `derivable-*`/`*-mismatch`
+`lifespan-age`, `fault-reaction-time`, the `derivable-*`/`*-mismatch`
 comparisons, the mode and fallback sequence rules — run in the consumer's merge
 layer, not here.
 

@@ -161,7 +161,7 @@ invokes. Cross-scope rule ids, emitted from
 |------|----------------|
 | `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean |
 | `consistency` | Topic/QoS/rate declarations agree across the scopes that declare the same topic (the in-crate no-op of the same id was removed in v0.1.38 — this is the only `consistency` rule) |
-| `budget-overflow` | Cross-event chain budgets: a child scope's path budget must not exceed a matched ancestor path's budget (theory doc "Check 1") |
+| `latency-bound-overflow` | Cross-event chain budgets: a child scope's path budget must not exceed a matched ancestor path's budget (theory doc "Check 1") |
 | `chain-latency` | Topology-aware critical path over the merged dataflow DAG, including per-sink `max_transport` overrides (the local flat-sum rule is the standalone fallback) |
 | `chain-sampling-feasibility` | The derived route's sampling cost alone already meets the budget — structurally infeasible, so no priority assignment can fix it. Emitted before `chain-latency`, so the structural verdict reads first |
 | `jitter-feasibility` | An event chain's `max_jitter` is below the sampling jitter its derived route already carries (one whole period per clock boundary crossed) |
@@ -172,8 +172,8 @@ invokes. Cross-scope rule ids, emitted from
 | `sync-feasibility` | The local rule's twin on DERIVED rates, run only where an input's rate is derived but not declared. Deleting a `rate_hz` the `derivable-rate` info calls redundant must not silence the window check that reads it |
 | `graph-from-remaps` | How many topics and endpoints the graph took from the launch file's own remaps rather than from a contract, and how many remaps were too ambiguous to give a direction (counted, never guessed) |
 | `derivable-criticality` / `criticality-mismatch`, `integrity-unknown` | A declared `criticality` against the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale |
-| `fault-reaction-budget`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for deriving them |
-| `degradation-level-budget`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level judged against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path |
+| `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for deriving them |
+| `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level judged against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path |
 | `lifespan-age`, `response-blocking`, `concurrency-decl`, `path-exclusion` | Declarations that contradict each other across the merged tree |
 
 Two properties of that layer are worth stating, because neither follows

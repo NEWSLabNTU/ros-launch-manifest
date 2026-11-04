@@ -1345,7 +1345,7 @@ topics: { ... }
 
 A scope can contain nodes, topics, services, includes (child scopes),
 and paths. When the checker loads a manifest tree, it walks the scope
-hierarchy for budget-overflow and chain-latency checks.
+hierarchy for latency-bound-overflow and chain-latency checks.
 
 ### Nodes
 
@@ -1760,7 +1760,7 @@ topic on an event chain's route permits more than the path. A node path's
 The checker traces the dataflow between the input and output topics,
 considering only nodes within this scope's subtree. When a parent scope
 and child scope declare paths with the same resolved (input, output)
-topics, `budget-overflow` checks that the child's budget ≤ the parent's.
+topics, `latency-bound-overflow` checks that the child's budget ≤ the parent's.
 
 ### External Topics
 
@@ -2260,7 +2260,7 @@ reported rather than assumed:
 
 | Rule | Severity | When |
 |------|----------|------|
-| `fault-reaction-budget` | Error / Info | `FDTI + FRTI > ftti` (error, naming every term); otherwise an info stating the slack |
+| `fault-reaction-time` | Error / Info | `FDTI + FRTI > ftti` (error, naming every term); otherwise an info stating the slack |
 | `reaction-unreachable` | Error | An `on_violation.reaction` naming no path on its own node, or one whose trigger does not include the subscription (the violation would never start it); a hazard `reaction:` naming no event chain in its scope; or no chain of `on_violation` reactions leading from the guards to that path's output — the declared `max_latency` is then used as the route |
 | `reaction-unbudgeted` | Warning | No route **and** no declared `max_latency`, or a route that reaches the sink with no `safe_state` settle — the check runs on INCOMPLETE EVIDENCE |
 | `reaction-unguarded` | Warning | No subscriber of the reaction's output declares an `on_violation` — a stalled reaction would go unnoticed |
@@ -2388,10 +2388,10 @@ hazards:
 ```
 
 **Each degradation level is judged in its own right.** A graded reaction is a promise,
-not merely a step toward the minimal risk condition, so `degradation-level-budget` (error) checks
+not merely a step toward the minimal risk condition, so `degradation-level-time` (error) checks
 every degradation level but the last with the same arithmetic the terminal one gets:
 `FDTI + degradation level route + settle <= ftti`. The last degradation level is what
-`fault-reaction-budget` measures, because it is the minimal risk condition the system is
+`fault-reaction-time` measures, because it is the minimal risk condition the system is
 guaranteed to reach. Autoware's real four-mode fallback sequence proves
 `comfortable_stop` cannot cover a 2 s interval (500 + 4000 = 4500 ms) that
 the emergency stop beneath it, the minimal risk condition, can.
@@ -2585,7 +2585,7 @@ The consumer's rules for these keys:
 | `dwell-expiry` | Error / Warning | The route of a degradation level below a dwelling level does not start at the node the dwell's `param:` names, or charges that node less than the period of its timer that publishes the degradation level with a `min_dwell`'s output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the degradation level's output, so when the deadline is noticed is undeclared (warning) |
 | `mode-exit-target` | Error | `to:` is not a mode, or is a degradation level of some `fallback:` fallback sequence |
 | `mode-exit-unwired` | Error | No node publishing the degradation level's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
-| `degradation-level-budget` | Error | Now cumulative: detection + every degradation level with a `min_dwell` passed (route + dwell) + the degradation level's route + settle, against the interval |
+| `degradation-level-time` | Error | Now cumulative: detection + every degradation level with a `min_dwell` passed (route + dwell) + the degradation level's route + settle, against the interval |
 | `settle-derived` | Info | The derivation's trace, printed (any extension's settle) |
 | `settle-entry-missing` | Warning | A derived settle reached by a hazard that writes no value for a key the derivation needs (a braking profile and no `entry_speed`) |
 | `settle-param-unresolved` | Error | A parameter the derivation reads with no numeric launch value on the node |
@@ -2634,7 +2634,7 @@ across manifest files. The ones that bear on this document:
 |------|-----------------|----------|
 | `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean | Error |
 | `consistency` | Same resolved topic/service has conflicting `type:`, `rate_hz:`, `max_transport:`, topic-level `qos:` or `drop:` across scopes; or an `external_topics:` `type:` contradicting the internal `topics:` one | Error |
-| `budget-overflow` | Descendant path budget exceeds a matched ancestor path budget (part > whole) | Error |
+| `latency-bound-overflow` | Descendant path budget exceeds a matched ancestor path budget (part > whole) | Error |
 | `chain-latency` | An event chain's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency`; supersedes the per-manifest flat sum where a route was traced | Warning |
 | `chain-sampling-feasibility` | An event chain's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it. Emitted before `chain-latency` | Warning |
 | `jitter-feasibility` | An event chain's declared `max_jitter` is below the sampling jitter its route already carries — one whole period per clock boundary crossed | Warning |
@@ -2645,13 +2645,13 @@ across manifest files. The ones that bear on this document:
 | `derivable-rate`, `rate-mismatch` | A declared `topics.<t>.rate_hz` agrees with (info) or contradicts (warning) the rate derived from the timers that drive it | Info/Warning |
 | `derivable-min-rate`, `min-rate-mismatch`, `derived-rate-hierarchy` | The same comparison for a publisher's `min_rate_hz`, and a subscriber asking for more than the derived rate delivers | Info/Warning |
 | `derivable-criticality`, `criticality-mismatch`, `integrity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale | Info/Warning/Error |
-| `fault-reaction-budget`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
-| `degradation-level-budget`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path | Error |
+| `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
+| `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path | Error |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, re-run after merge | Error/Warning |
 
 A mode with `overrides:` re-runs the requirement checks on the modified
 contract and reports only what that mode introduces, under a `mode:`
-prefix — `mode:chain-latency`, `mode:fault-reaction-budget`, and so on. See
+prefix — `mode:chain-latency`, `mode:fault-reaction-time`, and so on. See
 [Per-mode requirement values](#per-mode-requirement-values-overrides).
 
 `consistency` has only one implementation. A no-op body of the same id
@@ -2736,7 +2736,7 @@ warning[chain-latency]: event chain 'perception' (scope 3) max_latency_ms (85)
   is less than critical path: cropbox → ground_filter → detector = 125.00ms
   (25.00ms event-segment + 100.00ms sampling_cost)
 
-error[budget-overflow]: event chain 'detect' (scope 7) max_latency_ms (60)
+error[latency-bound-overflow]: event chain 'detect' (scope 7) max_latency_ms (60)
   exceeds ancestor path 'perception' (scope 3) max_latency_ms (50) — child
   budget cannot exceed parent budget on the same (input, output) topics
 
@@ -2744,14 +2744,14 @@ error[consistency]: topic '/localization/kinematic_state' type mismatch:
   'nav_msgs/msg/Odometry' (existing) vs 'geometry_msgs/msg/PoseStamped' in
   scope 4 (tier4_control_launch/control.launch.xml)
 
-info[fault-reaction-budget]: hazard 'drive_blind': detection 100.00ms
+info[fault-reaction-time]: hazard 'drive_blind': detection 100.00ms
   (/safety/scan -> brake/obstacles detects within 100.00ms) + reaction
   205.00ms (reaction route brake/emergency_stop = 5.00ms + settle 200.00ms)
   = 305.00ms fits the fault-tolerant time interval 500.00ms with 195.00ms
   of slack
 ```
 
-`fault-reaction-budget` is an **error** when the sum exceeds the interval
+`fault-reaction-time` is an **error** when the sum exceeds the interval
 and an **info** when it fits; the fitting case is shown because it is the
 one that states the whole derivation in a single line.
 
