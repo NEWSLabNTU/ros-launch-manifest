@@ -84,15 +84,15 @@ pub enum Context {
     Mode,
     /// `hazards.<name>` (phase 71).
     Hazard,
-    /// One `hazards.<name>.guards[i]` mapping: the inline `{ all_of: [...] }`
+    /// One `hazards.<name>.monitors[i]` mapping: the inline `{ all_of: [...] }`
     /// group, removed in v0.1.59 (phase 90 G7); kept for its removal message.
-    HazardGuard,
+    HazardMonitor,
     /// `on_violation` on a subscriber.
     OnViolation,
     /// `safe_state` on a path.
     SafeState,
-    /// `ingress` on a subscriber (v0.1.64).
-    Ingress,
+    /// `arrival_curve` on a subscriber (v0.1.64; `ingress` before v0.3.7).
+    ArrivalCurve,
     /// The map form of `functions.<name>` (v0.1.46): `{ all_of: [...] }` or
     /// `{ of: [...], when: {...} }`.
     Function,
@@ -167,10 +167,10 @@ impl Context {
             Context::Param => "params.<name>",
             Context::Mode => "modes.<name>",
             Context::Hazard => "hazards.<name>",
-            Context::HazardGuard => "hazards.<name>.guards[]",
+            Context::HazardMonitor => "hazards.<name>.monitors[]",
             Context::OnViolation => "on_violation",
             Context::SafeState => "safe_state",
-            Context::Ingress => "arrival_curve",
+            Context::ArrivalCurve => "arrival_curve",
             Context::Function => "functions.<name>",
             Context::Predicate => "when",
             Context::Exit => "modes.<name>.exit",
@@ -514,7 +514,7 @@ pub const FIELDS: &[Field] = &[
         "criticality",
         Context::Node,
         Kind::Consequence,
-        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under \"Severity to criticality\" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there.",
+        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node monitors, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under \"Severity to criticality\" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there.",
     ),
     live(
         "concurrency",
@@ -533,7 +533,7 @@ pub const FIELDS: &[Field] = &[
         "min_rate_hz",
         Context::Endpoint,
         Kind::ByEndpoint,
-        "Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `on_demand: true` instead of leaving this out.",
+        "Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out.",
     ),
     live(
         "max_rate_hz",
@@ -593,7 +593,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "The reaction this subscriber owes when its assumption is violated.",
     ),
-    alias("ingress", Context::Endpoint, "arrival_curve"),
+    removed(
+        "ingress",
+        Context::Endpoint,
+        "Renamed `arrival_curve:` in v0.3.7 (phase 98): a token bucket bounding what arrives is network calculus's arrival curve. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "arrival_curve",
         Context::Endpoint,
@@ -648,7 +652,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Buffering discriminator for a state subscriber: latest | queue.",
     ),
-    alias("on_demand", Context::Endpoint, "aperiodic"),
+    removed(
+        "on_demand",
+        Context::Endpoint,
+        "Renamed `aperiodic:` in v0.3.7 (phase 98): an activation with no period and no minimum separation is an aperiodic task. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "aperiodic",
         Context::Endpoint,
@@ -1168,7 +1176,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "What the hazardous event is.",
     ),
-    alias("guards", Context::Hazard, "monitors"),
+    removed(
+        "guards",
+        Context::Hazard,
+        "Renamed `monitors:` in v0.3.7 (phase 98): the topics watched for a fault are its monitored signals (in formal methods a guard is a transition's condition). `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "monitors",
         Context::Hazard,
@@ -1179,7 +1191,7 @@ pub const FIELDS: &[Field] = &[
         "on",
         Context::Hazard,
         Kind::Fact,
-        "Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error.",
+        "Fault classes the monitors report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error.",
     ),
     live(
         "ftti",
@@ -1270,10 +1282,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "`{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`; `to` is outside every `fallback:` list.",
     ),
-    // ── hazards.<name>.guards[] ──
+    // ── hazards.<name>.monitors[] ──
     removed(
         "all_of",
-        Context::HazardGuard,
+        Context::HazardMonitor,
         "Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and monitor it by name: `monitors: [<f>]`; `play_launch migrate` does it.",
     ),
     // ── on_violation ──
@@ -1304,13 +1316,13 @@ pub const FIELDS: &[Field] = &[
     // ── ingress ──
     live(
         "rate_hz",
-        Context::Ingress,
+        Context::ArrivalCurve,
         Kind::Requirement,
         "Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate_hz`.",
     ),
     live(
         "burst",
-        Context::Ingress,
+        Context::ArrivalCurve,
         Kind::Requirement,
         "Messages that may arrive back to back before pacing applies. An integer >= 1.",
     ),
@@ -1871,8 +1883,8 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Manifest, "rlm", "0.1.49"),
     (Context::Endpoint, "on_demand", "0.1.49"),
     (Context::Endpoint, "ingress", "0.1.64"),
-    (Context::Ingress, "rate_hz", "0.1.64"),
-    (Context::Ingress, "burst", "0.1.64"),
+    (Context::ArrivalCurve, "rate_hz", "0.1.64"),
+    (Context::ArrivalCurve, "burst", "0.1.64"),
     (Context::Endpoint, "min_interarrival", "0.1.68"),
     (Context::Endpoint, "budget", "0.1.68"),
     (Context::Endpoint, "budget_period", "0.1.68"),

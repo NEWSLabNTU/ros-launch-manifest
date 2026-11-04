@@ -6,6 +6,54 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.9 - 2026-11-05
+
+Phase 98 N6 at R+1, the model's schema 4, and N5's R+2 step for S1-S5.
+GRAMMAR_VERSION 0.3.9; the model's schema is 4. The renamed public fields
+and types are an API break, so the workspace Cargo version moves to 0.5.0.
+
+### Changed
+
+- **The model takes the N6 words (schema 4).** `HazardContract.guards` is
+  `monitors` (`GuardContract` is `MonitorContract`), `SubContract.ingress`
+  is `arrival_curve` (`IngressContract` is `ArrivalCurve`),
+  `PubContract.on_demand` is `aperiodic`, and the sched crate's
+  `EffectiveTrigger::Spontaneous` is `Aperiodic` (`kind: aperiodic`). A
+  model of schema 3 or older is read for good: the old field names and
+  `kind: spontaneous` are read under the new ones, so a schema-3 model and
+  a schema-4 model of the same system load to the same `SystemModel`
+  (`a_schema_3_model_reads_as_the_same_schema_4_model`). A model written
+  now carries only the new names, and an older reader refuses it by the
+  version.
+- **The contract types follow**: `HazardDecl.monitors` (`MonitorGroup`),
+  `EndpointProps.aperiodic` and `arrival_curve` (`ArrivalCurveDecl`),
+  `Trigger::Aperiodic` and the types crate's `EffectiveTrigger::Aperiodic`;
+  the sched crate's `PlatformFile.mapper` is `priority_assignment`.
+
+### Removed
+
+- **The v0.3.7 old spellings are refused (R+1).** A hazard's `guards:`, a
+  subscriber's `ingress:` and a publisher's `on_demand:` are `removed`
+  rows whose messages name the new key and `migrate`; `trigger:
+  spontaneous` is refused naming `trigger: aperiodic`; a platform file's
+  `mapper:` is `PlatformError::RenamedMapper` naming `priority_assignment:`.
+  `migrate` still rewrites the contract spellings. `Manifest::deprecated_spellings`,
+  `DeprecatedSpelling` and `PlatformFile::spelled_mapper` are gone.
+- **The v0.3.8 rule ids are refused (R+1).** `rule_names` now says where a
+  rename is with `RenamedRule::stage` / `RenamedKey::stage` (a `Stage`:
+  `Accepted`, `Refused`, `Retired`, replacing the `refused` flag):
+  `fault-reaction-budget`, `degradation-level-budget`, `budget-overflow`
+  and the `guards` path segment are `Refused`, so `accepted()` no longer
+  maps them and the consumer reports them naming the new id.
+- **The S1-S5 old ids are retired (R+2).** Their renames are `Retired`: the
+  new `noticed()` / `noticed_path()` (what a consumer names in its refusal
+  message) no longer map them, so an `acknowledged:` entry naming one reads
+  as any id that matches nothing, `ack-stale`. `current()` and `migrate`
+  still map them, for good. Their words were already in `check-terms`.
+- **`check-terms`** lists the v0.3.7/v0.3.8 old rule ids, `on_demand` and
+  `spontaneous`, and (in Markdown example blocks) the `guards:`,
+  `ingress:`, `on_demand:` and `mapper:` keys, a release ahead of R+2.
+
 ## v0.3.8 - 2026-11-04
 
 Phase 98 N6 M3, release R: "budget" in the sense of a time limit. GRAMMAR_VERSION

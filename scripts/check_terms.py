@@ -58,9 +58,21 @@ RETIRED: list[tuple[str, str]] = [
     (r"\bwindow-unbound\b", "dwell-unbound"),
     (r"\bscope-budget\b", "chain-latency"),
     (r"\bscope-sampling-feasibility\b", "chain-sampling-feasibility"),
+    # Phase 98 N6, refused since v0.3.9 (R+1); the R+1 words are listed
+    # here a release early, since nothing user-facing may teach a refused
+    # spelling either.
+    (r"\bfault-reaction-budget\b", "fault-reaction-time"),
+    (r"\bdegradation-level-budget\b", "degradation-level-time"),
+    (r"\bbudget-overflow\b", "latency-bound-overflow"),
+    (r"\bon_demand\b", "aperiodic"),
+    (r"\bspontaneous\b", "aperiodic"),
 ]
 # Markdown only: a mode's `window:` key in an example block.
-MD_ONLY: list[tuple[str, str]] = [(r"^\s+window:", "min_dwell:")]
+MD_ONLY: list[tuple[str, str]] = [
+    (r"^\s+window:", "min_dwell:"),
+    # Phase 98 N6 keys in an example block (refused since v0.3.9).
+    (r"^\s*-?\s*(?:guards|ingress|on_demand|mapper):", "monitors / arrival_curve / aperiodic / priority_assignment"),
+]
 
 COMPILED = [(re.compile(p, re.IGNORECASE), new) for p, new in RETIRED]
 MD_COMPILED = COMPILED + [(re.compile(p), new) for p, new in MD_ONLY]
@@ -220,6 +232,11 @@ def self_test() -> int:
         "types/src/a.rs": (
             'fn f(rung: &str) { eprintln!("hazard {rung}: scope-budget over"); }\n',
             'fn f(rung: &str) { eprintln!("hazard {rung}: chain-latency over"); }\n',
+        ),
+        "docs/y.md": ("hazards:\n  h:\n    guards: [a]\n", "hazards:\n  h:\n    monitors: [a]\n"),
+        "derive/src/c.rs": (
+            'const M: &str = "an on_demand publisher";\n',
+            'const M: &str = "an aperiodic publisher";\n',
         ),
         "check/src/b.rs": (
             'const M: &str = r#"the ladder ends"#;\n',

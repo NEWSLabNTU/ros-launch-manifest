@@ -66,10 +66,10 @@ fn trigger_once_serializes_as_bare_string() {
 }
 
 #[test]
-fn trigger_spontaneous_serializes_as_bare_string() {
-    let t = Trigger::Spontaneous;
+fn trigger_aperiodic_serializes_as_bare_string() {
+    let t = Trigger::Aperiodic;
     let json = serde_json::to_value(&t).unwrap();
-    assert_eq!(json, serde_json::json!("spontaneous"));
+    assert_eq!(json, serde_json::json!("aperiodic"));
 }
 
 // ── Golden parse: spec's own examples (§1) ──
@@ -133,10 +133,10 @@ nodes:
     assert_eq!(publish_map.effective_trigger(), EffectiveTrigger::Once);
 
     let operator_cmd = &m.nodes["remote_interface"].paths["operator_cmd"];
-    assert_eq!(operator_cmd.trigger, Some(Trigger::Spontaneous));
+    assert_eq!(operator_cmd.trigger, Some(Trigger::Aperiodic));
     assert_eq!(
         operator_cmd.effective_trigger(),
-        EffectiveTrigger::Spontaneous
+        EffectiveTrigger::Aperiodic
     );
 }
 

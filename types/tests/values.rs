@@ -61,7 +61,7 @@ fn a_reference_alone_is_unknown() {
 fn let_of_literals_evaluates_in_place() {
     let m = parse_manifest_str(
         "let:\n  odd: 8.33 m/s\n  ftti: 500ms\n  twice: $(let ftti) * 2\n\
-         hazards:\n  h: { guards: [/a], ftti: $(let twice), detection: $(let ftti) / 5 }\n\
+         hazards:\n  h: { monitors: [/a], ftti: $(let twice), detection: $(let ftti) / 5 }\n\
          modes:\n  m: { requires: [/a], min_dwell: { duration: $(let ftti), param: n.t } }\n",
     )
     .unwrap();

@@ -191,7 +191,7 @@ pub fn substitute_manifest(
 
     // Hazards: guard topics and the reaction path name
     for h in m.hazards.values_mut() {
-        for g in &mut h.guards {
+        for g in &mut h.monitors {
             g.members = substitute_vec(&g.members, args)?;
         }
         h.reaction = substitute_opt(&h.reaction, args)?;

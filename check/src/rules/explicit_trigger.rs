@@ -29,7 +29,7 @@ impl ValidationRule for ExplicitTriggerRule {
                         &format!("nodes.{node_name}.paths.{path_name}"),
                         format!(
                             "node '{node_name}' path '{path_name}' has no explicit 'trigger:' \
-                             — add one of timer/input/once/spontaneous (Vocabulary v2)"
+                             — add one of timer/input/once/aperiodic (Vocabulary v2)"
                         ),
                     );
                 }
@@ -44,7 +44,7 @@ impl ValidationRule for ExplicitTriggerRule {
                     &format!("paths.{path_name}"),
                     format!(
                         "event chain '{path_name}' has no explicit 'trigger:' — add one of \
-                         timer/input/once/spontaneous (Vocabulary v2)"
+                         timer/input/once/aperiodic (Vocabulary v2)"
                     ),
                 );
             }

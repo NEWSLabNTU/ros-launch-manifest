@@ -50,7 +50,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `srv` | meta |  | Service server endpoints, keyed by LOCAL endpoint name. Not neutral when omitted: a consumer sizes the image's pools from this list (an embedded realizer derives its service counts from it), so a server the code creates and the contract leaves out is found at boot, not here. |
 | `cli` | meta |  | Service client endpoints, keyed by LOCAL endpoint name. Not neutral when omitted, for the same reason as `srv:`: pools are sized from the list. A reaction route crosses a client -> server edge as a message (the resolver's reaction walk); a server with no path its request triggers latches the request for its own timer, and the walk charges that timer's period as a sampling hop. |
 | `paths` | meta |  | This node's internal paths, keyed by path name. |
-| `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node guards, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under "Severity to criticality" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there. |
+| `criticality` | **consequence** |  | Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node monitors, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under "Severity to criticality" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there. |
 | `concurrency` | fact |  | Which of this node's paths may NOT run concurrently. Absent means all of them serialize: every path of the node waits for any other that is running (a single-threaded executor), and the checker charges that wait (`path-exclusion`). Declare `exclusive` groups to say which may in fact overlap. |
 | `params` | fact |  | Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. `params: {}` means the node declares no parameters; a missing `params:` means not stated. The two stay distinct in the model: `{}` becomes an empty `contracts.node_params` entry, a missing key none. |
 
@@ -58,7 +58,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `min_rate_hz` | fact (pub) / requirement (sub) |  | Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `on_demand: true` instead of leaving this out. |
+| `min_rate_hz` | fact (pub) / requirement (sub) |  | Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out. |
 | `max_rate_hz` | fact (pub) / requirement (sub) |  | Upper bound on this endpoint's rate. |
 | `max_age` | requirement |  | Subscriber: maximum data age at receive (now - header.stamp). |
 | `max_age_ms` |  | **removed** | Removed in phase 70 — write `max_age: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
@@ -69,7 +69,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `link` | fact | since v0.3.4 | Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A written `max_transport` stays legal and is reported as `transport-inline`. |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
-| `ingress` |  | deprecated — use `arrival_curve` | Deprecated spelling. |
+| `ingress` |  | **removed** | Renamed `arrival_curve:` in v0.3.7 (phase 98): a token bucket bounding what arrives is network calculus's arrival curve. `play_launch migrate <contract> --write` rewrites it. |
 | `arrival_curve` | requirement | since v0.3.7 | Subscriber: what this endpoint is made to ABSORB, an arrival curve in token-bucket form (network calculus: rate ρ, burst σ) `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`. |
 | `min_interarrival` | requirement | since v0.1.68 | Subscriber: the least time between two arrivals. Its callback is then a sporadic task (T_min). An event input with no rate bound, no `min_interarrival` and no `budget` is unanalysable: a consumer that supervises a deadline refuses it. Refused under `pub:`/`cli:`, and above `1 / min_rate_hz`. |
 | `budget` | requirement | since v0.1.68 | Subscriber: the execution time its callback may use per `budget_period`. Its callback is then served (a server of budget Q per period P, analysed as a periodic task). Requires `budget_period`, and may not exceed it. Refused under `pub:`/`cli:`. |
@@ -79,7 +79,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `on_timeout` | fact | since v0.2.5 | Client: what the code does when `timeout` passes, `{ reaction: <mode | event chain> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`. |
 | `on_rejected` | fact | since v0.2.5 | Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
-| `on_demand` |  | deprecated — use `aperiodic` | Deprecated spelling. |
+| `on_demand` |  | **removed** | Renamed `aperiodic:` in v0.3.7 (phase 98): an activation with no period and no minimum separation is an aperiodic task. `play_launch migrate <contract> --write` rewrites it. |
 | `aperiodic` | fact | since v0.3.7 | Publisher: aperiodic -- publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
 | `jitter_ms` |  | **removed** | Removed in phase 68 — see `jitter`. |
@@ -255,9 +255,9 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `integrity` | requirement | since v0.3.3 | Integrity level from the HARA (`ASIL_D`, `SIL_3`, `DAL_A`, …): the level the analysis assigns, not ISO 26262's S0-S3 severity class, which is one of its inputs. Consumed, never computed. |
 | `severity` |  | **removed** | Renamed `integrity:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it. |
 | `description` | meta |  | What the hazardous event is. |
-| `guards` |  | deprecated — use `monitors` | Deprecated spelling. |
+| `guards` |  | **removed** | Renamed `monitors:` in v0.3.7 (phase 98): the topics watched for a fault are its monitored signals (in formal methods a guard is a transition's condition). `play_launch migrate <contract> --write` rewrites it. |
 | `monitors` | meta | since v0.3.7 | The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
-| `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
+| `on` | fact |  | Fault classes the monitors report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-time`. |
 | `enters` | meta | since v0.1.59 | The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
 | `reaction` | meta |  | The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
@@ -279,7 +279,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `window` |  | **removed** | Renamed `min_dwell:` in v0.3.3 (phase 98): a least time in a mode before the next is the switched-systems dwell time. `play_launch migrate <contract> --write` rewrites it. |
 | `exit` | requirement |  | `{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`; `to` is outside every `fallback:` list. |
 
-## `hazards.<name>.guards[]`
+## `hazards.<name>.monitors[]`
 
 | key | kind | status | meaning |
 |---|---|---|---|

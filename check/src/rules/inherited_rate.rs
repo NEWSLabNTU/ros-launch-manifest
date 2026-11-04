@@ -61,7 +61,7 @@ fn check_path(
     }
     let is_non_input_explicit_trigger = matches!(
         path.effective_trigger(),
-        EffectiveTrigger::Timer { .. } | EffectiveTrigger::Once | EffectiveTrigger::Spontaneous
+        EffectiveTrigger::Timer { .. } | EffectiveTrigger::Once | EffectiveTrigger::Aperiodic
     ) && path.trigger.is_some();
     if !is_non_input_explicit_trigger {
         return;

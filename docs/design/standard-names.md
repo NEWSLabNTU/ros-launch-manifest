@@ -3,8 +3,9 @@
 **Status (2026-11-04): decided; the names in §2 are final (phase 98 N0, the
 table in §2.6) and implemented: read with a warning in v0.3.3-v0.3.5,
 refused naming the new name since v0.3.6, and kept out of user-facing text
-by `scripts/check_terms.py` (`types/tests/retired_terms.rs`). Those in §3
-are proposals until their area is touched.**
+by `scripts/check_terms.py` (`types/tests/retired_terms.rs`); since v0.3.9
+an old S1-S5 rule id gets no message (R+2: it reads as `ack-stale`). Those
+in §3 are proposals until their area is touched.**
 Implementation is tracked by play_launch phase 98. Design issue 57 records the
 decision.
 
@@ -148,6 +149,15 @@ one reads with a warning and `migrate` rewrites it (M1's platform-file key
 by hand). The model's field names and the Rust types are unchanged until
 nano-ros moves with them. M6 is done in play_launch (`chains.json` format
 2). M3 is at release R in v0.3.8: `fault-reaction-time`, `degradation-level-time`, `latency-bound-overflow`. M7 is undecided.
+
+Progress (2026-11-05): v0.3.9 is R+1 for M1-M5. Every old key, the
+`spontaneous` trigger value, the platform file's `mapper:` and the three
+old M3 rule ids are refused naming the new spelling; the model moved with
+them (schema 4: `monitors`, `arrival_curve`, `aperiodic`, `kind:
+aperiodic`; schema 3 and older read for good), as did the Rust types;
+nano-ros follows with its own names too (its phase 534 W3).
+`rule_names` carries each rename's stage (`Accepted`, `Refused`,
+`Retired`).
 
 | # | Ours | Standard | Source | Notes |
 |---|---|---|---|---|

@@ -23,44 +23,10 @@ struct ValuePass {
     refs: Vec<ValueRef>,
     lets: Vec<String>,
     node: Option<String>,
-    spellings: Vec<DeprecatedSpelling>,
 }
 
 thread_local! {
     static VALUE_PASS: std::cell::RefCell<ValuePass> = std::cell::RefCell::new(ValuePass::default());
-}
-
-/// Phase 98 N6: an old spelling read for one release; the consumer warns.
-fn note_spelling(at: String, old: &'static str, new: &'static str) {
-    VALUE_PASS.with(|p| {
-        p.borrow_mut()
-            .spellings
-            .push(DeprecatedSpelling { at, old, new })
-    });
-}
-
-/// Phase 98 N6: the key `new`, or its old spelling `old` read for one
-/// release (noted for the consumer's `deprecated-spelling`). Returns the
-/// key the document wrote, `new` when it wrote neither; both is an error
-/// naming the new key.
-fn spelled_key(
-    doc: &Yaml,
-    ctx: &str,
-    old: &'static str,
-    new: &'static str,
-) -> Result<&'static str, ParseError> {
-    if doc[old].is_badvalue() {
-        return Ok(new);
-    }
-    if !doc[new].is_badvalue() {
-        return Err(field_err(
-            ctx,
-            old,
-            &format!("`{old}:` is the old spelling of `{new}:` -- write `{new}:` alone"),
-        ));
-    }
-    note_spelling(format_path(ctx, old), old, new);
-    Ok(old)
 }
 
 /// A scalar that reads the launch tree or a `let:` entry: its text.
@@ -246,12 +212,6 @@ pub fn parse_manifest_str_with_values(
     let result = with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""));
     let pass = VALUE_PASS.with(|p| std::mem::replace(&mut *p.borrow_mut(), outer));
     let mut m = result?;
-    let mut seen_at = std::collections::BTreeSet::new();
-    m.deprecated_spellings = pass
-        .spellings
-        .into_iter()
-        .filter(|s| seen_at.insert(s.at.clone()))
-        .collect();
     crate::transport::apply_links(&mut m, &BTreeMap::new())?;
     let mut seen = std::collections::BTreeSet::new();
     m.value_refs = pass
@@ -512,7 +472,6 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     let manifest = Manifest {
         lets,
         value_refs: Vec::new(),
-        deprecated_spellings: Vec::new(),
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
         rlm: if ctx.is_empty() {
             doc["rlm"].as_str().map(str::to_string)
@@ -1472,15 +1431,15 @@ fn yaml_scalar_text(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String>, 
 /// A guard group in the two shapes phase 71 established: a bare list is
 /// any-of (losing any member is the fault), `{ all_of: [...] }` is a
 /// redundant set (lost only when every member is). The redundant set is a
-/// function's shape only: inline in `hazards.<h>.guards` it was removed in
+/// function's shape only: inline in `hazards.<h>.monitors` it was removed in
 /// v0.1.59 (phase 90 G7), and [`parse_hazard_guard`] refuses it.
-fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, ParseError> {
+fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<MonitorGroup, ParseError> {
     match v {
-        Yaml::String(t) => Ok(GuardGroup {
+        Yaml::String(t) => Ok(MonitorGroup {
             members: vec![t.clone()],
             all_of: false,
         }),
-        Yaml::Array(_) => Ok(GuardGroup {
+        Yaml::Array(_) => Ok(MonitorGroup {
             members: yaml_direct_string_list(v, key, ctx)?,
             all_of: false,
         }),
@@ -1495,7 +1454,7 @@ fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, Parse
                      written bare",
                 ));
             }
-            Ok(GuardGroup {
+            Ok(MonitorGroup {
                 members,
                 all_of: true,
             })
@@ -1509,13 +1468,13 @@ fn parse_guard_group(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, Parse
     }
 }
 
-/// One `hazards.<h>.guards[i]`: a topic, a list of them, or a function's
+/// One `hazards.<h>.monitors[i]`: a topic, a list of them, or a function's
 /// name. A mapping is refused: its only key was the inline `all_of`, removed
 /// in v0.1.59 (phase 90 G7) for the same group named in `functions:`, and the
 /// removed row's message says so.
-fn parse_hazard_guard(v: &Yaml, ctx: &str, key: &str) -> Result<GuardGroup, ParseError> {
+fn parse_hazard_guard(v: &Yaml, ctx: &str, key: &str) -> Result<MonitorGroup, ParseError> {
     if let Yaml::Hash(_) = v {
-        reject_unknown_keys(v, ctx, Context::HazardGuard)?;
+        reject_unknown_keys(v, ctx, Context::HazardMonitor)?;
         return Err(type_err(
             ctx,
             key,
@@ -1582,7 +1541,7 @@ fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
                 ));
             }
             Ok(FunctionDecl {
-                group: GuardGroup {
+                group: MonitorGroup {
                     members,
                     all_of: false,
                 },
@@ -1999,21 +1958,16 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
         // A guard is a topic, an `all_of` set, or (phase 75) the NAME of a
         // function declared at scope level — resolved by the loader, which
         // is the layer that knows the scope's functions.
-        let mut guards = Vec::new();
-        let monitors = spelled_key(v, &hctx, "guards", "monitors")?;
-        match &v[monitors] {
+        let mut monitors = Vec::new();
+        match &v["monitors"] {
             Yaml::BadValue | Yaml::Null => {}
             Yaml::Array(items) => {
                 for (i, item) in items.iter().enumerate() {
-                    let gctx = format_path(&hctx, &format!("{monitors}[{i}]"));
-                    guards.push(parse_hazard_guard(
-                        item,
-                        &gctx,
-                        &format!("{monitors}[{i}]"),
-                    )?);
+                    let gctx = format_path(&hctx, &format!("monitors[{i}]"));
+                    monitors.push(parse_hazard_guard(item, &gctx, &format!("monitors[{i}]"))?);
                 }
             }
-            other => return Err(type_err(&hctx, monitors, "a list", other)),
+            other => return Err(type_err(&hctx, "monitors", "a list", other)),
         }
         // Phase 82: a set. A scalar is the set of one; `on: []` is refused
         // because an empty set would read as "omitted" (= every class),
@@ -2077,7 +2031,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
             HazardDecl {
                 integrity: yaml_string(v, "integrity", &hctx)?,
                 description: yaml_string(v, "description", &hctx)?,
-                guards,
+                monitors,
                 on,
                 ftti: yaml_bound(v, "ftti", &hctx, Context::Hazard)?,
                 detection: yaml_bound(v, "detection", &hctx, Context::Hazard)?,
@@ -2133,11 +2087,12 @@ fn parse_on_violation(doc: &Yaml, ctx: &str) -> Result<Option<OnViolation>, Pars
     }))
 }
 
-/// `ingress: { rate_hz, burst }` on a subscriber (v0.1.64, nano-ros
-/// RFC-0074). Shape only: whether the device can absorb it is a property of
+/// `arrival_curve: { rate_hz, burst }` on a subscriber (v0.1.64 as
+/// `ingress:`, nano-ros RFC-0074; the old key is a `removed` row since
+/// v0.3.9). Shape only: whether the device can absorb it is a property of
 /// the board (its per-frame cost), which the consumer owns.
-fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseError> {
-    let key = spelled_key(doc, ctx, "ingress", "arrival_curve")?;
+fn parse_arrival_curve(doc: &Yaml, ctx: &str) -> Result<Option<ArrivalCurveDecl>, ParseError> {
+    let key = "arrival_curve";
     let section = &doc[key];
     if section.is_badvalue() {
         return Ok(None);
@@ -2150,7 +2105,7 @@ fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseErro
             "expected a mapping `{ rate_hz: <n>, burst: <n> }`",
         ));
     }
-    reject_unknown_keys(section, ctx, Context::Ingress)?;
+    reject_unknown_keys(section, ctx, Context::ArrivalCurve)?;
     let read = ref_text(&section["rate_hz"]).is_some() || ref_text(&section["burst"]).is_some();
     let rate = yaml_rate_at(section, "rate_hz", ctx)?;
     let burst = yaml_count_at(section, "burst", ctx)?;
@@ -2187,7 +2142,7 @@ fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseErro
             "must be >= 1: a burst of 0 admits nothing",
         ));
     }
-    Ok(Some(IngressDecl { rate_hz, burst }))
+    Ok(Some(ArrivalCurveDecl { rate_hz, burst }))
 }
 
 /// What bounds an input's arrivals (since v0.1.68, nano-ros RFC-0108 D1):
@@ -2503,7 +2458,7 @@ fn parse_endpoints(
                 reject_endpoint_path(ctx, key, &name)?;
                 let path = format_path(ctx, &format!("{key}.{name}"));
                 let props = parse_endpoint_props(v, &path)?;
-                if key != "sub" && props.ingress.is_some() {
+                if key != "sub" && props.arrival_curve.is_some() {
                     return Err(field_err(
                         &path,
                         "arrival_curve",
@@ -2566,7 +2521,7 @@ fn parse_endpoints(
                         }
                     }
                 }
-                if key != "pub" && props.on_demand.is_some() {
+                if key != "pub" && props.aperiodic.is_some() {
                     return Err(field_err(
                         &path,
                         "aperiodic",
@@ -2652,11 +2607,8 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         link: yaml_string(yaml, "link", ctx)?,
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
-        on_demand: {
-            let key = spelled_key(yaml, ctx, "on_demand", "aperiodic")?;
-            yaml_bool(yaml, key, ctx)?
-        },
-        ingress: parse_ingress(yaml, ctx)?,
+        aperiodic: yaml_bool(yaml, "aperiodic", ctx)?,
+        arrival_curve: parse_arrival_curve(yaml, ctx)?,
         min_interarrival,
         budget,
         budget_period,
@@ -2683,7 +2635,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         ));
     }
     if let (Some(ingress), Some(need)) = (
-        props.ingress,
+        props.arrival_curve,
         props.min_rate_hz.as_ref().and_then(|b| b.hz()),
     ) && ingress.rate_hz < need
     {
@@ -2697,7 +2649,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
             ),
         ));
     }
-    if props.on_demand == Some(true) && props.min_rate_hz.is_some() {
+    if props.aperiodic == Some(true) && props.min_rate_hz.is_some() {
         return Err(field_err(
             ctx,
             "aperiodic",
@@ -3443,9 +3395,11 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
 // ── Trigger ──
 
 /// Parse `trigger:` (Vocabulary v2, Phase 44.1 §1). Bare-string forms
-/// (`once`, `aperiodic` -- `spontaneous` before phase 98 N6, read for one
-/// release) or single-key mapping forms (`timer:`, `input:`).
+/// (`once`, `aperiodic` -- `spontaneous` before phase 98 N6, refused
+/// since v0.3.9 naming it) or single-key mapping forms (`timer:`,
+/// `input:`).
 fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
+    const SPONTANEOUS: &str = "spontaneous"; // terms: allow (refused by name)
     let section = &doc["trigger"];
     if section.is_badvalue() {
         return Ok(None);
@@ -3453,11 +3407,17 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     if let Some(s) = section.as_str() {
         return match s {
             "once" => Ok(Some(Trigger::Once)),
-            "aperiodic" => Ok(Some(Trigger::Spontaneous)),
-            "spontaneous" => {
-                note_spelling(format_path(ctx, "trigger"), "spontaneous", "aperiodic");
-                Ok(Some(Trigger::Spontaneous))
-            }
+            "aperiodic" => Ok(Some(Trigger::Aperiodic)),
+            // The refusal names the old value.
+            old if old == SPONTANEOUS => Err(field_err(
+                ctx,
+                "trigger",
+                &format!(
+                    "`trigger: {old}` was renamed `trigger: aperiodic` in v0.3.7 (phase 98): \
+                     an activation with no period and no minimum separation is an aperiodic \
+                     task. `play_launch migrate <contract> --write` rewrites it"
+                ),
+            )),
             other => Err(field_err(
                 ctx,
                 "trigger",
@@ -4359,7 +4319,7 @@ hazards:
         );
         // A hazard guards the function by NAME; the loader resolves it.
         assert_eq!(
-            m.hazards["lost_pose"].guards[0].members,
+            m.hazards["lost_pose"].monitors[0].members,
             vec!["pose_estimation"]
         );
     }
@@ -4504,7 +4464,9 @@ hazards:
             "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 10, arrival_curve: { rate_hz: 200, burst: 4 } }\n",
         )
         .unwrap();
-        let ing = m.nodes["n"].subscribers["cmd"].ingress.expect("ingress");
+        let ing = m.nodes["n"].subscribers["cmd"]
+            .arrival_curve
+            .expect("ingress");
         assert_eq!(ing.rate_hz, 200.0);
         assert_eq!(ing.burst, 4);
         for (bad, needle) in [
@@ -4787,7 +4749,7 @@ hazards:
             "nodes:\n  op:\n    pub:\n      limit: { aperiodic: true }\n",
         )
         .expect("parses");
-        assert_eq!(m.nodes["op"].publishers["limit"].on_demand, Some(true));
+        assert_eq!(m.nodes["op"].publishers["limit"].aperiodic, Some(true));
         for (yaml, needle) in [
             (
                 "nodes:\n  op:\n    pub:\n      limit: { aperiodic: true, min_rate_hz: 10 }\n",
@@ -4867,10 +4829,10 @@ nodes:
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let h = &m.hazards["drive_blind"];
-        assert_eq!(h.guards.len(), 2);
-        assert!(!h.guards[0].all_of && h.guards[0].members == vec!["/safety/scan"]);
+        assert_eq!(h.monitors.len(), 2);
+        assert!(!h.monitors[0].all_of && h.monitors[0].members == vec!["/safety/scan"]);
         // A redundant set is a function, guarded by name (phase 90 G7).
-        assert!(!h.guards[1].all_of && h.guards[1].members == vec!["pose"]);
+        assert!(!h.monitors[1].all_of && h.monitors[1].members == vec!["pose"]);
         assert_eq!(h.on, vec![FaultKind::Omission]);
         assert_eq!(h.ftti.ms().unwrap(), 500.0);
         assert_eq!(h.reaction.as_deref(), Some("safety.stop"));
@@ -5912,73 +5874,54 @@ nodes:
         assert!(m.functions["f"].group.all_of && m.functions["f"].when.is_none());
     }
 
+    /// Phase 98 N6 at R+1 (v0.3.9): each key and value renamed in v0.3.7
+    /// is refused the same way, by a message naming its replacement and
+    /// `migrate` (one case per spelling), and the new spellings read.
+    #[test]
+    fn every_n6_spelling_is_refused_naming_its_replacement() {
+        for (doc, at, new) in [
+            (
+                "version: 1\nhazards:\n  h: { guards: [a], ftti: 1s }\n",
+                "hazards.h",
+                "`monitors:`",
+            ),
+            (
+                "version: 1\nnodes:\n  n:\n    pub:\n      cmd: { on_demand: true }\n",
+                "nodes.n.pub.cmd",
+                "`aperiodic:`",
+            ),
+            (
+                "version: 1\nnodes:\n  n:\n    sub:\n      in: { ingress: { rate_hz: 10, burst: 2 } }\n",
+                "nodes.n.sub.in",
+                "`arrival_curve:`",
+            ),
+            (
+                "version: 1\nnodes:\n  n:\n    paths:\n      p: { trigger: spontaneous }\n",
+                "nodes.n.paths.p",
+                "`trigger: aperiodic`",
+            ),
+        ] {
+            let e = err_of(doc);
+            assert!(
+                e.contains(at) && e.contains(new) && e.contains("migrate"),
+                "{e}"
+            );
+        }
+        let n = parse_manifest_str("version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in: { arrival_curve: { rate_hz: 10, burst: 2 } }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n").unwrap();
+        assert_eq!(n.hazards["h"].monitors.len(), 1);
+        assert_eq!(n.nodes["n"].publishers["cmd"].aperiodic, Some(true));
+        assert_eq!(
+            n.nodes["n"].subscribers["in"]
+                .arrival_curve
+                .map(|c| c.burst),
+            Some(2)
+        );
+        assert_eq!(n.nodes["n"].paths["p"].trigger, Some(Trigger::Aperiodic));
+    }
+
     /// Phase 98 N4: each key renamed in v0.3.3 is refused since v0.3.6,
     /// by a message naming its replacement (one case per key, so a removal
     /// that forgot one fails).
-    /// Phase 98 N6: each old spelling still reads, as what its new one
-    /// reads, and is noted for the consumer's warning with its path;
-    /// writing both is an error naming the new key.
-    #[test]
-    fn n6_old_spellings_read_and_are_noted() {
-        let new = "version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in: { arrival_curve: { rate_hz: 10, burst: 2 } }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n";
-        let old = "version: 1\nhazards:\n  h: { guards: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { on_demand: true }\n    sub:\n      in: { ingress: { rate_hz: 10, burst: 2 } }\n    paths:\n      p: { trigger: spontaneous, output: [cmd] }\n";
-        let n = parse_manifest_str(new).unwrap();
-        let o = parse_manifest_str(old).unwrap();
-        assert!(
-            n.deprecated_spellings.is_empty(),
-            "{:?}",
-            n.deprecated_spellings
-        );
-        let mut got: Vec<(String, &str, &str)> = o
-            .deprecated_spellings
-            .iter()
-            .map(|s| (s.at.clone(), s.old, s.new))
-            .collect();
-        got.sort();
-        assert_eq!(
-            got,
-            [
-                ("hazards.h.guards".to_string(), "guards", "monitors"),
-                (
-                    "nodes.n.paths.p.trigger".to_string(),
-                    "spontaneous",
-                    "aperiodic"
-                ),
-                (
-                    "nodes.n.pub.cmd.on_demand".to_string(),
-                    "on_demand",
-                    "aperiodic"
-                ),
-                (
-                    "nodes.n.sub.in.ingress".to_string(),
-                    "ingress",
-                    "arrival_curve"
-                ),
-            ]
-        );
-        assert_eq!(o.hazards["h"].guards, n.hazards["h"].guards);
-        assert_eq!(
-            o.nodes["n"].publishers["cmd"].on_demand,
-            n.nodes["n"].publishers["cmd"].on_demand
-        );
-        assert_eq!(
-            o.nodes["n"].subscribers["in"].ingress,
-            n.nodes["n"].subscribers["in"].ingress
-        );
-        assert_eq!(
-            o.nodes["n"].paths["p"].trigger,
-            n.nodes["n"].paths["p"].trigger
-        );
-        for both in [
-            "version: 1\nhazards:\n  h: { guards: [a], monitors: [a], ftti: 1s }\n",
-            "version: 1\nnodes:\n  n:\n    pub:\n      cmd: { on_demand: true, aperiodic: true }\n",
-            "version: 1\nnodes:\n  n:\n    sub:\n      in: { ingress: { rate_hz: 1, burst: 1 }, arrival_curve: { rate_hz: 1, burst: 1 } }\n",
-        ] {
-            let e = parse_manifest_str(both).unwrap_err().to_string();
-            assert!(e.contains("is the old spelling of"), "{e}");
-        }
-    }
-
     #[test]
     fn every_key_renamed_in_phase_98_is_refused_naming_its_replacement() {
         for (doc, at, new) in [

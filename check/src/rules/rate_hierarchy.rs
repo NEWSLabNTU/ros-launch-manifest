@@ -140,7 +140,7 @@ fn check_on_demand(
         .iter()
         .filter(|p| {
             resolve_endpoint(p, manifest, |n| &n.publishers)
-                .is_some_and(|e| e.on_demand == Some(true))
+                .is_some_and(|e| e.aperiodic == Some(true))
         })
         .collect();
     let Some(first) = on_demand.first() else {

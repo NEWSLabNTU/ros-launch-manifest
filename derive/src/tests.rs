@@ -558,7 +558,7 @@ fn rate_hz_is_the_fastest_timer_and_ignores_every_promise() {
         .path(
             "/n",
             "event",
-            Some(EffectiveTrigger::Spontaneous),
+            Some(EffectiveTrigger::Aperiodic),
             &["c"],
             None,
         )
@@ -576,7 +576,7 @@ fn chain_a_spontaneous_beside_a_timer() {
         .path(
             "/link/producer",
             "make",
-            Some(EffectiveTrigger::Spontaneous),
+            Some(EffectiveTrigger::Aperiodic),
             &["out"],
             Some(40.0),
         )

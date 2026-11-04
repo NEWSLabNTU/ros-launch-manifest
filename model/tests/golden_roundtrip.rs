@@ -424,7 +424,7 @@ fn a_path_contract_carries_each_trigger_kind_across_the_boundary() {
             "kind: input\n  value:\n  - a\n  - b",
         ),
         (EffectiveTrigger::Once, "kind: once"),
-        (EffectiveTrigger::Spontaneous, "kind: spontaneous"),
+        (EffectiveTrigger::Aperiodic, "kind: aperiodic"),
         (EffectiveTrigger::Unclassified, "kind: unclassified"),
     ] {
         let pc = PathContract {

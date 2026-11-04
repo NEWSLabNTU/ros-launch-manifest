@@ -30,13 +30,6 @@ impl ArgDecl {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Manifest {
     pub version: u32,
-    /// Keys and values written under a spelling phase 98 N6 renamed, read
-    /// for one release (rlm v0.3.7) and reported by the consumer as
-    /// `deprecated-spelling`; `migrate` rewrites each. Collected for the
-    /// whole file on the root manifest, each with its full dotted path.
-    /// Not serialized: a serialized manifest is written in the new names.
-    #[serde(skip)]
-    pub deprecated_spellings: Vec<DeprecatedSpelling>,
     /// The grammar release the file needs, as written in its `rlm:` header
     /// (`v0.1.49`, `0.1.49` or `>=0.1.49`; since v0.1.49). Checked against
     /// [`crate::GRAMMAR_VERSION`] before the body is read; `None` when the file
@@ -617,7 +610,7 @@ pub struct ModeExit {
 /// topic, an omission, late or loss fault removes both kinds.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FunctionDecl {
-    pub group: GuardGroup,
+    pub group: MonitorGroup,
     /// Present only for the `{ of: [...], when: {...} }` form.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<ValuePredicate>,
@@ -783,7 +776,7 @@ pub struct HazardDecl {
     /// `all_of` set whose fault is the loss of EVERY member (a redundant
     /// pair). Any group faulting is the hazard.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub guards: Vec<GuardGroup>,
+    pub monitors: Vec<MonitorGroup>,
     /// Which fault classes the guards report, as a set: `on: omission` and
     /// `on: [omission, late]` both parse (phase 82). EMPTY means the key was
     /// omitted, which a consumer reads as "every class" -- the strictest
@@ -1028,7 +1021,7 @@ impl std::fmt::Display for CheckRef {
 /// One guard: a topic, or a redundant set that faults only when all of its
 /// members do.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct GuardGroup {
+pub struct MonitorGroup {
     pub members: Vec<String>,
     /// `true` for `all_of:`; `false` for a single topic (the degenerate
     /// all-of-one, spelled without the wrapper).
@@ -1353,7 +1346,7 @@ pub struct EndpointProps {
     /// The parser refuses it beside `min_rate_hz` and on any side but
     /// `pub:`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub on_demand: Option<bool>,
+    pub aperiodic: Option<bool>,
     /// Subscriber only: what this endpoint is made to ABSORB (since v0.1.64,
     /// nano-ros RFC-0074 / issue 0760) -- a token bucket of `rate_hz` with
     /// `burst` messages back to back. Not a QoS policy and not a rate the
@@ -1362,7 +1355,7 @@ pub struct EndpointProps {
     /// device's read path and at the router. Both keys are required, so an
     /// unstated burst can never read as unbounded.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ingress: Option<IngressDecl>,
+    pub arrival_curve: Option<ArrivalCurveDecl>,
     /// Subscriber only (since v0.1.68, nano-ros RFC-0108 D1): the least time
     /// between two arrivals at this input. With it the callback is a
     /// SPORADIC task (T_min); without it, or a rate bound, or a `budget`, an
@@ -1492,10 +1485,10 @@ pub enum CallMode {
     Async,
 }
 
-/// A subscriber's ingress bound, `sub.<e>.ingress: { rate_hz, burst }`
-/// (since v0.1.64). See [`EndpointProps::ingress`].
+/// A subscriber's arrival curve, `sub.<e>.arrival_curve: { rate_hz, burst }`
+/// (since v0.1.64). See [`EndpointProps::arrival_curve`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct IngressDecl {
+pub struct ArrivalCurveDecl {
     /// Sustained messages per second the endpoint absorbs. Finite and > 0.
     pub rate_hz: f64,
     /// Messages that may arrive back to back before pacing applies. >= 1.
@@ -1956,7 +1949,7 @@ impl PathDecl {
                 Trigger::Timer { rate_hz, .. } => EffectiveTrigger::Timer { rate_hz: *rate_hz },
                 Trigger::Input(endpoints) => EffectiveTrigger::Input(endpoints.clone()),
                 Trigger::Once => EffectiveTrigger::Once,
-                Trigger::Spontaneous => EffectiveTrigger::Spontaneous,
+                Trigger::Aperiodic => EffectiveTrigger::Aperiodic,
             };
         }
         if !self.input.is_empty() {
@@ -1999,7 +1992,7 @@ pub enum Trigger {
     Once,
     /// Caused outside the graph (operator, network, hardware); event-like,
     /// no upstream inheritance.
-    Spontaneous,
+    Aperiodic,
 }
 
 /// The trigger actually in effect for a path — either the explicit
@@ -2012,7 +2005,7 @@ pub enum EffectiveTrigger {
     },
     Input(Vec<String>),
     Once,
-    Spontaneous,
+    Aperiodic,
     /// No explicit `trigger:` and no (non-empty) legacy `input:` list —
     /// trigger facts are not derivable. Never silently assumed to be a
     /// timer.
@@ -2199,16 +2192,4 @@ mod tests {
         assert!(ep.state.is_none());
         assert!(ep.required.is_none());
     }
-}
-
-/// A key or value written under its pre-phase-98-N6 spelling (see
-/// [`Manifest::deprecated_spellings`]).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DeprecatedSpelling {
-    /// Dotted contract path of the key (for a value, of the key holding it).
-    pub at: String,
-    /// The old spelling as written.
-    pub old: &'static str,
-    /// What to write instead.
-    pub new: &'static str,
 }

@@ -297,7 +297,7 @@ fn path_budget_ms(path: &MapperPath) -> Option<f64> {
     match &path.effective_trigger {
         EffectiveTrigger::Timer { .. } => path.effective_trigger.period_ms(),
         EffectiveTrigger::Input(_) => path.max_latency_ms,
-        EffectiveTrigger::Once | EffectiveTrigger::Spontaneous | EffectiveTrigger::Unclassified => {
+        EffectiveTrigger::Once | EffectiveTrigger::Aperiodic | EffectiveTrigger::Unclassified => {
             None
         }
     }

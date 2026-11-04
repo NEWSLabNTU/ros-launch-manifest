@@ -51,8 +51,11 @@ pub enum EffectiveTrigger {
     Input(Vec<String>),
     /// Fires exactly once (e.g. a map loader).
     Once,
-    /// Fires at caller-unpredictable times (e.g. a service/action server).
-    Spontaneous,
+    /// Fires at caller-unpredictable times (e.g. a service/action server):
+    /// an aperiodic task. `spontaneous` before model schema 4, read under
+    /// that name too.
+    #[serde(alias = "spontaneous")] // terms: allow (schema 3 on read)
+    Aperiodic,
     /// No trigger fact could be derived (no explicit `trigger:`, no legacy
     /// `input:`).
     Unclassified,
@@ -393,7 +396,7 @@ mod tests {
             EffectiveTrigger::Timer { rate_hz: 10.0 },
             EffectiveTrigger::Input(vec!["a".into(), "b".into()]),
             EffectiveTrigger::Once,
-            EffectiveTrigger::Spontaneous,
+            EffectiveTrigger::Aperiodic,
             EffectiveTrigger::Unclassified,
         ] {
             assert_eq!(roundtrip(&v), v);

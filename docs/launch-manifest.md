@@ -1932,7 +1932,7 @@ paths:
 | `{ timer: { rate_hz: <f64>, jitter: <dur> } }` | The same, with the timer's measured release jitter (v0.1.49): a tick may be released up to `jitter` late, less than one period. |
 | `{ input: [ep, ...] }` | Message-driven; caused by these input endpoint/topic names. |
 | `once` | Published once (startup latch); scheduling-irrelevant. |
-| `aperiodic` (`spontaneous` before v0.3.7) | Caused outside the graph (operator, network, hardware); event-like. |
+| `aperiodic` (`spontaneous` before v0.3.7) | Caused outside the graph (operator, network, hardware); event-like. | <!-- terms: allow -->
 
 **Release jitter** (v0.1.49). A timer's period is not all a message waits
 for it: the executor releases a tick late when something else holds the

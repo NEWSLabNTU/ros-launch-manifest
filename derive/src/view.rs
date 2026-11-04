@@ -353,7 +353,7 @@ fn path_facts(name: &str, pc: &PathContract) -> PathFacts {
 /// The trigger fact a model path carries: `PathContract::trigger`, the
 /// value of `PathDecl::effective_trigger()` at resolve time (design issue
 /// #52, R1). `None` on the wire is a model resolved before that field
-/// existed; the resolver of that era lowered Timer, Once, Spontaneous and
+/// existed; the resolver of that era lowered Timer, Once, Aperiodic and
 /// Unclassified alike to `input: []`, so nothing else on the path can say
 /// what fires it, and [`PathFacts::effective_trigger`] reads it as
 /// `Unclassified`.

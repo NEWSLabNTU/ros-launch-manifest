@@ -12,7 +12,7 @@ the `derive` crate — by a named, pluggable **priority assignment** policy
 (`priority_assignment:`; in the code a `SchedMapper`, which is why this
 document also says "mapper"), with explicit per-node **overrides** that
 always beat derived values. The key was `mapper:` before rlm v0.3.7 (phase
-98 N6); the old spelling reads for one release with a warning.
+98 N6) and is refused naming the new one since v0.3.9.
 
 **Key invariant:** everything platform-agnostic (timing facts, chain
 structure, priority *ordering*) is kept separate from platform
@@ -192,7 +192,7 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
 ```rust
 pub struct PlatformFile {
     pub target: String,
-    pub mapper: String,
+    pub priority_assignment: String,
     pub reservations: ReservationMode,
     pub resources: PlatformResources,
     pub overrides: BTreeMap<String, PlatformOverrideEntry>,
@@ -498,7 +498,7 @@ data-carrying enums (`EffectiveTrigger`, `ChainElement`) are adjacently
 tagged so their YAML stays plain mappings, no `!tags`:
 
 - `EffectiveTrigger` — `Timer { rate_hz } | Input(endpoints) | Once |
-  Spontaneous | Unclassified`; `period_ms() = 1000/rate_hz`, `None` for a
+  Aperiodic | Unclassified`; `period_ms() = 1000/rate_hz`, `None` for a
   non-positive or non-finite rate.
 - `MapperPath { name, effective_trigger, max_latency_ms, exec_ms,
   inputs, outputs, max_jitter_ms, miss }` — the per-(node, path)

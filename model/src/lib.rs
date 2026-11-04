@@ -47,7 +47,11 @@ use serde::{Deserialize, Serialize};
 ///   `level`, and its role `rung`/`window`/`floor` is `level`/`dwell`/`mrc`
 ///   (the fallback sequence's last level is the minimal risk condition),
 ///   and a mode's `window` is `min_dwell`.
-pub const SCHEMA_VERSION: u32 = 3;
+/// - **4** (v0.3.9, phase 98 N6): a hazard's `guards` is `monitors`, a
+///   subscriber's `ingress` is `arrival_curve`, a publisher's `on_demand`
+///   is `aperiodic`, and a path's trigger kind `spontaneous` is
+///   `aperiodic`. Older names are read for good, as for schema 3.
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Errors loading or saving a model.
 #[derive(Debug, thiserror::Error)]
@@ -93,7 +97,7 @@ impl SystemModel {
         if model.meta.version == 1 {
             model.upgrade_v1_lists();
         }
-        // Versions 1 and 2 read their renamed fields through the serde
+        // Versions 1 to 3 read their renamed fields through the serde
         // aliases; nothing else differs, so they are current once read.
         if (1..SCHEMA_VERSION).contains(&model.meta.version) {
             model.meta.version = SCHEMA_VERSION;
@@ -1197,11 +1201,12 @@ pub struct HazardContract {
     /// that name too).
     #[serde(default, alias = "severity", skip_serializing_if = "Option::is_none")]
     pub integrity: Option<String>,
-    /// Each entry is one fault: one topic, or a redundant set that faults
-    /// only when every member does.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub guards: Vec<GuardContract>,
-    /// The fault classes the guards report, as a set (phase 82). Empty
+    /// The monitored signals (`guards` before schema 4, read under that
+    /// name too). Each entry is one fault: one topic, or a redundant set
+    /// that faults only when every member does.
+    #[serde(default, alias = "guards", skip_serializing_if = "Vec::is_empty")]
+    pub monitors: Vec<MonitorContract>,
+    /// The fault classes the monitors report, as a set (phase 82). Empty
     /// means the contract omitted `on:`, read as every class. On the wire a
     /// set of one is a bare scalar -- exactly what a model written before
     /// v0.1.43 carried -- and a larger set is a list; both read back.
@@ -1362,7 +1367,7 @@ pub struct DerivedSource {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct GuardContract {
+pub struct MonitorContract {
     pub members: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_of: bool,
@@ -1744,7 +1749,8 @@ pub struct PubContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qos: Option<Qos>,
     /// The publisher publishes when asked and promises NO rate (contract
-    /// `on_demand: true`, v0.1.49). What a consumer must
+    /// `aperiodic: true`, v0.1.49; `on_demand` before schema 4, read under
+    /// that name too). What a consumer must
     /// derive from it: NO rate monitor for this endpoint (and none for a
     /// subscriber of its topic on its account), and no period for the
     /// topic. `min_rate_hz` is then absent, and an absent `min_rate_hz`
@@ -1752,8 +1758,12 @@ pub struct PubContract {
     /// Autoware Safety Island's board image raised two
     /// `rate-hierarchy-runtime` violations at start-up on exactly such
     /// endpoints when its contract had to give them a 10 Hz floor.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub on_demand: bool,
+    #[serde(
+        default,
+        alias = "on_demand",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub aperiodic: bool,
     /// Where each number of this entry read from the launch tree came from
     /// (play_launch phase 94), keyed by the model field it fills
     /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
@@ -1816,11 +1826,12 @@ pub struct SubContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
     /// What this subscriber is made to ABSORB (since v0.1.64; nano-ros
-    /// RFC-0074, issue 0760): a token bucket. Both numbers are always present
-    /// when the contract states one -- the grammar requires both -- so a
-    /// consumer never has to invent a burst.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ingress: Option<IngressContract>,
+    /// RFC-0074, issue 0760): an arrival curve in token-bucket form.
+    /// `ingress` before schema 4, read under that name too. Both numbers are
+    /// always present when the contract states one -- the grammar requires
+    /// both -- so a consumer never has to invent a burst.
+    #[serde(default, alias = "ingress", skip_serializing_if = "Option::is_none")]
+    pub arrival_curve: Option<ArrivalCurve>,
     /// The least time between two arrivals, ms (contract
     /// `sub.<e>.min_interarrival`, since v0.1.68; nano-ros RFC-0108 D1): a
     /// sporadic task's T_min. Absent means not stated.
@@ -1843,9 +1854,10 @@ pub struct SubContract {
     pub sources: BTreeMap<String, ValueSource>,
 }
 
-/// A subscriber's ingress bound (since v0.1.64). See [`SubContract::ingress`].
+/// A subscriber's arrival curve, token-bucket form (since v0.1.64;
+/// `IngressContract` before schema 4). See [`SubContract::arrival_curve`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct IngressContract {
+pub struct ArrivalCurve {
     /// Sustained messages per second. Finite and > 0.
     pub rate_hz: f64,
     /// Messages that may arrive back to back before pacing applies. >= 1.
@@ -2547,7 +2559,7 @@ mod tests {
         // subscriber written before it (no `ingress`) still reads.
         let sub = SubContract {
             min_rate_hz: Some(10.0),
-            ingress: Some(IngressContract {
+            arrival_curve: Some(ArrivalCurve {
                 rate_hz: 200.0,
                 burst: 4,
             }),
@@ -2557,8 +2569,12 @@ mod tests {
         assert!(y.contains("burst: 4"), "{y}");
         assert_eq!(serde_yaml_ng::from_str::<SubContract>(&y).unwrap(), sub);
         let old: SubContract = serde_yaml_ng::from_str("min_rate_hz: 10.0\n").unwrap();
-        assert_eq!(old.ingress, None);
-        assert!(!serde_yaml_ng::to_string(&old).unwrap().contains("ingress"));
+        assert_eq!(old.arrival_curve, None);
+        assert!(
+            !serde_yaml_ng::to_string(&old)
+                .unwrap()
+                .contains("arrival_curve")
+        );
         // v0.1.68: an input's release bound round-trips on a subscriber and
         // a server, and one written before it still reads.
         let sub = SubContract {
@@ -2736,7 +2752,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_2_names_read_as_schema_3() {
+    fn schema_2_names_read_as_current() {
         // Phase 98: `severity`/`severity_levels` were renamed `integrity`/
         // `integrity_levels`. A saved schema-2 model must load with them
         // and be current once read; a model written now has only the new
@@ -2781,6 +2797,61 @@ mod tests {
             out.contains("min_dwell:") && !out.contains("window"),
             "{out}"
         );
+    }
+
+    /// Phase 98 N6 (schema 4): a schema-3 model, which spells a hazard's
+    /// `guards`, a publisher's `on_demand`, a subscriber's `ingress` and the
+    /// `spontaneous` trigger kind, loads and resolves to exactly what the
+    /// same system written as schema 4 does, and is written back in the new
+    /// names only.
+    #[test]
+    fn a_schema_3_model_reads_as_the_same_schema_4_model() {
+        let body = |hz: &str, guards: &str, on_demand: &str, ingress: &str, kind: &str| {
+            format!(
+                "meta:\n  version: {hz}\nstructure: {{}}\ncontracts:\n  hazards:\n    h:\n      {guards}: [{{ members: [/scan] }}, {{ members: [/a, /b], all_of: true }}]\n      ftti_ms: 500.0\n  pub_endpoints:\n    n/cmd: {{ {on_demand}: true }}\n  sub_endpoints:\n    n/in: {{ min_rate_hz: 10.0, {ingress}: {{ rate_hz: 200.0, burst: 4 }} }}\n  node_paths:\n    n/p:\n      output: [/cmd]\n      trigger: {{ kind: {kind} }}\n"
+            )
+        };
+        let old =
+            SystemModel::from_yaml_str(&body("3", "guards", "on_demand", "ingress", "spontaneous"))
+                .unwrap();
+        let new = SystemModel::from_yaml_str(&body(
+            "4",
+            "monitors",
+            "aperiodic",
+            "arrival_curve",
+            "aperiodic",
+        ))
+        .unwrap();
+        assert_eq!(old, new);
+        assert_eq!(new.meta.version, SCHEMA_VERSION);
+        let h = &new.contracts.hazards["h"];
+        assert_eq!(h.monitors.len(), 2);
+        assert!(h.monitors[1].all_of);
+        assert!(new.contracts.pub_endpoints["n/cmd"].aperiodic);
+        assert_eq!(
+            new.contracts.sub_endpoints["n/in"].arrival_curve,
+            Some(ArrivalCurve {
+                rate_hz: 200.0,
+                burst: 4
+            })
+        );
+        assert_eq!(
+            new.contracts.node_paths["n/p"].effective_trigger(),
+            ros_launch_manifest_sched::EffectiveTrigger::Aperiodic
+        );
+        let out = old.to_yaml_string().unwrap();
+        for gone in ["guards", "on_demand", "ingress", "spontaneous"] {
+            assert!(!out.contains(gone), "{gone} in:\n{out}");
+        }
+        for now in [
+            "monitors:",
+            "aperiodic: true",
+            "arrival_curve:",
+            "kind: aperiodic",
+        ] {
+            assert!(out.contains(now), "{now} not in:\n{out}");
+        }
+        assert_eq!(SystemModel::from_yaml_str(&out).unwrap(), new);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! v2 platform-file schema (YAML): `target` + `priority_assignment` (`mapper`
-//! before phase 98 N6, read for one release) + `resources` +
+//! before phase 98 N6, refused since v0.3.9) + `resources` +
 //! `overrides`. One file names one target; `resources`/`overrides` value
 //! vocabulary is per-target. `posix` (Linux RT) is typed concretely here; any
 //! other target (`zephyr`, `freertos`, ...) is kept as a raw
@@ -36,10 +36,11 @@ pub enum PlatformError {
     )]
     MissingPriorityAssignment,
     #[error(
-        "platform file: `mapper:` is the old spelling of `priority_assignment:` -- write \
-         `priority_assignment:` alone"
+        "platform file: `mapper:` was renamed `priority_assignment:` in rlm v0.3.7 (phase 98): \
+         the policy that orders the nodes is a priority assignment. Rename the key; the value \
+         (`rate_monotonic`, `deadline_monotonic`, `chain_aware` or `manual`) is unchanged"
     )]
-    BothPriorityAssignmentSpellings,
+    RenamedMapper,
     #[error("unsupported platform file extension: {0:?} (expected `.yaml`/`.yml`)")]
     UnknownExtension(Option<String>),
     #[error(
@@ -250,10 +251,8 @@ pub enum ReservationMode {
 pub struct PlatformFile {
     pub target: String,
     /// The `priority_assignment:` policy (the registry's mapper name).
-    pub mapper: String,
-    /// `true` when the file wrote the old key `mapper:` (phase 98 N6, read
-    /// for one release); the consumer warns naming `priority_assignment:`.
-    pub spelled_mapper: bool,
+    /// `mapper:` before rlm v0.3.7, refused since v0.3.9.
+    pub priority_assignment: String,
     /// Whether reservations may be derived. See [`ReservationMode`].
     pub reservations: ReservationMode,
     pub resources: PlatformResources,
@@ -271,8 +270,9 @@ struct RawPlatformFile {
     target: String,
     #[serde(default)]
     priority_assignment: Option<String>,
+    /// `mapper:`, the old key: read only to refuse it naming the new one.
     #[serde(default)]
-    mapper: Option<String>,
+    mapper: Option<serde_yaml_ng::Value>,
     #[serde(default)]
     reservations: ReservationMode,
     #[serde(default)]
@@ -390,13 +390,13 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
     if raw.target.trim().is_empty() {
         return Err(PlatformError::EmptyTarget);
     }
-    let spelled_mapper = raw.mapper.is_some();
-    let mapper = match (raw.priority_assignment, raw.mapper) {
-        (Some(_), Some(_)) => return Err(PlatformError::BothPriorityAssignmentSpellings),
-        (Some(m), None) | (None, Some(m)) => m,
-        (None, None) => return Err(PlatformError::MissingPriorityAssignment),
+    if raw.mapper.is_some() {
+        return Err(PlatformError::RenamedMapper);
+    }
+    let Some(priority_assignment) = raw.priority_assignment else {
+        return Err(PlatformError::MissingPriorityAssignment);
     };
-    if mapper.trim().is_empty() {
+    if priority_assignment.trim().is_empty() {
         return Err(PlatformError::EmptyMapper);
     }
 
@@ -448,8 +448,7 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
 
     Ok(PlatformFile {
         target: raw.target,
-        mapper,
-        spelled_mapper,
+        priority_assignment,
         reservations: raw.reservations,
         resources,
         overrides,
@@ -491,7 +490,7 @@ overrides:
 "#;
         let file = parse_platform_file_yaml(src).expect("must parse");
         assert_eq!(file.target, "posix");
-        assert_eq!(file.mapper, "rate_monotonic");
+        assert_eq!(file.priority_assignment, "rate_monotonic");
         let PlatformResources::Posix(res) = &file.resources else {
             panic!("expected posix resources");
         };
@@ -736,17 +735,17 @@ overrides:
     }
 
     #[test]
-    fn the_old_mapper_key_reads_for_one_release_and_is_noted() {
-        let old = parse_platform_file_yaml("target: posix\nmapper: manual\n").unwrap();
+    fn the_old_mapper_key_is_refused_naming_priority_assignment() {
+        for src in [
+            "target: posix\nmapper: manual\n",
+            "target: posix\nmapper: manual\npriority_assignment: manual\n",
+        ] {
+            let err = parse_platform_file_yaml(src).unwrap_err();
+            assert_eq!(err, PlatformError::RenamedMapper);
+            assert!(err.to_string().contains("`priority_assignment:`"), "{err}");
+        }
         let new = parse_platform_file_yaml("target: posix\npriority_assignment: manual\n").unwrap();
-        assert_eq!(old.mapper, new.mapper);
-        assert!(old.spelled_mapper && !new.spelled_mapper);
-        assert_eq!(
-            parse_platform_file_yaml(
-                "target: posix\nmapper: manual\npriority_assignment: manual\n"
-            ),
-            Err(PlatformError::BothPriorityAssignmentSpellings)
-        );
+        assert_eq!(new.priority_assignment, "manual");
         assert_eq!(
             parse_platform_file_yaml("target: posix\n"),
             Err(PlatformError::MissingPriorityAssignment)
@@ -896,7 +895,7 @@ resources:
         let yaml_path = dir.join("bringup.system.posix.yaml");
         std::fs::write(&yaml_path, "target: posix\npriority_assignment: manual\n").unwrap();
         let file = parse_platform_file(&yaml_path).expect("yaml parses");
-        assert_eq!(file.mapper, "manual");
+        assert_eq!(file.priority_assignment, "manual");
 
         // The legacy schema is refused, naming the v2 form (v0.3.0).
         let toml_path = dir.join("system.toml");
