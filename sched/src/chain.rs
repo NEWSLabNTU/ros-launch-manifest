@@ -290,7 +290,7 @@ pub struct ChainAwareDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// The path's final priority (POSIX RT priority, same convention as
-    /// [`crate::resolve::ResolvedTier::priority`]).
+    /// [`crate::resolve::ResolvedTask::priority`]).
     pub priority: i64,
     /// One-line human-readable provenance, e.g.
     /// `derived(chain_aware: sensing_to_actuation S2 drain 2/2 -> prio 44)`.

@@ -7,7 +7,7 @@
 //! discouraged.
 //!
 //! This is the same species of defect as a deadline used as a cost, or a
-//! `SCHED_OTHER` tier clamped into an RT band: in each case a WRONG value was
+//! `SCHED_OTHER` task clamped into an RT band: in each case a WRONG value was
 //! structurally representable. The fix is the same shape — make the type
 //! refuse it.
 //!

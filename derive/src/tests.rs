@@ -1397,7 +1397,7 @@ fn derived_scope_binds_under_the_selector_rule() {
 /// `/perception/...` and `/control/...` inside it. Copying the scope id
 /// gave every node the scope `/`, so a platform file's
 /// `[[assign]] scope = "/perception"` selected NOTHING and the nodes fell
-/// to the default tier -- silently, because an unmatched selector is only
+/// to the default task -- silently, because an unmatched selector is only
 /// an error when it matches no node in the SYSTEM, and `/` always does.
 #[test]
 fn a_node_below_its_launch_scope_carries_its_own_namespace() {

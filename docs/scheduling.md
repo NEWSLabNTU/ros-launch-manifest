@@ -174,7 +174,7 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   (the old `rr_timeslice_us` spelling is refused since v0.3.0). A platform *fact*,
   which is why it sits in `resources:` — on Linux the slice is a global
   sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`, default **100 ms**),
-  not a per-task value, so the per-tier `TierPlatformSpec::time_slice`
+  not a per-task value, so the per-task `TaskPlatformSpec::time_slice`
   cannot express it. Every mapper that can produce a priority tie —
   `rate_monotonic`, `deadline_monotonic` and `chain_aware` — needs it to
   decide whether `SCHED_RR` is worth deriving for that tie at all. Absent
@@ -239,13 +239,13 @@ pub trait SchedMapper {
 
 - **`PlatformFacts`** — alias for `PlatformResources` (the platform
   file's parsed `resources`).
-- **`SchedPlan`** — alias for `ResolvedTierTable` (deliberately reused:
-  "ordered priority/core/sched_class placement grouped by tier, with
+- **`SchedPlan`** — alias for `ResolvedTaskTable` (deliberately reused:
+  "ordered priority/core/sched_class placement grouped by task, with
   member node names" is what every mapper produces). A rank holding one
-  node emits a one-member tier named after it; a rank holding several
-  (nodes whose ranking fact is exactly equal) emits one tier carrying all
+  node emits a one-member task named after it; a rank holding several
+  (nodes whose ranking fact is exactly equal) emits one task carrying all
   of them, named after the shared fact. Nodes with no usable facts
-  collapse into `DEFAULT_TIER` (priority 0, no `sched_class` — non-RT).
+  collapse into `DEFAULT_TASK` (priority 0, no `sched_class` — non-RT).
 - **`MapperRegistry`** — `register(Box<dyn SchedMapper>)`, `get(name)`;
   `with_builtins()` pre-registers **four** mappers: `manual`,
   `rate_monotonic`, `deadline_monotonic`, `chain_aware`. Consumers
@@ -255,7 +255,7 @@ pub trait SchedMapper {
 
 ## Built-in Mappers
 
-- **`manual`** — derives nothing: every node is placed in `DEFAULT_TIER`,
+- **`manual`** — derives nothing: every node is placed in `DEFAULT_TASK`,
   so the file's `overrides:` are the only placement. Needs no priority
   band; ignores `facts`. (Until v0.3.0 it reproduced the v1 tiers +
   `[[assign]]` resolution and was reachable only through the `.toml`
@@ -265,7 +265,7 @@ pub trait SchedMapper {
   last → `band.min`; a narrow band produces ties, never inversions).
   Deterministic: rate descending; nodes at **exactly** the same rate
   collapse into ONE rank, with members ordered by node name. No `rate_hz`
-  → `DEFAULT_TIER`. Requires a valid posix band
+  → `DEFAULT_TASK`. Requires a valid posix band
   (`sched/src/mapper.rs`).
 - **`deadline_monotonic`** — same shape, ranked by `deadline_us`
   ascending (shorter deadline → higher priority); equal deadlines collapse
@@ -290,12 +290,12 @@ nodes: four nodes at two rates take two levels, not four
 and on the value as declared — 30 and 30.000001 do not tie, and nothing is
 rounded into one: the collapse states a fact the contract carries, and a
 tolerance would invent one it does not. A rank holding more than one node is
-ONE tier carrying all of them as sorted `members`, named after the fact they
+ONE task carrying all of them as sorted `members`, named after the fact they
 share (`rate_hz=30`, `deadline_us=5000`) rather than after any one member — a
-tier named `/a` holding `/a` and `/b` would read as a tier holding only `/a`.
+task named `/a` holding `/a` and `/b` would read as a task holding only `/a`.
 A one-node rank still names itself after its node, so nothing moves for
-untied plans. The consumer explodes a grouped tier into one tier per member
-before applying overrides, so a multi-member tier is transparent downstream.
+untied plans. The consumer explodes a grouped task into one task per member
+before applying overrides, so a multi-member task is transparent downstream.
 
 **Decide.** The tied set is then handed to `chain_aware`'s decision,
 `rr_policy_for_ties` (`sched/src/chain_aware_mapper.rs`): `SCHED_RR` when
@@ -324,12 +324,12 @@ previously absent.
 Both simple mappers emit `class: real_time` and `sched_class: SCHED_FIFO`
 (or `SCHED_RR` for a mitigated tie) per ranked node, and populate `warnings`
 only — `details` (per-rank `--explain` provenance) remains a `chain_aware`
-feature. Neither writes the typed `posix` placement: **`ResolvedTier::posix`
+feature. Neither writes the typed `posix` placement: **`ResolvedTask::posix`
 stays `None` for these two**, so RR is expressed in `sched_class` alone, and
 the consumer reads the `sched_class`/`priority`/`core` trio for these plans.
 That looks like an oversight and is not — play_launch's `derive_reservations`
-and `report_jitter_placement` both test `tier.posix` for real-time-ness, so
-filling it would make every `rate_monotonic` tier reservation-eligible and
+and `report_jitter_placement` both test `task.posix` for real-time-ness, so
+filling it would make every `rate_monotonic` task reservation-eligible and
 silence its jitter warnings. Changing it is a separate decision from the tie
 rule.
 
@@ -379,7 +379,7 @@ Algorithm (steps 1–4 platform-agnostic, 5–6 POSIX realization):
    and interleaves a mixed bucket instead of splitting it by trigger kind.
    Paths with no derivable budget — `once`, `aperiodic`, `unclassified`,
    or an input path with no declared `max_latency` — never rank, and their
-   node falls to `DEFAULT_TIER` unless another of its paths ranked. Items
+   node falls to `DEFAULT_TASK` unless another of its paths ranked. Items
    with **exactly** equal (criticality, budget) collapse into one rank
    (`tie_group`).
 5. **Band compression** (POSIX realizer, `assign_priorities_compressed`).
@@ -400,7 +400,7 @@ Algorithm (steps 1–4 platform-agnostic, 5–6 POSIX realization):
    ([above](#an-exact-tie-is-a-fact-and-every-mapper-treats-it-the-same-way)),
    with the period read as the shortest budget among the node's paths
    (`shortest_node_budget_us`). Unlike the two simple mappers, `chain_aware`
-   *does* write the typed placement: each ranked tier carries
+   *does* write the typed placement: each ranked task carries
    `posix: Some(PosixPlacement { sched: Fifo|Rr, affinity: Inherit, uclamp:
    None })` beside the `sched_class` and `priority` fields.
 
@@ -549,13 +549,13 @@ never had an input that would distinguish it from declaration order. Both
 Pure functions over an already-derived `SchedPlan`; the caller decides
 warn-vs-strict and presentation (`--sched-apply`, `--explain`):
 
-- **`band_violations(plan, band)`** — every non-default tier whose
-  priority falls outside `[band.min, band.max]`. Two kinds of tier are
+- **`band_violations(plan, band)`** — every non-default task whose
+  priority falls outside `[band.min, band.max]`. Two kinds of task are
   skipped rather than compared, because neither HAS a priority to compare:
-  the synthesized default tier, and any tier whose typed placement returns
+  the synthesized default task, and any task whose typed placement returns
   `PosixSched::priority() == None` — i.e. a `SCHED_DEADLINE` reservation,
   whose `priority` field is absent, not zero. Comparing those was the same
-  defect class as the `SCHED_OTHER 10` tier once "clamped" into the RT band:
+  defect class as the `SCHED_OTHER 10` task once "clamped" into the RT band:
   a state Linux cannot represent, and fatal under strict mode.
 - **`rate_priority_contradictions(input, plan)`** /
   **`deadline_priority_contradictions(input, plan)`** — pairwise scan: a
@@ -565,18 +565,31 @@ warn-vs-strict and presentation (`--sched-apply`, `--explain`):
   construction. `chain_aware` triggers it **by design** — chain rank
   deliberately overrides raw timing facts — so the consumer suppresses
   those as chain-intended; hand-authored overrides and the `manual`
-  mapper's independent tiers can trigger it as genuine mistakes.
+  mapper's independent tasks can trigger it as genuine mistakes.
 
-## Tier types (`TierDef`)
+## Task types (`TaskDef`)
 
-A tier's portable head and its per-platform sub-tables. The v1
+A task's portable head and its per-platform sub-tables. The v1
 `system.toml` file that authored them with `[[assign]]` rules is gone
-(v0.3.0); the types remain because nano-ros's own `system.toml` `[tiers.*]`
-block and the SystemModel's `execution.tiers` use them:
+(v0.3.0); the types remain because nano-ros's own `system.toml` `[tasks.*]`
+block and the SystemModel's `execution.tiers` use them.
+
+A task is one named set of scheduling parameters and its placement, to
+which nodes and callback groups are bound: the AUTOSAR OS task into which
+runnables are mapped, with the periodic task model's period, deadline and
+budget on its head. On an RTOS it is one task running an executor over the
+callback groups bound to it; on Linux play_launch applies it to every
+thread of a node's process. Until v0.3.10 it was called a *tier*: a
+`system.toml` that writes `[tiers.<name>]` or `group_tiers` still reads
+this release, with one `deprecated-spelling` diagnostic per key naming the
+new one, and `migrate` rewrites the file
+(`system_config::migrate_system_toml_str`). The model's key stays
+`execution.tiers` through schema 4.
+
 
 ```toml
 # ===== GENERIC (portable — byte-identical across platforms) =====
-[tiers.control]
+[tasks.control]
 class = "real_time"        # best_effort | real_time | time_triggered | interrupt
 deadline    = "50ms"
 period      = "20ms"
@@ -586,11 +599,11 @@ spin_period = "1ms"
 # above = "transport"      # optional: placed above the reserved transport band
 
 # ===== PLATFORM (same shape per target, values differ) =====
-[tiers.control.posix]      # `native` accepted as alias
+[tasks.control.posix]      # `native` accepted as alias
 priority    = 80
 sched_class = "SCHED_FIFO"
 core        = 1
-[tiers.control.freertos]
+[tasks.control.freertos]
 priority    = 12
 stack_bytes = 8192
 deadline    = "40ms"       # optional per-platform tighten
@@ -604,48 +617,48 @@ written before the Duration migration still loads:
 `SystemModel::from_yaml_str` rewrites those keys in `execution.tiers` (a
 bare number there was microseconds).
 
-- `deny_unknown_fields` on the generic `TierDef` head — a stray
+- `deny_unknown_fields` on the generic `TaskDef` head — a stray
   `priority` on the head is a parse error; that is what enforces "no
   priority leakage" portability.
 - **`above = "transport"`** on the head (`ReservedBand`, a closed set whose
   one member is `transport`; anything else is a parse error, and the key is
   refused in a platform sub-table). It states a system fact, not a number:
-  the tier is placed above the port's reserved transport band instead of in
+  the task is placed above the port's reserved transport band instead of in
   its application pool. This crate only carries it; the realizer that owns
-  the port's address plan (nano-ros RFC-0079 section 6) places the tier, and
+  the port's address plan (nano-ros RFC-0079 section 6) places the task, and
   decides what a platform without a transport band does with it.
-- **`TierPlatformSpec`** per target sub-table (`posix`, `freertos`,
+- **`TaskPlatformSpec`** per target sub-table (`posix`, `freertos`,
   `zephyr`, `threadx`, `nuttx`): `priority: i64` (i64 admits Zephyr
   negative coop priorities), `stack_bytes`, `core`, `sched_class`,
   `preempt_threshold`, and per-platform overrides of the generic head:
   `deadline`, `budget`/`period` (sporadic budget + replenishment period,
   both required for a sporadic policy — lets one platform's kernel sporadic
   server engage, e.g. NuttX `SCHED_SPORADIC`, without affecting other
-  targets), and `time_slice` (round-robin slice among same-priority tiers;
+  targets), and `time_slice` (round-robin slice among same-priority tasks;
   ThreadX-only today, ignored elsewhere — on Linux the slice is the global
-  `resources.rr_timeslice`, not a per-tier value).
-- **`resolve(tiers, assigns, nodes, target) -> ResolvedTierTable`**
-  (`resolve.rs`), for a caller that builds tiers and `AssignRule`s in
+  `resources.rr_timeslice`, not a per-task value).
+- **`resolve(tasks, assigns, nodes, target) -> ResolvedTaskTable`**
+  (`resolve.rs`), for a caller that builds tasks and `AssignRule`s in
   memory: explicit `nodes` selectors win over `scope` selectors
-  (silently); a same-level double-claim for two *different* tiers →
-  `SchedError::NodeMatchedByMultipleTiers` (duplicate claims for the
-  same tier are accepted); missing
-  `[tiers.<t>.<target>]` → `MissingPlatformSpec`; unmatched selectors →
+  (silently); a same-level double-claim for two *different* tasks →
+  `SchedError::NodeMatchedByMultipleTasks` (duplicate claims for the
+  same task are accepted); missing
+  `[tasks.<t>.<target>]` → `MissingPlatformSpec`; unmatched selectors →
   `UnknownNodeSelector`/`UnknownScopeSelector`. Output sorted priority
-  descending. `ResolvedTier` is the flat 14-field record (placement from
+  descending. `ResolvedTask` is the flat 14-field record (placement from
   the platform sub-table, policy from the generic head, effective
   `deadline_us = spec ?? head`, sorted `members`, plus the typed
   `posix: Option<PosixPlacement>`); its duration fields are microseconds
   (`period_us`, `budget_us`, `deadline_us`, `spin_period_us`) because it is
-  the wire to play_launch and nano-ros, while `TierDef` carries `Duration`.
-  **`SCHED_DEADLINE` is not authorable on a tier**: the tier schema has
-  no per-tier runtime, so a `sched_class = "SCHED_DEADLINE"` sub-table is
+  the wire to play_launch and nano-ros, while `TaskDef` carries `Duration`.
+  **`SCHED_DEADLINE` is not authorable on a task**: the task schema has
+  no per-task runtime, so a `sched_class = "SCHED_DEADLINE"` sub-table is
   a `PosixError::UnknownSchedClass` naming the v2 platform file instead of
   a reservation invented from nothing.
 - These types do double duty: the SystemModel's `execution.tiers`
-  reuses `TierDef`/`TierPlatformSpec` (re-exported through the `model`
-  crate), so one schema serves nano-ros's `system.toml` tiers, the
-  model's applied-tier layer, and the mapper pipeline.
+  reuses `TaskDef`/`TaskPlatformSpec` (re-exported through the `model`
+  crate), so one schema serves nano-ros's `system.toml` tasks, the
+  model's applied-task layer, and the mapper pipeline.
 
 ## Consumers
 
@@ -664,9 +677,9 @@ play_launch `docs/guide/rt-scheduling.md`.
 - **Derive pipeline** (`derive_sched_plan`): build the `MapperInput` with
   `derive` ([above](#where-scheduling-facts-come-from)) → parse platform
   file → look up mapper in `with_builtins()` → `map_with_diagnostics` →
-  flatten grouped tiers to one tier per node → **apply overrides**
+  flatten grouped tasks to one task per node → **apply overrides**
   (selector = FQN or bare name; a priority-only override implies
-  `SCHED_FIFO` + `real_time` and promotes the node out of the default tier;
+  `SCHED_FIFO` + `real_time` and promotes the node out of the default task;
   overriding a chain member below its chain rank warns) → band violations
   (clamp + warn, or error under `--sched-apply strict`) → rate/deadline
   contradiction warnings (with chain-intended suppression).
@@ -681,20 +694,20 @@ play_launch `docs/guide/rt-scheduling.md`.
   scoped to nodes carrying a timing fact; **containers exempt**, since
   `--container-mode isolated` is the default and without the exemption
   nearly every system would hard-error. The parameters ride the portable
-  tier head (`budget_us`/`deadline_us`/`period_us`) so a later `up`, which
+  task head (`budget_us`/`deadline_us`/`period_us`) so a later `up`, which
   reads the model and never the platform file, can rebuild them.
 - **Where it runs**: fresh derive on `check --sched [--explain]`,
   `resolve`, `launch`, and `run`. `up <model.yaml>` does **not**
   re-run the mapper — it reads the model's `execution.tiers` +
   `execution.bindings` (see below).
 - **What lands in the SystemModel**: only the applied schedule —
-  synthesized `TierDef`s + `bindings` (FQN → tier, default tier
+  synthesized `TaskDef`s + `bindings` (FQN → task, default task
   excluded). **No resolved plan is embedded** (`execution.sched` landed
   and was reverted, 2026-07-20 maintainer decision, rlm `f090400`): the
   model is *input*; causality + execution modeling is each consumer's
   job. Mapper identity, chain decomposition, per-path ranks, and
   diagnostics exist only on a fresh derive — hence `up --explain`
-  shows degraded `derived((applied): tier ...)` provenance.
+  shows degraded `derived((applied): task ...)` provenance.
 - **Apply layer** (play_launch): `--sched-apply off|warn|strict`
   (default `warn`; on `launch`, `up`, and `run`); per-TID
   `sched_setattr(2)` across `/proc/<pid>/task/*` — not
@@ -755,16 +768,16 @@ RFC-0052 §"system-model RTOS mapper".
   | deadline | Zephyr `k_thread_deadline_set` (EDF among equal priorities) | a per-callback monitor, then the declared `miss` action |
   | budget | NuttX `SCHED_SPORADIC` | a sporadic gate: no further dispatch until the next replenishment |
   | release window | none | a time-triggered frame around the callback |
-  | starvation | none | a scheduled gap once a tier has run too long without blocking |
+  | starvation | none | a scheduled gap once a task has run too long without blocking |
 
   The executor column is why `MapperMiss::is_enforceable_on_linux()` is not
   the same question on an RTOS: `SkipNext` and `Abort` are obligations a
   cooperative executor between callbacks *can* discharge, where CBS on Linux
   can only continue.
 - **Authoring**: nano-ros authors its own `system.toml` (its bringup
-  config: `[tiers.*]`, `[[node_overrides]]`, lifecycle, bridges — a
+  config: `[tasks.*]`, `[[node_overrides]]`, lifecycle, bridges — a
   superset role, ingested via the model's system-config layer, reusing
-  `sched::TierDef`). It does **not** yet author v2
+  `sched::TaskDef`). It does **not** yet author v2
   `<stem>.system.<target>.yaml` platform files — its resolver plumbs
   `--sched`, but the workspace sync never passes it. The derived
   (mapper) path activates only when a model carries no declared
@@ -802,7 +815,7 @@ RFC-0052 §"system-model RTOS mapper".
 
 `sched_class: Option<String>` + `priority: i64` + `core: Option<u32>` made
 illegal states representable and left every consumer re-deriving which fields
-were live from a string. A tier could carry `sched_class: "SCHED_OTHER"` beside
+were live from a string. A task could carry `sched_class: "SCHED_OTHER"` beside
 `priority: 10` — a state Linux cannot express, which shipped into
 `system_model.yaml` and was fatal under strict mode.
 
@@ -838,8 +851,8 @@ Two consequences worth stating, because both correspond to shipped defects:
 - **`PosixSched::priority()` returns `None` for `Deadline`** — absent, not
   zero. A deadline thread preempts every fixed-priority thread regardless of RT
   priority, which is why the kernel gives it a reservation instead of a number.
-  `band_violations` skips such tiers rather than comparing them against the RT
-  band, the same way it skips the default tier.
+  `band_violations` skips such tasks rather than comparing them against the RT
+  band, the same way it skips the default task.
 - **`requires_reset_on_fork()` is a method, not a field**, and true only for
   `Deadline`. `SCHED_FLAG_RESET_ON_FORK` reads as hygiene but the kernel resets
   scheduling in `sched_fork()`, which runs for *thread* creation as well — so
@@ -851,7 +864,7 @@ Two consequences worth stating, because both correspond to shipped defects:
 reservation), set from `deadline_policy: fault`. The enum serializes with an
 internal `policy:` tag in `snake_case`.
 
-`ResolvedTier::posix: Option<PosixPlacement>` is **additive**: `sched_class`,
+`ResolvedTask::posix: Option<PosixPlacement>` is **additive**: `sched_class`,
 `priority` and `core` remain for one release so consumers migrate without a
 lockstep bump. When present, the typed placement is authoritative. It is
 filled by the v1 `resolve()` path for `posix`/`native` targets and by

@@ -6,6 +6,61 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.10 - 2026-11-05
+
+Phase 98 M7 at release R (play_launch `docs/roadmap/phase-99-tier-rename.md`
+T1): the scheduling unit is a **task**, the word AUTOSAR OS, the RTOS APIs
+and the periodic task model use for one set of scheduling parameters into
+which several runnables are mapped. GRAMMAR_VERSION 0.3.10; the model's
+schema stays 4. The renamed public fields and variants are an API break,
+so the workspace Cargo version moves to 0.6.0.
+
+### Changed
+
+- **`system.toml` writes `[tasks.<name>]`** (and `[tasks.<name>.<target>]`)
+  and **`[[component]] group_tasks`**. The old `[tiers.*]` and
+  `group_tiers` read for this release: `parse_system_config` folds them into
+  the new fields (`SystemConfigToml::tasks`, `ComponentBlock::group_tasks`;
+  the old fields keep what the file wrote and are `#[deprecated]`), and
+  `SystemConfigToml::deprecated_spellings` returns one
+  `SystemDeprecatedSpelling` per old key, which `apply_to_launch` also adds
+  to its diagnostics (`system config: deprecated-spelling: ...`, naming the
+  new key, the tasks or components, and `migrate`). One name under both
+  spellings is an error.
+- **The sched types**: `TierDef` is `TaskDef`, `TierPlatformSpec`
+  `TaskPlatformSpec`, `ResolvedTier` `ResolvedTask`, `ResolvedTierTable`
+  `ResolvedTaskTable` (its field `tiers` is `tasks`), `DEFAULT_TIER`
+  `DEFAULT_TASK` (value still `"default"`), `is_single_tier`
+  `is_single_task`; `SchedError::UnknownTier` is `UnknownTask`,
+  `NodeMatchedByMultipleTiers` `NodeMatchedByMultipleTasks`, and the
+  variants' `tier` fields are `task`; `AssignRule.tier` is `task`;
+  `BandViolation.tier` is `task`. Their messages say task.
+- Docs: `scheduling.md` ("Task types"), `model-boundary.md`.
+
+### Added
+
+- **Deprecated aliases** for one release: `TierDef`, `TierPlatformSpec`,
+  `ResolvedTier`, `ResolvedTierTable`, `DEFAULT_TIER` (sched root and their
+  modules; `TierDef`/`TierPlatformSpec` also through `model`) and
+  `ResolvedTaskTable::is_single_tier`, so a consumer can bump the tag before
+  renaming (`sched/tests/tier_aliases.rs`). A field or a variant cannot be
+  aliased: a consumer that names `ResolvedTierTable { tiers }`, a
+  `SchedError` variant or `AssignRule.tier` moves with this tag.
+- **`system_config::migrate_system_toml_str`** and `SYSTEM_TOML_REWRITES`
+  (`tiers-tasks`, `group-tiers-group-tasks`): a textual edit of the table
+  headers, top-level `tiers` keys and `[[component]]` `group_tiers` keys,
+  returning the contract migrate's `Migration`. The result must read as the
+  same task table and bindings or nothing is written; an old key written
+  inline is reported in `skipped`.
+
+### Not changed yet
+
+- The model keeps `execution.tiers` (schema 4); schema 5 writes
+  `execution.tasks` at R+1, which also refuses `[tiers.*]` and
+  `group_tiers` and deletes the aliases. R+1 ships after a play_launch
+  release carrying this tag is on PyPI and nano-ros has migrated its
+  `system.toml` files (its phase 536 W1).
+
 ## v0.3.9 - 2026-11-05
 
 Phase 98 N6 at R+1, the model's schema 4, and N5's R+2 step for S1-S5.

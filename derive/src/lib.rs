@@ -27,7 +27,7 @@
 //! The rule that separates this from the reverted `execution.sched`
 //! embedding: the model carries every fact the CHECKER resolves per entity
 //! (trigger, criticality, bounds); it carries nothing the MAPPER resolves
-//! (no route, no rank, no tier). This crate is the function from the first
+//! (no route, no rank, no task). This crate is the function from the first
 //! to the second. It sits above `model` because `model` already depends on
 //! `sched`, and it must not be `sched` because `sched` stays parser-free.
 //!
@@ -212,7 +212,7 @@ fn mapper_node(node: &NodeView, facts: &DeriveFacts, report: &mut DeriveReport) 
 
     // The fastest timer among the node's paths: the rate that would starve
     // first if the node were under-prioritised. A node with no timer path
-    // has no rate to be monotonic about and lands on the default tier.
+    // has no rate to be monotonic about and lands on the default task.
     let rate_hz = node
         .paths
         .values()

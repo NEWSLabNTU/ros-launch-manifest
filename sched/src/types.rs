@@ -1,14 +1,14 @@
-//! Scheduling tier types: a tier's portable head and per-platform
-//! sub-tables (`system.toml` `[tiers.*]`, the model's `execution.tiers`),
-//! and the selector rule that binds nodes to a tier.
+//! Scheduling task types: a task's portable head and per-platform
+//! sub-tables (`system.toml` `[tasks.*]`, the model's `execution.tiers`, whose key moves at schema 5),
+//! and the selector rule that binds nodes to a task.
 
 use serde::{Deserialize, Serialize};
 
-/// `[tiers.<name>]` — the generic (portable) head plus per-platform sub-tables.
+/// `[tasks.<name>]` — the generic (portable) head plus per-platform sub-tables.
 /// The head carries NO priority number; placement lives in the sub-tables.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TierDef {
+pub struct TaskDef {
     /// `best_effort | real_time | time_triggered | interrupt`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
@@ -27,7 +27,7 @@ pub struct TierDef {
     /// Executor spin period (µs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spin_period: Option<ros_launch_manifest_types::duration::Duration>,
-    /// `above = "transport"`: this tier is placed above a reserved SYSTEM
+    /// `above = "transport"`: this task is placed above a reserved SYSTEM
     /// band rather than in the application pool (nano-ros RFC-0079 section
     /// 6, "crossing into a reserved band requires naming it"). Portable: it
     /// states something about the system, not about one kernel's numbering,
@@ -38,22 +38,26 @@ pub struct TierDef {
 
     // Per-platform placement sub-tables. `posix` is Linux RT.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub posix: Option<TierPlatformSpec>,
+    pub posix: Option<TaskPlatformSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub freertos: Option<TierPlatformSpec>,
+    pub freertos: Option<TaskPlatformSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub zephyr: Option<TierPlatformSpec>,
+    pub zephyr: Option<TaskPlatformSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub threadx: Option<TierPlatformSpec>,
+    pub threadx: Option<TaskPlatformSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub nuttx: Option<TierPlatformSpec>,
+    pub nuttx: Option<TaskPlatformSpec>,
 }
 
-/// A reserved band a tier may be placed above (`[tiers.<name>] above`).
+/// Renamed [`TaskDef`] (phase 99); this alias goes at schema 5.
+#[deprecated(since = "0.3.10", note = "renamed `TaskDef`")]
+pub type TierDef = TaskDef;
+
+/// A reserved band a task may be placed above (`[tasks.<name>] above`).
 ///
 /// The bands themselves are a port's address plan (which priorities the
 /// transport tasks hold); this names one, and the realizer that owns the
-/// plan places the tier. `transport` is the only band a tier may name: it is
+/// plan places the task. `transport` is the only band a task may name: it is
 /// the one the application's executors wait behind (the zenoh read, lease
 /// and flush tasks).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -73,9 +77,9 @@ impl ReservedBand {
     }
 }
 
-impl TierDef {
+impl TaskDef {
     /// Pick the placement sub-table for a resolve target.
-    pub fn platform(&self, target: &str) -> Option<&TierPlatformSpec> {
+    pub fn platform(&self, target: &str) -> Option<&TaskPlatformSpec> {
         match target {
             "posix" | "native" => self.posix.as_ref(),
             "freertos" => self.freertos.as_ref(),
@@ -87,11 +91,11 @@ impl TierDef {
     }
 }
 
-/// `[tiers.<name>.<target>]` — concrete per-platform placement. Same shape on
+/// `[tasks.<name>.<target>]` — concrete per-platform placement. Same shape on
 /// every platform. `priority` is `i64` to admit Zephyr negative coop priorities.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TierPlatformSpec {
+pub struct TaskPlatformSpec {
     pub priority: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack_bytes: Option<u32>,
@@ -119,19 +123,23 @@ pub struct TierPlatformSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period: Option<ros_launch_manifest_types::duration::Duration>,
     /// Per-platform round-robin time slice (µs): requests
-    /// time-slicing among same-priority tiers. ThreadX-only today (its
+    /// time-slicing among same-priority tasks. ThreadX-only today (its
     /// `tx_thread_create` takes a per-thread slice); ignored elsewhere.
     /// Same sub-table-scoped precedent as `preempt_threshold`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_slice: Option<ros_launch_manifest_types::duration::Duration>,
 }
 
+/// Renamed [`TaskPlatformSpec`] (phase 99); this alias goes at schema 5.
+#[deprecated(since = "0.3.10", note = "renamed `TaskPlatformSpec`")]
+pub type TierPlatformSpec = TaskPlatformSpec;
+
 /// A sparse binding rule. A node matches if it is named in `nodes` OR falls
 /// under `scope`. Explicit `nodes` matches win over `scope` matches.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AssignRule {
-    pub tier: String,
+    pub task: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

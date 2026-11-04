@@ -1,11 +1,15 @@
-//! Selector-based tier resolution.
+//! Selector-based task resolution.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::types::{AssignRule, TierDef};
+use crate::types::{AssignRule, TaskDef};
 
-/// The synthesized tier for nodes matched by no assign rule.
-pub const DEFAULT_TIER: &str = "default";
+/// The synthesized task for nodes matched by no assign rule.
+pub const DEFAULT_TASK: &str = "default";
+
+/// Renamed [`DEFAULT_TASK`] (phase 99); this alias goes at schema 5.
+#[deprecated(since = "0.3.10", note = "renamed `DEFAULT_TASK`")]
+pub const DEFAULT_TIER: &str = DEFAULT_TASK;
 
 /// One node as seen by the resolver — dependency-free (no parser types).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,21 +30,21 @@ pub enum SchedError {
     #[error("assign rule scope selector `{selector}` matches no node's scope in the system")]
     UnknownScopeSelector { selector: String },
     #[error(
-        "node `{node}` is matched by two tiers (`{tier_a}` and `{tier_b}`); \
-         a node must belong to exactly one tier"
+        "node `{node}` is matched by two tasks (`{task_a}` and `{task_b}`); \
+         a node must belong to exactly one task"
     )]
-    NodeMatchedByMultipleTiers {
+    NodeMatchedByMultipleTasks {
         node: String,
-        tier_a: String,
-        tier_b: String,
+        task_a: String,
+        task_b: String,
     },
-    #[error("assign rule references tier `{tier}`, which has no [tiers.{tier}] definition")]
-    UnknownTier { tier: String },
-    #[error("tier `{tier}` has no [tiers.{tier}.{target}] sub-table for the resolve target")]
-    MissingPlatformSpec { tier: String, target: String },
-    #[error("tier `{tier}`: {source}")]
+    #[error("assign rule references task `{task}`, which has no [tasks.{task}] definition")]
+    UnknownTask { task: String },
+    #[error("task `{task}` has no [tasks.{task}.{target}] sub-table for the resolve target")]
+    MissingPlatformSpec { task: String, target: String },
+    #[error("task `{task}`: {source}")]
     Posix {
-        tier: String,
+        task: String,
         #[source]
         source: crate::posix::PosixError,
     },
@@ -68,33 +72,33 @@ fn scope_selector_matches(selector: &str, node: &SchedNode) -> bool {
     ns == sel || ns.starts_with(&format!("{}/", sel.trim_end_matches('/')))
 }
 
-/// Insert a node→tier assignment; error if it conflicts with a prior one.
+/// Insert a node→task assignment; error if it conflicts with a prior one.
 fn assign_one<'a>(
     map: &mut BTreeMap<String, &'a str>,
     node: &str,
-    tier: &'a str,
+    task: &'a str,
 ) -> Result<(), SchedError> {
-    if let Some(prev) = map.insert(node.to_string(), tier)
-        && prev != tier
+    if let Some(prev) = map.insert(node.to_string(), task)
+        && prev != task
     {
-        return Err(SchedError::NodeMatchedByMultipleTiers {
+        return Err(SchedError::NodeMatchedByMultipleTasks {
             node: node.to_string(),
-            tier_a: prev.to_string(),
-            tier_b: tier.to_string(),
+            task_a: prev.to_string(),
+            task_b: task.to_string(),
         });
     }
     Ok(())
 }
 
-/// Build tier-name → sorted member node names. Unmatched nodes → `DEFAULT_TIER`.
+/// Build task-name → sorted member node names. Unmatched nodes → `DEFAULT_TASK`.
 pub(crate) fn bind_nodes(
     assigns: &[AssignRule],
     nodes: &[SchedNode],
 ) -> Result<BTreeMap<String, Vec<String>>, SchedError> {
-    let mut node_tier: BTreeMap<String, &str> = BTreeMap::new();
+    let mut node_task: BTreeMap<String, &str> = BTreeMap::new();
     // Tracks nodes assigned by an explicit `nodes` rule (pass 1 only).
     // Scope rules (pass 2) skip these without error; scope-vs-scope conflicts
-    // are detected by `assign_one` since the node is in `node_tier` but NOT here.
+    // are detected by `assign_one` since the node is in `node_task` but NOT here.
     let mut explicit_nodes: BTreeSet<String> = BTreeSet::new();
 
     // Pass 1: explicit node selectors (highest precedence).
@@ -110,7 +114,7 @@ pub(crate) fn bind_nodes(
                 });
             }
             for n in hits {
-                assign_one(&mut node_tier, &n.name, &rule.tier)?;
+                assign_one(&mut node_task, &n.name, &rule.task)?;
                 explicit_nodes.insert(n.name.clone());
             }
         }
@@ -118,7 +122,7 @@ pub(crate) fn bind_nodes(
 
     // Pass 2: scope selectors.
     // - Nodes claimed by an explicit node rule (pass 1) are skipped silently: explicit wins.
-    // - Nodes claimed by a prior scope rule raise NodeMatchedByMultipleTiers via assign_one.
+    // - Nodes claimed by a prior scope rule raise NodeMatchedByMultipleTasks via assign_one.
     for rule in assigns {
         if let Some(scope_sel) = &rule.scope {
             let hits: Vec<&SchedNode> = nodes
@@ -134,7 +138,7 @@ pub(crate) fn bind_nodes(
                 if explicit_nodes.contains(&n.name) {
                     continue; // explicit node rule wins
                 }
-                assign_one(&mut node_tier, &n.name, &rule.tier)?;
+                assign_one(&mut node_task, &n.name, &rule.task)?;
             }
         }
     }
@@ -142,12 +146,12 @@ pub(crate) fn bind_nodes(
     // Collect members, defaulting the unmatched.
     let mut members: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for n in nodes {
-        let tier = node_tier
+        let task = node_task
             .get(&n.name)
             .copied()
-            .unwrap_or(DEFAULT_TIER)
+            .unwrap_or(DEFAULT_TASK)
             .to_string();
-        members.entry(tier).or_default().push(n.name.clone());
+        members.entry(task).or_default().push(n.name.clone());
     }
     for v in members.values_mut() {
         v.sort();
@@ -155,9 +159,9 @@ pub(crate) fn bind_nodes(
     Ok(members)
 }
 
-/// One resolved tier: generic policy + concrete placement for one target.
+/// One resolved task: generic policy + concrete placement for one target.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ResolvedTier {
+pub struct ResolvedTask {
     pub name: String,
     pub priority: i64,
     pub stack_bytes: Option<u32>,
@@ -184,62 +188,76 @@ pub struct ResolvedTier {
     pub members: Vec<String>,
 }
 
-impl ResolvedTier {
-    pub(crate) fn default_tier(members: Vec<String>) -> Self {
-        ResolvedTier {
-            name: DEFAULT_TIER.to_string(),
+impl ResolvedTask {
+    pub(crate) fn default_task(members: Vec<String>) -> Self {
+        ResolvedTask {
+            name: DEFAULT_TASK.to_string(),
             members,
             ..Default::default()
         }
     }
 }
 
-/// The ordered tier table for one target.
+/// The ordered task table for one target.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedTierTable {
+pub struct ResolvedTaskTable {
     /// Highest RTOS/OS priority first.
-    pub tiers: Vec<ResolvedTier>,
+    pub tasks: Vec<ResolvedTask>,
 }
 
-impl ResolvedTierTable {
+impl ResolvedTaskTable {
     /// True when the whole system collapsed to the single synthesized default.
+    pub fn is_single_task(&self) -> bool {
+        self.tasks.len() == 1 && self.tasks[0].name == DEFAULT_TASK
+    }
+
+    /// Renamed [`Self::is_single_task`] (phase 99); goes at schema 5.
+    #[deprecated(since = "0.3.10", note = "renamed `is_single_task`")]
     pub fn is_single_tier(&self) -> bool {
-        self.tiers.len() == 1 && self.tiers[0].name == DEFAULT_TIER
+        self.is_single_task()
     }
 }
 
-/// Resolve tiers + assign rules against the system's nodes for one target.
+/// Renamed [`ResolvedTask`] (phase 99); this alias goes at schema 5.
+#[deprecated(since = "0.3.10", note = "renamed `ResolvedTask`")]
+pub type ResolvedTier = ResolvedTask;
+
+/// Renamed [`ResolvedTaskTable`] (phase 99); this alias goes at schema 5.
+#[deprecated(since = "0.3.10", note = "renamed `ResolvedTaskTable`")]
+pub type ResolvedTierTable = ResolvedTaskTable;
+
+/// Resolve tasks + assign rules against the system's nodes for one target.
 pub fn resolve(
-    tiers: &std::collections::BTreeMap<String, TierDef>,
+    tasks: &std::collections::BTreeMap<String, TaskDef>,
     assigns: &[AssignRule],
     nodes: &[SchedNode],
     target: &str,
-) -> Result<ResolvedTierTable, SchedError> {
-    // Every assign rule must name a real tier (the synthesized default excepted).
+) -> Result<ResolvedTaskTable, SchedError> {
+    // Every assign rule must name a real task (the synthesized default excepted).
     for rule in assigns {
-        if rule.tier != DEFAULT_TIER && !tiers.contains_key(&rule.tier) {
-            return Err(SchedError::UnknownTier {
-                tier: rule.tier.clone(),
+        if rule.task != DEFAULT_TASK && !tasks.contains_key(&rule.task) {
+            return Err(SchedError::UnknownTask {
+                task: rule.task.clone(),
             });
         }
     }
 
-    let members_by_tier = bind_nodes(assigns, nodes)?;
+    let members_by_task = bind_nodes(assigns, nodes)?;
 
-    let mut out: Vec<ResolvedTier> = Vec::with_capacity(members_by_tier.len());
-    for (name, members) in members_by_tier {
-        // The default tier needs no [tiers.default] table.
-        if name == DEFAULT_TIER && !tiers.contains_key(DEFAULT_TIER) {
-            out.push(ResolvedTier::default_tier(members));
+    let mut out: Vec<ResolvedTask> = Vec::with_capacity(members_by_task.len());
+    for (name, members) in members_by_task {
+        // The default task needs no [tasks.default] table.
+        if name == DEFAULT_TASK && !tasks.contains_key(DEFAULT_TASK) {
+            out.push(ResolvedTask::default_task(members));
             continue;
         }
-        let def = tiers
+        let def = tasks
             .get(&name)
-            .ok_or_else(|| SchedError::UnknownTier { tier: name.clone() })?;
+            .ok_or_else(|| SchedError::UnknownTask { task: name.clone() })?;
         let spec = def
             .platform(target)
             .ok_or_else(|| SchedError::MissingPlatformSpec {
-                tier: name.clone(),
+                task: name.clone(),
                 target: target.to_string(),
             })?;
         // Lower the stringly-typed trio into the typed placement. Only the
@@ -248,7 +266,7 @@ pub fn resolve(
         let posix = if matches!(target, "posix" | "native") {
             Some(
                 posix_placement_from_spec(spec).map_err(|source| SchedError::Posix {
-                    tier: name.clone(),
+                    task: name.clone(),
                     source,
                 })?,
             )
@@ -256,7 +274,7 @@ pub fn resolve(
             None
         };
 
-        out.push(ResolvedTier {
+        out.push(ResolvedTask {
             name,
             posix,
             priority: spec.priority,
@@ -265,7 +283,7 @@ pub fn resolve(
             sched_class: spec.sched_class.clone(),
             preempt_threshold: spec.preempt_threshold,
             class: def.class.clone(),
-            // W2 seam: TierDef now carries durations, ResolvedTier still
+            // W2 seam: TaskDef now carries durations, ResolvedTask still
             // speaks microseconds because it is the wire to the realizers.
             // Both sides of that boundary move together in W4,
             // under one tag; converting here keeps W2 inside this repo.
@@ -280,10 +298,10 @@ pub fn resolve(
 
     // Highest priority first; ties by name for determinism.
     out.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
-    Ok(ResolvedTierTable { tiers: out })
+    Ok(ResolvedTaskTable { tasks: out })
 }
 
-/// Lower a `[tiers.<name>.posix]` sub-table into the typed placement.
+/// Lower a `[tasks.<name>.posix]` sub-table into the typed placement.
 ///
 /// This is where the v1/legacy path stops failing open: an unrecognized
 /// `sched_class` used to become `SCHED_OTHER` silently, so `SCHED_FIF0`
@@ -293,7 +311,7 @@ pub fn resolve(
 /// An absent `sched_class` still means `SCHED_OTHER` — that is a real default,
 /// not a parse failure, and it is what an unmatched node has always gotten.
 fn posix_placement_from_spec(
-    spec: &crate::types::TierPlatformSpec,
+    spec: &crate::types::TaskPlatformSpec,
 ) -> Result<crate::posix::PosixPlacement, crate::posix::PosixError> {
     use crate::posix::{PosixAffinity, PosixPolicyKind, PosixSched};
 
@@ -314,11 +332,11 @@ fn posix_placement_from_spec(
         PosixPolicyKind::Batch => PosixSched::Batch { nice: 0 },
         PosixPolicyKind::Other => PosixSched::Other { nice: 0 },
         PosixPolicyKind::Deadline => {
-            // v1 cannot author a reservation: it has no per-tier runtime, and
+            // v1 cannot author a reservation: it has no per-task runtime, and
             // substituting one would invent a number. Deriving SCHED_DEADLINE
             // is the v2 mapper's job.
             return Err(crate::posix::PosixError::UnknownSchedClass {
-                value: "SCHED_DEADLINE (not authorable in the v1 tier schema \
+                value: "SCHED_DEADLINE (not authorable in the v1 task schema \
                         — use a v2 platform file with a declared budget)"
                     .to_string(),
             });
@@ -344,17 +362,17 @@ mod bind_tests {
         }
     }
 
-    fn rule_nodes(tier: &str, names: &[&str]) -> AssignRule {
+    fn rule_nodes(task: &str, names: &[&str]) -> AssignRule {
         AssignRule {
-            tier: tier.to_string(),
+            task: task.to_string(),
             nodes: names.iter().map(|s| s.to_string()).collect(),
             scope: None,
         }
     }
 
-    fn rule_scope(tier: &str, scope: &str) -> AssignRule {
+    fn rule_scope(task: &str, scope: &str) -> AssignRule {
         AssignRule {
-            tier: tier.to_string(),
+            task: task.to_string(),
             nodes: vec![],
             scope: Some(scope.to_string()),
         }
@@ -365,7 +383,7 @@ mod bind_tests {
         let nodes = vec![node("/a", "/"), node("/b", "/")];
         let m = bind_nodes(&[], &nodes).unwrap();
         assert_eq!(m.len(), 1);
-        assert_eq!(m[DEFAULT_TIER], vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(m[DEFAULT_TASK], vec!["/a".to_string(), "/b".to_string()]);
     }
 
     #[test]
@@ -373,7 +391,7 @@ mod bind_tests {
         let nodes = vec![node("/ns/ndt_localizer", "/ns"), node("/ns/other", "/ns")];
         let m = bind_nodes(&[rule_nodes("control", &["ndt_localizer"])], &nodes).unwrap();
         assert_eq!(m["control"], vec!["/ns/ndt_localizer".to_string()]);
-        assert_eq!(m[DEFAULT_TIER], vec!["/ns/other".to_string()]);
+        assert_eq!(m[DEFAULT_TASK], vec!["/ns/other".to_string()]);
     }
 
     #[test]
@@ -391,7 +409,7 @@ mod bind_tests {
                 "/perception/lidar/deep/b".to_string()
             ]
         );
-        assert_eq!(m[DEFAULT_TIER], vec!["/control/c".to_string()]);
+        assert_eq!(m[DEFAULT_TASK], vec!["/control/c".to_string()]);
     }
 
     #[test]
@@ -408,16 +426,16 @@ mod bind_tests {
         let nodes = vec![node("/a", "/")];
         let assigns = vec![rule_nodes("hi", &["/a"]), rule_nodes("lo", &["/a"])];
         let err = bind_nodes(&assigns, &nodes).unwrap_err();
-        assert!(matches!(err, SchedError::NodeMatchedByMultipleTiers { .. }));
+        assert!(matches!(err, SchedError::NodeMatchedByMultipleTasks { .. }));
     }
 
     #[test]
     fn scope_scope_conflict_errors() {
-        // Two scope rules for different tiers, both matching the same node — must error.
+        // Two scope rules for different tasks, both matching the same node — must error.
         let nodes = vec![node("/p/a", "/p"), node("/p/b", "/p")];
         let assigns = vec![rule_scope("hi", "/p"), rule_scope("lo", "/p")];
         let err = bind_nodes(&assigns, &nodes).unwrap_err();
-        assert!(matches!(err, SchedError::NodeMatchedByMultipleTiers { .. }));
+        assert!(matches!(err, SchedError::NodeMatchedByMultipleTasks { .. }));
     }
 
     #[test]
@@ -447,14 +465,14 @@ mod bind_tests {
 mod resolve_tests {
     use super::*;
 
-    /// A tiers + assign spec, as the tests write it in TOML. The file
+    /// A tasks + assign spec, as the tests write it in TOML. The file
     /// format itself was removed in v0.3.0; `resolve` keeps the selector
-    /// binding for callers that build tiers and rules in memory.
+    /// binding for callers that build tasks and rules in memory.
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Spec {
         #[serde(default)]
-        tiers: BTreeMap<String, TierDef>,
+        tasks: BTreeMap<String, TaskDef>,
         #[serde(default)]
         assign: Vec<AssignRule>,
     }
@@ -471,108 +489,108 @@ mod resolve_tests {
     }
 
     #[test]
-    fn no_assigns_degenerates_to_single_default_tier() {
+    fn no_assigns_degenerates_to_single_default_task() {
         let sched = parse_system_sched("").unwrap();
-        let table = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap();
-        assert!(table.is_single_tier());
-        assert_eq!(table.tiers[0].members, vec!["/a".to_string()]);
-        assert_eq!(table.tiers[0].priority, 0);
+        let table = resolve(&sched.tasks, &sched.assign, &[node("/a", "/")], "posix").unwrap();
+        assert!(table.is_single_task());
+        assert_eq!(table.tasks[0].members, vec!["/a".to_string()]);
+        assert_eq!(table.tasks[0].priority, 0);
     }
 
     #[test]
     fn resolves_platform_numbers_and_effective_deadline() {
         let src = r#"
-[tiers.control]
+[tasks.control]
 class = "real_time"
 deadline = "50000us"
 
-[tiers.control.posix]
+[tasks.control.posix]
 priority = 80
 sched_class = "SCHED_FIFO"
 core = 1
 deadline = "40000us"
 
 [[assign]]
-tier = "control"
+task = "control"
 nodes = ["/a"]
 "#;
         let sched = parse_system_sched(src).unwrap();
-        let table = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap();
-        let t = table.tiers.iter().find(|t| t.name == "control").unwrap();
+        let table = resolve(&sched.tasks, &sched.assign, &[node("/a", "/")], "posix").unwrap();
+        let t = table.tasks.iter().find(|t| t.name == "control").unwrap();
         assert_eq!(t.priority, 80);
         assert_eq!(t.core, Some(1));
         assert_eq!(t.class.as_deref(), Some("real_time"));
-        assert_eq!(t.deadline_us, Some(40000)); // platform override wins (ResolvedTier still speaks us)
+        assert_eq!(t.deadline_us, Some(40000)); // platform override wins (ResolvedTask still speaks us)
         assert_eq!(t.members, vec!["/a".to_string()]);
     }
 
     #[test]
-    fn orders_tiers_highest_priority_first() {
+    fn orders_tasks_highest_priority_first() {
         let src = r#"
-[tiers.hi.posix]
+[tasks.hi.posix]
 priority = 80
-[tiers.lo.posix]
+[tasks.lo.posix]
 priority = 10
 
 [[assign]]
-tier = "hi"
+task = "hi"
 nodes = ["/a"]
 [[assign]]
-tier = "lo"
+task = "lo"
 nodes = ["/b"]
 "#;
         let sched = parse_system_sched(src).unwrap();
         let nodes = vec![node("/a", "/"), node("/b", "/")];
-        let table = resolve(&sched.tiers, &sched.assign, &nodes, "posix").unwrap();
-        assert_eq!(table.tiers[0].name, "hi");
-        assert_eq!(table.tiers[0].priority, 80);
-        assert_eq!(table.tiers[1].name, "lo");
+        let table = resolve(&sched.tasks, &sched.assign, &nodes, "posix").unwrap();
+        assert_eq!(table.tasks[0].name, "hi");
+        assert_eq!(table.tasks[0].priority, 80);
+        assert_eq!(table.tasks[1].name, "lo");
     }
 
     #[test]
-    fn unknown_tier_in_assign_errors() {
+    fn unknown_task_in_assign_errors() {
         let src = r#"
 [[assign]]
-tier = "ghost"
+task = "ghost"
 nodes = ["/a"]
 "#;
         let sched = parse_system_sched(src).unwrap();
-        let err = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap_err();
-        assert!(matches!(err, SchedError::UnknownTier { .. }));
+        let err = resolve(&sched.tasks, &sched.assign, &[node("/a", "/")], "posix").unwrap_err();
+        assert!(matches!(err, SchedError::UnknownTask { .. }));
     }
 
     #[test]
     fn missing_platform_spec_errors() {
         let src = r#"
-[tiers.hi.freertos]
+[tasks.hi.freertos]
 priority = 5
 
 [[assign]]
-tier = "hi"
+task = "hi"
 nodes = ["/a"]
 "#;
         let sched = parse_system_sched(src).unwrap();
         // resolving for posix must fail: only freertos declared.
-        let err = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap_err();
+        let err = resolve(&sched.tasks, &sched.assign, &[node("/a", "/")], "posix").unwrap_err();
         assert!(matches!(err, SchedError::MissingPlatformSpec { .. }));
     }
 
     #[test]
     fn deadline_falls_back_to_generic_head_when_platform_omits_it() {
         let src = r#"
-[tiers.rt]
+[tasks.rt]
 deadline = "50000us"
 
-[tiers.rt.posix]
+[tasks.rt.posix]
 priority = 40
 
 [[assign]]
-tier = "rt"
+task = "rt"
 nodes = ["/a"]
 "#;
         let sched = parse_system_sched(src).unwrap();
-        let table = resolve(&sched.tiers, &sched.assign, &[node("/a", "/")], "posix").unwrap();
-        let t = table.tiers.iter().find(|t| t.name == "rt").unwrap();
+        let table = resolve(&sched.tasks, &sched.assign, &[node("/a", "/")], "posix").unwrap();
+        let t = table.tasks.iter().find(|t| t.name == "rt").unwrap();
         // Platform sub-table has no deadline_us → falls back to the generic head's 50000.
         assert_eq!(t.deadline_us, Some(50000));
     }
@@ -580,23 +598,23 @@ nodes = ["/a"]
     #[test]
     fn ties_broken_by_name() {
         let src = r#"
-[tiers.b.posix]
+[tasks.b.posix]
 priority = 50
-[tiers.a.posix]
+[tasks.a.posix]
 priority = 50
 
 [[assign]]
-tier = "b"
+task = "b"
 nodes = ["/b_node"]
 [[assign]]
-tier = "a"
+task = "a"
 nodes = ["/a_node"]
 "#;
         let sched = parse_system_sched(src).unwrap();
         let nodes = vec![node("/a_node", "/"), node("/b_node", "/")];
-        let table = resolve(&sched.tiers, &sched.assign, &nodes, "posix").unwrap();
+        let table = resolve(&sched.tasks, &sched.assign, &nodes, "posix").unwrap();
         // Equal priority → sorted by name ascending.
-        assert_eq!(table.tiers[0].name, "a");
-        assert_eq!(table.tiers[1].name, "b");
+        assert_eq!(table.tasks[0].name, "a");
+        assert_eq!(table.tasks[1].name, "b");
     }
 }

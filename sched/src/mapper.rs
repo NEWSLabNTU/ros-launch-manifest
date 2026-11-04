@@ -3,14 +3,14 @@
 //! (`MapperInput`) and platform facts (`PlatformFacts`).
 //!
 //! `SchedPlan` is a type alias for the crate's existing
-//! [`crate::resolve::ResolvedTierTable`] — deliberately reused rather than
+//! [`crate::resolve::ResolvedTaskTable`] — deliberately reused rather than
 //! inventing a parallel type, since it is already exactly "ordered
-//! priority/core/sched_class placement grouped by tier, with member node
+//! priority/core/sched_class placement grouped by task, with member node
 //! names", which is what every mapper (manual, rate-monotonic,
 //! deadline-monotonic) produces. Built-in mappers that assign each node its
-//! own unique priority represent that as a one-member-per-tier
-//! `ResolvedTier` (tier name = node name); nodes with no facts collapse into
-//! the existing synthesized [`crate::resolve::DEFAULT_TIER`] (priority 0,
+//! own unique priority represent that as a one-member-per-task
+//! `ResolvedTask` (task name = node name); nodes with no facts collapse into
+//! the existing synthesized [`crate::resolve::DEFAULT_TASK`] (priority 0,
 //! no `sched_class` — i.e. `SCHED_OTHER`/non-RT), exactly like an unmatched
 //! node in the legacy resolver.
 
@@ -20,7 +20,7 @@ use crate::{
     chain::{MapDiagnostics, MapWarning, ResolvedChain},
     chain_aware_mapper::rr_policy_for_ties,
     platform::{PlatformResources, PriorityBand},
-    resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError},
+    resolve::{DEFAULT_TASK, ResolvedTask, ResolvedTaskTable, SchedError},
 };
 
 /// Mapper hint: platform-agnostic criticality (design §2.1, contract
@@ -103,8 +103,8 @@ pub struct MapperInput {
 /// [`crate::platform::PlatformFile::resources`].
 pub type PlatformFacts = PlatformResources;
 
-/// The mapper's output: reuses [`ResolvedTierTable`] (see module docs).
-pub type SchedPlan = ResolvedTierTable;
+/// The mapper's output: reuses [`ResolvedTaskTable`] (see module docs).
+pub type SchedPlan = ResolvedTaskTable;
 
 /// Errors produced while deriving a plan.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -159,9 +159,9 @@ pub trait SchedMapper {
 }
 
 /// `manual`: derives nothing. Every node is placed in the synthesized
-/// default tier, so the platform file's `overrides:` are the only placement
+/// default task, so the platform file's `overrides:` are the only placement
 /// (rlm v0.3.0, play_launch phase 41.6). Until v0.3.0 `manual` reproduced
-/// the legacy `system.toml` tiers + `[[assign]]` resolution and was
+/// the legacy `system.toml` tasks + `[[assign]]` resolution and was
 /// reachable only through the `.toml` bridge, which is gone; `facts` is
 /// ignored.
 #[derive(Debug, Default)]
@@ -174,8 +174,8 @@ impl SchedMapper for ManualMapper {
 
     fn map(&self, input: &MapperInput, _facts: &PlatformFacts) -> Result<SchedPlan, MapError> {
         let members: Vec<String> = input.nodes.iter().map(|n| n.name.clone()).collect();
-        Ok(ResolvedTierTable {
-            tiers: vec![ResolvedTier::default_tier(members)],
+        Ok(ResolvedTaskTable {
+            tasks: vec![ResolvedTask::default_task(members)],
         })
     }
 }
@@ -226,7 +226,7 @@ fn spread_priority(i: usize, n: usize, band: &PriorityBand) -> i64 {
 /// One rank: every node whose ranking fact is EXACTLY equal, plus a label for
 /// the shared value.
 struct RankGroup<'a> {
-    /// How the tier names itself when it holds more than one node — the fact
+    /// How the task names itself when it holds more than one node — the fact
     /// the members share (`rate_hz=30`), never one member's name.
     label: String,
     /// Members, in the mapper's tie-break order (node name ascending).
@@ -237,7 +237,7 @@ struct RankGroup<'a> {
 /// value of the ranking key.
 ///
 /// `key` is the exact ranking fact (a rate, a deadline); `label` names it for
-/// a tied tier. Equality is exact and on the value as declared: two nodes at
+/// a tied task. Equality is exact and on the value as declared: two nodes at
 /// 30 Hz tie, 30 Hz and 30.000001 Hz do not. Nothing is rounded into a tie —
 /// the collapse states a fact the contract already carries, and inventing a
 /// tolerance would invent one it does not.
@@ -262,11 +262,11 @@ fn rank_groups<'a, K: PartialEq>(
 
 /// Build a [`SchedPlan`] from ranks already ordered highest-priority-first
 /// (`groups`), spreading priorities across `band`, plus the remaining
-/// (fact-less) nodes collapsed into the synthesized default tier.
+/// (fact-less) nodes collapsed into the synthesized default task.
 ///
-/// A rank holding more than one node is ONE tier carrying all of them: equal
+/// A rank holding more than one node is ONE task carrying all of them: equal
 /// facts earn equal priority, and the band is spent on distinct facts rather
-/// than on the alphabet. Such a tier then takes `chain_aware`'s policy
+/// than on the alphabet. Such a task then takes `chain_aware`'s policy
 /// decision for a tie — `SCHED_RR` where the host's slice is short enough to
 /// actually rotate between them, otherwise `SCHED_FIFO` with an
 /// [`MapWarning::UnmitigatedPriorityTie`] naming both numbers — via the shared
@@ -280,7 +280,7 @@ fn build_ranked_plan(
     period_us: &dyn Fn(&MapperNode) -> Option<u64>,
 ) -> (SchedPlan, Vec<MapWarning>) {
     let n = groups.len();
-    let mut tiers: Vec<ResolvedTier> = Vec::with_capacity(n + 1);
+    let mut tasks: Vec<ResolvedTask> = Vec::with_capacity(n + 1);
 
     let mut node_priority: BTreeMap<String, i64> = BTreeMap::new();
     let mut period_by_name: BTreeMap<String, Option<u64>> = BTreeMap::new();
@@ -313,10 +313,10 @@ fn build_ranked_plan(
         let rr = members
             .first()
             .is_some_and(|m| rr_nodes.contains(m.as_str()));
-        tiers.push(ResolvedTier {
+        tasks.push(ResolvedTask {
             // A one-node rank keeps naming itself after the node (the shape
             // every consumer has seen since this mapper existed). A tied rank
-            // cannot: naming it after one member would read as a tier that
+            // cannot: naming it after one member would read as a task that
             // holds only that node, so it names the fact its members share.
             name: if members.len() == 1 {
                 members[0].clone()
@@ -334,22 +334,22 @@ fn build_ranked_plan(
     if !rest.is_empty() {
         let mut members: Vec<String> = rest.iter().map(|n| n.name.clone()).collect();
         members.sort();
-        tiers.push(ResolvedTier {
-            name: DEFAULT_TIER.to_string(),
+        tasks.push(ResolvedTask {
+            name: DEFAULT_TASK.to_string(),
             members,
             ..Default::default()
         });
     }
 
     // Highest priority first; ties by name — same convention as `resolve()`.
-    tiers.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
-    (ResolvedTierTable { tiers }, warnings)
+    tasks.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
+    (ResolvedTaskTable { tasks }, warnings)
 }
 
 /// `rate_monotonic` — higher rate → higher priority, spread within
 /// `resources.rt_priority_band`. Deterministic: ranked by rate descending,
 /// nodes at the SAME rate collapsed into one rank (members ordered by node
-/// name ascending). Nodes with no `rate_hz` fall into the non-RT default tier.
+/// name ascending). Nodes with no `rate_hz` fall into the non-RT default task.
 ///
 /// Rate-monotonic theory assigns equal periods equal priority. Handing each
 /// node its own level and letting the node name decide which of two 30 Hz
@@ -419,7 +419,7 @@ fn period_from_rate(rate_hz: Option<f64>) -> Option<u64> {
 /// within `resources.rt_priority_band`. Deterministic: ranked by
 /// `deadline_us` ascending, nodes with the SAME deadline collapsed into one
 /// rank (members ordered by node name ascending). Nodes with no `deadline_us`
-/// fall into the non-RT default tier.
+/// fall into the non-RT default task.
 ///
 /// Same ruling as [`RateMonotonicMapper`]: equal facts earn equal priority,
 /// and the tie is mitigated rather than broken by name.
@@ -597,11 +597,11 @@ mod tests {
         let plan = mapper.map(&input, &facts).expect("maps");
 
         // Highest priority first: fast(100) > mid(50) > slow(10).
-        assert_eq!(plan.tiers[0].name, "/fast");
-        assert_eq!(plan.tiers[0].priority, 40);
-        assert_eq!(plan.tiers[1].name, "/mid");
-        assert_eq!(plan.tiers[2].name, "/slow");
-        assert_eq!(plan.tiers[2].priority, 10);
+        assert_eq!(plan.tasks[0].name, "/fast");
+        assert_eq!(plan.tasks[0].priority, 40);
+        assert_eq!(plan.tasks[1].name, "/mid");
+        assert_eq!(plan.tasks[2].name, "/slow");
+        assert_eq!(plan.tasks[2].priority, 10);
     }
 
     /// Two nodes at the same rate are ONE rank: equal facts, equal priority.
@@ -609,10 +609,10 @@ mod tests {
     /// The old test asserted only that `/a` came before `/b` in the output
     /// table, which is true of a name-ordered spread (40 and 30) and of a
     /// collapsed tie alike — so the behaviour it protected was the one nobody
-    /// had chosen. What is pinned now is the choice: one tier, both members,
+    /// had chosen. What is pinned now is the choice: one task, both members,
     /// one priority, member order stable (`docs/design-issues.md` #53).
     #[test]
-    fn rate_monotonic_equal_rates_share_one_tier_and_priority() {
+    fn rate_monotonic_equal_rates_share_one_task_and_priority() {
         let mapper = RateMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", Some(50.0), None), node("/a", Some(50.0), None)],
@@ -622,29 +622,29 @@ mod tests {
         let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
 
         assert_eq!(
-            plan.tiers.len(),
+            plan.tasks.len(),
             1,
             "one rate is one rank: {:?}",
-            plan.tiers
+            plan.tasks
         );
-        let tier = &plan.tiers[0];
+        let task = &plan.tasks[0];
         assert_eq!(
-            tier.members,
+            task.members,
             vec!["/a".to_string(), "/b".to_string()],
             "both tied nodes are members, in a stable order"
         );
         assert_eq!(
-            tier.priority, 40,
+            task.priority, 40,
             "the single rank holds band.max; the band is spent on distinct rates"
         );
         assert_eq!(
-            tier.name, "rate_hz=50",
-            "a tied tier names the fact its members share, not one member"
+            task.name, "rate_hz=50",
+            "a tied task names the fact its members share, not one member"
         );
 
         // No slice stated, so the tie cannot be mitigated -- and that is
         // REPORTED rather than papered over with a name-ordered spread.
-        assert_eq!(tier.sched_class.as_deref(), Some("SCHED_FIFO"));
+        assert_eq!(task.sched_class.as_deref(), Some("SCHED_FIFO"));
         let (priority, nodes, shortest_period_us) = tie_warning(&diags.warnings);
         assert_eq!(priority, 40);
         assert_eq!(nodes, vec!["/a".to_string(), "/b".to_string()]);
@@ -668,7 +668,7 @@ mod tests {
         // 1 ms against a 20 ms period: rotating actually rotates.
         let facts = posix_facts_rr(Some((10, 40)), 1_000);
         let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
-        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_RR"));
+        assert_eq!(plan.tasks[0].sched_class.as_deref(), Some("SCHED_RR"));
         assert!(
             diags.warnings.is_empty(),
             "no tie left unmitigated: {:?}",
@@ -688,7 +688,7 @@ mod tests {
         // Linux's default 100 ms slice against a 10 Hz (100 ms) period.
         let facts = posix_facts_rr(Some((10, 40)), 100_000);
         let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
-        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_FIFO"));
+        assert_eq!(plan.tasks[0].sched_class.as_deref(), Some("SCHED_FIFO"));
         let (_, _, shortest_period_us) = tie_warning(&diags.warnings);
         assert_eq!(shortest_period_us, Some(100_000));
     }
@@ -711,7 +711,7 @@ mod tests {
         let plan = mapper.map(&input, &facts).expect("maps");
 
         let got: Vec<(String, i64, Vec<String>)> = plan
-            .tiers
+            .tasks
             .iter()
             .map(|t| (t.name.clone(), t.priority, t.members.clone()))
             .collect();
@@ -743,14 +743,14 @@ mod tests {
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
 
-        let default_tier = plan
-            .tiers
+        let default_task = plan
+            .tasks
             .iter()
-            .find(|t| t.name == DEFAULT_TIER)
-            .expect("default tier present");
-        assert_eq!(default_tier.members, vec!["/bg".to_string()]);
-        assert_eq!(default_tier.priority, 0);
-        assert!(default_tier.sched_class.is_none());
+            .find(|t| t.name == DEFAULT_TASK)
+            .expect("default task present");
+        assert_eq!(default_task.members, vec!["/bg".to_string()]);
+        assert_eq!(default_task.priority, 0);
+        assert!(default_task.sched_class.is_none());
     }
 
     #[test]
@@ -762,7 +762,7 @@ mod tests {
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
-        assert_eq!(plan.tiers[0].priority, 40);
+        assert_eq!(plan.tasks[0].priority, 40);
     }
 
     #[test]
@@ -812,7 +812,7 @@ mod tests {
         // Deterministic exact spread: rank i of 5 across span 2 →
         // 12 - round(2*i/4) = [12, 11, 11, 10, 10].
         let got: Vec<(String, i64)> = plan
-            .tiers
+            .tasks
             .iter()
             .map(|t| (t.name.clone(), t.priority))
             .collect();
@@ -825,15 +825,15 @@ mod tests {
                 ("/n20".to_string(), 10),
                 ("/n40".to_string(), 10),
             ],
-            "note: equal-priority tiers order by name in the OUTPUT table (/n60 before /n80, \
+            "note: equal-priority tasks order by name in the OUTPUT table (/n60 before /n80, \
              /n20 before /n40); rank (and thus priority) is still assigned by rate"
         );
 
         // Every priority inside the band.
-        for t in &plan.tiers {
+        for t in &plan.tasks {
             assert!(
                 (10..=12).contains(&t.priority),
-                "tier {} priority {} escaped band 10..=12",
+                "task {} priority {} escaped band 10..=12",
                 t.name,
                 t.priority
             );
@@ -864,14 +864,14 @@ mod tests {
         let facts = posix_facts(Some((10, 12)));
         let plan = mapper.map(&input, &facts).expect("maps");
 
-        for t in &plan.tiers {
+        for t in &plan.tasks {
             assert!((10..=12).contains(&t.priority));
         }
         assert!(crate::validate::deadline_priority_contradictions(&input, &plan).is_empty());
 
         // Tightest deadline holds band max; loosest holds band min.
         let prio = |name: &str| {
-            plan.tiers
+            plan.tasks
                 .iter()
                 .find(|t| t.name == name)
                 .map(|t| t.priority)
@@ -927,11 +927,11 @@ mod tests {
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
-        assert_eq!(plan.tiers[0].name, "/tight");
-        assert_eq!(plan.tiers[0].priority, 40);
-        assert_eq!(plan.tiers[1].name, "/mid");
-        assert_eq!(plan.tiers[2].name, "/loose");
-        assert_eq!(plan.tiers[2].priority, 10);
+        assert_eq!(plan.tasks[0].name, "/tight");
+        assert_eq!(plan.tasks[0].priority, 40);
+        assert_eq!(plan.tasks[1].name, "/mid");
+        assert_eq!(plan.tasks[2].name, "/loose");
+        assert_eq!(plan.tasks[2].priority, 10);
     }
 
     #[test]
@@ -943,16 +943,16 @@ mod tests {
         };
         let facts = posix_facts(Some((10, 40)));
         let plan = mapper.map(&input, &facts).expect("maps");
-        let default_tier = plan.tiers.iter().find(|t| t.name == DEFAULT_TIER).unwrap();
-        assert_eq!(default_tier.members, vec!["/bg".to_string()]);
+        let default_task = plan.tasks.iter().find(|t| t.name == DEFAULT_TASK).unwrap();
+        assert_eq!(default_task.members, vec!["/bg".to_string()]);
     }
 
     /// The deadline twin of
-    /// [`rate_monotonic_equal_rates_share_one_tier_and_priority`]: equal
+    /// [`rate_monotonic_equal_rates_share_one_task_and_priority`]: equal
     /// deadlines are one rank, and the deadline is the period the RR slice is
     /// judged against.
     #[test]
-    fn deadline_monotonic_equal_deadlines_share_one_tier_and_priority() {
+    fn deadline_monotonic_equal_deadlines_share_one_task_and_priority() {
         let mapper = DeadlineMonotonicMapper;
         let input = MapperInput {
             nodes: vec![node("/b", None, Some(5_000)), node("/a", None, Some(5_000))],
@@ -961,12 +961,12 @@ mod tests {
         let facts = posix_facts(Some((10, 40)));
         let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
 
-        assert_eq!(plan.tiers.len(), 1, "{:?}", plan.tiers);
-        let tier = &plan.tiers[0];
-        assert_eq!(tier.members, vec!["/a".to_string(), "/b".to_string()]);
-        assert_eq!(tier.priority, 40);
-        assert_eq!(tier.name, "deadline_us=5000");
-        assert_eq!(tier.sched_class.as_deref(), Some("SCHED_FIFO"));
+        assert_eq!(plan.tasks.len(), 1, "{:?}", plan.tasks);
+        let task = &plan.tasks[0];
+        assert_eq!(task.members, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(task.priority, 40);
+        assert_eq!(task.name, "deadline_us=5000");
+        assert_eq!(task.sched_class.as_deref(), Some("SCHED_FIFO"));
         let (_, _, shortest_period_us) = tie_warning(&diags.warnings);
         assert_eq!(shortest_period_us, Some(5_000));
     }
@@ -995,7 +995,7 @@ mod tests {
         let (plan, diags) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
 
         let sched = |name: &str| {
-            plan.tiers
+            plan.tasks
                 .iter()
                 .find(|t| t.name == name)
                 .and_then(|t| t.sched_class.clone())
@@ -1015,7 +1015,7 @@ mod tests {
 
     #[test]
     fn manual_mapper_derives_nothing() {
-        // v0.3.0: `manual` places every node in the default tier, so the
+        // v0.3.0: `manual` places every node in the default task, so the
         // platform file's `overrides:` are the only placement, and it needs
         // no priority band.
         let mapper = ManualMapper;
@@ -1024,11 +1024,11 @@ mod tests {
             chains: Vec::new(),
         };
         let plan = mapper.map(&input, &posix_facts(None)).unwrap();
-        assert!(plan.is_single_tier());
+        assert!(plan.is_single_task());
         assert_eq!(
-            plan.tiers[0].members,
+            plan.tasks[0].members,
             vec!["/a".to_string(), "/b".to_string()]
         );
-        assert_eq!(plan.tiers[0].priority, 0);
+        assert_eq!(plan.tasks[0].priority, 0);
     }
 }

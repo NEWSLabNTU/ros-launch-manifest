@@ -482,7 +482,7 @@ fn execution_layer_slices() {
     assert_eq!(e.bridges[0].from, "eth0");
     assert_eq!(e.bridges[0].topics, vec!["/perception/objects"]);
 
-    // tier table (sched crate TierDef schema) + per-callback-group binding
+    // task table (sched crate TaskDef schema) + per-callback-group binding
     let high = &e.tiers["high"];
     assert_eq!(high.class.as_deref(), Some("real_time"));
     assert_eq!(high.deadline.unwrap().as_micros(), 2_000);

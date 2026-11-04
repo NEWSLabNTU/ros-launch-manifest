@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 indexmap = { version = "2", features = ["serde"] }
 ros-launch-manifest-sched = { path = "../sched" }
+ros-launch-manifest-types = { path = "../types" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
 toml = "0.8"

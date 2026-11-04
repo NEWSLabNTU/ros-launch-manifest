@@ -58,7 +58,8 @@ These pass, and stay:
 - placement facts that change behaviour on any realizer: per-node `domain`,
   `locator`, `rmw` in `Deploy`, from `[host.*]` (its `nodes` / `launch`
   scoping included) and from `[system]`;
-- `[tiers.*]` and `group_tiers` (scheduling, in the shared `sched` schema);
+- `[tasks.*]` and `group_tasks` (scheduling, in the shared `sched` schema;
+  spelled `[tiers.*]` and `group_tiers` before v0.3.10);
 - `[[component]] params` / `params_files` (ROS parameter values);
 - `[system] rmw` / `domain_id` / `locator`, `[[transport]]`, `[[bridge]]`;
 - per-node `lifecycle` and `lifecycle_autostart`. The enum keeps
@@ -77,7 +78,7 @@ The decision: **`SystemConfigToml` is the integrator's system config for
 the shared layers, and this crate owns its format.**
 
 - It declares exactly the tables whose facts pass the test above: `[system]`
-  (`rmw`, `domain_id`, `locator`), `[host.*]`, `[tiers.*]`, `[[component]]`,
+  (`rmw`, `domain_id`, `locator`), `[host.*]`, `[tasks.*]`, `[[component]]`,
   `[[transport]]`, `[[bridge]]`.
 - **Every other table is ignored by design**, not refused. A realizer extends
   the same file with its own tables and validates them itself. This is

@@ -31,7 +31,7 @@
 //!    single rank (Phase 41 tie-collapse decision — no alphabetical
 //!    spread). `once`/`spontaneous`/`unclassified`/fact-less paths never
 //!    enter this ranking and their node falls to
-//!    [`crate::resolve::DEFAULT_TIER`] unless another of its paths ranked.
+//!    [`crate::resolve::DEFAULT_TASK`] unless another of its paths ranked.
 //! 5. The whole ranked sequence (chain items, in chain order, followed by
 //!    non-chain items) is compressed into the platform's `rt_priority_band`
 //!    (dense rank -> priority, order-preserving; when the band is narrower
@@ -59,7 +59,7 @@ use crate::{
         require_posix_band,
     },
     platform::PriorityBand,
-    resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable},
+    resolve::{DEFAULT_TASK, ResolvedTask, ResolvedTaskTable},
 };
 
 pub use crate::chain::EffectiveTrigger;
@@ -148,7 +148,7 @@ fn chain_feasibility(chain: &ResolvedChain) -> ChainFeasibility {
 /// order IS the priority order (highest first); no OS priority numbers are
 /// assigned here. Each platform realizer turns this into concrete scheduling:
 /// the `posix` realizer band-compresses into
-/// [`crate::resolve::ResolvedTierTable`] (steps 5–6), while an RTOS
+/// [`crate::resolve::ResolvedTaskTable`] (steps 5–6), while an RTOS
 /// realizer maps segments → executors + kernel features (EDF /
 /// preemption-threshold / sporadic / affinity) from the same ordering.
 #[derive(Clone, Debug, PartialEq)]
@@ -469,7 +469,7 @@ fn chain_aware_map(
 
 /// The `posix` (Linux) realizer (design steps 5–6): band-compress the agnostic
 /// ranking into OS priorities, project per-node (max over paths), and emit a
-/// [`ResolvedTierTable`]. A Linux apply layer consumes this; an RTOS
+/// [`ResolvedTaskTable`]. A Linux apply layer consumes this; an RTOS
 /// realizer does NOT — it writes its own realization over the same
 /// [`RankedPlan`] ([`chain_aware_rank`]).
 /// Decide which tied nodes get `SCHED_RR` instead of `SCHED_FIFO`.
@@ -480,7 +480,7 @@ fn chain_aware_map(
 ///
 /// The catch is that Linux's RR slice is a **global sysctl**
 /// (`/proc/sys/kernel/sched_rr_timeslice_ms`), not a per-task value —
-/// `TierPlatformSpec::time_slice_us` cannot express it — and its default is
+/// `TaskPlatformSpec::time_slice_us` cannot express it — and its default is
 /// **100 ms**. Two tied 10 Hz nodes would get a slice as long as their whole
 /// period, so RR would behave exactly like FIFO while appearing to have solved
 /// starvation. Deriving it unconditionally would be a cosmetic change dressed
@@ -615,7 +615,7 @@ fn realize_posix(
     );
     warnings.extend(tie_warnings);
 
-    let mut tiers: Vec<ResolvedTier> = node_priority
+    let mut tasks: Vec<ResolvedTask> = node_priority
         .iter()
         .map(|(name, prio)| {
             let sched = if rr_nodes.contains(name.as_str()) {
@@ -627,7 +627,7 @@ fn realize_posix(
                     priority: *prio as i32,
                 }
             };
-            ResolvedTier {
+            ResolvedTask {
                 name: name.clone(),
                 priority: *prio,
                 sched_class: Some(sched.kind().as_str().to_string()),
@@ -653,17 +653,17 @@ fn realize_posix(
     if !rest.is_empty() {
         let mut members = rest;
         members.sort();
-        tiers.push(ResolvedTier {
-            name: DEFAULT_TIER.to_string(),
+        tasks.push(ResolvedTask {
+            name: DEFAULT_TASK.to_string(),
             members,
             ..Default::default()
         });
     }
 
-    tiers.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
+    tasks.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
 
     Ok((
-        ResolvedTierTable { tiers },
+        ResolvedTaskTable { tasks },
         MapDiagnostics { details, warnings },
     ))
 }
@@ -1052,7 +1052,7 @@ mod tests {
     }
 
     fn prio_of<'a>(plan: &'a SchedPlan, node: &str) -> Option<(&'a str, i64)> {
-        plan.tiers
+        plan.tasks
             .iter()
             .find(|t| t.members.iter().any(|m| m == node))
             .map(|t| (t.name.as_str(), t.priority))
@@ -1163,8 +1163,8 @@ mod tests {
         // properties it pins down precisely and leave the exact residual-
         // band value as this implementation's documented interpretation
         // (see the W3 report's "Deviations" section).
-        let (sim_tier, sim_prio) = prio_of(&plan, "/sim_timer").expect("sim_timer ranked");
-        assert_ne!(sim_tier, DEFAULT_TIER);
+        let (sim_task, sim_prio) = prio_of(&plan, "/sim_timer").expect("sim_timer ranked");
+        assert_ne!(sim_task, DEFAULT_TASK);
         assert!(
             sim_prio < 39,
             "sim_timer must rank below the whole chain: {sim_prio}"
@@ -1174,13 +1174,13 @@ mod tests {
             "sim_timer must stay inside the band: {sim_prio}"
         );
 
-        let loader_tier = plan
-            .tiers
+        let loader_task = plan
+            .tasks
             .iter()
-            .find(|t| t.name == DEFAULT_TIER)
-            .expect("default tier present");
-        assert!(loader_tier.members.contains(&"/loader".to_string()));
-        assert!(loader_tier.sched_class.is_none());
+            .find(|t| t.name == DEFAULT_TASK)
+            .expect("default task present");
+        assert!(loader_task.members.contains(&"/loader".to_string()));
+        assert!(loader_task.sched_class.is_none());
 
         // `--explain` detail: every chain member has a provenance string.
         let gate_detail = diag
@@ -1556,7 +1556,7 @@ mod tests {
         );
 
         // Every ranked node stays inside the band (clamped, never escaped).
-        for t in plan.tiers.iter().filter(|t| t.name != DEFAULT_TIER) {
+        for t in plan.tasks.iter().filter(|t| t.name != DEFAULT_TASK) {
             assert_eq!(
                 t.priority, 45,
                 "width-1 band: everything clamps to 45, got {} for {}",

@@ -1,15 +1,23 @@
 //! Shared, portable scheduling spec for launch-based systems.
 //!
 //! Consumed by realizers for Linux RT (target `posix`) and for RTOS
-//! targets. The generic layer (tier class, deadline, binding) is
+//! targets. The generic layer (task class, deadline, binding) is
 //! platform-independent and carries no priority numbers; per-platform
-//! placement lives in `[tiers.<name>.<target>]` sub-tables.
+//! placement lives in `[tasks.<name>.<target>]` sub-tables.
 
 pub mod resolve;
 pub mod types;
 
-pub use resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable, SchedError, SchedNode, resolve};
-pub use types::{AssignRule, ReservedBand, TierDef, TierPlatformSpec};
+pub use resolve::{DEFAULT_TASK, ResolvedTask, ResolvedTaskTable, SchedError, SchedNode, resolve};
+pub use types::{AssignRule, ReservedBand, TaskDef, TaskPlatformSpec};
+
+// Phase 99 T1 (v0.3.10): the scheduling unit is a task. The old names stay
+// one release as deprecated aliases, so a consumer can bump the tag before
+// renaming; they go at the release that moves the model to schema 5.
+#[allow(deprecated)]
+pub use resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable};
+#[allow(deprecated)]
+pub use types::{TierDef, TierPlatformSpec};
 
 // --- v2 (derived) model: platform-file schema, SchedMapper, legacy bridge,
 // conflict-semantics validation (Phase 41.1). Additive: everything above
@@ -24,7 +32,7 @@ pub mod chain;
 pub mod chain_aware_mapper;
 
 // --- Phase 60: typed `posix` placement. Additive: `sched_class`/`priority`/
-// `core` stay on `ResolvedTier`/`TierPlatformSpec` for one release so
+// `core` stay on `ResolvedTask`/`TaskPlatformSpec` for one release so
 // consumers migrate without a lockstep bump. ---
 pub mod posix;
 

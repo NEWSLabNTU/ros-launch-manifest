@@ -134,7 +134,7 @@ impl SystemModel {
 /// durations as `<name>_us: <bare number of microseconds>`. The aliases
 /// that read them were removed in v0.3.0 (play_launch phase 63 W6), where
 /// an authored file is refused; a MODEL is read backward-compatibly, so the
-/// legacy keys are rewritten here before the typed read, on the tier head
+/// legacy keys are rewritten here before the typed read, on the task head
 /// and on each platform sub-table.
 fn upgrade_legacy_tier_keys(doc: &mut serde_yaml_ng::Value) {
     use serde_yaml_ng::Value;
@@ -2188,10 +2188,11 @@ pub struct Execution {
     /// Node FQN → placement.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub deploy: BTreeMap<String, Deploy>,
-    /// Tier name → definition (sched crate schema — see [`TierDef`]).
+    /// Task name → definition (sched crate schema — see [`TaskDef`]). The
+    /// key stays `tiers` through schema 4; schema 5 writes `tasks`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tiers: BTreeMap<String, TierDef>,
-    /// `"<node FQN>"` or `"<node FQN>/<callback group>"` → tier name.
+    pub tiers: BTreeMap<String, TaskDef>,
+    /// `"<node FQN>"` or `"<node FQN>/<callback group>"` → task name.
     /// RESOLVED form: the resolver flattens the authoring-side sparse
     /// `assign` rules (`sched::AssignRule`, scope prefixes + node lists)
     /// into explicit per-node bindings — early binding, like everything
@@ -2308,14 +2309,17 @@ pub struct Deploy {
     pub rmw: Option<String>,
 }
 
-/// Tier definitions reuse the sched crate's schema (RT config v2, phase 41):
+/// Task definitions reuse the sched crate's schema (RT config v2, phase 41):
 /// a portable head (`class`, `deadline_us`, `period_us`, `budget_us`,
 /// `deadline_policy`, `spin_period_us`) plus fixed per-platform placement
 /// sub-tables (`posix`/`freertos`/`zephyr`/`threadx`/`nuttx` — `priority`,
 /// `stack_bytes`, `core`, `sched_class`, `preempt_threshold`, per-platform
 /// `deadline_us` override). One schema for the authoring form
 /// (`system.toml`), the model, and the `SchedMapper` pipeline.
-pub use ros_launch_manifest_sched::types::{ReservedBand, TierDef, TierPlatformSpec};
+pub use ros_launch_manifest_sched::types::{ReservedBand, TaskDef, TaskPlatformSpec};
+/// The pre-phase-99 names, deprecated aliases for one release.
+#[allow(deprecated)]
+pub use ros_launch_manifest_sched::types::{TierDef, TierPlatformSpec};
 
 #[cfg(test)]
 mod order_tests {

@@ -8,36 +8,36 @@ use std::collections::BTreeMap;
 use crate::{
     mapper::{MapperInput, SchedPlan},
     platform::PriorityBand,
-    resolve::DEFAULT_TIER,
+    resolve::DEFAULT_TASK,
 };
 
-/// One tier whose priority falls outside the platform's `rt_priority_band`.
+/// One task whose priority falls outside the platform's `rt_priority_band`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BandViolation {
-    /// The tier name (for built-in derived mappers, this is the node name —
+    /// The task name (for built-in derived mappers, this is the node name —
     /// see [`crate::mapper`] module docs).
-    pub tier: String,
+    pub task: String,
     pub priority: i64,
     pub band: PriorityBand,
 }
 
-/// List every non-default tier in `plan` whose priority falls outside
+/// List every non-default task in `plan` whose priority falls outside
 /// `band`. The caller decides warn-and-clamp vs strict-error; this function
 /// only reports.
 pub fn band_violations(plan: &SchedPlan, band: &PriorityBand) -> Vec<BandViolation> {
-    plan.tiers
+    plan.tasks
         .iter()
-        .filter(|t| t.name != DEFAULT_TIER)
-        // A `SCHED_DEADLINE` tier has NO priority — deadline threads preempt
+        .filter(|t| t.name != DEFAULT_TASK)
+        // A `SCHED_DEADLINE` task has NO priority — deadline threads preempt
         // every fixed-priority thread regardless of RT priority, which is why
         // the kernel gives them a reservation instead of a number. Its
         // `priority` field is therefore absent, not zero, and comparing it
         // against the RT band would flag a violation that does not exist.
         //
-        // This is the same defect class as the `SCHED_OTHER` tier that was
+        // This is the same defect class as the `SCHED_OTHER` task that was
         // once "clamped" into the RT band and printed as `SCHED_OTHER 10` — a
         // state Linux cannot represent, and fatal under strict mode. Skipping
-        // is the fix in both cases: check only tiers that have a priority to
+        // is the fix in both cases: check only tasks that have a priority to
         // check.
         .filter(|t| {
             t.posix
@@ -46,7 +46,7 @@ pub fn band_violations(plan: &SchedPlan, band: &PriorityBand) -> Vec<BandViolati
         })
         .filter(|t| !band.contains(t.priority))
         .map(|t| BandViolation {
-            tier: t.name.clone(),
+            task: t.name.clone(),
             priority: t.priority,
             band: *band,
         })
@@ -66,13 +66,13 @@ pub struct Contradiction {
     pub kind: &'static str,
 }
 
-/// Build a node-name → priority lookup by scanning every tier's members
-/// (tier-grouped or one-node-per-tier plans both work).
+/// Build a node-name → priority lookup by scanning every task's members
+/// (task-grouped or one-node-per-task plans both work).
 fn priority_by_node(plan: &SchedPlan) -> BTreeMap<String, i64> {
     let mut out = BTreeMap::new();
-    for tier in &plan.tiers {
-        for member in &tier.members {
-            out.insert(member.clone(), tier.priority);
+    for task in &plan.tasks {
+        for member in &task.members {
+            out.insert(member.clone(), task.priority);
         }
     }
     out
@@ -154,7 +154,7 @@ mod tests {
     use crate::{
         mapper::{MapperNode, RateMonotonicMapper, SchedMapper},
         platform::{PlatformResources, PosixResources},
-        resolve::{ResolvedTier, ResolvedTierTable},
+        resolve::{ResolvedTask, ResolvedTaskTable},
     };
 
     fn node(name: &str, rate_hz: Option<f64>, deadline_us: Option<u64>) -> MapperNode {
@@ -171,16 +171,16 @@ mod tests {
     }
 
     #[test]
-    fn band_violations_flags_out_of_band_tiers() {
-        let plan = ResolvedTierTable {
-            tiers: vec![
-                ResolvedTier {
+    fn band_violations_flags_out_of_band_tasks() {
+        let plan = ResolvedTaskTable {
+            tasks: vec![
+                ResolvedTask {
                     name: "/a".to_string(),
                     priority: 50, // outside [10, 40]
                     members: vec!["/a".to_string()],
                     ..Default::default()
                 },
-                ResolvedTier {
+                ResolvedTask {
                     name: "/b".to_string(),
                     priority: 20, // inside
                     members: vec!["/b".to_string()],
@@ -191,15 +191,15 @@ mod tests {
         let band = PriorityBand { min: 10, max: 40 };
         let violations = band_violations(&plan, &band);
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].tier, "/a");
+        assert_eq!(violations[0].task, "/a");
         assert_eq!(violations[0].priority, 50);
     }
 
     #[test]
-    fn band_violations_ignores_default_tier() {
-        let plan = ResolvedTierTable {
-            tiers: vec![ResolvedTier {
-                name: DEFAULT_TIER.to_string(),
+    fn band_violations_ignores_default_task() {
+        let plan = ResolvedTaskTable {
+            tasks: vec![ResolvedTask {
+                name: DEFAULT_TASK.to_string(),
                 priority: 0, // outside [10, 40] but must not be flagged
                 members: vec!["/bg".to_string()],
                 ..Default::default()
@@ -214,15 +214,15 @@ mod tests {
         // Build a plan by hand where the FASTER node has LOWER priority —
         // a hand-authored override could produce this; the mapper itself
         // never would.
-        let plan = ResolvedTierTable {
-            tiers: vec![
-                ResolvedTier {
+        let plan = ResolvedTaskTable {
+            tasks: vec![
+                ResolvedTask {
                     name: "/fast".to_string(),
                     priority: 10,
                     members: vec!["/fast".to_string()],
                     ..Default::default()
                 },
-                ResolvedTier {
+                ResolvedTask {
                     name: "/slow".to_string(),
                     priority: 40,
                     members: vec!["/slow".to_string()],
@@ -268,15 +268,15 @@ mod tests {
 
     #[test]
     fn deadline_contradiction_detected_when_priority_order_reversed() {
-        let plan = ResolvedTierTable {
-            tiers: vec![
-                ResolvedTier {
+        let plan = ResolvedTaskTable {
+            tasks: vec![
+                ResolvedTask {
                     name: "/tight".to_string(),
                     priority: 10, // should be high (tight deadline), but isn't
                     members: vec!["/tight".to_string()],
                     ..Default::default()
                 },
-                ResolvedTier {
+                ResolvedTask {
                     name: "/loose".to_string(),
                     priority: 40,
                     members: vec!["/loose".to_string()],
@@ -300,8 +300,8 @@ mod tests {
 
     #[test]
     fn no_contradiction_when_priorities_tie() {
-        let plan = ResolvedTierTable {
-            tiers: vec![ResolvedTier {
+        let plan = ResolvedTaskTable {
+            tasks: vec![ResolvedTask {
                 name: "/both".to_string(),
                 priority: 20,
                 members: vec!["/a".to_string(), "/b".to_string()],
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn no_contradiction_for_nodes_missing_from_plan() {
-        let plan = ResolvedTierTable { tiers: vec![] };
+        let plan = ResolvedTaskTable { tasks: vec![] };
         let input = MapperInput {
             nodes: vec![node("/a", Some(100.0), None), node("/b", Some(1.0), None)],
             chains: Vec::new(),

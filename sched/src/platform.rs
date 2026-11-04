@@ -79,7 +79,7 @@ pub struct PosixResources {
     ///
     /// A platform *fact*, which is why it lives here: on Linux the slice is a
     /// global sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`, default
-    /// **100 ms**), not a per-task value, so `TierPlatformSpec::time_slice`
+    /// **100 ms**), not a per-task value, so `TaskPlatformSpec::time_slice`
     /// cannot express it. The mapper needs it to decide whether `SCHED_RR` is
     /// worth deriving at all: at 100 ms, two tied 10 Hz nodes get a slice as
     /// long as their entire period, so RR degenerates to FIFO while looking
@@ -179,7 +179,7 @@ pub struct PosixOverride {
     pub uclamp_max: Option<u32>,
     /// Declared execution cost.
     ///
-    /// The field `TierDef::budget` has always meant "execution-time budget —
+    /// The field `TaskDef::budget` has always meant "execution-time budget —
     /// EDF/sporadic", but only the deprecated v1 TOML bridge could populate
     /// it, so on every v2 path it was `None` and the derivation substituted a
     /// path's *deadline* for its cost. This is what makes cost authorable, and
@@ -192,7 +192,7 @@ pub struct PosixOverride {
     /// Phase 63: spelled `budget: 8000us`, with `budget_us: 8000` still
     /// accepted. This is the field a measuring tool writes, and it was
     /// missed by the W2 sweep — that wave scoped itself to the fields it
-    /// believed "the v2 schema has none of", which was true of `TierDef` and
+    /// believed "the v2 schema has none of", which was true of `TaskDef` and
     /// false here. The result was a shipped verb whose output the loader
     /// rejected outright: `deny_unknown_fields` turned `budget:` into
     /// "unknown field", so a measured budget could not be pasted into the

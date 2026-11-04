@@ -4,17 +4,17 @@
 //! `priority: i64`, `core: Option<u32>`) that every consumer had to
 //! re-interpret for itself. Three problems that caused, all of them real:
 //!
-//! - **Illegal states were representable.** A tier could carry
+//! - **Illegal states were representable.** A task could carry
 //!   `sched_class: "SCHED_OTHER"` next to `priority: 10` — a combination
 //!   Linux cannot express, and one that was written into `system_model.yaml`
 //!   and treated as fatal by strict mode.
-//! - **Every new knob was another loose `Option`.** `ResolvedTier` already
+//! - **Every new knob was another loose `Option`.** `ResolvedTask` already
 //!   carries thirteen fields mixing a portable head with `posix` placement.
 //! - **Unknown values failed open.** A `sched_class` typo silently became
 //!   `SCHED_OTHER`, dropping a node out of real-time with no diagnostic.
 //!
 //! The types here are **additive**: `sched_class`/`priority`/`core` remain on
-//! [`crate::ResolvedTier`] and [`crate::TierPlatformSpec`] for one release so
+//! [`crate::ResolvedTask`] and [`crate::TaskPlatformSpec`] for one release so
 //! consumers can migrate without a lockstep bump.
 
 use serde::{Deserialize, Serialize};
@@ -136,7 +136,7 @@ impl PosixPolicyKind {
     /// Is this one of the real-time policies (`SCHED_FIFO`/`RR`/`DEADLINE`)?
     ///
     /// This is what decides whether `class: real_time` is written into the
-    /// model's execution layer, and what `band_violations` uses to skip tiers
+    /// model's execution layer, and what `band_violations` uses to skip tasks
     /// that have no RT priority to check.
     pub fn is_real_time(self) -> bool {
         matches!(
@@ -208,7 +208,7 @@ pub enum PosixAffinity {
     Cpuset { path: String },
 }
 
-/// A complete `posix` placement for one tier.
+/// A complete `posix` placement for one task.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PosixPlacement {
     pub sched: PosixSched,

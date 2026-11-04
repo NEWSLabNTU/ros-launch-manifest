@@ -159,6 +159,16 @@ nano-ros follows with its own names too (its phase 534 W3).
 `rule_names` carries each rename's stage (`Accepted`, `Refused`,
 `Retired`).
 
+Progress (2026-11-05): v0.3.10 is release R for M7. `system.toml` reads
+`[tasks.<name>]` and `[[component]] group_tasks`; `[tiers.*]` and
+`group_tiers` read this release with one `deprecated-spelling` diagnostic
+per key naming the new one, and `migrate` rewrites the file
+(`system_config::migrate_system_toml_str`, a textual TOML edit). The sched
+types are `TaskDef`, `TaskPlatformSpec`, `ResolvedTask`,
+`ResolvedTaskTable` (field `tasks`), `DEFAULT_TASK`, with the old names as
+`#[deprecated]` aliases for this release. The model keeps
+`execution.tiers` (schema 4) until R+1.
+
 | # | Ours | Standard | Source | Notes |
 |---|---|---|---|---|
 | M1 | `mapper:` (`rate_monotonic`, `deadline_monotonic`, `manual`), `SchedMapper` | **priority assignment** policy | Liu & Layland; Audsley's optimal priority assignment | platform-file key `priority_assignment:` |
