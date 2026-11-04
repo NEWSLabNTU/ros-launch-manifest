@@ -100,7 +100,7 @@ nodes:
     pub: [external_cmd]
     paths:
       operator_cmd:
-        trigger: spontaneous
+        trigger: aperiodic
         output: [external_cmd]
 "#;
     let m = parse_manifest_str(yaml).unwrap();

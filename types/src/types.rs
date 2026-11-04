@@ -30,6 +30,13 @@ impl ArgDecl {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Manifest {
     pub version: u32,
+    /// Keys and values written under a spelling phase 98 N6 renamed, read
+    /// for one release (rlm v0.3.7) and reported by the consumer as
+    /// `deprecated-spelling`; `migrate` rewrites each. Collected for the
+    /// whole file on the root manifest, each with its full dotted path.
+    /// Not serialized: a serialized manifest is written in the new names.
+    #[serde(skip)]
+    pub deprecated_spellings: Vec<DeprecatedSpelling>,
     /// The grammar release the file needs, as written in its `rlm:` header
     /// (`v0.1.49`, `0.1.49` or `>=0.1.49`; since v0.1.49). Checked against
     /// [`crate::GRAMMAR_VERSION`] before the body is read; `None` when the file
@@ -1966,7 +1973,7 @@ impl PathDecl {
 /// trigger: { timer: { rate_hz: 10 } }
 /// trigger: { input: [a, b] }
 /// trigger: once
-/// trigger: spontaneous
+/// trigger: aperiodic
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -2192,4 +2199,16 @@ mod tests {
         assert!(ep.state.is_none());
         assert!(ep.required.is_none());
     }
+}
+
+/// A key or value written under its pre-phase-98-N6 spelling (see
+/// [`Manifest::deprecated_spellings`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DeprecatedSpelling {
+    /// Dotted contract path of the key (for a value, of the key holding it).
+    pub at: String,
+    /// The old spelling as written.
+    pub old: &'static str,
+    /// What to write instead.
+    pub new: &'static str,
 }

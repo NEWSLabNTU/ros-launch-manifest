@@ -23,10 +23,44 @@ struct ValuePass {
     refs: Vec<ValueRef>,
     lets: Vec<String>,
     node: Option<String>,
+    spellings: Vec<DeprecatedSpelling>,
 }
 
 thread_local! {
     static VALUE_PASS: std::cell::RefCell<ValuePass> = std::cell::RefCell::new(ValuePass::default());
+}
+
+/// Phase 98 N6: an old spelling read for one release; the consumer warns.
+fn note_spelling(at: String, old: &'static str, new: &'static str) {
+    VALUE_PASS.with(|p| {
+        p.borrow_mut()
+            .spellings
+            .push(DeprecatedSpelling { at, old, new })
+    });
+}
+
+/// Phase 98 N6: the key `new`, or its old spelling `old` read for one
+/// release (noted for the consumer's `deprecated-spelling`). Returns the
+/// key the document wrote, `new` when it wrote neither; both is an error
+/// naming the new key.
+fn spelled_key(
+    doc: &Yaml,
+    ctx: &str,
+    old: &'static str,
+    new: &'static str,
+) -> Result<&'static str, ParseError> {
+    if doc[old].is_badvalue() {
+        return Ok(new);
+    }
+    if !doc[new].is_badvalue() {
+        return Err(field_err(
+            ctx,
+            old,
+            &format!("`{old}:` is the old spelling of `{new}:` -- write `{new}:` alone"),
+        ));
+    }
+    note_spelling(format_path(ctx, old), old, new);
+    Ok(old)
 }
 
 /// A scalar that reads the launch tree or a `let:` entry: its text.
@@ -212,6 +246,12 @@ pub fn parse_manifest_str_with_values(
     let result = with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""));
     let pass = VALUE_PASS.with(|p| std::mem::replace(&mut *p.borrow_mut(), outer));
     let mut m = result?;
+    let mut seen_at = std::collections::BTreeSet::new();
+    m.deprecated_spellings = pass
+        .spellings
+        .into_iter()
+        .filter(|s| seen_at.insert(s.at.clone()))
+        .collect();
     crate::transport::apply_links(&mut m, &BTreeMap::new())?;
     let mut seen = std::collections::BTreeSet::new();
     m.value_refs = pass
@@ -472,6 +512,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     let manifest = Manifest {
         lets,
         value_refs: Vec::new(),
+        deprecated_spellings: Vec::new(),
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
         rlm: if ctx.is_empty() {
             doc["rlm"].as_str().map(str::to_string)
@@ -1959,15 +2000,20 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
         // function declared at scope level — resolved by the loader, which
         // is the layer that knows the scope's functions.
         let mut guards = Vec::new();
-        match &v["guards"] {
+        let monitors = spelled_key(v, &hctx, "guards", "monitors")?;
+        match &v[monitors] {
             Yaml::BadValue | Yaml::Null => {}
             Yaml::Array(items) => {
                 for (i, item) in items.iter().enumerate() {
-                    let gctx = format_path(&hctx, &format!("guards[{i}]"));
-                    guards.push(parse_hazard_guard(item, &gctx, &format!("guards[{i}]"))?);
+                    let gctx = format_path(&hctx, &format!("{monitors}[{i}]"));
+                    guards.push(parse_hazard_guard(
+                        item,
+                        &gctx,
+                        &format!("{monitors}[{i}]"),
+                    )?);
                 }
             }
-            other => return Err(type_err(&hctx, "guards", "a list", other)),
+            other => return Err(type_err(&hctx, monitors, "a list", other)),
         }
         // Phase 82: a set. A scalar is the set of one; `on: []` is refused
         // because an empty set would read as "omitted" (= every class),
@@ -2091,15 +2137,16 @@ fn parse_on_violation(doc: &Yaml, ctx: &str) -> Result<Option<OnViolation>, Pars
 /// RFC-0074). Shape only: whether the device can absorb it is a property of
 /// the board (its per-frame cost), which the consumer owns.
 fn parse_ingress(doc: &Yaml, ctx: &str) -> Result<Option<IngressDecl>, ParseError> {
-    let section = &doc["ingress"];
+    let key = spelled_key(doc, ctx, "ingress", "arrival_curve")?;
+    let section = &doc[key];
     if section.is_badvalue() {
         return Ok(None);
     }
-    let ctx = &format_path(ctx, "ingress");
+    let ctx = &format_path(ctx, key);
     if !matches!(section, Yaml::Hash(_)) {
         return Err(field_err(
             ctx,
-            "ingress",
+            key,
             "expected a mapping `{ rate_hz: <n>, burst: <n> }`",
         ));
     }
@@ -2459,8 +2506,8 @@ fn parse_endpoints(
                 if key != "sub" && props.ingress.is_some() {
                     return Err(field_err(
                         &path,
-                        "ingress",
-                        "`ingress` bounds what a SUBSCRIBER is made to absorb; a publisher's \
+                        "arrival_curve",
+                        "`arrival_curve` bounds what a SUBSCRIBER is made to absorb; a publisher's \
                          output rate is `min_rate_hz` / `max_rate_hz`",
                     ));
                 }
@@ -2522,8 +2569,8 @@ fn parse_endpoints(
                 if key != "pub" && props.on_demand.is_some() {
                     return Err(field_err(
                         &path,
-                        "on_demand",
-                        "`on_demand` is a publisher's statement (it publishes when asked and \
+                        "aperiodic",
+                        "`aperiodic` is a publisher's statement (it publishes when asked and \
                          promises no rate); a subscriber that needs no rate simply states no \
                          `min_rate_hz`",
                     ));
@@ -2605,7 +2652,10 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         link: yaml_string(yaml, "link", ctx)?,
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
-        on_demand: yaml_bool(yaml, "on_demand", ctx)?,
+        on_demand: {
+            let key = spelled_key(yaml, ctx, "on_demand", "aperiodic")?;
+            yaml_bool(yaml, key, ctx)?
+        },
         ingress: parse_ingress(yaml, ctx)?,
         min_interarrival,
         budget,
@@ -2639,9 +2689,9 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     {
         return Err(field_err(
             ctx,
-            "ingress",
+            "arrival_curve",
             &format!(
-                "`ingress.rate_hz` {} is below this subscriber's own `min_rate_hz` {need}: it \
+                "`arrival_curve.rate_hz` {} is below this subscriber's own `min_rate_hz` {need}: it \
                  would admit less than the endpoint requires",
                 ingress.rate_hz
             ),
@@ -2650,8 +2700,8 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     if props.on_demand == Some(true) && props.min_rate_hz.is_some() {
         return Err(field_err(
             ctx,
-            "on_demand",
-            "`on_demand: true` says this publisher promises no rate, and `min_rate_hz` promises \
+            "aperiodic",
+            "`aperiodic: true` says this publisher promises no rate, and `min_rate_hz` promises \
              one: state one or the other",
         ));
     }
@@ -3393,8 +3443,8 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
 // ── Trigger ──
 
 /// Parse `trigger:` (Vocabulary v2, Phase 44.1 §1). Bare-string forms
-/// (`once`, `spontaneous`) or single-key mapping forms (`timer:`,
-/// `input:`).
+/// (`once`, `aperiodic` -- `spontaneous` before phase 98 N6, read for one
+/// release) or single-key mapping forms (`timer:`, `input:`).
 fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     let section = &doc["trigger"];
     if section.is_badvalue() {
@@ -3403,12 +3453,16 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     if let Some(s) = section.as_str() {
         return match s {
             "once" => Ok(Some(Trigger::Once)),
-            "spontaneous" => Ok(Some(Trigger::Spontaneous)),
+            "aperiodic" => Ok(Some(Trigger::Spontaneous)),
+            "spontaneous" => {
+                note_spelling(format_path(ctx, "trigger"), "spontaneous", "aperiodic");
+                Ok(Some(Trigger::Spontaneous))
+            }
             other => Err(field_err(
                 ctx,
                 "trigger",
                 &format!(
-                    "invalid trigger '{other}', expected 'once', 'spontaneous', \
+                    "invalid trigger '{other}', expected 'once', 'aperiodic', \
                      or a mapping with 'timer' or 'input'"
                 ),
             )),
@@ -3418,7 +3472,7 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
         field_err(
             ctx,
             "trigger",
-            "expected 'once', 'spontaneous', or a mapping with 'timer' or 'input'",
+            "expected 'once', 'aperiodic', or a mapping with 'timer' or 'input'",
         )
     })?;
     if hash.len() != 1 {
@@ -4272,7 +4326,7 @@ modes:
     reaction: system.emergency_stop
 hazards:
   lost_pose:
-    guards: [pose_estimation]
+    monitors: [pose_estimation]
     ftti: 2s
     reaction: autonomous
 "#;
@@ -4447,7 +4501,7 @@ hazards:
     #[test]
     fn ingress_is_a_subscribers_token_bucket() {
         let m = super::parse_manifest_str(
-            "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 10, ingress: { rate_hz: 200, burst: 4 } }\n",
+            "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 10, arrival_curve: { rate_hz: 200, burst: 4 } }\n",
         )
         .unwrap();
         let ing = m.nodes["n"].subscribers["cmd"].ingress.expect("ingress");
@@ -4455,31 +4509,31 @@ hazards:
         assert_eq!(ing.burst, 4);
         for (bad, needle) in [
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 200 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 200 } }\n",
                 "required: the messages that may arrive back to back",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { burst: 4 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { burst: 4 } }\n",
                 "required: the sustained messages per second",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 200, burst: 0 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 200, burst: 0 } }\n",
                 "must be >= 1",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 0, burst: 4 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 0, burst: 4 } }\n",
                 "finite number > 0",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { ingress: { rate_hz: 200, burst: 4, cap: 9 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 200, burst: 4, cap: 9 } }\n",
                 "cap",
             ),
             (
-                "nodes:\n  n:\n    pub:\n      cmd: { ingress: { rate_hz: 200, burst: 4 } }\n",
+                "nodes:\n  n:\n    pub:\n      cmd: { arrival_curve: { rate_hz: 200, burst: 4 } }\n",
                 "bounds what a SUBSCRIBER",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 50, ingress: { rate_hz: 20, burst: 4 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 50, arrival_curve: { rate_hz: 20, burst: 4 } }\n",
                 "below this subscriber's own `min_rate_hz`",
             ),
         ] {
@@ -4730,22 +4784,22 @@ hazards:
     #[test]
     fn on_demand_is_a_publishers_statement() {
         let m = super::parse_manifest_str(
-            "nodes:\n  op:\n    pub:\n      limit: { on_demand: true }\n",
+            "nodes:\n  op:\n    pub:\n      limit: { aperiodic: true }\n",
         )
         .expect("parses");
         assert_eq!(m.nodes["op"].publishers["limit"].on_demand, Some(true));
         for (yaml, needle) in [
             (
-                "nodes:\n  op:\n    pub:\n      limit: { on_demand: true, min_rate_hz: 10 }\n",
+                "nodes:\n  op:\n    pub:\n      limit: { aperiodic: true, min_rate_hz: 10 }\n",
                 "state one or the other",
             ),
             (
-                "nodes:\n  op:\n    sub:\n      limit: { on_demand: true }\n",
+                "nodes:\n  op:\n    sub:\n      limit: { aperiodic: true }\n",
                 "is a publisher's statement",
             ),
             (
-                "nodes:\n  op:\n    pub:\n      limit: { on_demand: yes_please }\n",
-                "on_demand",
+                "nodes:\n  op:\n    pub:\n      limit: { aperiodic: yes_please }\n",
+                "aperiodic",
             ),
         ] {
             let err = super::parse_manifest_str(yaml)
@@ -4786,7 +4840,7 @@ hazards:
   drive_blind:
     integrity: ASIL_D
     description: vehicle continues with no obstacle data
-    guards:
+    monitors:
       - /safety/scan
       - pose
     on: omission
@@ -4890,11 +4944,11 @@ nodes:
                 "required",
             ),
             (
-                "hazards:\n  h:\n    guards: [{ all_of: [/a, /b] }]\n",
+                "hazards:\n  h:\n    monitors: [{ all_of: [/a, /b] }]\n",
                 "Removed in v0.1.59",
             ),
             (
-                "hazards:\n  h:\n    guards: [{ any: [/a] }]\n",
+                "hazards:\n  h:\n    monitors: [{ any: [/a] }]\n",
                 "unknown key",
             ),
             ("hazards:\n  h:\n    fttii: 5ms\n", "did you mean `ftti`"),
@@ -5667,7 +5721,7 @@ functions:
   driver_took_over: { of: /vehicle/status/control_mode, when: { field: mode, equals: MANUAL } }
 hazards:
   odd_exit:
-    guards: [/system/operation_mode/availability]
+    monitors: [/system/operation_mode/availability]
     on: reported
     when: { field: autonomous, equals: false }
     entry_speed: 8.33
@@ -5792,7 +5846,7 @@ nodes:
     fn a_predicate_has_exactly_one_operator_and_a_fitting_constant() {
         let h = |when: &str| {
             format!(
-                "version: 1\nhazards:\n  h:\n    guards: [/t]\n    on: reported\n    when: {when}\n"
+                "version: 1\nhazards:\n  h:\n    monitors: [/t]\n    on: reported\n    when: {when}\n"
             )
         };
         let e = err_of(&h("{ field: autonomous }"));
@@ -5861,6 +5915,70 @@ nodes:
     /// Phase 98 N4: each key renamed in v0.3.3 is refused since v0.3.6,
     /// by a message naming its replacement (one case per key, so a removal
     /// that forgot one fails).
+    /// Phase 98 N6: each old spelling still reads, as what its new one
+    /// reads, and is noted for the consumer's warning with its path;
+    /// writing both is an error naming the new key.
+    #[test]
+    fn n6_old_spellings_read_and_are_noted() {
+        let new = "version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in: { arrival_curve: { rate_hz: 10, burst: 2 } }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n";
+        let old = "version: 1\nhazards:\n  h: { guards: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { on_demand: true }\n    sub:\n      in: { ingress: { rate_hz: 10, burst: 2 } }\n    paths:\n      p: { trigger: spontaneous, output: [cmd] }\n";
+        let n = parse_manifest_str(new).unwrap();
+        let o = parse_manifest_str(old).unwrap();
+        assert!(
+            n.deprecated_spellings.is_empty(),
+            "{:?}",
+            n.deprecated_spellings
+        );
+        let mut got: Vec<(String, &str, &str)> = o
+            .deprecated_spellings
+            .iter()
+            .map(|s| (s.at.clone(), s.old, s.new))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                ("hazards.h.guards".to_string(), "guards", "monitors"),
+                (
+                    "nodes.n.paths.p.trigger".to_string(),
+                    "spontaneous",
+                    "aperiodic"
+                ),
+                (
+                    "nodes.n.pub.cmd.on_demand".to_string(),
+                    "on_demand",
+                    "aperiodic"
+                ),
+                (
+                    "nodes.n.sub.in.ingress".to_string(),
+                    "ingress",
+                    "arrival_curve"
+                ),
+            ]
+        );
+        assert_eq!(o.hazards["h"].guards, n.hazards["h"].guards);
+        assert_eq!(
+            o.nodes["n"].publishers["cmd"].on_demand,
+            n.nodes["n"].publishers["cmd"].on_demand
+        );
+        assert_eq!(
+            o.nodes["n"].subscribers["in"].ingress,
+            n.nodes["n"].subscribers["in"].ingress
+        );
+        assert_eq!(
+            o.nodes["n"].paths["p"].trigger,
+            n.nodes["n"].paths["p"].trigger
+        );
+        for both in [
+            "version: 1\nhazards:\n  h: { guards: [a], monitors: [a], ftti: 1s }\n",
+            "version: 1\nnodes:\n  n:\n    pub:\n      cmd: { on_demand: true, aperiodic: true }\n",
+            "version: 1\nnodes:\n  n:\n    sub:\n      in: { ingress: { rate_hz: 1, burst: 1 }, arrival_curve: { rate_hz: 1, burst: 1 } }\n",
+        ] {
+            let e = parse_manifest_str(both).unwrap_err().to_string();
+            assert!(e.contains("is the old spelling of"), "{e}");
+        }
+    }
+
     #[test]
     fn every_key_renamed_in_phase_98_is_refused_naming_its_replacement() {
         for (doc, at, new) in [
@@ -6186,7 +6304,7 @@ nodes:
 version: 1
 hazards:
   h:
-    guards: [/a]
+    monitors: [/a]
     ftti: { duration: 10s, source: requirement }
     reaction: r
 modes:
@@ -6354,7 +6472,7 @@ nodes:
     /// without `use:` the same key is refused as unknown.
     #[test]
     fn use_captures_extension_keys() {
-        let body = "hazards:\n  h:\n    guards: [/p]\n    on: reported\n    deadline_by: machine.iso13855/safety_distance\n    reaction: stop\n    detection_capability: 30 mm\n    device_response: 15ms\nnodes:\n  n:\n    paths:\n      stop:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            traction_cut_off: 1.0s\n            a_ebd: { 0 km/h: 0.75 m/s^2, 100 km/h: 0.70 m/s^2 }\n            response: 256ms\n";
+        let body = "hazards:\n  h:\n    monitors: [/p]\n    on: reported\n    deadline_by: machine.iso13855/safety_distance\n    reaction: stop\n    detection_capability: 30 mm\n    device_response: 15ms\nnodes:\n  n:\n    paths:\n      stop:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            traction_cut_off: 1.0s\n            a_ebd: { 0 km/h: 0.75 m/s^2, 100 km/h: 0.70 m/s^2 }\n            response: 256ms\n";
         let m = super::parse_manifest_str(&format!(
             "use: {{ machine.iso13855: \"^0.3\", rail.ebd: \"~0.1\" }}\n{body}"
         ))
@@ -6426,7 +6544,7 @@ nodes:
     /// `detection:` and `deadline_by:`, and `reaction_total` refused.
     #[test]
     fn derived_records_and_the_hazard_interface_parse() {
-        let yaml = "hazards:\n  occlusion:\n    guards: [/p]\n    on: reported\n    ftti: 1800s\n    reaction: stop\n    detection:\n      duration: 3028.8s\n      source:\n        derived:\n          by: medical.occlusion\n          version: 0.1.0\n          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n          inputs: { min_rate: 1 mL/h, alarm_threshold: 300 }\n          trace: ['(300 - 20) mmHg * 0.003 mL/mmHg = 0.84 mL', '0.84 mL / 1 mL/h = 50.40 min']\n  reach:\n    guards: [/c]\n    on: reported\n    deadline_by: machine.iso13855/safety_distance\n    reaction: stop\n";
+        let yaml = "hazards:\n  occlusion:\n    monitors: [/p]\n    on: reported\n    ftti: 1800s\n    reaction: stop\n    detection:\n      duration: 3028.8s\n      source:\n        derived:\n          by: medical.occlusion\n          version: 0.1.0\n          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n          inputs: { min_rate: 1 mL/h, alarm_threshold: 300 }\n          trace: ['(300 - 20) mmHg * 0.003 mL/mmHg = 0.84 mL', '0.84 mL / 1 mL/h = 50.40 min']\n  reach:\n    monitors: [/c]\n    on: reported\n    deadline_by: machine.iso13855/safety_distance\n    reaction: stop\n";
         let m = super::parse_manifest_str(yaml).unwrap_or_else(|e| panic!("{e}"));
         let h = &m.hazards["occlusion"];
         let det = h.detection.as_ref().expect("detection");
@@ -6456,7 +6574,7 @@ nodes:
         );
         // A bare `source: derived` stays a kind without a record.
         let bare = super::parse_manifest_str(
-            "hazards:\n  h:\n    guards: [/p]\n    ftti: { duration: 1s, source: derived }\n    reaction: r\n",
+            "hazards:\n  h:\n    monitors: [/p]\n    ftti: { duration: 1s, source: derived }\n    reaction: r\n",
         )
         .unwrap();
         let s = bare.hazards["h"]
@@ -6474,7 +6592,7 @@ nodes:
     fn a_malformed_derivation_or_hazard_interface_is_refused() {
         let hz = |extra: &str| {
             super::parse_manifest_str(&format!(
-                "hazards:\n  h:\n    guards: [/p]\n    ftti: 1s\n    reaction: r\n{extra}"
+                "hazards:\n  h:\n    monitors: [/p]\n    ftti: 1s\n    reaction: r\n{extra}"
             ))
             .map(|_| ())
             .unwrap_err()
@@ -6617,7 +6735,7 @@ nodes:
             assert!(e.contains(needle), "{extra}: {e}");
         }
         // `overrun` is the supervision's verdict, not a class to watch for.
-        let e = super::parse_manifest_str("hazards:\n  h: { guards: [/a], on: overrun }\n")
+        let e = super::parse_manifest_str("hazards:\n  h: { monitors: [/a], on: overrun }\n")
             .unwrap_err()
             .to_string();
         assert!(e.contains("supervise:"), "{e}");

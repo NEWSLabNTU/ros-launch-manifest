@@ -151,8 +151,8 @@ fn check_on_demand(
             id,
             &format!("topics.{topic_name}"),
             format!(
-                "topic rate_hz ({rate}) beside on-demand publisher '{first}', which promises no \
-                 rate (`on_demand: true`)"
+                "topic rate_hz ({rate}) beside aperiodic publisher '{first}', which promises no \
+                 rate (`aperiodic: true`)"
             ),
         );
     }
@@ -172,7 +172,7 @@ fn check_on_demand(
                 &format!("topics.{topic_name}"),
                 format!(
                     "subscriber '{sub_ref}' requires min_rate_hz ({rate}), but every publisher of \
-                     the topic is on demand (`on_demand: true` on '{first}') and promises no rate"
+                     the topic is aperiodic (`aperiodic: true` on '{first}') and promises no rate"
                 ),
             );
         }
@@ -229,7 +229,7 @@ mod max_rate_tests {
     /// nobody may hold it to one.
     #[test]
     fn an_on_demand_publisher_promises_no_rate() {
-        let base = "version: 1\nnodes:\n  op:\n    pub:\n      limit: { on_demand: true }\n  planner:\n    sub:\n      limit: SUB\ntopics:\n  limit:\n    type: T\n    pub: [op/limit]\n    sub: [planner/limit]\n";
+        let base = "version: 1\nnodes:\n  op:\n    pub:\n      limit: { aperiodic: true }\n  planner:\n    sub:\n      limit: SUB\ntopics:\n  limit:\n    type: T\n    pub: [op/limit]\n    sub: [planner/limit]\n";
         // Nobody requires a rate: clean.
         assert!(errors(&base.replace("SUB", "{}")).is_empty());
         // A read-latest subscriber requires none either.
@@ -243,7 +243,7 @@ mod max_rate_tests {
         let errs = errors(&format!("{}    rate_hz: 10\n", base.replace("SUB", "{}")));
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(
-            errs[0].contains("beside on-demand publisher 'op/limit'"),
+            errs[0].contains("beside aperiodic publisher 'op/limit'"),
             "{errs:?}"
         );
     }

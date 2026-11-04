@@ -6,7 +6,7 @@ nodes:
       out2: {}
     paths:
       make:
-        trigger: spontaneous
+        trigger: aperiodic
         output: [out]
         max_latency: 40ms
       make_slow:

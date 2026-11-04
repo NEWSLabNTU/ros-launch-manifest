@@ -181,7 +181,7 @@ document asserted the min unconditionally until v0.1.39.
 ### What else is derived
 
 Topic rates propagate from the timers that drive them. Any unknown contributor
-— a `once` path, a `spontaneous` one, an external publisher, a cycle — makes
+— a `once` path, an `aperiodic` one, an external publisher, a cycle — makes
 the answer `Unknown` **with a reason**, never zero, because a zero silently
 passes every budget.
 

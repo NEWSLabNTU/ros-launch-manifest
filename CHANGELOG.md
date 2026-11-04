@@ -6,6 +6,50 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.7 - 2026-11-04
+
+Phase 98 N6, release R for four of the imprecise names (play_launch
+`docs/roadmap/phase-98-standard-names.md`, `docs/design/standard-names.md`
+§3). GRAMMAR_VERSION 0.3.7; the model's schema stays 3 and the workspace
+Cargo version 0.4.0. Each old spelling reads for this release with a
+`deprecated-spelling` warning from the consumer, and is refused in the
+next.
+
+### Changed
+
+- **`hazards.<h>.monitors`** (was `guards`, M2): the topics watched for a
+  fault are its monitored signals; in formal methods a guard is a
+  transition's condition. `rule_names::RENAMED_KEYS` maps
+  `hazards.<h>.guards[i]` in an `acknowledged:` path, accepted this
+  release.
+- **`sub.<e>.arrival_curve`** (was `ingress`, M4): a token bucket bounding
+  what arrives is network calculus's arrival curve.
+- **`pub.<e>.aperiodic`** and **`trigger: aperiodic`** (were `on_demand`
+  and `trigger: spontaneous`, M5): an activation with no period and no
+  minimum separation is aperiodic in the periodic / sporadic / aperiodic
+  task model. The `rate-hierarchy` messages say "aperiodic publisher".
+- **A platform file's `priority_assignment:`** (was `mapper:`, M1): what it
+  names is a priority assignment policy. `PlatformFile.spelled_mapper` says
+  the old key was written; both keys is
+  `PlatformError::BothPriorityAssignmentSpellings`, neither is
+  `MissingPriorityAssignment`. The band errors name the new key.
+
+### Added
+
+- **`Manifest::deprecated_spellings`**: every old N6 spelling a file wrote,
+  with its dotted path, collected on the root manifest (not serialized). A
+  consumer warns per entry.
+- **`migrate` rewrites** `guards-monitors`, `ingress-arrival-curve` and
+  `aperiodic` (key and trigger value), at every manifest level, block and
+  flow; a mapping writing both spellings is left for a hand edit.
+
+### Not changed yet
+
+- The model keeps its field names (`guards`, `ingress`, `on_demand`,
+  `Spontaneous`, `execution.sched.mapper`) and the Rust types theirs:
+  nano-ros reads them, so they move with its pull request.
+- M3 (`budget` in the time-limit sense) waits on its names.
+
 ## v0.3.6 - 2026-11-04
 
 Phase 98 N4 (play_launch `docs/roadmap/phase-98-standard-names.md`): the

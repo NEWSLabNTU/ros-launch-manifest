@@ -228,7 +228,7 @@ time interval**.
 hazards:
   drive_blind:
     integrity: ASIL_D
-    guards: [/scan]              # what is watched
+    monitors: [/scan]              # what is watched
     on: omission                 # omission | late | loss | reported
     ftti: 300ms                  # REQUIREMENT: fault -> hazardous event
     reaction: stop_now           # the event chain reaching the safe state

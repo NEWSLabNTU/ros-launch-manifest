@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn every_bound_key_parses_to_its_row() {
         let m = crate::parse_manifest_str(
-            "hazards:\n  h: { guards: [/a], ftti: { duration: 1s, source: requirement }, detection: 1s }\n\
+            "hazards:\n  h: { monitors: [/a], ftti: { duration: 1s, source: requirement }, detection: 1s }\n\
              modes:\n  m: { requires: [/a], min_dwell: { duration: 10s, param: n.t } }\n\
              topics:\n  /a: { type: std_msgs/msg/Empty, max_transport: 2ms, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\

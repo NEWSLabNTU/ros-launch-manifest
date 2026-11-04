@@ -3,8 +3,7 @@
 //! `scripts/check_terms.py`; this test is what runs it, and its negative
 //! control, on every `cargo test`.
 
-use std::path::Path;
-use std::process::Command;
+use std::{path::Path, process::Command};
 
 fn run(args: &[&str]) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();

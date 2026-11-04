@@ -149,7 +149,7 @@ nodes:
       out: {}
     paths:
       main:
-        trigger: spontaneous
+        trigger: aperiodic
         input: [a]
         output: [out]
 "#;

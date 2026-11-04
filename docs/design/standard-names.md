@@ -142,6 +142,13 @@ as the old one's return.
 
 Fixed when the area is next touched, in the same release discipline (§5).
 
+Progress (2026-11-04): M1, M2, M4 and M5 are at release R in v0.3.7 --
+the contract keys and the platform-file key take the new spelling, the old
+one reads with a warning and `migrate` rewrites it (M1's platform-file key
+by hand). The model's field names and the Rust types are unchanged until
+nano-ros moves with them. M6 is done in play_launch (`chains.json` format
+2). M3 waits on its rule ids; M7 is undecided.
+
 | # | Ours | Standard | Source | Notes |
 |---|---|---|---|---|
 | M1 | `mapper:` (`rate_monotonic`, `deadline_monotonic`, `manual`), `SchedMapper` | **priority assignment** policy | Liu & Layland; Audsley's optimal priority assignment | platform-file key `priority_assignment:` |

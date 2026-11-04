@@ -156,6 +156,33 @@ pub const REWRITES: &[Rewrite] = &[
         find: window_min_dwell,
     },
     Rewrite {
+        id: "guards-monitors",
+        unit: "98 N6 M2",
+        since: "0.3.7",
+        from: "hazards.<h>.guards: [...]",
+        to: "hazards.<h>.monitors: [...]",
+        when: "always (the topics watched for a fault are its monitored signals; in formal methods a guard is a transition's condition)",
+        find: guards_monitors,
+    },
+    Rewrite {
+        id: "ingress-arrival-curve",
+        unit: "98 N6 M4",
+        since: "0.3.7",
+        from: "nodes.<n>.sub.<e>.ingress: { rate_hz, burst }",
+        to: "nodes.<n>.sub.<e>.arrival_curve: { rate_hz, burst }",
+        when: "always (a token bucket bounding what arrives is network calculus's arrival curve)",
+        find: ingress_arrival_curve,
+    },
+    Rewrite {
+        id: "aperiodic",
+        unit: "98 N6 M5",
+        since: "0.3.7",
+        from: "nodes.<n>.pub.<e>.on_demand: true; a path's `trigger: spontaneous`",
+        to: "nodes.<n>.pub.<e>.aperiodic: true; `trigger: aperiodic`",
+        when: "always (an activation with no period and no minimum separation is aperiodic in the periodic / sporadic / aperiodic task model)",
+        find: aperiodic,
+    },
+    Rewrite {
         id: "rule-id-renamed",
         unit: "98",
         since: "0.3.3",
@@ -665,6 +692,140 @@ fn rule_id_renamed(doc: &Doc) -> Vec<Edit> {
                 _ => new,
             };
             out.push(doc.edit(ID, &dotted, start..end, text));
+        }
+    }
+    out
+}
+
+/// Rename the key `old` to `new` in each mapping of `maps`, leaving one
+/// that writes both for a hand edit (the parser refuses it).
+fn rename_in(
+    doc: &Doc,
+    id: &'static str,
+    maps: Vec<(Vec<String>, Yaml)>,
+    old: &str,
+    new: &str,
+) -> Vec<Edit> {
+    let mut out = Vec::new();
+    for (mpath, m) in maps {
+        if m[old].is_badvalue() {
+            continue;
+        }
+        let path = with(&mpath, &[old]);
+        if !m[new].is_badvalue() {
+            doc.skip(
+                id,
+                &path.join("."),
+                "both spellings written: delete one by hand",
+            );
+            continue;
+        }
+        let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+        out.extend(doc.rename_key(id, &refs, new));
+    }
+    out
+}
+
+/// Every `nodes.<n>.<side>.<e>` mapping, at every manifest level.
+fn endpoint_maps(doc: &Doc, side: &str) -> Vec<(Vec<String>, Yaml)> {
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let Some(nodes) = y["nodes"].as_hash() else {
+            continue;
+        };
+        for (k, n) in nodes {
+            let Some(node) = key_str(k) else { continue };
+            let Some(eps) = n[side].as_hash() else {
+                continue;
+            };
+            for (ek, e) in eps {
+                if let Some(ep) = key_str(ek) {
+                    out.push((with(&level, &["nodes", &node, side, &ep]), e.clone()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Phase 98 N6 M2: `hazards.<h>.guards` becomes `monitors`.
+fn guards_monitors(doc: &Doc) -> Vec<Edit> {
+    let mut maps = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        if let Some(hazards) = y["hazards"].as_hash() {
+            for (k, h) in hazards {
+                if let Some(name) = key_str(k) {
+                    maps.push((with(&level, &["hazards", &name]), h.clone()));
+                }
+            }
+        }
+    }
+    rename_in(doc, "guards-monitors", maps, "guards", "monitors")
+}
+
+/// Phase 98 N6 M4: a subscriber's `ingress` becomes `arrival_curve`.
+fn ingress_arrival_curve(doc: &Doc) -> Vec<Edit> {
+    rename_in(
+        doc,
+        "ingress-arrival-curve",
+        endpoint_maps(doc, "sub"),
+        "ingress",
+        "arrival_curve",
+    )
+}
+
+/// Phase 98 N6 M5: a publisher's `on_demand` becomes `aperiodic`, and a
+/// path's `trigger: spontaneous` becomes `trigger: aperiodic`.
+fn aperiodic(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "aperiodic";
+    let mut out = rename_in(doc, ID, endpoint_maps(doc, "pub"), "on_demand", "aperiodic");
+    for (level, y) in manifest_levels(doc) {
+        let mut maps: Vec<(Vec<String>, Yaml)> =
+            vec![(with(&level, &["paths"]), y["paths"].clone())];
+        if let Some(nodes) = y["nodes"].as_hash() {
+            for (k, v) in nodes {
+                if let Some(n) = key_str(k) {
+                    maps.push((with(&level, &["nodes", &n, "paths"]), v["paths"].clone()));
+                }
+            }
+        }
+        for (mpath, paths) in maps {
+            let Some(paths) = paths.as_hash() else {
+                continue;
+            };
+            for (k, p) in paths {
+                let Some(name) = key_str(k) else { continue };
+                if p["trigger"].as_str() != Some("spontaneous") {
+                    continue;
+                }
+                let item = with(&mpath, &[&name]);
+                let path = with(&item, &["trigger"]);
+                let dotted = path.join(".");
+                let Some(&start) = doc.nodes.get(&path) else {
+                    doc.skip(ID, &dotted, "value token not found");
+                    continue;
+                };
+                let in_flow = doc.flow.contains(&item)
+                    || doc
+                        .nodes
+                        .get(&item)
+                        .is_some_and(|&p| doc.src[p..].starts_with('{'));
+                let end = doc.inline_value_end(start, in_flow);
+                let token = &doc.src[start..end];
+                if token.trim_matches(|c| c == '"' || c == '\'') != "spontaneous" {
+                    doc.skip(
+                        ID,
+                        &dotted,
+                        "value spelled in a form the edit does not handle",
+                    );
+                    continue;
+                }
+                let text = match token.chars().next() {
+                    Some(q @ ('"' | '\'')) => format!("{q}aperiodic{q}"),
+                    _ => "aperiodic".to_string(),
+                };
+                out.push(doc.edit(ID, &dotted, start..end, text));
+            }
         }
     }
     out
@@ -1358,14 +1519,20 @@ fn guard_all_of_function(doc: &Doc) -> Vec<Edit> {
         let mut edits = Vec::new();
         for (k, h) in hazards {
             let Some(hname) = key_str(k) else { continue };
-            let Some(guards) = h["guards"].as_vec() else {
+            // `monitors:` since phase 98 N6; `guards:` read for one release.
+            let key = if h["monitors"].is_badvalue() {
+                "guards"
+            } else {
+                "monitors"
+            };
+            let Some(guards) = h[key].as_vec() else {
                 continue;
             };
             for (i, g) in guards.iter().enumerate() {
                 if g.as_hash().is_none() || g["all_of"].is_badvalue() {
                     continue;
                 }
-                let gpath = with(&level, &["hazards", &hname, "guards", &i.to_string()]);
+                let gpath = with(&level, &["hazards", &hname, key, &i.to_string()]);
                 let dotted = format!(
                     "{}.guards[{i}]",
                     with(&level, &["hazards", &hname]).join(".")
@@ -1979,10 +2146,10 @@ modes:
 hazards:
   blind:
     integrity: ASIL_D
-    guards: [scan]
+    monitors: [scan]
     reaction: driving    # a mode: becomes enters
   stale:
-    guards: [odom]
+    monitors: [odom]
     reaction: sys.stop   # a path: stays
 ";
 
@@ -2241,12 +2408,12 @@ modes: {}
 version: 1
 hazards:
   blind:
-    guards:
+    monitors:
       - /scan
       - blind_all_of
     reaction: s.stop
   lost:
-    guards: [/odom, lost_all_of]
+    monitors: [/odom, lost_all_of]
     reaction: s.stop
 functions:
   blind_all_of: { all_of: [/ndt, /gnss] }
@@ -2280,7 +2447,7 @@ functions:
   h_all_of: { all_of: [/a, /b] }
 hazards:
   h:
-    guards: [h_all_of]
+    monitors: [h_all_of]
     reaction: s.stop
 "
         );
@@ -2529,7 +2696,7 @@ hazards:
   blind:
     integrity: ASIL_B
     entry_speed: 8.33   # m/s
-    guards: [scan]
+    monitors: [scan]
 nodes:
   op:
     paths:
@@ -2550,7 +2717,7 @@ hazards:
   blind:
     integrity: ASIL_B
     entry_speed: 8.33 m/s   # m/s
-    guards: [scan]
+    monitors: [scan]
 nodes:
   op:
     paths:
@@ -2635,6 +2802,27 @@ nodes:
             m.edits
         );
         assert!(!run(&m.output).changed());
+    }
+
+    /// Phase 98 N6: `guards`, `ingress`, `on_demand` and
+    /// `trigger: spontaneous` become `monitors`, `arrival_curve`,
+    /// `aperiodic` and `trigger: aperiodic`, block and flow, in an inline
+    /// include too; a mapping writing both spellings is left.
+    #[test]
+    fn n6_renames_reach_every_level_and_form() {
+        let src = "version: 1\nhazards:\n  h: { guards: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { on_demand: true }\n    sub:\n      in:\n        ingress: { rate_hz: 10, burst: 2 }\n    paths:\n      p: { trigger: spontaneous, output: [cmd] }\n      q:\n        trigger: \"spontaneous\"\nincludes:\n  sub:\n    hazards:\n      g:\n        guards: [b]\n        monitors: [c]\n";
+        let m = run(src);
+        assert_eq!(
+            m.output,
+            "version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in:\n        arrival_curve: { rate_hz: 10, burst: 2 }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n      q:\n        trigger: \"aperiodic\"\nincludes:\n  sub:\n    hazards:\n      g:\n        guards: [b]\n        monitors: [c]\n"
+        );
+        assert_eq!(m.edits.len(), 5, "{:?}", m.edits);
+        assert_eq!(m.skipped.len(), 1, "{:?}", m.skipped);
+        assert!(
+            m.skipped[0].contains("includes.sub.hazards.g.guards"),
+            "{:?}",
+            m.skipped
+        );
     }
 
     /// Phase 98: an acknowledgement of a renamed rule follows the rename,

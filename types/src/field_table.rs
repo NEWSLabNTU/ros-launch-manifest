@@ -170,7 +170,7 @@ impl Context {
             Context::HazardGuard => "hazards.<name>.guards[]",
             Context::OnViolation => "on_violation",
             Context::SafeState => "safe_state",
-            Context::Ingress => "ingress",
+            Context::Ingress => "arrival_curve",
             Context::Function => "functions.<name>",
             Context::Predicate => "when",
             Context::Exit => "modes.<name>.exit",
@@ -593,11 +593,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "The reaction this subscriber owes when its assumption is violated.",
     ),
+    alias("ingress", Context::Endpoint, "arrival_curve"),
     live(
-        "ingress",
+        "arrival_curve",
         Context::Endpoint,
         Kind::Requirement,
-        "Subscriber: what this endpoint is made to ABSORB, a token bucket `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`.",
+        "Subscriber: what this endpoint is made to ABSORB, an arrival curve in token-bucket form (network calculus: rate ρ, burst σ) `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`.",
     ),
     live(
         "min_interarrival",
@@ -647,11 +648,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Buffering discriminator for a state subscriber: latest | queue.",
     ),
+    alias("on_demand", Context::Endpoint, "aperiodic"),
     live(
-        "on_demand",
+        "aperiodic",
         Context::Endpoint,
         Kind::Fact,
-        "Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`.",
+        "Publisher: aperiodic -- publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`.",
     ),
     removed(
         "jitter",
@@ -1166,11 +1168,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "What the hazardous event is.",
     ),
+    alias("guards", Context::Hazard, "monitors"),
     live(
-        "guards",
+        "monitors",
         Context::Hazard,
         Kind::Meta,
-        "Topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is.",
+        "The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is.",
     ),
     live(
         "on",
@@ -1271,7 +1274,7 @@ pub const FIELDS: &[Field] = &[
     removed(
         "all_of",
         Context::HazardGuard,
-        "Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and guard it by name: `guards: [<f>]`; `play_launch migrate` does it.",
+        "Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and monitor it by name: `monitors: [<f>]`; `play_launch migrate` does it.",
     ),
     // ── on_violation ──
     live(
@@ -1909,6 +1912,9 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Supervise, "resume", "0.3.2"),
     (Context::SuperviseResume, "after", "0.3.2"),
     (Context::Hazard, "integrity", "0.3.3"),
+    (Context::Hazard, "monitors", "0.3.7"),
+    (Context::Endpoint, "arrival_curve", "0.3.7"),
+    (Context::Endpoint, "aperiodic", "0.3.7"),
     (Context::Manifest, "links", "0.3.4"),
     (Context::Endpoint, "link", "0.3.4"),
     (Context::Link, "max_transport", "0.3.4"),

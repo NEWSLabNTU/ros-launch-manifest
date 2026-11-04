@@ -47,7 +47,7 @@ Symbols used throughout this document:
 | $K$ | Max consecutive drops (from `drop.max_consecutive`) |
 | $\ell_{\max}$ | Observed longest consecutive drop run (runtime) |
 | $T_{\text{FTTI}}$ | Fault-tolerant time interval — fault to hazardous event, absent any reaction (declared, `hazards.<h>.ftti`) |
-| $T_{\text{FDTI}}$ | Fault-detection time interval — derived from the guards' detectors |
+| $T_{\text{FDTI}}$ | Fault-detection time interval — derived from the monitors' detectors |
 | $T_{\text{FRTI}}$ | Fault-reaction time interval — derived from the reaction route plus the plant's settle |
 | `budget-overflow` | Verification check: descendant budget exceeds ancestor budget (error) |
 | `chain-latency` | Verification check: sum of children exceeds scope budget (warning) |
@@ -704,7 +704,7 @@ Taking the min in both input cases is the natural-looking mistake, and it
 understates a fan-in node's load by exactly the factor that decides whether
 it fits.
 
-A `once` or `spontaneous` trigger, an unclassified path, an externally
+A `once` or `aperiodic` trigger, an unclassified path, an externally
 driven publisher and a feedback cycle each yield **`Unknown` with a
 reason**, never 0 — and any unknown contributor makes the whole sum unknown,
 because a partial sum would be a lower bound presented as a rate. A topic
@@ -796,7 +796,7 @@ does not, or how fast that must be noticed — and ISO 26262 requires both.
 The vocabulary adds exactly one requirement, one reaction edge and one
 fact, and derives the rest:
 
-- **`hazards.<h>`** — `guards:` (topics watched; a bare name is one guard,
+- **`hazards.<h>`** — `monitors:` (the monitored signals: topics watched; a bare name is one,
   `{ all_of: [...] }` a redundant set), `on:` (the fault classes, one or a
   list: `omission | late | loss | reported`; omitted means every class the
   detectors observe), **`ftti:`** (the requirement), and
@@ -885,7 +885,7 @@ $$T_{\text{FRTI}} = \sum_{\text{hops on the longest branch}} \texttt{max\_latenc
 Missing evidence is reported rather than assumed: no route and no declared
 budget gives `reaction-unbudgeted` (warning, "the FTTI check runs on
 INCOMPLETE EVIDENCE"), a reaction nothing would run gives
-`reaction-unreachable` (error), and a reaction sink no subscriber guards
+`reaction-unreachable` (error), and a reaction sink no subscriber monitors
 gives `reaction-unguarded` (warning) — a stalled reaction would otherwise
 go unnoticed. `reaction-within` checks a subscriber's declared `within`
 against its own reaction path's `max_latency`.
@@ -907,7 +907,7 @@ functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
   guaranteed to reach.
 - **`fallback-without-mrc`** (error) — a mode with no `fallback:` reaches no
   safe state, and **a last degradation level that requires anything this hazard's own
-  guards remove is not a minimal risk condition**: losing the guard takes the whole fallback sequence
+  monitors lose is not a minimal risk condition**: losing the guard takes the whole fallback sequence
   with it.
 - **`mode-requires-unguarded`** (warning) — a mode requires a function no
   subscriber watches, so its loss would never be observed.

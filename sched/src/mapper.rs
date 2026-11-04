@@ -109,10 +109,12 @@ pub type SchedPlan = ResolvedTierTable;
 /// Errors produced while deriving a plan.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MapError {
-    #[error("mapper `{mapper}` requires `resources.rt_priority_band` (target must be `posix`)")]
+    #[error(
+        "`priority_assignment: {mapper}` requires `resources.rt_priority_band` (target must be `posix`)"
+    )]
     MissingPriorityBand { mapper: String },
     #[error(
-        "mapper `{mapper}`'s `rt_priority_band` {{ min: {min}, max: {max} }} is invalid: {reason}"
+        "`priority_assignment: {mapper}`: `rt_priority_band` {{ min: {min}, max: {max} }} is invalid: {reason}"
     )]
     InvalidPriorityBand {
         mapper: String,

@@ -1,4 +1,5 @@
-//! v2 platform-file schema (YAML): `target` + `mapper` + `resources` +
+//! v2 platform-file schema (YAML): `target` + `priority_assignment` (`mapper`
+//! before phase 98 N6, read for one release) + `resources` +
 //! `overrides`. One file names one target; `resources`/`overrides` value
 //! vocabulary is per-target. `posix` (Linux RT) is typed concretely here; any
 //! other target (`zephyr`, `freertos`, ...) is kept as a raw
@@ -27,16 +28,26 @@ pub enum PlatformError {
     TargetShape { target: String, reason: String },
     #[error("platform file `target` must be non-empty")]
     EmptyTarget,
-    #[error("platform file `mapper` must be non-empty")]
+    #[error("platform file `priority_assignment` must be non-empty")]
     EmptyMapper,
+    #[error(
+        "platform file needs `priority_assignment:` (`rate_monotonic`, `deadline_monotonic`, \
+         `chain_aware` or `manual`)"
+    )]
+    MissingPriorityAssignment,
+    #[error(
+        "platform file: `mapper:` is the old spelling of `priority_assignment:` -- write \
+         `priority_assignment:` alone"
+    )]
+    BothPriorityAssignmentSpellings,
     #[error("unsupported platform file extension: {0:?} (expected `.yaml`/`.yml`)")]
     UnknownExtension(Option<String>),
     #[error(
         "{path}: the legacy `system.toml` scheduling schema (`[tiers.*]` + `[[assign]]`) was \
          removed in rlm v0.3.0. Write a v2 platform file `<stem>.system.posix.yaml`: \
-         `target: posix`, `mapper: manual`, and one `overrides:` entry per node with its \
-         `priority`, `sched_class` and `cpus`; or let a mapper derive priorities \
-         (`mapper: rate_monotonic` with `resources.rt_priority_band`)"
+         `target: posix`, `priority_assignment: manual`, and one `overrides:` entry per node \
+         with its `priority`, `sched_class` and `cpus`; or let a priority assignment derive \
+         them (`priority_assignment: rate_monotonic` with `resources.rt_priority_band`)"
     )]
     LegacyToml { path: String },
     #[error(
@@ -238,7 +249,11 @@ pub enum ReservationMode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformFile {
     pub target: String,
+    /// The `priority_assignment:` policy (the registry's mapper name).
     pub mapper: String,
+    /// `true` when the file wrote the old key `mapper:` (phase 98 N6, read
+    /// for one release); the consumer warns naming `priority_assignment:`.
+    pub spelled_mapper: bool,
     /// Whether reservations may be derived. See [`ReservationMode`].
     pub reservations: ReservationMode,
     pub resources: PlatformResources,
@@ -254,7 +269,10 @@ pub struct PlatformFile {
 #[serde(deny_unknown_fields)]
 struct RawPlatformFile {
     target: String,
-    mapper: String,
+    #[serde(default)]
+    priority_assignment: Option<String>,
+    #[serde(default)]
+    mapper: Option<String>,
     #[serde(default)]
     reservations: ReservationMode,
     #[serde(default)]
@@ -372,7 +390,13 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
     if raw.target.trim().is_empty() {
         return Err(PlatformError::EmptyTarget);
     }
-    if raw.mapper.trim().is_empty() {
+    let spelled_mapper = raw.mapper.is_some();
+    let mapper = match (raw.priority_assignment, raw.mapper) {
+        (Some(_), Some(_)) => return Err(PlatformError::BothPriorityAssignmentSpellings),
+        (Some(m), None) | (None, Some(m)) => m,
+        (None, None) => return Err(PlatformError::MissingPriorityAssignment),
+    };
+    if mapper.trim().is_empty() {
         return Err(PlatformError::EmptyMapper);
     }
 
@@ -424,7 +448,8 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
 
     Ok(PlatformFile {
         target: raw.target,
-        mapper: raw.mapper,
+        mapper,
+        spelled_mapper,
         reservations: raw.reservations,
         resources,
         overrides,
@@ -457,7 +482,7 @@ mod tests {
     fn parses_valid_posix_platform_file() {
         let src = r#"
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
   isolated_cpus: [0]
@@ -491,7 +516,8 @@ overrides:
     #[test]
     fn an_rr_timeslice_needs_a_unit() {
         let slice = |body: &str| {
-            let src = format!("target: posix\nmapper: chain_aware\nresources:\n{body}");
+            let src =
+                format!("target: posix\npriority_assignment: chain_aware\nresources:\n{body}");
             let file = parse_platform_file_yaml(&src).expect("must parse");
             let PlatformResources::Posix(res) = &file.resources else {
                 panic!("posix resources");
@@ -502,7 +528,8 @@ overrides:
         // v0.3.0 (phase 63 W6): the `_us` spelling and a bare number are
         // refused, the first as an unknown field, the second asking for a unit.
         for refused in ["  rr_timeslice_us: 100000\n", "  rr_timeslice: 100000\n"] {
-            let src = format!("target: posix\nmapper: chain_aware\nresources:\n{refused}");
+            let src =
+                format!("target: posix\npriority_assignment: chain_aware\nresources:\n{refused}");
             assert!(parse_platform_file_yaml(&src).is_err(), "{refused}");
         }
         assert_eq!(slice("  rr_timeslice: 100000us\n"), Some(100_000));
@@ -523,13 +550,13 @@ overrides:
     fn a_budget_parses_with_a_unit_and_the_legacy_spelling_is_refused() {
         let with_unit = r#"
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 overrides:
   obstacle_detector: { budget: 8000us }
 "#;
         let legacy = r#"
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 overrides:
   obstacle_detector: { budget_us: 8000 }
 "#;
@@ -554,7 +581,7 @@ overrides:
         // not assumed.
         let millis = r#"
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 overrides:
   obstacle_detector: { budget: 8ms }
 "#;
@@ -567,7 +594,7 @@ overrides:
     fn a_budget_is_emitted_with_its_unit() {
         let src = r#"
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 overrides:
   obstacle_detector: { budget: 8000us }
 "#;
@@ -591,7 +618,7 @@ overrides:
     fn override_vocabulary_parses() {
         let src = r#"
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 reservations: required
 resources:
   rt_priority_band: { min: 10, max: 40 }
@@ -637,14 +664,16 @@ overrides:
 
     #[test]
     fn reservations_defaults_to_off() {
-        let file = parse_platform_file_yaml("target: posix\nmapper: chain_aware\n").unwrap();
+        let file =
+            parse_platform_file_yaml("target: posix\npriority_assignment: chain_aware\n").unwrap();
         assert_eq!(file.reservations, ReservationMode::Off);
     }
 
     /// Parse a one-override file and return the error text, so each rejection
     /// below reads as the YAML that causes it.
     fn override_err(body: &str) -> String {
-        let src = format!("target: posix\nmapper: chain_aware\noverrides:\n  n:\n{body}");
+        let src =
+            format!("target: posix\npriority_assignment: chain_aware\noverrides:\n  n:\n{body}");
         parse_platform_file_yaml(&src)
             .expect_err("expected this override to be rejected")
             .to_string()
@@ -701,14 +730,32 @@ overrides:
 
     #[test]
     fn empty_target_is_rejected() {
-        let src = "target: \"\"\nmapper: manual\n";
+        let src = "target: \"\"\npriority_assignment: manual\n";
         let err = parse_platform_file_yaml(src).unwrap_err();
         assert_eq!(err, PlatformError::EmptyTarget);
     }
 
     #[test]
-    fn empty_mapper_is_rejected() {
-        let src = "target: posix\nmapper: \"\"\n";
+    fn the_old_mapper_key_reads_for_one_release_and_is_noted() {
+        let old = parse_platform_file_yaml("target: posix\nmapper: manual\n").unwrap();
+        let new = parse_platform_file_yaml("target: posix\npriority_assignment: manual\n").unwrap();
+        assert_eq!(old.mapper, new.mapper);
+        assert!(old.spelled_mapper && !new.spelled_mapper);
+        assert_eq!(
+            parse_platform_file_yaml(
+                "target: posix\nmapper: manual\npriority_assignment: manual\n"
+            ),
+            Err(PlatformError::BothPriorityAssignmentSpellings)
+        );
+        assert_eq!(
+            parse_platform_file_yaml("target: posix\n"),
+            Err(PlatformError::MissingPriorityAssignment)
+        );
+    }
+
+    #[test]
+    fn empty_priority_assignment_is_rejected() {
+        let src = "target: posix\npriority_assignment: \"\"\n";
         let err = parse_platform_file_yaml(src).unwrap_err();
         assert_eq!(err, PlatformError::EmptyMapper);
     }
@@ -718,7 +765,7 @@ overrides:
         // max beyond 99
         let src = r#"
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 200 }
 "#;
@@ -735,7 +782,7 @@ resources:
         // min below 1 (0 is not a valid RT priority)
         let src = r#"
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 0, max: 40 }
 "#;
@@ -747,7 +794,7 @@ resources:
     fn posix_band_min_above_max_is_rejected_at_parse() {
         let src = r#"
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 40, max: 10 }
 "#;
@@ -765,7 +812,7 @@ resources:
     fn posix_band_at_full_rt_range_is_accepted() {
         let src = r#"
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 1, max: 99 }
 "#;
@@ -783,7 +830,7 @@ resources:
         // unvalidated (the consumer validates its own vocabulary).
         let src = r#"
 target: zephyr
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: -16, max: 200 }
 "#;
@@ -795,7 +842,7 @@ resources:
     fn unknown_target_keeps_raw_passthrough() {
         let src = r#"
 target: zephyr
-mapper: manual
+priority_assignment: manual
 resources:
   stack_bytes: 8192
   custom_key: [1, 2, 3]
@@ -813,7 +860,7 @@ overrides:
 
     #[test]
     fn minimal_posix_file_with_no_resources_or_overrides_parses() {
-        let src = "target: posix\nmapper: manual\n";
+        let src = "target: posix\npriority_assignment: manual\n";
         let file = parse_platform_file_yaml(src).expect("must parse");
         let PlatformResources::Posix(res) = &file.resources else {
             panic!("expected posix resources");
@@ -826,7 +873,7 @@ overrides:
     fn unknown_field_in_posix_resources_is_rejected() {
         let src = r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 resources:
   bogus_field: 1
 "#;
@@ -847,7 +894,7 @@ resources:
         std::fs::create_dir_all(&dir).unwrap();
 
         let yaml_path = dir.join("bringup.system.posix.yaml");
-        std::fs::write(&yaml_path, "target: posix\nmapper: manual\n").unwrap();
+        std::fs::write(&yaml_path, "target: posix\npriority_assignment: manual\n").unwrap();
         let file = parse_platform_file(&yaml_path).expect("yaml parses");
         assert_eq!(file.mapper, "manual");
 
@@ -858,7 +905,7 @@ resources:
         assert!(matches!(err, PlatformError::LegacyToml { .. }), "{err}");
         let msg = err.to_string();
         assert!(msg.contains("removed in rlm v0.3.0"), "{msg}");
-        assert!(msg.contains("mapper: manual"), "{msg}");
+        assert!(msg.contains("priority_assignment: manual"), "{msg}");
 
         let bogus_path = dir.join("bringup.json");
         std::fs::write(&bogus_path, "{}").unwrap();

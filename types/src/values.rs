@@ -1397,7 +1397,7 @@ mod tests {
     #[test]
     fn lookup_errors_and_unknowns_pass_through() {
         let m = manifest(
-            "hazards:\n  z: { guards: [/a], ftti: $(param timeout) s }\n\
+            "hazards:\n  z: { monitors: [/a], ftti: $(param timeout) s }\n\
              nodes:\n  h:\n    sub:\n      i: { max_age: $(param nope) s }\n",
         );
         let r = m.resolve_values(&Tree);

@@ -8,8 +8,11 @@ between `play_launch` (Linux RT, via `ros-launch-resolve`) and `nano-ros`
 (RTOS targets). The integrator ships one small **platform file** per
 target; per-node scheduling is **derived** from the timing facts the launch
 tree and its contracts already state — read off the resolved SystemModel by
-the `derive` crate — by a named, pluggable **mapper**, with explicit
-per-node **overrides** that always beat derived values.
+the `derive` crate — by a named, pluggable **priority assignment** policy
+(`priority_assignment:`; in the code a `SchedMapper`, which is why this
+document also says "mapper"), with explicit per-node **overrides** that
+always beat derived values. The key was `mapper:` before rlm v0.3.7 (phase
+98 N6); the old spelling reads for one release with a warning.
 
 **Key invariant:** everything platform-agnostic (timing facts, chain
 structure, priority *ordering*) is kept separate from platform
@@ -18,11 +21,12 @@ part is the **algorithm**, not the output — each consumer runs its own
 realizer over the same ranking core.
 
 One schema: the **v2 platform file** (`<stem>.system.<target>.yaml`):
-mapper name + platform facts + overrides. This is what ships through the
+priority assignment + platform facts + overrides. This is what ships through the
 contract discovery channels. The v1 `system.toml` scheduling schema
 (hand-written tiers + `[[assign]]`) and its `.toml` bridge were removed in
 v0.3.0 (play_launch phase 41.6); a `.toml` platform file is refused with
-the v2 form. Its replacement is `mapper: manual` plus `overrides:`.
+the v2 form. Its replacement is `priority_assignment: manual` plus
+`overrides:`.
 
 ## Where scheduling facts come from
 
@@ -106,7 +110,7 @@ per-target vocabulary. Schema and every rule below:
 
 ```yaml
 target: posix                # required, non-empty
-mapper: chain_aware          # SchedMapper name, looked up in MapperRegistry
+priority_assignment: chain_aware  # SchedMapper name, looked up in MapperRegistry
 reservations: off            # off (default) | required — POLICY, so not under resources
 resources:                   # platform facts, typed per target
   rt_priority_band: { min: 10, max: 40 }
@@ -157,7 +161,7 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   `budget: 0us` is rejected: absent and zero are different answers, and a
   declared zero would silently mean "free".
 
-- **`reservations`** (`ReservationMode`, top level beside `mapper:`):
+- **`reservations`** (`ReservationMode`, top level beside `priority_assignment:`):
   `off` (default) or `required`. Deliberately not inside `resources:` —
   that holds facts about the machine, and whether to reserve is a policy
   choice. Opt-in because reservations are all-or-nothing within a band: a
@@ -373,7 +377,7 @@ Algorithm (steps 1–4 platform-agnostic, 5–6 POSIX realization):
    declared `max_latency_ms` for input paths. Under the implicit-deadline
    assumption RM *is* DM, so the one comparison reproduces both orderings
    and interleaves a mixed bucket instead of splitting it by trigger kind.
-   Paths with no derivable budget — `once`, `spontaneous`, `unclassified`,
+   Paths with no derivable budget — `once`, `aperiodic`, `unclassified`,
    or an input path with no declared `max_latency` — never rank, and their
    node falls to `DEFAULT_TIER` unless another of its paths ranked. Items
    with **exactly** equal (criticality, budget) collapse into one rank

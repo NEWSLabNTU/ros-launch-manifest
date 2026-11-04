@@ -443,7 +443,7 @@ Per path:
 | `input: [...]`, **no** `sync:` | the **SUM** of its inputs' rates |
 | `input: [...]`, **with** `sync:` | the **MIN** of its inputs' rates |
 | `once` | `Unknown` — it fires exactly once |
-| `spontaneous` | `Unknown` — the contract says nothing about when |
+| `aperiodic` | `Unknown` — the contract says nothing about when |
 | unclassified (no trigger, no `input:`) | `Unknown` — a path with no declared trigger |
 
 The fan-in case is the one worth stating twice. A subscription callback
@@ -484,7 +484,7 @@ Reporting 0 Hz would be a claim; omitting the topic silently would read as
   where an input's rate is derived but not declared, so deleting the
   declared copy cannot silence a real warning.
 
-**An on-demand publisher** (`pub: { <ep>: { on_demand: true } }`, v0.1.49)
+**An on-demand publisher** (`pub: { <ep>: { aperiodic: true } }`, v0.1.49)
 says the opposite of a rate: it publishes when asked -- a service call, an
 operator's command -- and promises none. That is not what an omitted
 `min_rate_hz` says (nothing at all), and the difference is acted on. A
@@ -1731,7 +1731,7 @@ topic names on a scope. The fields below are the common ones:
 
 | Field          | Meaning | If omitted |
 |----------------|---------|------------|
-| `trigger`      | What causes the output: `{ timer: { rate_hz } }`, `{ input: [...] }`, `once`, `spontaneous` | Derived from `input:`; see below |
+| `trigger`      | What causes the output: `{ timer: { rate_hz } }`, `{ input: [...] }`, `once`, `aperiodic` | Derived from `input:`; see below |
 | `input`        | Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`; the checker warns (`deprecated-spelling`) and `play_launch migrate` rewrites it | See `trigger` |
 | `output`       | Result endpoint(s) or topic(s) | Required |
 | `max_latency`  | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
@@ -1922,7 +1922,7 @@ paths:
     trigger: once
     output: [map]
   operator_cmd:                             # externally caused, irregular
-    trigger: spontaneous
+    trigger: aperiodic
     output: [external_cmd]
 ```
 
@@ -1932,7 +1932,7 @@ paths:
 | `{ timer: { rate_hz: <f64>, jitter: <dur> } }` | The same, with the timer's measured release jitter (v0.1.49): a tick may be released up to `jitter` late, less than one period. |
 | `{ input: [ep, ...] }` | Message-driven; caused by these input endpoint/topic names. |
 | `once` | Published once (startup latch); scheduling-irrelevant. |
-| `spontaneous` | Caused outside the graph (operator, network, hardware); event-like. |
+| `aperiodic` (`spontaneous` before v0.3.7) | Caused outside the graph (operator, network, hardware); event-like. |
 
 **Release jitter** (v0.1.49). A timer's period is not all a message waits
 for it: the executor releases a tick late when something else holds the
@@ -2143,7 +2143,7 @@ functions:
 hazards:
   drive_blind:
     integrity: ASIL_D                      # from the HARA; consumed, never computed
-    guards:
+    monitors:
       - /safety/scan                      # any guard faulting is the hazard …
       - pose_estimation                   # … a function by name: this one faults when ALL its members do
     on: omission                          # omission | late | loss | reported, or a list of them
@@ -2382,7 +2382,7 @@ modes:
     reaction: system.emergency_stop
 hazards:
   lost_pose:
-    guards: [pose_estimation]
+    monitors: [pose_estimation]
     ftti: 2s
     enters: autonomous
 ```
@@ -2398,7 +2398,7 @@ the emergency stop beneath it, the minimal risk condition, can.
 
 **A fallback sequence must terminate.** `fallback-without-mrc` (error) fires two ways:
 a mode a hazard enters with no `fallback:` at all, and — the one worth
-stating — a **last degradation level that requires something the hazard's own guards
+stating — a **last degradation level that requires something the hazard's own monitors
 can take away**. That is not a minimal risk condition: losing the guard takes the whole
 fallback sequence with it. A degradation level naming a mode that does not exist, or a degradation level with
 no `reaction:` path of its own, is `reaction-unreachable`.
@@ -2460,7 +2460,7 @@ functions:
     when: { field: mode, not_equals: MANUAL }  # lost unless MANUAL: holds on MANUAL
 hazards:
   odd_exit:
-    guards: [/system/operation_mode/availability]
+    monitors: [/system/operation_mode/availability]
     on: reported                               # `when:` needs `reported`
     when: { field: autonomous, equals: false }
     entry_speed: 30 km/h                       # the speed bound (vehicle.braking)
@@ -2616,7 +2616,7 @@ second table.
 | 12 | `satisfiability`   | Arg combination produces dangling entities; unreachable nodes. Built without the `smt` feature it becomes a stub emitting one Info saying the analysis was not run | Error/Warning |
 | 13 | `state-consistency` | Node has ≥2 sibling subs tagged `state: true` and *exactly one* other sub is neither tagged `state:` nor referenced as a path `input` — likely a missed `state:` tag | Warning |
 | 14 | `explicit-trigger` (44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation | Info |
-| 15 | `inherited-rate` (44.1/44.2) | A path has a non-`Input` explicit `trigger:` (`timer`/`once`/`spontaneous`) alongside a stale, now-ignored legacy `input:` list | Warning |
+| 15 | `inherited-rate` (44.1/44.2) | A path has a non-`Input` explicit `trigger:` (`timer`/`once`/`aperiodic`) alongside a stale, now-ignored legacy `input:` list | Warning |
 | 16 | `once-durability` (44.1/44.2) | A `once`-triggered path's output topic is not `durability: transient_local` — late joiners lose the startup-latch message | Warning |
 | 17 | `sync-feasibility` (44.1/44.2) | `sync:` `max_interval`/`timeout` too narrow for the slowest declared input's inter-arrival period | Warning |
 | 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |

@@ -129,6 +129,13 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         new: "min_dwell",
         refused: true,
     },
+    // Phase 98 N6 (v0.3.7), accepted for one release.
+    RenamedKey {
+        section: "hazards",
+        old: "guards",
+        new: "monitors",
+        refused: false,
+    },
 ];
 
 /// `at` with every renamed key segment replaced by its new name. A
@@ -142,10 +149,12 @@ pub fn current_path(at: &str) -> String {
 
 fn rewrite_path(at: &str, refused_too: bool) -> String {
     let segs: Vec<&str> = at.split('.').collect();
-    let mut out: Vec<&str> = segs.clone();
+    let mut out: Vec<String> = segs.iter().map(|s| s.to_string()).collect();
     for (i, seg) in segs.iter().enumerate() {
+        // `guards[0]`: the key is the part before an index.
+        let (base, index) = seg.split_at(seg.find('[').unwrap_or(seg.len()));
         for k in RENAMED_KEYS {
-            if *seg != k.old || (k.refused && !refused_too) {
+            if base != k.old || (k.refused && !refused_too) {
                 continue;
             }
             let at_level = i == 0 || (i >= 2 && segs[i - 2] == "includes");
@@ -154,7 +163,7 @@ fn rewrite_path(at: &str, refused_too: bool) -> String {
                 && segs[i - 2] == k.section
                 && (i == 2 || segs[i - 3] == "includes" || i >= 4 && segs[i - 4] == "includes");
             if (k.section.is_empty() && at_level) || in_section {
-                out[i] = k.new;
+                out[i] = format!("{}{index}", k.new);
             }
         }
     }
@@ -228,6 +237,20 @@ mod tests {
         assert_eq!(current_path("nodes.window.paths.p"), "nodes.window.paths.p");
         assert_eq!(current_path("topics.severity"), "topics.severity");
         assert_eq!(current_path("nodes.n.paths.window"), "nodes.n.paths.window");
+    }
+
+    /// Phase 98 N6: an accepted rename applies to an indexed segment too,
+    /// and to matching as well as to `migrate`.
+    #[test]
+    fn guards_in_a_path_reads_as_monitors_this_release() {
+        assert_eq!(
+            accepted_path("hazards.h.guards[1]"),
+            "hazards.h.monitors[1]"
+        );
+        assert_eq!(current_path("hazards.h.guards"), "hazards.h.monitors");
+        assert_eq!(accepted_path("topics.guards"), "topics.guards");
+        // A refused rename is not accepted.
+        assert_eq!(accepted_path("modes.m.window"), "modes.m.window");
     }
 
     #[test]

@@ -69,7 +69,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `link` | fact | since v0.3.4 | Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A written `max_transport` stays legal and is reported as `transport-inline`. |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `on_violation` | requirement |  | The reaction this subscriber owes when its assumption is violated. |
-| `ingress` | requirement | since v0.1.64 | Subscriber: what this endpoint is made to ABSORB, a token bucket `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`. |
+| `ingress` |  | deprecated — use `arrival_curve` | Deprecated spelling. |
+| `arrival_curve` | requirement | since v0.3.7 | Subscriber: what this endpoint is made to ABSORB, an arrival curve in token-bucket form (network calculus: rate ρ, burst σ) `{ rate_hz, burst }`. Not a QoS policy, and not the rate it needs (`min_rate_hz`): a consumer bounds the device's read path and the router's pacing by it. Both keys required, so an unstated burst never reads as unbounded. Refused under `pub:`/`cli:`. |
 | `min_interarrival` | requirement | since v0.1.68 | Subscriber: the least time between two arrivals. Its callback is then a sporadic task (T_min). An event input with no rate bound, no `min_interarrival` and no `budget` is unanalysable: a consumer that supervises a deadline refuses it. Refused under `pub:`/`cli:`, and above `1 / min_rate_hz`. |
 | `budget` | requirement | since v0.1.68 | Subscriber: the execution time its callback may use per `budget_period`. Its callback is then served (a server of budget Q per period P, analysed as a periodic task). Requires `budget_period`, and may not exceed it. Refused under `pub:`/`cli:`. |
 | `budget_period` | requirement | since v0.1.68 | Subscriber: the server period P of `budget`. Only beside `budget`. |
@@ -78,7 +79,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `on_timeout` | fact | since v0.2.5 | Client: what the code does when `timeout` passes, `{ reaction: <mode | event chain> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`. |
 | `on_rejected` | fact | since v0.2.5 | Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
-| `on_demand` | fact | since v0.1.49 | Publisher: publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
+| `on_demand` |  | deprecated — use `aperiodic` | Deprecated spelling. |
+| `aperiodic` | fact | since v0.3.7 | Publisher: aperiodic -- publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
 | `jitter` |  | **removed** | Removed in phase 68 — jitter is a property of a route, not one publisher. Use `max_jitter` on a path. |
 | `jitter_ms` |  | **removed** | Removed in phase 68 — see `jitter`. |
 
@@ -253,7 +255,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `integrity` | requirement | since v0.3.3 | Integrity level from the HARA (`ASIL_D`, `SIL_3`, `DAL_A`, …): the level the analysis assigns, not ISO 26262's S0-S3 severity class, which is one of its inputs. Consumed, never computed. |
 | `severity` |  | **removed** | Renamed `integrity:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it. |
 | `description` | meta |  | What the hazardous event is. |
-| `guards` | meta |  | Topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
+| `guards` |  | deprecated — use `monitors` | Deprecated spelling. |
+| `monitors` | meta | since v0.3.7 | The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
 | `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-budget`. |
 | `enters` | meta | since v0.1.59 | The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-budget`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
@@ -280,7 +283,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `all_of` |  | **removed** | Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and guard it by name: `guards: [<f>]`; `play_launch migrate` does it. |
+| `all_of` |  | **removed** | Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and monitor it by name: `monitors: [<f>]`; `play_launch migrate` does it. |
 
 ## `on_violation`
 
@@ -291,7 +294,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `within` | requirement |  | This hop's share of the fault reaction time. |
 | `mechanism` | fact |  | Where the runtime observer reads the violation: qos (default) | diagnostics | application. |
 
-## `ingress`
+## `arrival_curve`
 
 | key | kind | status | meaning |
 |---|---|---|---|
