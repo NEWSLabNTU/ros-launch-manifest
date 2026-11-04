@@ -2763,7 +2763,10 @@ topics:
     let unsourced: Vec<_> = d.iter().filter(|l| l.contains("link-unsourced")).collect();
     assert_eq!(unsourced.len(), 1, "{d:?}");
     assert!(unsourced[0].contains("'bare'"), "{d:?}");
-    let inline: Vec<_> = d.iter().filter(|l| l.contains("transport-inline")).collect();
+    let inline: Vec<_> = d
+        .iter()
+        .filter(|l| l.contains("transport-inline"))
+        .collect();
     assert_eq!(inline.len(), 1, "{d:?}");
     assert!(inline[0].contains("'c/in'"), "{d:?}");
 }

@@ -489,16 +489,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         paths: parse_paths(doc, ctx, false)?,
         external_topics: parse_external_topics(doc, ctx)?,
         hazards: parse_hazards(doc, ctx)?,
-        integrity_levels: renamed(
-            yaml_string_list(doc, "integrity_levels", ctx)?,
-            yaml_string_list(doc, "severity_levels", ctx)?,
-            Vec::is_empty,
-            ctx,
-            "severity_levels",
-            "integrity_levels",
-        )?
-        .0,
-        spelled_severity_levels: !doc["severity_levels"].is_badvalue(),
+        integrity_levels: yaml_string_list(doc, "integrity_levels", ctx)?,
         functions: parse_functions(doc, ctx)?,
         modes: parse_modes(doc, ctx)?,
         policy: parse_policy(doc, ctx)?,
@@ -1672,23 +1663,10 @@ fn parse_predicate(doc: &Yaml, ctx: &str) -> Result<Option<ValuePredicate>, Pars
 /// `modes.<m>.min_dwell` (v0.1.46 as `window`, renamed in v0.3.3, phase
 /// 98): a bare duration (unbound), or the map form of a budget,
 /// `{ duration, param: <node>.<parameter>, source }` (phase 90 G2: a
-/// least-time bound, no context of its own). The old key reads for one
-/// release; the second value says it was the one written.
-fn parse_min_dwell(doc: &Yaml, ctx: &str) -> Result<(Option<Bound>, bool), ParseError> {
-    let spelled_window = !doc["window"].is_badvalue();
-    if spelled_window && !doc["min_dwell"].is_badvalue() {
-        return Err(field_err(
-            ctx,
-            "window",
-            "`window:` is the old spelling of `min_dwell:` -- write `min_dwell:` alone",
-        ));
-    }
-    let key = if spelled_window {
-        "window"
-    } else {
-        "min_dwell"
-    };
-    parse_dwell_at(doc, ctx, key).map(|b| (b, spelled_window))
+/// least-time bound, no context of its own). The old key is a `removed`
+/// row since v0.3.6: `reject_unknown_keys` refuses it naming this one.
+fn parse_min_dwell(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
+    parse_dwell_at(doc, ctx, "min_dwell")
 }
 
 fn parse_dwell_at(doc: &Yaml, ctx: &str, key: &str) -> Result<Option<Bound>, ParseError> {
@@ -1831,31 +1809,6 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
     }))
 }
 
-/// A key read under its new name or its old one (phase 98: one release of
-/// the old spelling, warned by the consumer as `deprecated-spelling`).
-/// Both written is an error naming the new key. Returns the value and
-/// whether the old spelling supplied it.
-fn renamed<T>(
-    new: T,
-    old: T,
-    absent: fn(&T) -> bool,
-    ctx: &str,
-    old_key: &str,
-    new_key: &str,
-) -> Result<(T, bool), ParseError> {
-    match (absent(&new), absent(&old)) {
-        (false, false) => Err(field_err(
-            ctx,
-            old_key,
-            &format!(
-                "`{old_key}:` is the old spelling of `{new_key}:` -- write `{new_key}:` alone"
-            ),
-        )),
-        (true, false) => Ok((old, true)),
-        _ => Ok((new, false)),
-    }
-}
-
 /// `yaml_duration` reports with an empty context; put the real one back.
 fn reframe(e: ParseError, ctx: &str) -> ParseError {
     match e {
@@ -1881,7 +1834,7 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
         let mctx = format_path(ctx, &format!("modes.{name}"));
         reject_unknown_keys(v, &mctx, Context::Mode)?;
         let overrides = parse_mode_overrides(v, &mctx)?;
-        let (min_dwell, spelled_window) = parse_min_dwell(v, &mctx)?;
+        let min_dwell = parse_min_dwell(v, &mctx)?;
         let exit = parse_exit(v, &mctx)?;
         // An exit is the one way out of a TIMED level. On a level with no
         // dwell it would be a general mode transition, which the grammar
@@ -1904,7 +1857,6 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
                 reaction: yaml_string(v, "reaction", &mctx)?,
                 overrides,
                 min_dwell,
-                spelled_window,
                 exit,
             },
         );
@@ -2077,16 +2029,7 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
         out.insert(
             name,
             HazardDecl {
-                integrity: renamed(
-                    yaml_string(v, "integrity", &hctx)?,
-                    yaml_string(v, "severity", &hctx)?,
-                    Option::is_none,
-                    &hctx,
-                    "severity",
-                    "integrity",
-                )?
-                .0,
-                spelled_severity: !v["severity"].is_badvalue(),
+                integrity: yaml_string(v, "integrity", &hctx)?,
                 description: yaml_string(v, "description", &hctx)?,
                 guards,
                 on,
@@ -4841,7 +4784,7 @@ hazards:
 version: 1
 hazards:
   drive_blind:
-    severity: ASIL_D
+    integrity: ASIL_D
     description: vehicle continues with no obstacle data
     guards:
       - /safety/scan
@@ -5915,27 +5858,36 @@ nodes:
         assert!(m.functions["f"].group.all_of && m.functions["f"].when.is_none());
     }
 
-    /// Phase 98 S4: `window:` reads as `min_dwell:` for one release, with
-    /// the flag the consumer warns from; both together are refused.
+    /// Phase 98 N4: each key renamed in v0.3.3 is refused since v0.3.6,
+    /// by a message naming its replacement (one case per key, so a removal
+    /// that forgot one fails).
     #[test]
-    fn the_old_window_key_reads_as_min_dwell() {
-        let doc = "version: 1\nmodes:\n  m:\n    window: 10s\n";
-        let ok = parse_manifest_str(doc).unwrap();
-        let m = &ok.modes["m"];
-        assert!(m.spelled_window);
-        assert_eq!(
-            m.min_dwell
-                .as_ref()
-                .unwrap()
-                .duration()
-                .unwrap()
-                .as_millis_f64(),
-            10_000.0
-        );
+    fn every_key_renamed_in_phase_98_is_refused_naming_its_replacement() {
+        for (doc, at, new) in [
+            (
+                "version: 1\nmodes:\n  m:\n    window: 10s\n",
+                "modes.m",
+                "`min_dwell:`",
+            ),
+            (
+                "version: 1\nhazards:\n  h:\n    severity: QM\n",
+                "hazards.h",
+                "`integrity:`",
+            ),
+            (
+                "version: 1\nseverity_levels: [a, b]\n",
+                "severity_levels",
+                "`integrity_levels:`",
+            ),
+        ] {
+            let e = err_of(doc);
+            assert!(
+                e.contains(at) && e.contains(new) && e.contains("migrate"),
+                "{e}"
+            );
+        }
         let new = parse_manifest_str("version: 1\nmodes:\n  m:\n    min_dwell: 10s\n").unwrap();
-        assert!(!new.modes["m"].spelled_window);
-        let e = err_of("version: 1\nmodes:\n  m:\n    window: 10s\n    min_dwell: 10s\n");
-        assert!(e.contains("old spelling of `min_dwell:`"), "{e}");
+        assert!(new.modes["m"].min_dwell.is_some());
     }
 
     #[test]

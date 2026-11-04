@@ -1,7 +1,10 @@
 # Standard names: the contract vocabulary in the terms its readers know
 
-**Status (2026-11-03): decided; the names in §2 are final (phase 98 N0, the
-table in §2.6), those in §3 are proposals until their area is touched.**
+**Status (2026-11-04): decided; the names in §2 are final (phase 98 N0, the
+table in §2.6) and implemented: read with a warning in v0.3.3-v0.3.5,
+refused naming the new name since v0.3.6, and kept out of user-facing text
+by `scripts/check_terms.py` (`types/tests/retired_terms.rs`). Those in §3
+are proposals until their area is touched.**
 Implementation is tracked by play_launch phase 98. Design issue 57 records the
 decision.
 

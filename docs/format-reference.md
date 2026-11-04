@@ -26,7 +26,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
 | `modes` | meta |  | Operational modes: what each requires, and the fallback sequence (the ordered degradation levels) to fall to when it is lost. |
-| `severity_levels` |  | deprecated — use `integrity_levels` | Deprecated spelling. |
+| `severity_levels` |  | **removed** | Renamed `integrity_levels:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it. |
 | `integrity_levels` | meta | since v0.3.3 | The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this. |
 | `external_topics` |  | deprecated — use `topics.<name>.external` | Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as an event chain and let the route be derived. |
@@ -251,7 +251,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `integrity` | requirement | since v0.3.3 | Integrity level from the HARA (`ASIL_D`, `SIL_3`, `DAL_A`, …): the level the analysis assigns, not ISO 26262's S0-S3 severity class, which is one of its inputs. Consumed, never computed. |
-| `severity` |  | deprecated — use `integrity` | Deprecated spelling. |
+| `severity` |  | **removed** | Renamed `integrity:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it. |
 | `description` | meta |  | What the hazardous event is. |
 | `guards` | meta |  | Topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
 | `on` | fact |  | Fault classes the guards report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error. |
@@ -273,7 +273,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `reaction` | meta |  | The event chain that reaches this mode's safe state. |
 | `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
 | `min_dwell` | requirement | since v0.3.3 | A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`. |
-| `window` |  | deprecated — use `min_dwell` | Deprecated spelling. |
+| `window` |  | **removed** | Renamed `min_dwell:` in v0.3.3 (phase 98): a least time in a mode before the next is the switched-systems dwell time. `play_launch migrate <contract> --write` rewrites it. |
 | `exit` | requirement |  | `{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`; `to` is outside every `fallback:` list. |
 
 ## `hazards.<name>.guards[]`

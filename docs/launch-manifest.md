@@ -2007,7 +2007,7 @@ nodes:
 **Parse-time validation:** `buffer:` is only meaningful alongside
 `state: true` — a parse error otherwise.
 
-### Cross-scope end-to-end budgets (scope `paths:`)
+### Cross-scope event chains
 
 An end-to-end requirement is stated as a top-level `paths:` entry naming
 its two ends and a budget. The route between them is **derived** from
@@ -2435,7 +2435,7 @@ A degraded mode's `max_latency: 200ms` is a different contract, and the
 arithmetic that clears the default one says nothing about it.
 
 > Target paths are read **section-from-front, field-from-back**, because a
-> scope-path name may itself contain dots (`safety.stop`). Splitting
+> event-chain name may itself contain dots (`safety.stop`). Splitting
 > positionally fired `override-target-missing` on a correct contract.
 
 ### The takeover keys: a value fault, a timed degradation level, an exit, a derived settle

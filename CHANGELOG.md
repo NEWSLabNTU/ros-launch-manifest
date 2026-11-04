@@ -6,6 +6,48 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.6 - 2026-11-04
+
+Phase 98 N4 (play_launch `docs/roadmap/phase-98-standard-names.md`): the
+spellings renamed in v0.3.3 are refused. GRAMMAR_VERSION 0.3.6; the
+model's schema stays 3 and the workspace Cargo version 0.4.0.
+
+### Changed
+
+- **The old keys are parse errors naming the new key.** `severity_levels:`,
+  a hazard's `severity:`, a mode's `window:` and a profile's
+  `severity_scale:` were read with a `deprecated-spelling` warning in
+  v0.3.3-v0.3.5; each is now a `removed` field-table row (or, for the
+  profile key, its own refusal) whose message names `integrity_levels:`,
+  `integrity:`, `min_dwell:` or `integrity_scale:` and
+  `play_launch migrate <contract> --write`, which still rewrites them.
+  The `spelled_*` fields that carried the warning are gone from
+  `Manifest`, `HazardDecl`, `ModeDecl` and `Profile`.
+- **`types::rule_names`** marks each rename `refused`, true for all
+  eleven rule ids and three keys. `current()`/`current_path()` still map
+  every old spelling (what `migrate` rewrites); the new
+  `accepted()`/`accepted_path()` map only the renames still accepted,
+  which is what a consumer matching `acknowledged:` entries reads, so an
+  old id there matches nothing and the consumer reports it.
+
+### Added
+
+- **`scripts/check_terms.py`** (phase 98 N5), run by
+  `types/tests/retired_terms.rs`: fails when a retired word (`rung`,
+  `ladder`, `severity_levels`, `severity_scale`, `severity: ASIL_*`,
+  "scope path", an old rule id) reaches `README.md`, `docs/*.md` or a
+  string literal in a crate's `src/`, with a self-test that injects one
+  word per scanned kind. History (`docs/design/`, the design issues, the
+  CHANGELOG) and the files that map an old name to its new one are not
+  scanned. Its first run moved four doc lines from "scope path" to "event
+  chain" and the `launch-manifest.md` heading to "Cross-scope event
+  chains".
+
+### Kept
+
+- `SystemModel::from_yaml_str` still rewrites a schema 1 or 2 model's old
+  field names, the `removed` rows stay, and `migrate` keeps every rewrite.
+
 ## v0.3.5 - 2026-11-04
 
 Links follow-up (play_launch phase 97). GRAMMAR_VERSION 0.3.5; no key

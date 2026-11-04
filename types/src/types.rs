@@ -84,10 +84,6 @@ pub struct Manifest {
     /// first entry is "no safety requirement" and derives no criticality.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub integrity_levels: Vec<String>,
-    /// Written under its pre-0.3.3 name `severity_levels:`
-    /// (`deprecated-spelling`; phase 98).
-    #[serde(skip)]
-    pub spelled_severity_levels: bool,
     /// Named guard groups (phase 75). A function is what a set of topics
     /// together provide; a mode requires functions, and a hazard may guard
     /// one by name instead of repeating its members.
@@ -556,10 +552,6 @@ pub struct ModeDecl {
     /// budget's (phase 90 G2); its `param` is a [`crate::ParamBinding::Node`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_dwell: Option<crate::bound::Bound>,
-    /// Written under its pre-0.3.3 name `window:` (`deprecated-spelling`;
-    /// phase 98).
-    #[serde(skip)]
-    pub spelled_window: bool,
     /// The one way out of a dwelling level that is not the next level
     /// (v0.1.46): while this mode is active, the named function holding ends
     /// the fallback sequence successfully in `to`. Only a level with a
@@ -778,10 +770,6 @@ pub struct HazardDecl {
     /// never computed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub integrity: Option<String>,
-    /// Written under its pre-0.3.3 name `severity:` (`deprecated-spelling`;
-    /// phase 98).
-    #[serde(skip)]
-    pub spelled_severity: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// What is watched. Each group is one fault: a single topic, or an

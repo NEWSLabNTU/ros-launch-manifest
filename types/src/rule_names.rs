@@ -2,12 +2,13 @@
 //! section 5).
 //!
 //! A rule id is an interface: `acknowledged: [{ rule }]` names it and
-//! `check --format json` emits it. So a renamed rule keeps its old id for
-//! one release: an `acknowledged:` entry naming the old id still matches
-//! the renamed rule (and is warned as `deprecated-spelling`), and
-//! `migrate` rewrites it. The release after refuses it, naming the new id.
-//! Without this table an upgrade would turn every acknowledged finding of
-//! a renamed rule into `ack-stale` plus an unacknowledged warning.
+//! `check --format json` emits it. A renamed rule kept its old id for one
+//! release (v0.3.3-v0.3.5: an entry naming it still matched, warned as
+//! `deprecated-spelling`); since v0.3.6 the consumer refuses an entry
+//! naming an old id or an old path, by a message naming the new one, and
+//! `migrate` rewrites both. Without this table an upgrade would have
+//! turned every acknowledged finding of a renamed rule into `ack-stale`
+//! plus an unacknowledged warning, and would now refuse with no name.
 
 /// One renamed rule id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,10 @@ pub struct RenamedRule {
     pub new: &'static str,
     /// The grammar release that renamed it.
     pub since: &'static str,
+    /// The old id is refused (an `acknowledged:` entry naming it is an
+    /// error naming `new`), no longer matched. False for the one release
+    /// after `since`; true from the next.
+    pub refused: bool,
 }
 
 /// Every renamed rule id, oldest first.
@@ -26,56 +31,67 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
         old: "severity-unknown",
         new: "integrity-unknown",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "severity-scale-conflict",
         new: "integrity-scale-conflict",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "ladder-rung-budget",
         new: "degradation-level-budget",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "ladder-unterminated",
         new: "fallback-without-mrc",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "ladder-window-floor",
         new: "dwell-at-mrc",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "call-unbounded-floor",
         new: "call-unbounded-mrc",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "window-expiry",
         new: "dwell-expiry",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "window-param",
         new: "dwell-param",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "window-unbound",
         new: "dwell-unbound",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "scope-budget",
         new: "chain-latency",
         since: "0.3.3",
+        refused: true,
     },
     RenamedRule {
         old: "scope-sampling-feasibility",
         new: "chain-sampling-feasibility",
         since: "0.3.3",
+        refused: true,
     },
 ];
 
@@ -87,6 +103,8 @@ pub struct RenamedKey {
     pub section: &'static str,
     pub old: &'static str,
     pub new: &'static str,
+    /// As [`RenamedRule::refused`]: the old key is a `removed` row.
+    pub refused: bool,
 }
 
 /// Every renamed key a diagnostic path can name (phase 98). An
@@ -97,16 +115,19 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         section: "",
         old: "severity_levels",
         new: "integrity_levels",
+        refused: true,
     },
     RenamedKey {
         section: "hazards",
         old: "severity",
         new: "integrity",
+        refused: true,
     },
     RenamedKey {
         section: "modes",
         old: "window",
         new: "min_dwell",
+        refused: true,
     },
 ];
 
@@ -116,11 +137,15 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
 /// two segments under its section for an entry key. Names containing dots
 /// are not split apart: the match is on the segments around them.
 pub fn current_path(at: &str) -> String {
+    rewrite_path(at, true)
+}
+
+fn rewrite_path(at: &str, refused_too: bool) -> String {
     let segs: Vec<&str> = at.split('.').collect();
     let mut out: Vec<&str> = segs.clone();
     for (i, seg) in segs.iter().enumerate() {
         for k in RENAMED_KEYS {
-            if *seg != k.old {
+            if *seg != k.old || (k.refused && !refused_too) {
                 continue;
             }
             let at_level = i == 0 || (i >= 2 && segs[i - 2] == "includes");
@@ -134,6 +159,21 @@ pub fn current_path(at: &str) -> String {
         }
     }
     out.join(".")
+}
+
+/// The id an `acknowledged:` entry naming `id` matches: the new id while
+/// the old one is still accepted, else `id` itself (a refused old id
+/// matches nothing, and the consumer reports it).
+pub fn accepted(id: &str) -> std::borrow::Cow<'_, str> {
+    match renamed(id) {
+        Some(r) if !r.refused => current(id),
+        _ => id.into(),
+    }
+}
+
+/// As [`accepted`] for a path: only renames still accepted are applied.
+pub fn accepted_path(at: &str) -> String {
+    rewrite_path(at, false)
 }
 
 /// The rule id `id` names now: its new id when it was renamed, else itself.

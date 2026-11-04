@@ -397,7 +397,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Operational modes: what each requires, and the fallback sequence (the ordered degradation levels) to fall to when it is lost.",
     ),
-    alias("severity_levels", Context::Manifest, "integrity_levels"),
+    removed(
+        "severity_levels",
+        Context::Manifest,
+        "Renamed `integrity_levels:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "integrity_levels",
         Context::Manifest,
@@ -1151,7 +1155,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "Integrity level from the HARA (`ASIL_D`, `SIL_3`, `DAL_A`, …): the level the analysis assigns, not ISO 26262's S0-S3 severity class, which is one of its inputs. Consumed, never computed.",
     ),
-    alias("severity", Context::Hazard, "integrity"),
+    removed(
+        "severity",
+        Context::Hazard,
+        "Renamed `integrity:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "description",
         Context::Hazard,
@@ -1248,7 +1256,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`.",
     ),
-    alias("window", Context::Mode, "min_dwell"),
+    removed(
+        "window",
+        Context::Mode,
+        "Renamed `min_dwell:` in v0.3.3 (phase 98): a least time in a mode before the next is the switched-systems dwell time. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "exit",
         Context::Mode,

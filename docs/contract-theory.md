@@ -378,7 +378,7 @@ with property-specific composition math but the same structural rules.
 *As implemented:* Check 1 corresponds to the cross-scope
 `budget-overflow` rule and Check 2 to the `chain-latency` rule, each a
 narrower slice of the theory below. `budget-overflow` compares
-**scope-path budgets only**: a child scope's path against an ancestor
+**event-chain budgets only**: a child scope's path against an ancestor
 scope's path with matching input/output endpoints — node
 `max_latency` is not compared against scope budgets by any current
 rule. For Check 2, the single-manifest checker
@@ -916,7 +916,7 @@ functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
 contract path, so every requirement keeps one value where it is declared
 and no scalar becomes a map. An override naming nothing is
 `override-target-missing`; targets are read section-from-front and
-field-from-back, because scope-path names contain dots. The checker then
+field-from-back, because event-chain names contain dots. The checker then
 **re-runs** the requirement checks once per mode whose overrides differ and
 diffs against the default run, reporting only what that mode introduces,
 tagged `mode:<rule>`.

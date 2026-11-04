@@ -47,9 +47,6 @@ pub struct Profile {
     pub requires_rlm: Option<VersionReq>,
     /// The integrity levels, ascending.
     pub scale: Vec<String>,
-    /// The scale was written under its pre-0.3.3 key `severity_scale:`
-    /// (phase 98; accepted for one release, warned by the consumer).
-    pub spelled_severity_scale: bool,
     /// For each level of [`Profile::scale`], in order, the criticality it
     /// derives: one of [`CRITICALITY_LEVELS`], or `None` for no requirement.
     pub criticality: Vec<Option<&'static str>>,
@@ -185,18 +182,14 @@ pub fn parse_profile(text: &str) -> Result<Profile, String> {
         }
         _ => return Err("`requires:` is a map (`{ rlm: \">=0.1.71\" }`)".into()),
     };
-    let spelled_severity_scale = !doc["severity_scale"].is_badvalue();
-    if spelled_severity_scale && !doc["integrity_scale"].is_badvalue() {
+    if !doc["severity_scale"].is_badvalue() {
         return Err(
-            "`severity_scale:` is the old spelling of `integrity_scale:` -- write `integrity_scale:` alone"
+            "`severity_scale:` was renamed `integrity_scale:` in rlm v0.3.3 (an ASIL, SIL or DAL \
+             is an integrity level) -- rename the key"
                 .into(),
         );
     }
-    let scale_yaml = if spelled_severity_scale {
-        &doc["severity_scale"]
-    } else {
-        &doc["integrity_scale"]
-    };
+    let scale_yaml = &doc["integrity_scale"];
     let scale: Vec<String> = match scale_yaml {
         Yaml::Array(a) => a
             .iter()
@@ -272,7 +265,6 @@ pub fn parse_profile(text: &str) -> Result<Profile, String> {
         version,
         requires_rlm,
         scale,
-        spelled_severity_scale,
         criticality,
         functions,
     })
@@ -362,5 +354,15 @@ mod tests {
             ))
             .is_ok()
         );
+    }
+
+    /// Phase 98 N4: the scale's pre-0.3.3 key is refused naming the new one.
+    #[test]
+    fn severity_scale_is_refused_naming_integrity_scale() {
+        let e = parse_profile(
+            "profile: t\nversion: 1.0.0\nseverity_scale: [a, b]\ncriticality: { a: null, b: high }\n",
+        )
+        .unwrap_err();
+        assert!(e.contains("renamed `integrity_scale:`"), "{e}");
     }
 }
