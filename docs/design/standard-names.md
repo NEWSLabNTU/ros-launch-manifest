@@ -177,6 +177,11 @@ rewrite. The model is schema 5: `execution.tasks`, a schema-4 model's
 `execution.tiers` rewritten on read for good. The deprecated type aliases
 and `SystemConfigToml::deprecated_spellings` are gone.
 
+Progress (2026-11-05): v0.3.12 is R+2 for M7, and M7 is done.
+`scripts/check_terms.py` lists `tier`/`tiers` as retired (write `task`),
+with TIER IV's `tier4_*` packages and name left out by the pattern, not by
+file. The removed rows, the model rewrite and `migrate` stay for good.
+
 | # | Ours | Standard | Source | Notes |
 |---|---|---|---|---|
 | M1 | `mapper:` (`rate_monotonic`, `deadline_monotonic`, `manual`), `SchedMapper` | **priority assignment** policy | Liu & Layland; Audsley's optimal priority assignment | platform-file key `priority_assignment:` |

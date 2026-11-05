@@ -6,6 +6,31 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.12 - 2026-11-05
+
+Phase 98 M7 at R+2 (play_launch `docs/roadmap/phase-99-tier-rename.md`
+T5): the old word is retired from user-facing text. GRAMMAR_VERSION 0.3.12;
+no API change, so the workspace Cargo version stays 0.7.0.
+
+### Added
+
+- **`tier` in `scripts/check_terms.py`'s retired list** (`tier`/`tiers`,
+  write `task`). TIER IV's packages (`tier4_*`) and the company's name
+  ("TIER IV") are another word spelled the same and are left out by the
+  pattern itself (no word boundary before a digit or `_`; a lookahead for
+  ` IV`), not by excluding a file; the self-test injects the word into a
+  Rust literal and a guide, and holds a `tier4_*` / "TIER IV" line as a
+  negative control. `model/src/system_config.rs` (the removed rows and
+  `migrate`) and `sched/src/platform.rs` (the v1 schema's refusal) name the
+  old key to say where it went and are allowlisted; history (the CHANGELOG,
+  `docs/design/`) is not scanned. Its first run moved two lines of
+  `scheduling.md` to "task" and marked the four that name the old spelling.
+
+### Kept
+
+- The `system.toml` removed rows (`SYSTEM_TOML_REMOVED`), the model's
+  `execution.tiers` rewrite and `migrate`'s two rewrites, for good.
+
 ## v0.3.11 - 2026-11-05
 
 Phase 98 M7 at R+1 (play_launch `docs/roadmap/phase-99-tier-rename.md`

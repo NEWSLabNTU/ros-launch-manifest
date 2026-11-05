@@ -23,7 +23,7 @@ realizer over the same ranking core.
 One schema: the **v2 platform file** (`<stem>.system.<target>.yaml`):
 priority assignment + platform facts + overrides. This is what ships through the
 contract discovery channels. The v1 `system.toml` scheduling schema
-(hand-written tiers + `[[assign]]`) and its `.toml` bridge were removed in
+(hand-written tasks + `[[assign]]`) and its `.toml` bridge were removed in
 v0.3.0 (play_launch phase 41.6); a `.toml` platform file is refused with
 the v2 form. Its replacement is `priority_assignment: manual` plus
 `overrides:`.
@@ -257,7 +257,7 @@ pub trait SchedMapper {
 
 - **`manual`** — derives nothing: every node is placed in `DEFAULT_TASK`,
   so the file's `overrides:` are the only placement. Needs no priority
-  band; ignores `facts`. (Until v0.3.0 it reproduced the v1 tiers +
+  band; ignores `facts`. (Until v0.3.0 it reproduced the v1 task +
   `[[assign]]` resolution and was reachable only through the `.toml`
   bridge.)
 - **`rate_monotonic`** — higher `rate_hz` → higher priority, spread
@@ -579,12 +579,12 @@ which nodes and callback groups are bound: the AUTOSAR OS task into which
 runnables are mapped, with the periodic task model's period, deadline and
 budget on its head. On an RTOS it is one task running an executor over the
 callback groups bound to it; on Linux play_launch applies it to every
-thread of a node's process. Until v0.3.10 it was called a *tier*. Since
-v0.3.11 a `system.toml` that writes `[tiers.<name>]` or `group_tiers` is
+thread of a node's process. Until v0.3.10 it was called a *tier*. Since <!-- terms: allow -->
+v0.3.11 a `system.toml` that writes `[tiers.<name>]` or `group_tiers` is <!-- terms: allow -->
 refused, naming the new key and `migrate`, which rewrites the file
 (`system_config::migrate_system_toml_str`). The model's key is
 `execution.tasks` since schema 5; a schema-4 (or older) model's
-`execution.tiers` is rewritten on read.
+`execution.tiers` is rewritten on read. <!-- terms: allow -->
 
 
 ```toml

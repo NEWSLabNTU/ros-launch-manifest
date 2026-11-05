@@ -66,6 +66,12 @@ RETIRED: list[tuple[str, str]] = [
     (r"\bbudget-overflow\b", "latency-bound-overflow"),
     (r"\bon_demand\b", "aperiodic"),
     (r"\bspontaneous\b", "aperiodic"),
+    # Phase 98 M7 (play_launch phase 99 T5, R+2): the scheduling unit is a
+    # task. TIER IV's packages (`tier4_*`) and the company's name ("TIER
+    # IV") are another word spelled the same; the pattern itself leaves
+    # them out (a digit or `_` after the word is no word boundary, and the
+    # lookahead skips the name), so no file is excluded for carrying them.
+    (r"\btiers?\b(?![ \t]+IV\b)", "task"),
 ]
 # Markdown only: a mode's `window:` key in an example block.
 MD_ONLY: list[tuple[str, str]] = [
@@ -91,8 +97,13 @@ ALLOWED_FILES: set[str] = {
     "types/src/migrate.rs",
     # A profile's `severity_scale:` is refused by its own message.
     "types/src/profile.rs",
-    # Saved models of schema 1 and 2 are rewritten on read.
+    # Saved models of schema 1 to 4 are rewritten on read.
     "model/src/lib.rs",
+    # The `system.toml` removed rows and `migrate` name `[tiers.*]` and
+    # `group_tiers` to say where they went.
+    "model/src/system_config.rs",
+    # The legacy v1 schema's refusal names the key it removed.
+    "sched/src/platform.rs",
     # `removed` rows name the old key to say where it went, and the
     # generated reference prints them.
     "types/src/field_table.rs",
@@ -237,6 +248,16 @@ def self_test() -> int:
         "derive/src/c.rs": (
             'const M: &str = "an on_demand publisher";\n',
             'const M: &str = "an aperiodic publisher";\n',
+        ),
+        "sched/src/t.rs": (
+            'const M: &str = "the tier has no deadline";\n',
+            'const M: &str = "the task has no deadline";\n',
+        ),
+        "docs/t.md": ("Each tier runs one executor.\n", "Each task runs one executor.\n"),
+        # TIER IV's packages and name are another word: never a hit.
+        "docs/t4.md": (
+            "The tiers are bound.\n",
+            "`tier4_system_launch` and `tier4_*` are TIER IV's; TIER IV ships them.\n",
         ),
         "check/src/b.rs": (
             'const M: &str = r#"the ladder ends"#;\n',
