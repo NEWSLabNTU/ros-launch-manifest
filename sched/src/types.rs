@@ -1,6 +1,7 @@
 //! Scheduling task types: a task's portable head and per-platform
-//! sub-tables (`system.toml` `[tasks.*]`, the model's `execution.tiers`, whose key moves at schema 5),
-//! and the selector rule that binds nodes to a task.
+//! sub-tables (`system.toml` `[tasks.*]`, the model's `execution.tasks`,
+//! spelled `execution.tiers` before schema 5), and the selector rule that
+//! binds nodes to a task.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,10 +49,6 @@ pub struct TaskDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nuttx: Option<TaskPlatformSpec>,
 }
-
-/// Renamed [`TaskDef`] (phase 99); this alias goes at schema 5.
-#[deprecated(since = "0.3.10", note = "renamed `TaskDef`")]
-pub type TierDef = TaskDef;
 
 /// A reserved band a task may be placed above (`[tasks.<name>] above`).
 ///
@@ -129,10 +126,6 @@ pub struct TaskPlatformSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_slice: Option<ros_launch_manifest_types::duration::Duration>,
 }
-
-/// Renamed [`TaskPlatformSpec`] (phase 99); this alias goes at schema 5.
-#[deprecated(since = "0.3.10", note = "renamed `TaskPlatformSpec`")]
-pub type TierPlatformSpec = TaskPlatformSpec;
 
 /// A sparse binding rule. A node matches if it is named in `nodes` OR falls
 /// under `scope`. Explicit `nodes` matches win over `scope` matches.

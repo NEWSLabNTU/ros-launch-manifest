@@ -51,7 +51,11 @@ use serde::{Deserialize, Serialize};
 ///   subscriber's `ingress` is `arrival_curve`, a publisher's `on_demand`
 ///   is `aperiodic`, and a path's trigger kind `spontaneous` is
 ///   `aperiodic`. Older names are read for good, as for schema 3.
-pub const SCHEMA_VERSION: u32 = 4;
+/// - **5** (v0.3.11, phase 99 T4): the scheduling unit is a task, so
+///   `execution.tiers` is `execution.tasks` (the entries are unchanged).
+///   [`SystemModel::from_yaml_str`] rewrites the old key of a schema-4 (or
+///   older) model on read, for good.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Errors loading or saving a model.
 #[derive(Debug, thiserror::Error)]
@@ -60,6 +64,14 @@ pub enum ModelError {
     Yaml(#[from] serde_yaml_ng::Error),
     #[error("unsupported SystemModel schema version {found} (this reader supports <= {supported})")]
     UnsupportedVersion { found: u32, supported: u32 },
+    /// A model carrying a renamed key under both spellings: which one is
+    /// meant is the writer's call, so neither is guessed.
+    #[error("SystemModel carries both `{old}` (before schema {schema}) and `{new}`; keep `{new}`")]
+    BothSpellings {
+        old: &'static str,
+        new: &'static str,
+        schema: u32,
+    },
 }
 
 /// The resolved system artifact. See the crate docs for the contract.
@@ -84,7 +96,8 @@ impl SystemModel {
     /// and becomes a [`ParamValue::StrList`] (see [`SCHEMA_VERSION`]).
     pub fn from_yaml_str(s: &str) -> Result<Self, ModelError> {
         let mut value: serde_yaml_ng::Value = serde_yaml_ng::from_str(s)?;
-        upgrade_legacy_tier_keys(&mut value);
+        upgrade_tiers_to_tasks(&mut value)?;
+        upgrade_legacy_duration_keys(&mut value);
         let mut model: SystemModel = serde_yaml_ng::from_value(value)?;
         if model.meta.version > SCHEMA_VERSION {
             return Err(ModelError::UnsupportedVersion {
@@ -98,7 +111,8 @@ impl SystemModel {
             model.upgrade_v1_lists();
         }
         // Versions 1 to 3 read their renamed fields through the serde
-        // aliases; nothing else differs, so they are current once read.
+        // aliases, and version 4's `execution.tiers` is rewritten above;
+        // nothing else differs, so they are current once read.
         if (1..SCHEMA_VERSION).contains(&model.meta.version) {
             model.meta.version = SCHEMA_VERSION;
         }
@@ -130,13 +144,37 @@ impl SystemModel {
     }
 }
 
-/// A model written before the Duration migration spelled `execution.tiers`
+/// Schema 4 -> 5 (phase 99 T4): `execution.tiers` is `execution.tasks`.
+/// Rewritten on read for good, so a saved model loads; the entries move
+/// unchanged (their own old keys are [`upgrade_legacy_duration_keys`]'s).
+fn upgrade_tiers_to_tasks(doc: &mut serde_yaml_ng::Value) -> Result<(), ModelError> {
+    let Some(exec) = doc
+        .get_mut("execution")
+        .and_then(serde_yaml_ng::Value::as_mapping_mut)
+    else {
+        return Ok(());
+    };
+    let Some(tiers) = exec.remove("tiers") else {
+        return Ok(());
+    };
+    if exec.contains_key("tasks") {
+        return Err(ModelError::BothSpellings {
+            old: "execution.tiers",
+            new: "execution.tasks",
+            schema: 5,
+        });
+    }
+    exec.insert(serde_yaml_ng::Value::String("tasks".to_string()), tiers);
+    Ok(())
+}
+
+/// A model written before the Duration migration spelled the task table's
 /// durations as `<name>_us: <bare number of microseconds>`. The aliases
 /// that read them were removed in v0.3.0 (play_launch phase 63 W6), where
 /// an authored file is refused; a MODEL is read backward-compatibly, so the
 /// legacy keys are rewritten here before the typed read, on the task head
 /// and on each platform sub-table.
-fn upgrade_legacy_tier_keys(doc: &mut serde_yaml_ng::Value) {
+fn upgrade_legacy_duration_keys(doc: &mut serde_yaml_ng::Value) {
     use serde_yaml_ng::Value;
     const KEYS: [(&str, &str); 5] = [
         ("deadline_us", "deadline"),
@@ -160,15 +198,15 @@ fn upgrade_legacy_tier_keys(doc: &mut serde_yaml_ng::Value) {
             table.entry(Value::String(new.to_string())).or_insert(v);
         }
     }
-    let Some(tiers) = doc
+    let Some(tasks) = doc
         .get_mut("execution")
-        .and_then(|e| e.get_mut("tiers"))
+        .and_then(|e| e.get_mut("tasks"))
         .and_then(Value::as_mapping_mut)
     else {
         return;
     };
-    for (_, tier) in tiers.iter_mut() {
-        let Some(head) = tier.as_mapping_mut() else {
+    for (_, task) in tasks.iter_mut() {
+        let Some(head) = task.as_mapping_mut() else {
             continue;
         };
         rewrite(head);
@@ -2189,9 +2227,9 @@ pub struct Execution {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub deploy: BTreeMap<String, Deploy>,
     /// Task name → definition (sched crate schema — see [`TaskDef`]). The
-    /// key stays `tiers` through schema 4; schema 5 writes `tasks`.
+    /// key is `tasks` since schema 5; `tiers` before it, rewritten on read.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tiers: BTreeMap<String, TaskDef>,
+    pub tasks: BTreeMap<String, TaskDef>,
     /// `"<node FQN>"` or `"<node FQN>/<callback group>"` → task name.
     /// RESOLVED form: the resolver flattens the authoring-side sparse
     /// `assign` rules (`sched::AssignRule`, scope prefixes + node lists)
@@ -2281,7 +2319,7 @@ pub struct Bridge {
 impl Execution {
     pub fn is_empty(&self) -> bool {
         self.deploy.is_empty()
-            && self.tiers.is_empty()
+            && self.tasks.is_empty()
             && self.bindings.is_empty()
             && self.transports.is_empty()
             && self.bridges.is_empty()
@@ -2317,9 +2355,6 @@ pub struct Deploy {
 /// `deadline_us` override). One schema for the authoring form
 /// (`system.toml`), the model, and the `SchedMapper` pipeline.
 pub use ros_launch_manifest_sched::types::{ReservedBand, TaskDef, TaskPlatformSpec};
-/// The pre-phase-99 names, deprecated aliases for one release.
-#[allow(deprecated)]
-pub use ros_launch_manifest_sched::types::{TierDef, TierPlatformSpec};
 
 #[cfg(test)]
 mod order_tests {
@@ -2360,7 +2395,7 @@ mod tests {
     /// before the Duration migration still loads, its legacy keys read as
     /// microseconds, head and platform sub-table alike.
     #[test]
-    fn a_model_with_legacy_tier_keys_still_loads() {
+    fn a_model_with_legacy_duration_keys_still_loads() {
         let mut doc: serde_yaml_ng::Value =
             serde_yaml_ng::from_str(&SystemModel::default().to_yaml_string().unwrap()).unwrap();
         let tiers: serde_yaml_ng::Value = serde_yaml_ng::from_str(
@@ -2370,7 +2405,7 @@ mod tests {
         doc["execution"]["tiers"] = tiers;
         let old = serde_yaml_ng::to_string(&doc).unwrap();
         let m = SystemModel::from_yaml_str(&old).expect("an old model loads");
-        let t = &m.execution.tiers["high"];
+        let t = &m.execution.tasks["high"];
         assert_eq!(t.spin_period.unwrap().as_micros(), 1_000);
         assert_eq!(t.budget.unwrap().as_micros(), 5_000);
         assert_eq!(
@@ -2856,6 +2891,54 @@ mod tests {
             assert!(out.contains(now), "{now} not in:\n{out}");
         }
         assert_eq!(SystemModel::from_yaml_str(&out).unwrap(), new);
+    }
+
+    /// Phase 99 T4 (schema 5): a schema-4 model, which spells the task table
+    /// `execution.tiers`, loads to exactly the model its schema-5 twin
+    /// (`execution.tasks`) does, the same task table and bindings, and is
+    /// written back as `tasks` only. A legacy `_us` key under the old table
+    /// is still read, so the two rewrites compose.
+    #[test]
+    fn a_schema_4_model_reads_as_the_same_schema_5_model() {
+        let body = |v: &str, key: &str, spin: &str| {
+            format!(
+                "meta:\n  version: {v}\nstructure: {{}}\nexecution:\n  {key}:\n    mrm:\n      class: real_time\n      {spin}\n      above: transport\n      zephyr:\n        priority: 5\n        stack_bytes: 4096\n    default:\n      posix:\n        priority: 10\n  bindings:\n    /mrm_handler: mrm\n    /mrm_handler/timer: default\n"
+            )
+        };
+        let old = SystemModel::from_yaml_str(&body("4", "tiers", "spin_period_us: 33333")).unwrap();
+        let new = SystemModel::from_yaml_str(&body("5", "tasks", "spin_period: 33333us")).unwrap();
+        assert_eq!(old, new);
+        assert_eq!(old.meta.version, SCHEMA_VERSION);
+        assert_eq!(
+            old.execution.tasks.keys().collect::<Vec<_>>(),
+            ["default", "mrm"]
+        );
+        let mrm = &old.execution.tasks["mrm"];
+        assert_eq!(mrm.spin_period.unwrap().as_micros(), 33_333);
+        assert_eq!(mrm.zephyr.as_ref().unwrap().priority, 5);
+        assert_eq!(old.execution.bindings["/mrm_handler/timer"], "default");
+        let out = old.to_yaml_string().unwrap();
+        assert!(out.contains("  tasks:\n"), "{out}");
+        assert!(!out.contains("tiers"), "{out}");
+        assert_eq!(SystemModel::from_yaml_str(&out).unwrap(), new);
+        // Negative control: a different table under the old key is not the
+        // same model, so the equality above is not vacuous.
+        let other =
+            SystemModel::from_yaml_str(&body("4", "tiers", "spin_period_us: 1000")).unwrap();
+        assert_ne!(other, new);
+    }
+
+    #[test]
+    fn a_model_with_both_task_table_spellings_is_refused() {
+        let yaml = "meta:\n  version: 4\nstructure: {}\nexecution:\n  tiers:\n    a: {}\n  tasks:\n    a: {}\n";
+        match SystemModel::from_yaml_str(yaml) {
+            Err(e @ ModelError::BothSpellings { .. }) => {
+                let msg = e.to_string();
+                assert!(msg.contains("`execution.tiers`"), "{msg}");
+                assert!(msg.contains("keep `execution.tasks`"), "{msg}");
+            }
+            other => panic!("expected BothSpellings, got {other:?}"),
+        }
     }
 
     #[test]

@@ -15,11 +15,10 @@
 //! the model is realized.
 //!
 //! Phase 99 (v0.3.10): the scheduling unit is a task. `[tasks.<name>]` and
-//! `[[component]] group_tasks` are the keys; the old `[tiers.<name>]` and
-//! `group_tiers` are read for this release, folded into the new ones by
-//! [`parse_system_config`], each reported once by
-//! [`SystemConfigToml::deprecated_spellings`], and rewritten by
-//! [`migrate_system_toml_str`].
+//! `[[component]] group_tasks` are the keys. Since v0.3.11 (R+1) the old
+//! `[tiers.<name>]` and `group_tiers` are refused by [`parse_system_config`]
+//! naming the new key and `migrate` (the [`SYSTEM_TOML_REMOVED`] rows), and
+//! [`migrate_system_toml_str`] still rewrites them, for good.
 
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
@@ -31,7 +30,6 @@ use ros_launch_manifest_types::migrate::{Edit, MigrateError, Migration};
 use crate::{Bridge, Deploy, Execution, NodeInstance, ParamSource, ParamValue, Transport};
 
 #[derive(Debug, Default, Deserialize)]
-#[allow(deprecated)]
 pub struct SystemConfigToml {
     #[serde(default)]
     pub system: SystemDefaults,
@@ -49,21 +47,11 @@ pub struct SystemConfigToml {
     /// `[tasks.<name>]` scheduling tasks. The block is the shared-schema
     /// `sched::TaskDef` verbatim — `spin_period` + per-RTOS sub-tables —
     /// so it deserializes straight into the model's task table
-    /// (`execution.tiers` through schema 4). (A system may instead supply
-    /// tasks through a scheduling platform file; one that authors them
-    /// inline here has them consumed by the resolver.) After
-    /// [`parse_system_config`] it also holds every `[tiers.*]` entry.
+    /// (`execution.tasks`). (A system may instead supply tasks through a
+    /// scheduling platform file; one that authors them inline here has them
+    /// consumed by the resolver.)
     #[serde(default)]
     pub tasks: BTreeMap<String, ros_launch_manifest_sched::TaskDef>,
-    /// `[tiers.<name>]`, the spelling before phase 99, exactly as written.
-    /// Read for this release only: [`parse_system_config`] folds it into
-    /// [`Self::tasks`], and the next release refuses it.
-    #[deprecated(
-        since = "0.3.10",
-        note = "`[tiers.*]` is spelled `[tasks.*]`; read `tasks`"
-    )]
-    #[serde(default)]
-    pub tiers: BTreeMap<String, ros_launch_manifest_sched::TaskDef>,
     /// `[[component]]` rows — carry `group_tasks` (the
     /// group→task bindings) keyed by the component/node `name`.
     #[serde(default, rename = "component")]
@@ -71,7 +59,6 @@ pub struct SystemConfigToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[allow(deprecated)]
 pub struct ComponentBlock {
     #[serde(default)]
     pub name: Option<String>,
@@ -80,18 +67,8 @@ pub struct ComponentBlock {
     #[serde(default)]
     pub pkg: Option<String>,
     /// `group_tasks = { <group> = <task> }` — RFC-0047 group→task binding.
-    /// After [`parse_system_config`] it also holds every `group_tiers` entry.
     #[serde(default)]
     pub group_tasks: BTreeMap<String, String>,
-    /// `group_tiers`, the spelling before phase 99, exactly as written.
-    /// Read for this release only: [`parse_system_config`] folds it into
-    /// [`Self::group_tasks`], and the next release refuses it.
-    #[deprecated(
-        since = "0.3.10",
-        note = "`group_tiers` is spelled `group_tasks`; read `group_tasks`"
-    )]
-    #[serde(default)]
-    pub group_tiers: BTreeMap<String, String>,
     /// `params = { <name> = <value> }` — deployment-time parameter values for
     /// this component's node, equivalent to an inline `<param>` in the launch
     /// file.
@@ -206,63 +183,84 @@ pub struct BridgeBlock {
     pub bidirectional: bool,
 }
 
+/// A `system.toml` key retired by a rename: refused by
+/// [`parse_system_config`] with its own message naming the key to write
+/// instead and `migrate`. Kept for good (rlm `docs/design/standard-names.md`
+/// section 6): a file last edited before the rename must be told where its
+/// key went, not read as if the key were absent (this reader is lenient, so
+/// an undeclared key would otherwise be ignored in silence).
+pub struct SystemTomlRemoved {
+    /// The old key as a reader names it.
+    pub old: &'static str,
+    /// The key to write instead.
+    pub new: &'static str,
+    /// The release that refused it.
+    pub since: &'static str,
+    /// The [`SYSTEM_TOML_REWRITES`] id `migrate` applies.
+    pub rewrite: &'static str,
+}
+
+/// Every retired `system.toml` key, one row per key.
+pub const SYSTEM_TOML_REMOVED: &[SystemTomlRemoved] = &[
+    SystemTomlRemoved {
+        old: "[tiers.<name>]",
+        new: "[tasks.<name>]",
+        since: "0.3.11",
+        rewrite: "tiers-tasks",
+    },
+    SystemTomlRemoved {
+        old: "[[component]] group_tiers",
+        new: "[[component]] group_tasks",
+        since: "0.3.11",
+        rewrite: "group-tiers-group-tasks",
+    },
+];
+
+fn removed_key_error(row: &SystemTomlRemoved, at: &[String]) -> String {
+    format!(
+        "system config: `{}` was renamed `{}` (phase 99) and is refused since v{} ({}); \
+         write `{}`, or run `migrate` to rewrite the file (rewrite `{}`)",
+        row.old,
+        row.new,
+        row.since,
+        at.join(", "),
+        row.new,
+        row.rewrite
+    )
+}
+
 /// Parse the integrator `system.toml` (lenient subset).
 ///
-/// The old spellings `[tiers.*]` and `group_tiers` are folded into
-/// `[tasks.*]` and `group_tasks` here, so a reader of the result needs only
-/// the new fields; the old fields keep what the file wrote, which is what
-/// [`SystemConfigToml::deprecated_spellings`] reports. One name written under
-/// both spellings is an error: which one is meant is the author's call.
-#[allow(deprecated)]
+/// A key retired by a rename ([`SYSTEM_TOML_REMOVED`]: `[tiers.*]`,
+/// `group_tiers`) is an error naming its replacement and `migrate`, checked
+/// before the typed read, which would otherwise ignore it.
 pub fn parse_system_config(input: &str) -> Result<SystemConfigToml, String> {
-    let mut cfg: SystemConfigToml = toml::from_str(input).map_err(|e| e.to_string())?;
-    for (name, def) in &cfg.tiers {
-        if cfg.tasks.contains_key(name) {
-            return Err(format!(
-                "system config: task `{name}` is written both as `[tasks.{name}]` and as \
-                 `[tiers.{name}]` (the old spelling); keep `[tasks.{name}]`"
-            ));
+    let doc: toml::Table = toml::from_str(input).map_err(|e| e.to_string())?;
+    if let Some(tiers) = doc.get("tiers") {
+        let at: Vec<String> = match tiers.as_table() {
+            Some(t) => t.keys().cloned().collect(),
+            None => vec!["`tiers` is not a table".to_string()],
+        };
+        return Err(removed_key_error(&SYSTEM_TOML_REMOVED[0], &at));
+    }
+    if let Some(comps) = doc.get("component").and_then(toml::Value::as_array) {
+        let at: Vec<String> = comps
+            .iter()
+            .filter(|c| c.get("group_tiers").is_some())
+            .map(|c| {
+                c.get("name")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or("<unnamed>")
+                    .to_string()
+            })
+            .collect();
+        if !at.is_empty() {
+            return Err(removed_key_error(&SYSTEM_TOML_REMOVED[1], &at));
         }
-        cfg.tasks.insert(name.clone(), def.clone());
     }
-    for c in &mut cfg.components {
-        for (group, task) in &c.group_tiers {
-            if c.group_tasks.contains_key(group) {
-                return Err(format!(
-                    "system config: [[component]] '{}' binds group `{group}` in both \
-                     `group_tasks` and `group_tiers` (the old spelling); keep `group_tasks`",
-                    c.name.as_deref().unwrap_or("<unnamed>")
-                ));
-            }
-            c.group_tasks.insert(group.clone(), task.clone());
-        }
-    }
-    Ok(cfg)
-}
-
-/// A key a `system.toml` wrote under its pre-phase-99 spelling (see
-/// [`SystemConfigToml::deprecated_spellings`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemDeprecatedSpelling {
-    /// The old key as a reader names it (`[tiers.<name>]`, `group_tiers`).
-    pub old: &'static str,
-    /// The key to write instead (`[tasks.<name>]`, `group_tasks`).
-    pub new: &'static str,
-    /// Where the file wrote it: the task names, or the components' names.
-    pub at: Vec<String>,
-}
-
-impl std::fmt::Display for SystemDeprecatedSpelling {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "system config: deprecated-spelling: `{}` is now `{}` ({}); the old \
-             spelling is refused in the next release, and `migrate` rewrites the file",
-            self.old,
-            self.new,
-            self.at.join(", ")
-        )
-    }
+    toml::Value::Table(doc)
+        .try_into()
+        .map_err(|e: toml::de::Error| e.to_string())
 }
 
 fn clamp_domain(d: Option<u32>, diags: &mut Vec<String>, ctx: &str) -> Option<u8> {
@@ -279,47 +277,6 @@ fn clamp_domain(d: Option<u32>, diags: &mut Vec<String>, ctx: &str) -> Option<u8
 }
 
 impl SystemConfigToml {
-    /// Every pre-phase-99 key this file wrote, one entry per key: `[tiers.*]`
-    /// naming its tasks, `group_tiers` naming its components. A consumer
-    /// warns once per entry; [`Self::apply_to_launch`] also adds each to its
-    /// diagnostics.
-    #[allow(deprecated)]
-    pub fn deprecated_spellings(&self) -> Vec<SystemDeprecatedSpelling> {
-        let mut out = Vec::new();
-        if !self.tiers.is_empty() {
-            out.push(SystemDeprecatedSpelling {
-                old: "[tiers.<name>]",
-                new: "[tasks.<name>]",
-                at: self.tiers.keys().cloned().collect(),
-            });
-        }
-        let comps: Vec<String> = self
-            .components
-            .iter()
-            .filter(|c| !c.group_tiers.is_empty())
-            .map(|c| c.name.clone().unwrap_or_else(|| "<unnamed>".to_string()))
-            .collect();
-        if !comps.is_empty() {
-            out.push(SystemDeprecatedSpelling {
-                old: "[[component]] group_tiers",
-                new: "[[component]] group_tasks",
-                at: comps,
-            });
-        }
-        out
-    }
-
-    /// The task table, `[tiers.*]` included (for a value deserialized
-    /// directly rather than through [`parse_system_config`]).
-    #[allow(deprecated)]
-    fn all_tasks(&self) -> BTreeMap<String, ros_launch_manifest_sched::TaskDef> {
-        let mut out = self.tasks.clone();
-        for (k, v) in &self.tiers {
-            out.entry(k.clone()).or_insert_with(|| v.clone());
-        }
-        out
-    }
-
     /// Fill an [`Execution`] layer from this config for the given node
     /// FQNs. Returns human-readable diagnostics (unknown placement nodes,
     /// clamped domains); ambiguity (multiple hosts, none listing a node) is
@@ -430,15 +387,10 @@ impl SystemConfigToml {
         node_fqns: &[&str],
         launch_file: Option<&str>,
     ) -> Result<Vec<String>, String> {
-        let mut diags: Vec<String> = self
-            .deprecated_spellings()
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        let mut diags: Vec<String> = Vec::new();
 
-        // `[tasks.*]` → the execution task table (verbatim schema; the
-        // model's key is `tiers` through schema 4).
-        execution.tiers = self.all_tasks();
+        // `[tasks.*]` → the execution task table (verbatim schema).
+        execution.tasks = self.tasks.clone();
 
         // `[[component]].group_tasks` → `execution.bindings`
         // (`<node FQN>/<group>` → task). Map the component `name` to its
@@ -447,12 +399,7 @@ impl SystemConfigToml {
         // may be absent in this variant).
         for c in &self.components {
             let Some(name) = &c.name else { continue };
-            #[allow(deprecated)]
-            let mut groups = c.group_tasks.clone();
-            #[allow(deprecated)]
-            for (g, t) in &c.group_tiers {
-                groups.entry(g.clone()).or_insert_with(|| t.clone());
-            }
+            let groups = &c.group_tasks;
             if groups.is_empty() {
                 continue;
             }
@@ -461,7 +408,7 @@ impl SystemConfigToml {
                 .find(|f| f.rsplit('/').next().unwrap_or(f) == name.as_str());
             match fqn {
                 Some(fqn) => {
-                    for (group, task) in &groups {
+                    for (group, task) in groups {
                         execution
                             .bindings
                             .insert(format!("{fqn}/{group}"), task.clone());
@@ -737,17 +684,12 @@ pub fn migrate_system_toml_str(src: &str) -> Result<Migration, MigrateError> {
                  under both `[tiers.*]` and `[tasks.*]` is the usual cause)"
             ))
         })?;
-        // The same system: the task table and the bindings read the same.
-        if let (Ok(a), Ok(b)) = (parse_system_config(src), parse_system_config(&output)) {
-            let groups = |c: &SystemConfigToml| -> Vec<BTreeMap<String, String>> {
-                c.components.iter().map(|b| b.group_tasks.clone()).collect()
-            };
-            if a.tasks != b.tasks || groups(&a) != groups(&b) {
-                return Err(MigrateError(
-                    "the migrated text reads as a different task table; nothing written"
-                        .to_string(),
-                ));
-            }
+        // The same system: the task table and the bindings read the same,
+        // the old spelling of the input counted under the new key.
+        if task_view(&before) != task_view(&after) {
+            return Err(MigrateError(
+                "the migrated text reads as a different task table; nothing written".to_string(),
+            ));
         }
         old_spellings_left(&after)
     };
@@ -756,6 +698,39 @@ pub fn migrate_system_toml_str(src: &str) -> Result<Migration, MigrateError> {
         edits,
         skipped,
     })
+}
+
+/// The task table and each component's group bindings of a parsed
+/// `system.toml`, under either spelling: what a migration must preserve.
+type TaskView = (
+    BTreeMap<String, toml::Value>,
+    Vec<BTreeMap<String, toml::Value>>,
+);
+
+fn task_view(doc: &toml::Value) -> TaskView {
+    let mut tasks = BTreeMap::new();
+    for key in ["tasks", "tiers"] {
+        if let Some(t) = doc.get(key).and_then(toml::Value::as_table) {
+            for (k, v) in t {
+                tasks.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    let mut groups = Vec::new();
+    if let Some(comps) = doc.get("component").and_then(toml::Value::as_array) {
+        for c in comps {
+            let mut g = BTreeMap::new();
+            for key in ["group_tasks", "group_tiers"] {
+                if let Some(t) = c.get(key).and_then(toml::Value::as_table) {
+                    for (k, v) in t {
+                        g.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            groups.push(g);
+        }
+    }
+    (tasks, groups)
 }
 
 /// Old keys a parsed `system.toml` still carries: what the line scan could
@@ -830,19 +805,19 @@ above = "transport"
         let mut e = Execution::default();
         cfg.apply_to(&mut e, &["/handler"]).expect("applies");
         assert_eq!(
-            e.tiers["mrm"].above,
+            e.tasks["mrm"].above,
             Some(ros_launch_manifest_sched::ReservedBand::Transport)
         );
         // And through the model's serialized (YAML) form.
-        let yaml = serde_yaml_ng::to_string(&e.tiers["mrm"]).unwrap();
+        let yaml = serde_yaml_ng::to_string(&e.tasks["mrm"]).unwrap();
         assert!(yaml.contains("above: transport"), "{yaml}");
         let back: ros_launch_manifest_sched::TaskDef = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(back, e.tiers["mrm"]);
+        assert_eq!(back, e.tasks["mrm"]);
     }
 
     #[test]
     fn reads_tasks_lifecycle_and_group_task_bindings() {
-        // A system.toml with inline [tasks.*], [[component]] group_tiers and
+        // A system.toml with inline [tasks.*], [[component]] group_tasks and
         // a `[lifecycle]` table this crate does not declare (ignored).
         let toml = r#"
 [system]
@@ -876,17 +851,18 @@ priority = 10
             .apply_to(&mut e, &["/control_node", "/telem_node"])
             .expect("applies");
         assert!(diags.is_empty(), "{diags:?}");
-        // tasks rode in verbatim (the model key is `tiers` through schema 4).
-        assert_eq!(e.tiers.len(), 2);
-        assert_eq!(e.tiers["high"].spin_period.unwrap().as_micros(), 1_000);
-        assert_eq!(e.tiers["high"].posix.as_ref().unwrap().priority, 80);
-        assert_eq!(e.tiers["high"].zephyr.as_ref().unwrap().priority, 5);
+        // tasks rode in verbatim.
+        assert_eq!(e.tasks.len(), 2);
+        assert_eq!(e.tasks["high"].spin_period.unwrap().as_micros(), 1_000);
+        assert_eq!(e.tasks["high"].posix.as_ref().unwrap().priority, 80);
+        assert_eq!(e.tasks["high"].zephyr.as_ref().unwrap().priority, 5);
         // group_tasks → bindings keyed by FQN.
         assert_eq!(e.bindings["/control_node/ctrl"], "high");
         assert_eq!(e.bindings["/telem_node/telem"], "low");
     }
 
-    /// Phase 99 T1 — the same system in the old spelling and the new.
+    /// Phase 99 — a system in the old spelling, for `migrate` (refused by
+    /// the reader since v0.3.11).
     const TASKS_OLD: &str = r#"
 # the scheduling units
 [[component]]
@@ -924,76 +900,90 @@ group_tiers = { inside = "a string" }
         (e, diags)
     }
 
+    /// Phase 99 T4 (R+1): `[tiers.*]` is refused naming `[tasks.*]`, the
+    /// tasks it wrote and `migrate`; the migrated file resolves.
     #[test]
-    fn the_old_tiers_key_warns_once_and_reads_as_the_same_table() {
+    fn the_old_tiers_key_is_refused_naming_tasks_and_migrate() {
+        let only_tiers = "[tiers.high]\nspin_period = \"1ms\"\n[tiers.low.zephyr]\npriority = 3\n";
+        let err = parse_system_config(only_tiers).unwrap_err();
+        assert!(err.contains("`[tiers.<name>]`"), "{err}");
+        assert!(err.contains("write `[tasks.<name>]`"), "{err}");
+        assert!(err.contains("high, low"), "names the tasks: {err}");
+        assert!(err.contains("`migrate`"), "{err}");
+        assert!(err.contains("`tiers-tasks`"), "{err}");
+        // A dotted top-level key is the same key.
+        let dotted = "tiers.a.spin_period = \"1ms\"\n";
+        assert!(
+            parse_system_config(dotted)
+                .unwrap_err()
+                .contains("`[tasks.<name>]`")
+        );
+        // Negative control: the new key reads.
+        let new = migrate_system_toml_str(only_tiers).unwrap().output;
+        assert_eq!(parse_system_config(&new).unwrap().tasks.len(), 2);
+    }
+
+    /// Phase 99 T4 (R+1): `group_tiers` is refused naming `group_tasks`, the
+    /// components that wrote it and `migrate`.
+    #[test]
+    fn the_old_group_tiers_key_is_refused_naming_group_tasks_and_migrate() {
+        let only_groups = "[[component]]\nname = \"control_node\"\ngroup_tiers = { ctrl = \"high\" }\n[[component]]\nname = \"telem_node\"\ngroup_tasks = { telem = \"low\" }\n[tasks.high]\n[tasks.low]\n";
+        let err = parse_system_config(only_groups).unwrap_err();
+        assert!(err.contains("`[[component]] group_tiers`"), "{err}");
+        assert!(err.contains("write `[[component]] group_tasks`"), "{err}");
+        assert!(
+            err.contains("(control_node)"),
+            "names only that component: {err}"
+        );
+        assert!(err.contains("`migrate`"), "{err}");
+        assert!(err.contains("`group-tiers-group-tasks`"), "{err}");
+        let new = migrate_system_toml_str(only_groups).unwrap().output;
+        let (e, d) = resolved(&new);
+        assert!(d.is_empty(), "{d:?}");
+        assert_eq!(e.bindings["/control_node/ctrl"], "high");
+    }
+
+    /// Every removed row is refused, with its own message: a row added
+    /// without a check here fails.
+    #[test]
+    fn every_removed_row_is_refused() {
+        assert_eq!(SYSTEM_TOML_REMOVED.len(), 2);
+        let files = [
+            "[tiers.a]\n",
+            "[[component]]\nname = \"n\"\ngroup_tiers = { g = \"a\" }\n",
+        ];
+        for (row, file) in SYSTEM_TOML_REMOVED.iter().zip(files) {
+            let err = parse_system_config(file).unwrap_err();
+            assert!(err.contains(&format!("`{}`", row.old)), "{err}");
+            assert!(err.contains(&format!("write `{}`", row.new)), "{err}");
+            assert!(SYSTEM_TOML_REWRITES.iter().any(|r| r.id == row.rewrite));
+        }
+    }
+
+    /// The old spelling in a string, or a table that merely starts with the
+    /// letters, is not the key.
+    #[test]
+    fn a_key_only_spelled_like_the_old_one_reads() {
+        let text = "[tierset]\nnote = \"[tiers.x] group_tiers\"\n[[component]]\nname = \"n\"\ngroup_tasks = { g = \"a\" }\n[tasks.a]\n";
+        let (e, d) = {
+            let cfg = parse_system_config(text).expect("parses");
+            let mut e = Execution::default();
+            let d = cfg.apply_to(&mut e, &["/n"]).unwrap();
+            (e, d)
+        };
+        assert!(d.is_empty(), "{d:?}");
+        assert_eq!(e.bindings["/n/g"], "a");
+    }
+
+    #[test]
+    fn migrate_turns_the_old_spelling_into_the_same_system() {
         let new = migrate_system_toml_str(TASKS_OLD).unwrap().output;
-        let (old_e, old_d) = resolved(TASKS_OLD);
-        let (new_e, new_d) = resolved(&new);
-        assert_eq!(
-            old_e, new_e,
-            "both spellings resolve to the same execution layer"
-        );
-        assert_eq!(old_e.tiers.len(), 2);
-        let tiers: Vec<_> = old_d
-            .iter()
-            .filter(|d| d.contains("`[tiers.<name>]`"))
-            .collect();
-        assert_eq!(tiers.len(), 1, "one warning for the key: {old_d:?}");
-        assert!(tiers[0].contains("deprecated-spelling"), "{}", tiers[0]);
-        assert!(
-            tiers[0].contains("`[tasks.<name>]`"),
-            "names the new key: {}",
-            tiers[0]
-        );
-        assert!(
-            tiers[0].contains("high, low"),
-            "names the tasks: {}",
-            tiers[0]
-        );
-        assert!(tiers[0].contains("migrate"), "{}", tiers[0]);
-        assert!(new_d.is_empty(), "the new spelling reads clean: {new_d:?}");
-        // The parsed config folds the old key into the new field.
-        let cfg = parse_system_config(TASKS_OLD).unwrap();
-        assert_eq!(cfg.tasks.keys().collect::<Vec<_>>(), ["high", "low"]);
-    }
-
-    #[test]
-    fn the_old_group_tiers_key_warns_once_and_binds_the_same() {
-        let (old_e, old_d) = resolved(TASKS_OLD);
-        assert_eq!(old_e.bindings["/control_node/ctrl"], "high");
-        assert_eq!(old_e.bindings["/telem_node/telem"], "low");
-        let groups: Vec<_> = old_d.iter().filter(|d| d.contains("group_tiers")).collect();
-        assert_eq!(groups.len(), 1, "one warning for the key: {old_d:?}");
-        assert!(groups[0].contains("deprecated-spelling"), "{}", groups[0]);
-        assert!(
-            groups[0].contains("`[[component]] group_tasks`"),
-            "{}",
-            groups[0]
-        );
-        assert!(
-            groups[0].contains("control_node, telem_node"),
-            "{}",
-            groups[0]
-        );
-        let cfg = parse_system_config(TASKS_OLD).unwrap();
-        assert_eq!(cfg.components[0].group_tasks["ctrl"], "high");
-    }
-
-    #[test]
-    fn one_name_under_both_spellings_is_an_error() {
-        let both = "[tasks.a]\nspin_period = \"1ms\"\n[tiers.a]\nspin_period = \"2ms\"\n";
-        let err = parse_system_config(both).unwrap_err();
-        assert!(
-            err.contains("`[tasks.a]`") && err.contains("`[tiers.a]`"),
-            "{err}"
-        );
-        let both = "[[component]]\nname = \"n\"\ngroup_tasks = { g = \"a\" }\ngroup_tiers = { g = \"b\" }\n";
-        let err = parse_system_config(both).unwrap_err();
-        assert!(err.contains("group `g`"), "{err}");
-        // Different names under the two spellings read as one table.
-        let mixed = "[tasks.a]\nspin_period = \"1ms\"\n[tiers.b]\nspin_period = \"2ms\"\n";
-        let cfg = parse_system_config(mixed).unwrap();
-        assert_eq!(cfg.tasks.len(), 2);
+        let (e, d) = resolved(&new);
+        assert!(d.is_empty(), "the new spelling reads clean: {d:?}");
+        assert_eq!(e.tasks.keys().collect::<Vec<_>>(), ["high", "low"]);
+        assert_eq!(e.tasks["high"].posix.as_ref().unwrap().priority, 80);
+        assert_eq!(e.bindings["/control_node/ctrl"], "high");
+        assert_eq!(e.bindings["/telem_node/telem"], "low");
     }
 
     #[test]
@@ -1029,8 +1019,7 @@ group_tiers = { inside = "a string" }
                 .contains("[tiers.not_a_table]\ngroup_tiers = { inside")
         );
         assert_eq!(m.output.len(), TASKS_OLD.len());
-        let cfg = parse_system_config(&m.output).unwrap();
-        assert!(cfg.deprecated_spellings().is_empty());
+        parse_system_config(&m.output).expect("the migrated file reads");
         // Idempotent.
         assert!(!migrate_system_toml_str(&m.output).unwrap().changed());
     }

@@ -6,6 +6,47 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.11 - 2026-11-05
+
+Phase 98 M7 at R+1 (play_launch `docs/roadmap/phase-99-tier-rename.md`
+T4): the old spellings of the scheduling unit are refused, and the model
+moves with them to schema 5. GRAMMAR_VERSION 0.3.11; the model's schema is
+5. The renamed model field and the removed aliases are an API break, so
+the workspace Cargo version moves to 0.7.0.
+
+### Changed
+
+- **`[tiers.*]` and `[[component]] group_tiers` are refused** by
+  `parse_system_config`, each with its own message naming the key to write
+  (`[tasks.<name>]`, `[[component]] group_tasks`), the tasks or components
+  the file wrote under the old key, and `migrate` with its rewrite id. The
+  rows are `system_config::SYSTEM_TOML_REMOVED`, the `system.toml`
+  counterpart of the field table's `removed` rows, kept for good: the
+  reader is lenient, so without them an old key would be ignored in
+  silence. One negative test per row.
+- **Model schema 5**: `Execution::tiers` is `Execution::tasks`, written
+  `execution.tasks`. `SystemModel::from_yaml_str` rewrites a schema-4 (or
+  older) model's `execution.tiers` on read, for good, before the legacy
+  `_us` duration keys are read; a model carrying both keys is
+  `ModelError::BothSpellings`. A test loads one system written as schema 4
+  and as schema 5 to the same model (with a negative control).
+
+### Removed
+
+- The deprecated aliases of v0.3.10: `TierDef`, `TierPlatformSpec`,
+  `ResolvedTier`, `ResolvedTierTable`, `DEFAULT_TIER` (sched and model),
+  `ResolvedTaskTable::is_single_tier`, and `sched/tests/tier_aliases.rs`.
+- `SystemConfigToml::tiers`, `ComponentBlock::group_tiers`,
+  `SystemConfigToml::deprecated_spellings` and `SystemDeprecatedSpelling`:
+  nothing reads the old keys any more, so nothing warns.
+
+### Kept
+
+- `migrate_system_toml_str` and its two rewrites (`tiers-tasks`,
+  `group-tiers-group-tasks`), now comparing the task table and bindings on
+  the raw TOML (the old text no longer parses as a config).
+- `upgrade_legacy_duration_keys` (was `upgrade_legacy_tier_keys`).
+
 ## v0.3.10 - 2026-11-05
 
 Phase 98 M7 at release R (play_launch `docs/roadmap/phase-99-tier-rename.md`

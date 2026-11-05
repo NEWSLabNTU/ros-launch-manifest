@@ -572,19 +572,19 @@ warn-vs-strict and presentation (`--sched-apply`, `--explain`):
 A task's portable head and its per-platform sub-tables. The v1
 `system.toml` file that authored them with `[[assign]]` rules is gone
 (v0.3.0); the types remain because nano-ros's own `system.toml` `[tasks.*]`
-block and the SystemModel's `execution.tiers` use them.
+block and the SystemModel's `execution.tasks` use them.
 
 A task is one named set of scheduling parameters and its placement, to
 which nodes and callback groups are bound: the AUTOSAR OS task into which
 runnables are mapped, with the periodic task model's period, deadline and
 budget on its head. On an RTOS it is one task running an executor over the
 callback groups bound to it; on Linux play_launch applies it to every
-thread of a node's process. Until v0.3.10 it was called a *tier*: a
-`system.toml` that writes `[tiers.<name>]` or `group_tiers` still reads
-this release, with one `deprecated-spelling` diagnostic per key naming the
-new one, and `migrate` rewrites the file
-(`system_config::migrate_system_toml_str`). The model's key stays
-`execution.tiers` through schema 4.
+thread of a node's process. Until v0.3.10 it was called a *tier*. Since
+v0.3.11 a `system.toml` that writes `[tiers.<name>]` or `group_tiers` is
+refused, naming the new key and `migrate`, which rewrites the file
+(`system_config::migrate_system_toml_str`). The model's key is
+`execution.tasks` since schema 5; a schema-4 (or older) model's
+`execution.tiers` is rewritten on read.
 
 
 ```toml
@@ -614,7 +614,7 @@ v0.3.0 a bare number is an error asking for one, and the `<name>_us`
 spellings (`deadline_us`, `period_us`, `budget_us`, `spin_period_us`,
 `time_slice_us`, `rr_timeslice_us`) are unknown fields. A SystemModel
 written before the Duration migration still loads:
-`SystemModel::from_yaml_str` rewrites those keys in `execution.tiers` (a
+`SystemModel::from_yaml_str` rewrites those keys in `execution.tasks` (a
 bare number there was microseconds).
 
 - `deny_unknown_fields` on the generic `TaskDef` head — a stray
@@ -655,7 +655,7 @@ bare number there was microseconds).
   no per-task runtime, so a `sched_class = "SCHED_DEADLINE"` sub-table is
   a `PosixError::UnknownSchedClass` naming the v2 platform file instead of
   a reservation invented from nothing.
-- These types do double duty: the SystemModel's `execution.tiers`
+- These types do double duty: the SystemModel's `execution.tasks`
   reuses `TaskDef`/`TaskPlatformSpec` (re-exported through the `model`
   crate), so one schema serves nano-ros's `system.toml` tasks, the
   model's applied-task layer, and the mapper pipeline.
@@ -698,7 +698,7 @@ play_launch `docs/guide/rt-scheduling.md`.
   reads the model and never the platform file, can rebuild them.
 - **Where it runs**: fresh derive on `check --sched [--explain]`,
   `resolve`, `launch`, and `run`. `up <model.yaml>` does **not**
-  re-run the mapper — it reads the model's `execution.tiers` +
+  re-run the mapper — it reads the model's `execution.tasks` +
   `execution.bindings` (see below).
 - **What lands in the SystemModel**: only the applied schedule —
   synthesized `TaskDef`s + `bindings` (FQN → task, default task
@@ -781,7 +781,7 @@ RFC-0052 §"system-model RTOS mapper".
   `<stem>.system.<target>.yaml` platform files — its resolver plumbs
   `--sched`, but the workspace sync never passes it. The derived
   (mapper) path activates only when a model carries no declared
-  `execution.tiers`.
+  `execution.tasks`.
 
 ## Distribution & Cross-Repo Sharing
 

@@ -169,6 +169,14 @@ types are `TaskDef`, `TaskPlatformSpec`, `ResolvedTask`,
 `#[deprecated]` aliases for this release. The model keeps
 `execution.tiers` (schema 4) until R+1.
 
+Progress (2026-11-05): v0.3.11 is R+1 for M7. `[tiers.*]` and
+`group_tiers` are refused by `parse_system_config`, each naming the new
+key, what the file wrote under it and `migrate` (`SYSTEM_TOML_REMOVED`, the
+`system.toml` counterpart of the `removed` rows); `migrate` keeps the
+rewrite. The model is schema 5: `execution.tasks`, a schema-4 model's
+`execution.tiers` rewritten on read for good. The deprecated type aliases
+and `SystemConfigToml::deprecated_spellings` are gone.
+
 | # | Ours | Standard | Source | Notes |
 |---|---|---|---|---|
 | M1 | `mapper:` (`rate_monotonic`, `deadline_monotonic`, `manual`), `SchedMapper` | **priority assignment** policy | Liu & Layland; Audsley's optimal priority assignment | platform-file key `priority_assignment:` |

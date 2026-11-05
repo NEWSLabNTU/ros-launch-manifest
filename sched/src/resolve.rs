@@ -7,10 +7,6 @@ use crate::types::{AssignRule, TaskDef};
 /// The synthesized task for nodes matched by no assign rule.
 pub const DEFAULT_TASK: &str = "default";
 
-/// Renamed [`DEFAULT_TASK`] (phase 99); this alias goes at schema 5.
-#[deprecated(since = "0.3.10", note = "renamed `DEFAULT_TASK`")]
-pub const DEFAULT_TIER: &str = DEFAULT_TASK;
-
 /// One node as seen by the resolver — dependency-free (no parser types).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchedNode {
@@ -210,21 +206,7 @@ impl ResolvedTaskTable {
     pub fn is_single_task(&self) -> bool {
         self.tasks.len() == 1 && self.tasks[0].name == DEFAULT_TASK
     }
-
-    /// Renamed [`Self::is_single_task`] (phase 99); goes at schema 5.
-    #[deprecated(since = "0.3.10", note = "renamed `is_single_task`")]
-    pub fn is_single_tier(&self) -> bool {
-        self.is_single_task()
-    }
 }
-
-/// Renamed [`ResolvedTask`] (phase 99); this alias goes at schema 5.
-#[deprecated(since = "0.3.10", note = "renamed `ResolvedTask`")]
-pub type ResolvedTier = ResolvedTask;
-
-/// Renamed [`ResolvedTaskTable`] (phase 99); this alias goes at schema 5.
-#[deprecated(since = "0.3.10", note = "renamed `ResolvedTaskTable`")]
-pub type ResolvedTierTable = ResolvedTaskTable;
 
 /// Resolve tasks + assign rules against the system's nodes for one target.
 pub fn resolve(

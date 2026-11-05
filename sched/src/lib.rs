@@ -11,14 +11,6 @@ pub mod types;
 pub use resolve::{DEFAULT_TASK, ResolvedTask, ResolvedTaskTable, SchedError, SchedNode, resolve};
 pub use types::{AssignRule, ReservedBand, TaskDef, TaskPlatformSpec};
 
-// Phase 99 T1 (v0.3.10): the scheduling unit is a task. The old names stay
-// one release as deprecated aliases, so a consumer can bump the tag before
-// renaming; they go at the release that moves the model to schema 5.
-#[allow(deprecated)]
-pub use resolve::{DEFAULT_TIER, ResolvedTier, ResolvedTierTable};
-#[allow(deprecated)]
-pub use types::{TierDef, TierPlatformSpec};
-
 // --- v2 (derived) model: platform-file schema, SchedMapper, legacy bridge,
 // conflict-semantics validation (Phase 41.1). Additive: everything above
 // keeps compiling and passing unchanged. ---

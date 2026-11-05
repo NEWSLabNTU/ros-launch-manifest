@@ -59,7 +59,8 @@ These pass, and stay:
   `locator`, `rmw` in `Deploy`, from `[host.*]` (its `nodes` / `launch`
   scoping included) and from `[system]`;
 - `[tasks.*]` and `group_tasks` (scheduling, in the shared `sched` schema;
-  spelled `[tiers.*]` and `group_tiers` before v0.3.10);
+  spelled `[tiers.*]` and `group_tiers` before v0.3.10, refused since
+  v0.3.11);
 - `[[component]] params` / `params_files` (ROS parameter values);
 - `[system] rmw` / `domain_id` / `locator`, `[[transport]]`, `[[bridge]]`;
 - per-node `lifecycle` and `lifecycle_autostart`. The enum keeps

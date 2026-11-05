@@ -482,8 +482,13 @@ fn execution_layer_slices() {
     assert_eq!(e.bridges[0].from, "eth0");
     assert_eq!(e.bridges[0].topics, vec!["/perception/objects"]);
 
-    // task table (sched crate TaskDef schema) + per-callback-group binding
-    let high = &e.tiers["high"];
+    // task table (sched crate TaskDef schema) + per-callback-group binding;
+    // the fixture is a version-1 model, so it spells the table `tiers`.
+    assert!(
+        text.contains("  tiers:\n"),
+        "the golden fixture must keep `tiers`"
+    );
+    let high = &e.tasks["high"];
     assert_eq!(high.class.as_deref(), Some("real_time"));
     assert_eq!(high.deadline.unwrap().as_micros(), 2_000);
     assert_eq!(high.spin_period.unwrap().as_micros(), 1_000);
