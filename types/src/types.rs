@@ -1970,6 +1970,10 @@ impl PathDecl {
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
+// `Timer` carries an inline `Bound`; boxing it would change the public
+// variant shape every consumer matches on. A path holds one trigger, so
+// the size costs nothing that matters.
+#[allow(clippy::large_enum_variant)]
 pub enum Trigger {
     /// Periodic self-clocked callback. `rate_hz` is a REAL scheduling
     /// input (mapper fact); must be > 0.
