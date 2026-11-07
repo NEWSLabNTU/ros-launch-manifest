@@ -93,6 +93,12 @@ pub struct Manifest {
     /// ladder to fall to when it is lost.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, ModeDecl>,
+    /// Independence requirements (play_launch phase 101,
+    /// `docs/design/fault-tolerance.md` §4.5): each entry names nodes or
+    /// functions that must not share the listed deployment facts, pairwise.
+    /// In the order written.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub independence: Vec<IndependenceDecl>,
     /// Project policy (phase 93): how the consumer treats a measured budget
     /// nothing supervises. `None` when the file states none (the default:
     /// a warning).
@@ -560,6 +566,49 @@ pub struct ModeDecl {
     /// grammar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit: Option<ModeExit>,
+    /// What this level commands (play_launch phase 100,
+    /// `docs/design/safety-functions.md` §5): while it is active, every
+    /// message on each named topic satisfies every predicate listed for it.
+    /// A topic named here is a final element; its arbiter, the invariant
+    /// and silence are derived by the consumer. Keyed by topic as written.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub commands: BTreeMap<String, Vec<ValuePredicate>>,
+}
+
+/// One `independence:` entry: `{ of: [...], not_sharing: [...] }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IndependenceDecl {
+    /// Nodes or functions, pairwise independent. At least two.
+    pub of: Vec<String>,
+    /// The deployment facts no two of them may share. At least one.
+    pub not_sharing: Vec<SharedFact>,
+}
+
+/// A deployment fact an independence requirement can be checked against.
+/// A closed set: the facts the model and play_launch have
+/// (`fault-tolerance.md` §6 decision 3). A host is not one: one resolved
+/// model runs on one host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedFact {
+    /// One OS process (composables in one container, unless `isolated`).
+    Process,
+    /// One container, in any container mode.
+    Container,
+    /// An overlapping CPU set (the platform file's `cpus`).
+    Cpus,
+}
+
+impl SharedFact {
+    pub const ALL: [SharedFact; 3] = [SharedFact::Process, SharedFact::Container, SharedFact::Cpus];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SharedFact::Process => "process",
+            SharedFact::Container => "container",
+            SharedFact::Cpus => "cpus",
+        }
+    }
 }
 
 /// A parameter named across the contract: `<node>.<parameter>`, split at
@@ -614,6 +663,11 @@ pub struct FunctionDecl {
     /// Present only for the `{ of: [...], when: {...} }` form.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<ValuePredicate>,
+    /// A redundant group's count (play_launch phase 101, IEC 61508's MooN):
+    /// held while at least `m` of the `all_of` members hold. Only on an
+    /// `all_of` group; absent means 1 (1ooN, held while any member holds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub m: Option<u32>,
 }
 
 /// A predicate on ONE scalar field of a topic's message (v0.1.46):
@@ -824,6 +878,21 @@ pub struct HazardDecl {
     /// classes (`when-requires-reported` in the consumer).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<ValuePredicate>,
+    /// The requirement of the hazard analysis this hazard implements (play_launch
+    /// phase 100): an id, and optionally where it is written. The consumer
+    /// names it in every diagnostic about the hazard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<RequirementRef>,
+}
+
+/// `hazards.<h>.requirement: { id, source }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RequirementRef {
+    /// The requirement's id in the hazard analysis (`R1`, `SG-04`).
+    pub id: String,
+    /// Where it is written (`HARA rev 3, section 4.2`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 impl HazardDecl {
@@ -1045,6 +1114,14 @@ pub enum FaultKind {
     /// A supervised budget was overrun (phase 93): what a `supervise:`
     /// detects, for traces and verdicts. Not written in an `on:` list.
     Overrun,
+    /// A message whose stamp equals the previous one from the same
+    /// publisher (play_launch phase 101).
+    Repetition,
+    /// A message whose stamp is earlier than the previous one from the same
+    /// publisher.
+    Resequencing,
+    /// A message from a publisher the contract does not name on the topic.
+    Insertion,
 }
 
 /// Where the runtime observer reads a violation.
@@ -1616,6 +1693,20 @@ pub struct TopicDecl {
     /// block (phase 90 G3: this is the one place).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalSide>,
+    /// What the EXTERNAL consumer does when this topic goes quiet (play_launch
+    /// phase 101, `fault-tolerance.md` §4.4): it reaches its safe state by
+    /// itself after `after` of silence. Written in the map form
+    /// `external: { side: sub, on_silence: { after: 500ms } }`; only with an
+    /// external subscriber side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_silence: Option<OnSilence>,
+}
+
+/// `topics.<t>.external.on_silence`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OnSilence {
+    /// Silence after which the external consumer is in its safe state.
+    pub after: crate::duration::Duration,
 }
 
 /// Side of a topic that is provided/consumed by an external system.

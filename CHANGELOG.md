@@ -6,6 +6,32 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+The contract safety model's grammar (play_launch phases 100 to 102 M1;
+`docs/design/safety-functions.md`, `docs/design/fault-tolerance.md`).
+GRAMMAR_VERSION 0.3.13. Every key is additive, so the model stays schema 5.
+
+### Added
+
+- **`modes.<m>.commands`**: `{ <topic>: [<predicate>, ...] }`, what a level
+  commands while it is active, each predicate in the `when:` shape. Model:
+  `ModeContract.commands`. A topic named here is a final element; its
+  arbiter, the invariant and silence are derived by the consumer.
+- **`hazards.<h>.requirement`**: `{ id, source }`, the hazard analysis's
+  requirement the hazard implements. Model: `HazardContract.requirement`.
+- **`functions.<f>.m`**: a redundant group's count (MooN), only beside
+  `all_of`, from 1 to the member count. Model: `FunctionContract.m`.
+- **`independence:`**: a list of `{ of, not_sharing }` over the deployment
+  facts `process`, `container` and `cpus`. `host` is refused, naming why.
+  Model: `Contracts.independence`.
+- **`topics.<t>.external: { side, on_silence: { after } }`**: the map form
+  of `external`, stating that an external consumer reaches its safe state
+  after `after` of silence. Only with an external subscriber side. Model:
+  `TopicContract.on_silence_after_ms`.
+- **Fault classes `repetition`, `resequencing`, `insertion`** in every
+  `on:` list. Model: `FaultKind`.
+
 ## v0.3.12 - 2026-11-05
 
 Phase 98 M7 at R+2 (play_launch `docs/roadmap/phase-99-tier-rename.md`

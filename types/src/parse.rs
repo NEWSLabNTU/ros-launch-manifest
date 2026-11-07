@@ -492,6 +492,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         integrity_levels: yaml_string_list(doc, "integrity_levels", ctx)?,
         functions: parse_functions(doc, ctx)?,
         modes: parse_modes(doc, ctx)?,
+        independence: parse_independence(doc, ctx)?,
         policy: parse_policy(doc, ctx)?,
         supervision: parse_supervision_platform(doc, ctx)?,
         acknowledged: parse_acknowledged(doc, ctx)?,
@@ -1515,15 +1516,42 @@ fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
         return Ok(FunctionDecl {
             group: parse_guard_group(v, ctx, "functions.<name>")?,
             when: None,
+            m: None,
         });
     };
     reject_unknown_keys(v, ctx, Context::Function)?;
     let has = |key: &str| !v[key].is_badvalue();
+    if has("m") && !has("all_of") {
+        return Err(field_err(
+            ctx,
+            "m",
+            "`m` counts the members of a redundant group -- only beside `all_of:`",
+        ));
+    }
     match (has("all_of"), has("of"), has("when")) {
-        (true, false, false) => Ok(FunctionDecl {
-            group: parse_guard_group(v, ctx, "functions.<name>")?,
-            when: None,
-        }),
+        (true, false, false) => {
+            let group = parse_guard_group(v, ctx, "functions.<name>")?;
+            let m = match yaml_u32(v, "m", ctx)? {
+                None => None,
+                Some(m) if m >= 1 && (m as usize) <= group.members.len() => Some(m),
+                Some(m) => {
+                    return Err(field_err(
+                        ctx,
+                        "m",
+                        &format!(
+                            "`m: {m}` -- a group of {} members is held by 1 to {} of them",
+                            group.members.len(),
+                            group.members.len()
+                        ),
+                    ));
+                }
+            };
+            Ok(FunctionDecl {
+                group,
+                when: None,
+                m,
+            })
+        }
         (true, _, _) => Err(field_err(
             ctx,
             "all_of",
@@ -1546,6 +1574,7 @@ fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
                     all_of: false,
                 },
                 when: parse_predicate(v, ctx)?,
+                m: None,
             })
         }
         (false, true, false) => Err(field_err(
@@ -1585,6 +1614,12 @@ fn parse_predicate(doc: &Yaml, ctx: &str) -> Result<Option<ValuePredicate>, Pars
             section,
         ));
     };
+    parse_predicate_map(section, pctx).map(Some)
+}
+
+/// One predicate mapping, `{ field: <name>, <op>: <constant> }`, at `pctx`:
+/// a `when:` or one entry of a mode's `commands`.
+fn parse_predicate_map(section: &Yaml, pctx: &str) -> Result<ValuePredicate, ParseError> {
     reject_unknown_keys(section, pctx, Context::Predicate)?;
     let field = yaml_string(section, "field", pctx)?.ok_or_else(|| {
         field_err(
@@ -1657,7 +1692,139 @@ fn parse_predicate(doc: &Yaml, ctx: &str) -> Result<Option<ValuePredicate>, Pars
             ),
         ));
     }
-    Ok(Some(ValuePredicate { field, op, value }))
+    Ok(ValuePredicate { field, op, value })
+}
+
+/// `modes.<m>.commands` (v0.3.13): `{ <topic>: [<predicate>, ...] }`.
+fn parse_commands(
+    doc: &Yaml,
+    ctx: &str,
+) -> Result<BTreeMap<String, Vec<ValuePredicate>>, ParseError> {
+    let mut out = BTreeMap::new();
+    let section = &doc["commands"];
+    if section.is_badvalue() {
+        return Ok(out);
+    }
+    let hash = section.as_hash().ok_or_else(|| {
+        type_err(
+            ctx,
+            "commands",
+            "a mapping `{ <topic>: [{ field, <op>: <constant> }, ...] }`",
+            section,
+        )
+    })?;
+    if hash.is_empty() {
+        return Err(field_err(
+            ctx,
+            "commands",
+            "an empty mapping -- name the topic this level commands, or omit the key",
+        ));
+    }
+    let cctx = format_path(ctx, "commands");
+    for (k, v) in hash {
+        let topic = yaml_str_owned(k);
+        let items: Vec<&Yaml> = match v {
+            Yaml::Array(items) => items.iter().collect(),
+            Yaml::Hash(_) => vec![v],
+            other => {
+                return Err(type_err(
+                    &cctx,
+                    &topic,
+                    "a list of predicates `[{ field, <op>: <constant> }, ...]`",
+                    other,
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(field_err(
+                &cctx,
+                &topic,
+                "no predicate -- a commanded topic states what its messages satisfy",
+            ));
+        }
+        let mut preds = Vec::new();
+        for (i, item) in items.into_iter().enumerate() {
+            let pctx = format_path(&cctx, &format!("{topic}[{i}]"));
+            let Yaml::Hash(_) = item else {
+                return Err(type_err(
+                    &cctx,
+                    &format!("{topic}[{i}]"),
+                    "a mapping `{ field: <name>, <op>: <constant> }`",
+                    item,
+                ));
+            };
+            preds.push(parse_predicate_map(item, &pctx)?);
+        }
+        out.insert(topic, preds);
+    }
+    Ok(out)
+}
+
+/// `independence:` at a manifest's top (v0.3.13): a list of
+/// `{ of: [...], not_sharing: [...] }`.
+fn parse_independence(doc: &Yaml, ctx: &str) -> Result<Vec<IndependenceDecl>, ParseError> {
+    let section = &doc["independence"];
+    let items = match section {
+        Yaml::BadValue => return Ok(Vec::new()),
+        Yaml::Array(items) => items,
+        other => {
+            return Err(type_err(
+                ctx,
+                "independence",
+                "a list of `{ of: [...], not_sharing: [...] }`",
+                other,
+            ));
+        }
+    };
+    let mut out = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let ictx = format_path(ctx, &format!("independence[{i}]"));
+        reject_unknown_keys(item, &ictx, Context::Independence)?;
+        let of = yaml_string_list(item, "of", &ictx)?;
+        if of.len() < 2 {
+            return Err(field_err(
+                &ictx,
+                "of",
+                "independence is between at least two nodes or functions",
+            ));
+        }
+        let mut not_sharing: Vec<SharedFact> = Vec::new();
+        for raw in parse_string_or_list(item, "not_sharing", &ictx)? {
+            let fact = match raw.as_str() {
+                "process" => SharedFact::Process,
+                "container" => SharedFact::Container,
+                "cpus" => SharedFact::Cpus,
+                "host" => {
+                    return Err(field_err(
+                        &ictx,
+                        "not_sharing",
+                        "`host` is not a fact one model can check: every node of one resolved model runs on one host, so independence across hosts is the separation of two models -- accepted: process, container, cpus",
+                    ));
+                }
+                other => {
+                    return Err(field_err(
+                        &ictx,
+                        "not_sharing",
+                        &format!(
+                            "`{other}` is not a deployment fact this checker has -- accepted: process, container, cpus"
+                        ),
+                    ));
+                }
+            };
+            if !not_sharing.contains(&fact) {
+                not_sharing.push(fact);
+            }
+        }
+        if not_sharing.is_empty() {
+            return Err(field_err(
+                &ictx,
+                "not_sharing",
+                "required: at least one of process, container, cpus",
+            ));
+        }
+        out.push(IndependenceDecl { of, not_sharing });
+    }
+    Ok(out)
 }
 
 /// `modes.<m>.min_dwell` (v0.1.46 as `window`, renamed in v0.3.3, phase
@@ -1858,6 +2025,7 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
                 overrides,
                 min_dwell,
                 exit,
+                commands: parse_commands(v, &mctx)?,
             },
         );
     }
@@ -1924,6 +2092,9 @@ fn parse_fault_kind(raw: &str, ctx: &str, key: &str) -> Result<FaultKind, ParseE
         "late" => Ok(FaultKind::Late),
         "loss" => Ok(FaultKind::Loss),
         "reported" => Ok(FaultKind::Reported),
+        "repetition" => Ok(FaultKind::Repetition),
+        "resequencing" => Ok(FaultKind::Resequencing),
+        "insertion" => Ok(FaultKind::Insertion),
         "overrun" => Err(field_err(
             ctx,
             key,
@@ -1935,8 +2106,9 @@ fn parse_fault_kind(raw: &str, ctx: &str, key: &str) -> Result<FaultKind, ParseE
             ctx,
             key,
             &format!(
-                "`{other}` is not a fault class — accepted: omission, late, loss, reported \
-                 (AADL EMV2's error types, restricted to what a subscriber can observe)"
+                "`{other}` is not a fault class — accepted: omission, late, loss, reported, \
+                 repetition, resequencing, insertion (AADL EMV2's error types, restricted to \
+                 what a subscriber can observe)"
             ),
         )),
     }
@@ -2040,10 +2212,36 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 enters,
                 reaction,
                 when: parse_predicate(v, &hctx)?,
+                requirement: parse_requirement(v, &hctx)?,
             },
         );
     }
     Ok(out)
+}
+
+/// `hazards.<h>.requirement: { id, source }` (v0.3.13).
+fn parse_requirement(doc: &Yaml, ctx: &str) -> Result<Option<RequirementRef>, ParseError> {
+    let section = &doc["requirement"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let rctx = &format_path(ctx, "requirement");
+    let Yaml::Hash(_) = section else {
+        return Err(type_err(
+            ctx,
+            "requirement",
+            "a mapping `{ id, source }`",
+            section,
+        ));
+    };
+    reject_unknown_keys(section, rctx, Context::Requirement)?;
+    let id = yaml_string(section, "id", rctx)?
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| field_err(rctx, "id", "required: the requirement's id, non-empty"))?;
+    Ok(Some(RequirementRef {
+        id,
+        source: yaml_string(section, "source", rctx)?,
+    }))
 }
 
 fn parse_on_violation(doc: &Yaml, ctx: &str) -> Result<Option<OnViolation>, ParseError> {
@@ -3006,8 +3204,10 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
             max_transport: None,
             drop: None,
             external: None,
+            on_silence: None,
         });
     }
+    let (external, on_silence) = parse_topic_external(yaml, ctx)?;
     Ok(TopicDecl {
         if_condition: yaml_string(yaml, "if", ctx)?,
         unless_condition: yaml_string(yaml, "unless", ctx)?,
@@ -3019,8 +3219,60 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         rate_hz: yaml_rate_at(yaml, "rate_hz", ctx)?,
         max_transport: yaml_bound(yaml, "max_transport", ctx, Context::Topic)?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
-        external: parse_external_side(yaml, "external", ctx)?,
+        external,
+        on_silence,
     })
+}
+
+/// `topics.<t>.external`: a side, or (v0.3.13) the map `{ side, on_silence }`.
+fn parse_topic_external(
+    yaml: &Yaml,
+    ctx: &str,
+) -> Result<(Option<ExternalSide>, Option<OnSilence>), ParseError> {
+    let section = &yaml["external"];
+    let Yaml::Hash(_) = section else {
+        return Ok((parse_external_side(yaml, "external", ctx)?, None));
+    };
+    let ectx = &format_path(ctx, "external");
+    reject_unknown_keys(section, ectx, Context::External)?;
+    let side = parse_external_side(section, "side", ectx)?
+        .ok_or_else(|| field_err(ectx, "side", "required: pub, sub or both"))?;
+    let on_silence = match &section["on_silence"] {
+        Yaml::BadValue => None,
+        s @ Yaml::Hash(_) => {
+            let sctx = &format_path(ectx, "on_silence");
+            reject_unknown_keys(s, sctx, Context::OnSilence)?;
+            let after = yaml_duration(s, "after")
+                .map_err(|e| reframe(e, sctx))?
+                .ok_or_else(|| {
+                    field_err(
+                        sctx,
+                        "after",
+                        "required: the silence after which the external consumer is safe",
+                    )
+                })?;
+            if after.as_millis_f64() <= 0.0 {
+                return Err(field_err(sctx, "after", "must be positive"));
+            }
+            Some(OnSilence { after })
+        }
+        other => {
+            return Err(type_err(
+                ectx,
+                "on_silence",
+                "a mapping `{ after: <d> }`",
+                other,
+            ));
+        }
+    };
+    if on_silence.is_some() && side == ExternalSide::Pub {
+        return Err(field_err(
+            ectx,
+            "on_silence",
+            "`on_silence` is what an external CONSUMER does -- only with `side: sub` or `both`",
+        ));
+    }
+    Ok((Some(side), on_silence))
 }
 
 /// Parse the manifest-level `external_topics:` block.
@@ -5949,6 +6201,139 @@ nodes:
         }
         let new = parse_manifest_str("version: 1\nmodes:\n  m:\n    min_dwell: 10s\n").unwrap();
         assert!(new.modes["m"].min_dwell.is_some());
+    }
+
+    /// v0.3.13 (play_launch phase 100 S1): a level's `commands`.
+    #[test]
+    fn a_mode_commands_its_topics() {
+        let ok = parse_manifest_str(
+            "version: 1\nmodes:\n  stopped:\n    requires: []\n    commands:\n      /cmd_vel:\n        - { field: linear.x, equals: 0 }\n        - { field: angular.z, equals: 0 }\n      /lamp: { field: on, equals: true }\n",
+        )
+        .unwrap();
+        let c = &ok.modes["stopped"].commands;
+        assert_eq!(c["/cmd_vel"].len(), 2);
+        assert_eq!(c["/cmd_vel"][0].field, "linear.x");
+        assert_eq!(c["/lamp"].len(), 1, "one mapping is a list of one");
+        let m = |body: &str| format!("version: 1\nmodes:\n  s:\n    commands:\n{body}");
+        let e = err_of(&m("      /cmd_vel: []\n"));
+        assert!(e.contains("no predicate"), "{e}");
+        let e = err_of(&m("      /cmd_vel: [{ field: x }]\n"));
+        assert!(
+            e.contains("modes.s.commands./cmd_vel[0]") && e.contains("no operator"),
+            "{e}"
+        );
+        let e = err_of(&m("      /cmd_vel: [{ field: x, equals: 0, gt: 1 }]\n"));
+        assert!(e.contains("exactly one"), "{e}");
+        let e = err_of(&m("      /cmd_vel: [{ fild: x, equals: 0 }]\n"));
+        assert!(e.contains("fild"), "{e}");
+        let e = err_of("version: 1\nmodes:\n  s:\n    commands: {}\n");
+        assert!(e.contains("empty mapping"), "{e}");
+    }
+
+    /// v0.3.13 (phase 100 S2): `hazards.<h>.requirement`.
+    #[test]
+    fn a_hazard_names_its_requirement() {
+        let ok = parse_manifest_str(
+            "version: 1\nhazards:\n  h:\n    requirement: { id: R1, source: \"HARA rev 3\" }\n",
+        )
+        .unwrap();
+        let r = ok.hazards["h"].requirement.as_ref().unwrap();
+        assert_eq!(
+            (r.id.as_str(), r.source.as_deref()),
+            ("R1", Some("HARA rev 3"))
+        );
+        let e = err_of("version: 1\nhazards:\n  h:\n    requirement: { source: x }\n");
+        assert!(
+            e.contains("hazards.h.requirement.id") && e.contains("required"),
+            "{e}"
+        );
+        let e = err_of("version: 1\nhazards:\n  h:\n    requirement: R1\n");
+        assert!(e.contains("a mapping"), "{e}");
+    }
+
+    /// v0.3.13 (phase 101): `m` on a redundant group.
+    #[test]
+    fn a_redundant_group_states_its_count() {
+        let ok = parse_manifest_str(
+            "version: 1\nfunctions:\n  att:\n    all_of: [/a, /b, /c]\n    m: 2\n",
+        )
+        .unwrap();
+        assert_eq!(ok.functions["att"].m, Some(2));
+        for (m, needle) in [("0", "1 to 3"), ("4", "1 to 3")] {
+            let e = err_of(&format!(
+                "version: 1\nfunctions:\n  att:\n    all_of: [/a, /b, /c]\n    m: {m}\n"
+            ));
+            assert!(e.contains(needle), "{e}");
+        }
+        let e = err_of(
+            "version: 1\nfunctions:\n  v:\n    of: [/a]\n    when: { field: x, equals: 1 }\n    m: 1\n",
+        );
+        assert!(e.contains("only beside `all_of:`"), "{e}");
+    }
+
+    /// v0.3.13 (phase 101): one form of independence; `host` refused.
+    #[test]
+    fn independence_names_deployment_facts() {
+        let ok = parse_manifest_str(
+            "version: 1\nindependence:\n  - of: [/a, /b]\n    not_sharing: [process, cpus, process]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            ok.independence[0].not_sharing,
+            vec![SharedFact::Process, SharedFact::Cpus]
+        );
+        let e = err_of("version: 1\nindependence:\n  - of: [/a, /b]\n    not_sharing: [host]\n");
+        assert!(
+            e.contains("one resolved model runs on one host") || e.contains("one host"),
+            "{e}"
+        );
+        let e = err_of("version: 1\nindependence:\n  - of: [/a]\n    not_sharing: [process]\n");
+        assert!(e.contains("at least two"), "{e}");
+        let e = err_of("version: 1\nindependence:\n  - of: [/a, /b]\n    not_sharing: [power]\n");
+        assert!(e.contains("accepted: process, container, cpus"), "{e}");
+        let e = err_of("version: 1\nindependence:\n  - of: [/a, /b]\n");
+        assert!(e.contains("not_sharing") && e.contains("required"), "{e}");
+    }
+
+    /// v0.3.13 (phase 101): an external consumer's silence behaviour.
+    #[test]
+    fn an_external_consumer_states_what_it_does_on_silence() {
+        let t = |ext: &str| {
+            format!(
+                "version: 1\ntopics:\n  /cmd:\n    type: geometry_msgs/msg/Twist\n    external: {ext}\n"
+            )
+        };
+        let ok = parse_manifest_str(&t("{ side: sub, on_silence: { after: 500ms } }")).unwrap();
+        let topic = &ok.topics["/cmd"];
+        assert_eq!(topic.external, Some(ExternalSide::Sub));
+        assert!(topic.on_silence.is_some());
+        let plain = parse_manifest_str(&t("sub")).unwrap();
+        assert!(plain.topics["/cmd"].on_silence.is_none());
+        let e = err_of(&t("{ side: pub, on_silence: { after: 1s } }"));
+        assert!(e.contains("only with `side: sub`"), "{e}");
+        let e = err_of(&t("{ on_silence: { after: 1s } }"));
+        assert!(e.contains("side") && e.contains("required"), "{e}");
+        let e = err_of(&t("{ side: sub, on_silence: {} }"));
+        assert!(e.contains("after") && e.contains("required"), "{e}");
+    }
+
+    /// v0.3.13 (phase 101): three communication fault classes.
+    #[test]
+    fn three_communication_fault_classes_parse() {
+        let ok = parse_manifest_str(
+            "version: 1\nhazards:\n  h:\n    on: [repetition, resequencing, insertion]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            ok.hazards["h"].on,
+            vec![
+                FaultKind::Repetition,
+                FaultKind::Resequencing,
+                FaultKind::Insertion
+            ]
+        );
+        let e = err_of("version: 1\nhazards:\n  h:\n    on: corruption\n");
+        assert!(e.contains("insertion"), "{e}");
     }
 
     #[test]

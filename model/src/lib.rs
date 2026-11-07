@@ -1015,6 +1015,9 @@ pub struct Contracts {
     /// that schedules per mode.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub modes: BTreeMap<String, ModeContract>,
+    /// Independence requirements (v0.3.13), in the order written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub independence: Vec<IndependenceContract>,
     /// The integrity scale `hazards.<h>.integrity` is drawn from, ascending
     /// (design issue #52; `severity_levels` before schema 3, read under
     /// that name too). Empty means the ISO 26262 default
@@ -1109,6 +1112,11 @@ pub struct ModeContract {
     /// The success exit of a level with a dwell (v0.1.46).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<ExitContract>,
+    /// What this level commands (v0.3.13): topic FQN to the predicates every
+    /// message on it satisfies while the level is active. A topic named in
+    /// any mode's `commands` is a final element.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub commands: BTreeMap<String, Vec<PredicateContract>>,
     /// Where each number of this entry read from the launch tree came from
     /// (play_launch phase 94), keyed by the model field it fills
     /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
@@ -1147,6 +1155,10 @@ pub struct FunctionContract {
     pub all_of: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<PredicateContract>,
+    /// A redundant group's count, MooN (v0.3.13): held while at least `m`
+    /// members hold. Absent means 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub m: Option<u32>,
 }
 
 /// A `when:` predicate after merge (v0.1.46): one field, one operator, one
@@ -1298,6 +1310,35 @@ pub struct HazardContract {
     /// Empty when the hazard reaches no level the checker could walk.
     #[serde(default, alias = "rungs", skip_serializing_if = "Vec::is_empty")]
     pub degradation_levels: Vec<LevelRoute>,
+    /// The hazard analysis's requirement this hazard implements (v0.3.13).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<RequirementContract>,
+}
+
+/// `hazards.<h>.requirement` after merge (v0.3.13).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequirementContract {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// One `independence:` entry after merge (v0.3.13): node FQNs or function
+/// keys, pairwise independent, and the deployment facts no two of them
+/// share.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndependenceContract {
+    pub of: Vec<String>,
+    pub not_sharing: Vec<SharedFact>,
+}
+
+/// A deployment fact an independence requirement is checked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedFact {
+    Process,
+    Container,
+    Cpus,
 }
 
 /// One degradation level's route (play_launch phase 85 D4), as the checker
@@ -1423,6 +1464,12 @@ pub enum FaultKind {
     /// A supervised budget overran (phase 93): the verdict of a
     /// `supervise:`'s monitor, never a subscriber's `on:`.
     Overrun,
+    /// A stamp equal to the publisher's previous one (v0.3.13).
+    Repetition,
+    /// A stamp earlier than the publisher's previous one (v0.3.13).
+    Resequencing,
+    /// A publisher the contract does not name on the topic (v0.3.13).
+    Insertion,
 }
 
 /// A supervised budget lowered to a route monitor (phase 93): the budget
@@ -2168,6 +2215,10 @@ pub struct TopicContract {
     pub drop: Option<DropContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qos: Option<Qos>,
+    /// The external consumer's silence behaviour (v0.3.13): after this long
+    /// with no message it is in its safe state by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_silence_after_ms: Option<f64>,
     /// Where each number of this entry read from the launch tree came from
     /// (play_launch phase 94), keyed by the model field it fills
     /// (`max_age_ms`, `qos.lease_duration_ms`, `rate_hz`). The number is in
@@ -2531,6 +2582,7 @@ mod tests {
                     constant: "MANUAL".into(),
                 },
             }),
+            m: None,
         };
         let y = serde_yaml_ng::to_string(&f).unwrap();
         assert!(y.contains("constant: MANUAL"), "{y}");

@@ -140,6 +140,15 @@ pub enum Context {
     /// A client's `{ reaction }` map: `on_rejected` and `on_timeout.then`
     /// (v0.2.5).
     CallReaction,
+    /// The map form of `topics.<name>.external` (v0.3.13): `{ side,
+    /// on_silence }`.
+    External,
+    /// `topics.<name>.external.on_silence` (v0.3.13).
+    OnSilence,
+    /// `hazards.<name>.requirement` (v0.3.13).
+    Requirement,
+    /// One entry of `independence:` at a manifest's top (v0.3.13).
+    Independence,
 }
 
 impl Context {
@@ -191,6 +200,10 @@ impl Context {
             Context::OnTimeout => "cli.<endpoint>.on_timeout",
             Context::Retry => "cli.<endpoint>.on_timeout.retry",
             Context::CallReaction => "on_rejected / on_timeout.then",
+            Context::External => "topics.<name>.external (map form)",
+            Context::OnSilence => "topics.<name>.external.on_silence",
+            Context::Requirement => "hazards.<name>.requirement",
+            Context::Independence => "independence[]",
         }
     }
 }
@@ -396,6 +409,12 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         Kind::Meta,
         "Operational modes: what each requires, and the fallback sequence (the ordered degradation levels) to fall to when it is lost.",
+    ),
+    live(
+        "independence",
+        Context::Manifest,
+        Kind::Requirement,
+        "Independence requirements, a list of `{ of, not_sharing }`: the nodes or functions in `of` share none of the deployment facts in `not_sharing`, pairwise (`independence-violated`). Freedom from interference between nodes of different integrity in one process is derived, with no key (`interference-shared-process`).",
     ),
     removed(
         "severity_levels",
@@ -779,7 +798,7 @@ pub const FIELDS: &[Field] = &[
         "external",
         Context::Topic,
         Kind::Meta,
-        "Mark one side of this topic as provided by an external system.",
+        "Mark one side of this topic as provided by an external system: `pub | sub | both`, or the map `{ side, on_silence }`.",
     ),
     // ── external_topics.<name> ──
     live(
@@ -1191,7 +1210,7 @@ pub const FIELDS: &[Field] = &[
         "on",
         Context::Hazard,
         Kind::Fact,
-        "Fault classes the monitors report, one or a list: omission | late | loss | reported. Omitted means every class, the strictest reading; `[]` is an error.",
+        "Fault classes the monitors report, one or a list: omission | late | loss | reported | repetition | resequencing | insertion. `repetition` is a stamp equal to the publisher's previous one, `resequencing` an earlier one, `insertion` a publisher the contract does not name on the topic. Omitted means every class, the strictest reading; `[]` is an error.",
     ),
     live(
         "ftti",
@@ -1228,6 +1247,12 @@ pub const FIELDS: &[Field] = &[
         Context::Hazard,
         Kind::Requirement,
         "`<extension>/<check>`: the check that is this hazard's requirement when it is not a time (a safety distance). A hazard states `ftti`, `deadline_by`, or both.",
+    ),
+    live(
+        "requirement",
+        Context::Hazard,
+        Kind::Meta,
+        "The hazard analysis's requirement this hazard implements, `{ id, source }`. The id is named in every diagnostic about the hazard.",
     ),
     removed(
         "reaction_total",
@@ -1282,6 +1307,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "`{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`; `to` is outside every `fallback:` list.",
     ),
+    live(
+        "commands",
+        Context::Mode,
+        Kind::Requirement,
+        "What this level commands: `{ <topic>: [<predicate>, ...] }`, each predicate in the `when:` shape (`{ field, <op>: <constant> }`). While the level is active, every message on the topic satisfies every predicate (`safe-state-violated`). A topic named here is a final element: it has one publisher, its arbiter (`arbiter-bypass`); the level's reaction reaches it (`commands-unreached`); silence on it is judged by its consumer (`final-element-silent`).",
+    ),
     // ── hazards.<name>.monitors[] ──
     removed(
         "all_of",
@@ -1293,7 +1324,7 @@ pub const FIELDS: &[Field] = &[
         "on",
         Context::OnViolation,
         Kind::Fact,
-        "Fault classes that trigger the reaction: omission | late | loss | reported.",
+        "Fault classes that trigger the reaction: omission | late | loss | reported | repetition | resequencing | insertion.",
     ),
     live(
         "reaction",
@@ -1357,6 +1388,12 @@ pub const FIELDS: &[Field] = &[
         Context::Function,
         Kind::Fact,
         "The predicate that LOSES the function by value. A value function is lost by the value or by silence.",
+    ),
+    live(
+        "m",
+        Context::Function,
+        Kind::Fact,
+        "A redundant group's count, IEC 61508's MooN: held while at least `m` of the `all_of` members hold. Only beside `all_of`; an integer from 1 to the member count. Omitted: 1 (held while any member holds).",
     ),
     // -- when --
     live(
@@ -1694,6 +1731,51 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "The mode the hazard falls to, or the event chain that runs. Required.",
     ),
+    // -- topics.<name>.external, map form (v0.3.13) --
+    live(
+        "side",
+        Context::External,
+        Kind::Meta,
+        "Which side is external: pub | sub | both. Required.",
+    ),
+    live(
+        "on_silence",
+        Context::External,
+        Kind::Fact,
+        "What the external consumer does when the topic goes quiet: `{ after: <d> }`, it reaches its safe state by itself after `after` of silence. Only with an external `sub` side. Without it, silence on a commanded topic is `final-element-silent`.",
+    ),
+    live(
+        "after",
+        Context::OnSilence,
+        Kind::Fact,
+        "Silence after which the external consumer is in its safe state. A positive duration. Required.",
+    ),
+    // -- hazards.<name>.requirement (v0.3.13) --
+    live(
+        "id",
+        Context::Requirement,
+        Kind::Meta,
+        "The requirement's id in the hazard analysis (`R1`, `SG-04`). Required, non-empty.",
+    ),
+    live(
+        "source",
+        Context::Requirement,
+        Kind::Meta,
+        "Where the requirement is written (`HARA rev 3, section 4.2`), or the evidence for it.",
+    ),
+    // -- independence[] (v0.3.13) --
+    live(
+        "of",
+        Context::Independence,
+        Kind::Meta,
+        "The nodes or functions that must be independent, pairwise. At least two.",
+    ),
+    live(
+        "not_sharing",
+        Context::Independence,
+        Kind::Requirement,
+        "The deployment facts no two of them share: process | container | cpus. At least one. A host is not one: one resolved model runs on one host.",
+    ),
     // -- policy (phase 93) --
     live(
         "unsupervised_measured",
@@ -1961,6 +2043,17 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Retry, "attempts", "0.2.5"),
     (Context::Retry, "backoff", "0.2.5"),
     (Context::CallReaction, "reaction", "0.2.5"),
+    (Context::Manifest, "independence", "0.3.13"),
+    (Context::Hazard, "requirement", "0.3.13"),
+    (Context::Mode, "commands", "0.3.13"),
+    (Context::Function, "m", "0.3.13"),
+    (Context::External, "side", "0.3.13"),
+    (Context::External, "on_silence", "0.3.13"),
+    (Context::OnSilence, "after", "0.3.13"),
+    (Context::Requirement, "id", "0.3.13"),
+    (Context::Requirement, "source", "0.3.13"),
+    (Context::Independence, "of", "0.3.13"),
+    (Context::Independence, "not_sharing", "0.3.13"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].
