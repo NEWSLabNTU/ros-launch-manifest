@@ -1497,6 +1497,42 @@ ingress, on_demand, tier) when their area is next touched.
 - nano-ros mirrors the model's level and tier types, so each model rename
   ships with a nano-ros pull request.
 
+## 58. A Safe State Is a Value, an Actuator Has an Arbiter, a Hazard Traces to a Requirement — Proposed
+
+**Status (2026-11-07):** proposed; design of record
+`docs/design/safety-functions.md`; implementation is play_launch phase 100.
+
+### The question
+
+Safe-ROS (FMAS 2025) builds a ROS safety layer whose decision logic is
+formally verified and whose timing is not stated at all. This grammar is
+the reverse: it bounds detection, reaction and settle against the FTTI and
+says nothing about what the safe state commands, which node has the last
+word on the actuator, or which requirement of the hazard analysis a hazard
+implements. Safe-ROS's published code also shows two failure shapes the
+grammar should name: a reaction emitted only when the overridden traffic
+arrives, and a protective distance never checked against speed.
+
+### The ruling (proposed)
+
+Additive keys, no renames: `safe_state.value` (predicates the safe-state
+message must satisfy, checked at run time), `topics.<t>.arbiter` (the only
+node allowed to publish an actuator topic, checked statically and at run
+time), `hazards.<h>.requirement` (`{ id, source }`, carried into every
+diagnostic and rendered as one sentence in `--explain`), a reference
+extension for a moving robot's protective stop, and a rule
+`reaction-waits-on-traffic`. A nuclear instrumentation profile (IEC 61513)
+is to be investigated before it is proposed.
+
+### Consequences
+
+- The model gains `safe_state.value`, the arbiter and the requirement,
+  additively; nano-ros may generate the value and arbiter monitors.
+- `arbiter` is dominance only. Independence of the barrier stays R6's
+  question.
+- Proving a node's code is not the contract's job; `requirement.source`
+  is where evidence of that can be named.
+
 ## Summary
 
 Design issues 1–51, #53 (equal periods, equal priorities) and #54 (the
