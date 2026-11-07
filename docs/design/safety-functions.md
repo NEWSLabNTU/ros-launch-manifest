@@ -179,8 +179,11 @@ modes:
   - it has exactly one publisher in the resolved graph, its arbiter
     (`arbiter-bypass`, error, statically and at run time from endpoint
     owners);
-  - every reaction route of a level that commands it reaches it through
-    that publisher (`reaction-bypasses-arbiter`, error);
+  - with one publisher, every reaction route that reaches the topic passes
+    through it, so no separate bypass-route rule is needed (play_launch
+    phase 102, finding 4); the route must reach it, which is
+    `commands-unreached` (error) when the topic is neither the level's
+    reaction sink nor downstream of it;
   - the runtime invariant runs from the reaction's derived bound until the
     level is left (`safe-state-violated`, error);
   - silence on it while the level holds is judged by what its consumer
@@ -200,7 +203,7 @@ modes:
 ### S1. `modes.<m>.commands` (replaces `final_elements:`)
 
 As §5. Model: `ModeContract.commands`, additive. Static rules:
-`arbiter-bypass`, `reaction-bypasses-arbiter`, `commands-field-unknown`.
+`arbiter-bypass`, `commands-unreached`, `commands-field-unknown`.
 Runtime rules: `safe-state-violated`, `final-element-silent`, runtime
 `arbiter-bypass`. The arbiter is dominance only; independence is
 `fault-tolerance.md` §4.5.

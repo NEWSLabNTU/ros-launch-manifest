@@ -185,12 +185,15 @@ independence:
   - of: [/fcc1, /fcc2, /fcc3]                       # nodes or functions, pairwise
     not_sharing: [process, container, cpus]
   - of: [/safety/cmd_vel_gate, /navigation/move_base]   # arbiter vs. what it overrides
-    not_sharing: [process, host]
+    not_sharing: [process, cpus]
 ```
 
 - A requirement checked against deployment facts the model and play_launch
-  have: process, container, host, CPU set (`independence-violated`,
-  error).
+  have: process, container, CPU set (`independence-violated`, error).
+  Composables in one container share a process unless play_launch runs
+  them `isolated`; the model does not carry the mode, so `check` assumes
+  the shared case and says so, and `launch`/`up` re-check with the mode
+  they run.
 - **Freedom from interference is derived, with no key:** nodes of
   different derived integrity in one process (a shared container under
   `observable` or `stock`) are `interference-shared-process` (warning).
@@ -247,10 +250,14 @@ reported once). Corruption is left out: not observable above DDS.
 2. A node's startup time comes only from a run (`check --against`); the
    contract does not state one. A restart without a run is not credited,
    and the output says so.
-3. `independence` counts four deployment facts: `process`, `container`,
-   `host` and `cpus` (the CPU set from the platform file). A shared DDS
+3. `independence` counts three deployment facts: `process`, `container`
+   and `cpus` (the CPU set from the platform file). A shared DDS
    participant, power supply or sensor is not a fact play_launch has, and
-   is not accepted in `not_sharing`.
+   is not accepted in `not_sharing`. `host` was decided first and is
+   proposed for removal (play_launch phase 102, finding 2): `Deploy.host`
+   left the model on 2026-07-31, so every node of one resolved model is on
+   one host, and independence across hosts is the separation of two
+   models, which no single check sees.
 
 ## 7. Not adopted
 
