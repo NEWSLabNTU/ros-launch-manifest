@@ -1499,84 +1499,73 @@ ingress, on_demand, tier) when their area is next touched.
 
 ## 58. A Safety Function Ends at a Final Element — Proposed
 
-**Status (2026-11-07):** proposed, revised the same day after a use-case
-survey; design of record `docs/design/safety-functions.md`; implementation
-is play_launch phase 100.
+**Status (2026-11-07):** proposed, revised three times the same day;
+design of record `docs/design/safety-functions.md`; implementation is
+play_launch phase 100.
 
 ### The question
 
 Safe-ROS (FMAS 2025) builds a ROS safety layer whose decision logic is
-formally verified and whose timing is not stated at all. This grammar is
-the reverse: it bounds detection, reaction and settle against the FTTI and
-says nothing about what the safe state commands, which node has the last
-word on the actuator, or which requirement of the hazard analysis a hazard
-implements.
+formally verified and whose timing is not stated. This grammar bounds
+detection, reaction and settle against the FTTI and says nothing about
+what the safe state commands, which node has the last word on the
+actuator, or which requirement of the hazard analysis a hazard implements.
 
 ### The ruling (proposed)
 
-A first draft added a value predicate per reaction path and an arbiter per
-topic. Seven use cases (mobile robot, automated driving, cobot, UAV,
-infusion pump, process plant, rail) showed that both belong to the third
-part of a safety instrumented function, the final element: the channel the
-actuator consumes, its arbiter, the predicate of the minimal risk
-condition there, and a predicate per degradation level. What must hold is
-an invariant for as long as the level lasts, not the first message after
-the fault. So: `final_elements:` (channel, arbiter, safe predicate) and
-`modes.<m>.commands`, checked statically (bypass, unreached) and at run
-time (`safe-state-violated`, `final-element-silent`, `arbiter-bypass`);
-`hazards.<h>.requirement` (`{ id, source }`, a sentence per hazard in
-`--explain`); `reaction-waits-on-traffic` if the walk misses that shape.
-A moving robot's protective stop is a reference extension on the existing
-`deadline_by` pattern, not a core key. An IEC 61513 profile is to be
-investigated.
+Seven use cases showed every safety function ends at a final element (IEC
+61511): a commanded channel with one arbiter, held to a condition per
+degradation level for as long as the level lasts. Held to the primitives
+rule, that is one new key, `modes.<m>.commands: { <topic>: [predicates] }`:
+a topic a level commands is a final element, its arbiter is its one
+publisher in the resolved graph, and the bypass, invariant and silence
+checks are derived. A `final_elements:` section was proposed and dropped:
+its arbiter is derivable, its safe predicate is the minimal risk
+condition's own `commands`, and silence is the consumer's subscriber
+contract. `hazards.<h>.requirement` (`{ id, source }`) is core. A moving
+robot's protective stop is a reference extension on `deadline_by`.
 
 ### Consequences
 
-- The model gains `final_elements`, `ModeContract.commands` and the
-  requirement, additively; nano-ros may generate the invariant and bypass
-  monitors in the image.
-- The arbiter is dominance only. Independence of the barrier stays R6's
-  question.
+- The model gains `ModeContract.commands` and the requirement, additively.
+- The arbiter is dominance only; independence is issue 59.
 - Proving a node's code is not the contract's job; `requirement.source`
-  is where evidence of that can be named.
+  can name it.
 
 ## 59. Most of the System Is Safety Critical — Proposed
 
-**Status (2026-11-07):** proposed; design of record
-`docs/design/fault-tolerance.md`; implementation is play_launch phase 101.
+**Status (2026-11-07):** proposed, revised the same day to the primitives
+rule; design of record `docs/design/fault-tolerance.md`; implementation is
+play_launch phase 101.
 
 ### The question
 
-Issue 58 models one safety function beside a system that does the work.
 Aircraft flight control, spacecraft, level-4 driving and closed-loop
-medical devices are made safe differently: most components are safety
-critical, some phases have no safe state, and safety rests on redundancy,
-recovery and the independence of redundant members.
+medical devices are made safe by redundancy, recovery before degradation
+and the independence of redundant members, and some phases have no safe
+state. Issue 58 covers one safety function beside a working system.
 
 ### The ruling (proposed)
 
-Twelve case studies (Airbus and Boeing flight control, spacecraft FDIR,
-ARINC 653, fail-operational driving, nuclear defence in depth, closed-loop
-insulin, ventilators, surgical robots, Auto-GCAS, EN 50159, AUTOSAR
-watchdogs). The final element of issue 58 holds; five additions make it
-fit: `functions.<f>.k_of` (k-of-n with agreement), an ordered
-`recovery:` (restart, switchover) credited before degradation when it fits
-the FTTI, `fail_operational:` modes that must be covered by recovery or
-redundancy, `silence:` on a final element (silence as the safe state), and
-`independent:` checked against the deployment facts play_launch has, with
-freedom from interference derived from them. `on:` gains repetition,
-resequencing and insertion. Run-time assurance, AADL EMV2, GSN and
-numbered FDIR levels were considered as the whole model and not adopted.
+Twelve case studies. In the core: `k` on a redundant group (`all_of` with
+a threshold; members may be value functions), one `independence:` form
+checked against deployment facts, `on_silence` on an external subscriber
+side, and `on:` gains repetition, resequencing and insertion. Derived, no
+key: restart credit from the launch file's `respawn`, hot and cold standby
+from redundancy and existing reactions, fail-operational as the existing
+`fault-reaction-time` verdict with those credits, freedom from
+interference from shared processes. Extensions: distances, physics,
+alarms; value agreement across members is recorded for a future runtime
+extension hook. Run-time assurance, AADL EMV2, GSN and numbered FDIR
+levels were considered as the whole model and not adopted.
 
 ### Consequences
 
-- Independence becomes mechanical where it is a deployment fact (process,
-  container, host, CPU set) and stays a stated claim where it is not
-  (diversity, power, sensors).
-- `respawn` becomes a safety mechanism the checker credits, timed from
-  the model and the measured startup.
-- The model gains the new keys additively; nano-ros mirrors what its
-  image can check.
+- `respawn` becomes a safety mechanism the checker credits, timed from a
+  run's startup timeline.
+- Independence is mechanical where it is a deployment fact and out of
+  scope where it is not (diversity, power, sensors).
+- nano-ros mirrors what its image can check.
 
 ## Summary
 

@@ -1,10 +1,13 @@
 # Fault tolerance: safety when most of the system is safety critical
 
-**Status (2026-11-07): proposed.** Nothing here is implemented. Design
-issue 59 records it; implementation is tracked by play_launch phase 101.
-It extends `safety-functions.md` (design issue 58, the final element),
-which this survey also revises in one place (§4.4, silence at the final
-element). Every key is additive.
+**Status (2026-11-07): proposed; §4 revised the same day to the
+contract's primitives rule.** Nothing here is implemented. Design issue 59
+records it; implementation is tracked by play_launch phase 101. It extends
+`safety-functions.md` (design issue 58). After the revision the core gains
+three things here: `k` on a redundant group, one `independence` form, and
+`on_silence` on an external subscriber side, plus three `on:` classes;
+recovery and fail-operational are derived, and use-case specifics are
+extensions (§4.7). Every key is additive.
 
 ## 1. The question
 
@@ -95,121 +98,122 @@ or a primary source, supports.
     triggers what; whether the order of path executions is legal is a
     finer claim than the contract makes. Not proposed; recorded.
 
-## 4. The model, revised
+## 4. The model, in primitives
 
-The safety-functions model (a final element per actuator channel, with an
-arbiter and a predicate per degradation level) holds for every case. Five
-additions make it fit systems where most components are critical. Each is
-one key or one rule; none changes an existing one.
+**Revised 2026-11-07.** The first version of this section proposed five
+keys (`k_of` with `agree`, `recovery:`, `fail_operational:`, `silence:`,
+`independent:`/`independent_of:`). Held to the contract's primitives rule
+(state what the code does and what it must achieve; derive the rest) and
+to extensions for use-case specifics, most were second copies:
 
-### 4.1 Redundancy with a count: `functions.<f>.k_of`
+| Proposed | Verdict | Why |
+|---|---|---|
+| `recovery: [restart]` | **derived** | A restart is the launch file's `respawn` and `respawn_delay`, which the model carries. Writing it again in the contract is a second copy. |
+| `recovery: [switchover]` | **derived** | A hot standby is a redundant function member: losing one member does not lose the function, so nothing is entered. A cold standby that takes over is the standby node's own subscriber `max_age` + `on_violation` reaction, grammar that exists. |
+| `recovery.attempts` | **dropped** | ROS launch's respawn has no bound to state, so an escalation count would be a fact nothing implements. |
+| `fail_operational: true` | **derived** | A level with no safe state in time is one whose degradation cannot meet the FTTI, which `fault-reaction-time` already reports. With recovery and redundancy credited (§4.2), the same verdict is the fail-operational check. |
+| `k_of.agree` (value voting) | **extension territory** | Agreement is a comparison whose tolerance and metric are domain-specific (a pose, a pressure, a surface angle). A member wrong by its own value is already a value function (`of` + `when`). Comparing members against each other needs a runtime hook extensions do not have; recorded, not proposed. |
+| `silence:` on a final element | **derived**, one fact where it cannot be | §4.4. |
+| `independent` and `independent_of` | **one form** | Two spellings of one claim. §4.5. |
+| `k` on a redundant group | **core** | The count is a fact of the design and computable from nothing. |
+| `on:` repetition, resequencing, insertion | **core** | Fault classes are the closed vocabulary every monitor uses. |
 
-```yaml
-functions:
-  attitude:
-    k_of: { k: 2, of: [/fcc1/cmd, /fcc2/cmd, /fcc3/cmd] }   # 2-of-3 must agree
-  wheel_odometry:
-    all_of: [/odom/left, /odom/right]                       # 1-of-2 is enough
-```
-
-- `all_of` stays: available while any member is (1-of-n).
-- `k_of` adds integrity: the function holds while at least k members are
-  present **and** agree. Agreement is stated as a tolerance on a field
-  (`agree: { field: <path>, within: <value> }`); without one, presence
-  alone counts and `k_of` is availability with a higher threshold.
-- Runtime: the observer counts healthy members and reports the function
-  lost below k, as it reports a mode lost today.
-
-### 4.2 Recovery before degradation: `recovery:`
-
-```yaml
-hazards:
-  planner_crash:
-    monitors: [/planning/trajectory]
-    on: omission
-    ftti: 2s
-    recovery:                        # tried first, in order; each must fit the ftti
-      - restart: /planning/planner   # the node's respawn, timed from the model
-        attempts: 2                  # recurrence beyond this escalates
-      - switchover: backup_planner   # a function with a standby member
-    enters: degraded                 # only if recovery fails or does not fit
-```
-
-- A recovery step is credited only if detection plus the step's time fits
-  the FTTI. A restart's time is the node's `respawn_delay` plus its
-  measured startup (`startup_timeline.json`); a switchover's is the
-  standby's detection and takeover.
-- `attempts` is C3's and C12's escalation on recurrence.
-- New rule `recovery-unfit` (warning): a step that cannot fit the FTTI,
-  so the hazard will in fact degrade.
-
-### 4.3 Phases without a safe state: `fail_operational:`
-
-A mode marked `fail_operational: true` (orbit insertion, highway driving
-before the MRC is reached) has no minimal risk condition to fall to within
-its own time. The checker requires that every hazard that can occur in it
-is covered by recovery (§4.2) or by a `k_of`/`all_of` function, not by
-degradation alone (`fail-operational-uncovered`, error).
-
-### 4.4 Silence at the final element (revises `safety-functions.md` §5)
-
-```yaml
-final_elements:
-  base_velocity:
-    channel: /cmd_vel_filtered
-    arbiter: /safety/cmd_vel_interceptor
-    safe: [{ field: linear.x, equals: 0 }]
-    silence: { after: 500ms, becomes: safe }   # the base stops on its own timeout
-```
-
-- `silence: { after, becomes: safe }` is a fact about the actuator:
-  de-energise to trip, a valve that opens, a base command timeout.
-- With it, a reaction may end in silence, and its settle is `after` plus
-  the actuator's own response. `final-element-silent` is then not an error
-  but the reaction's success.
-- Without it (`becomes: hold`, the default), silence leaves the actuator
-  at its last command, and `final-element-silent` stays an error.
-
-### 4.5 Independence, from what play_launch knows: `independent:`
+### 4.1 A redundant group's count: `functions.<f>.k`
 
 ```yaml
 functions:
   attitude:
-    k_of: { k: 2, of: [/fcc1/cmd, /fcc2/cmd, /fcc3/cmd] }
-    independent: [process, container, cpus]     # what the members must not share
-final_elements:
-  base_velocity:
-    arbiter: /safety/cmd_vel_interceptor
-    independent_of: [/navigation/move_base]      # the arbiter vs. what it overrides
-    independent: [process, host]
+    all_of: [/fcc1/cmd, /fcc2/cmd, /fcc3/cmd]
+    k: 2                        # held while at least 2 members hold
 ```
 
-- The checker compares the members' deployment facts the model already
-  carries (process, container, host, CPU set from the platform file,
-  memory group from the cgroup config) and reports each shared one
-  (`independence-violated`, error).
-- **Freedom from interference** follows from the same facts, without a
-  key: a node whose derived integrity is above another's, in the same
-  process (a shared container under `observable` or `stock`), is
-  `interference-shared-process` (warning, naming ISO 26262's memory and
-  timing interference). Under `isolated` the two are separate processes
-  and the rule is silent.
-- This is the R6 review's question answered for redundancy, where the
-  answer is mechanical. Diversity (C2's dissimilar processors, C6's
-  diverse software) is not a deployment fact and stays a stated claim.
+- `all_of` keeps its meaning with `k` absent (`k: 1`: held while any
+  member holds). `k` raises the threshold.
+- Members may be functions, so a member lost by its own value (a value
+  function, `of` + `when`) counts as lost. That is how a monitor-control
+  lane that fails silent, or reports itself wrong, takes part in k-of-n
+  without a voting key.
+- Runtime: the observer counts held members, as it evaluates a function
+  today.
+- Name: IEC 61508 writes the architecture as MooN (2oo3). `k` keeps N
+  where it already is, the member list; whether to spell it `m` is §6.
+
+### 4.2 Recovery, credited and not written
+
+- **Restart.** A node with `respawn` is credited when detection plus
+  `respawn_delay` plus its startup time fits the FTTI. The startup time
+  comes from a run (`check --against <run-dir>`, as link transport does,
+  from `startup_timeline.json`); absent a run it is unknown, and the
+  restart is not credited. `recovery-unfit` (warning) names a restart that
+  cannot fit, so the hazard will degrade.
+- **Hot standby.** A redundant group above its `k` after the loss keeps
+  the mode; nothing is entered and nothing is charged.
+- **Cold standby.** The standby's subscriber on the primary's output, with
+  `max_age` and `on_violation: { reaction: take_over }`, is an ordinary
+  reaction route, charged by the walk.
+- **Fail-operational.** No key: a level that cannot degrade in time fails
+  `fault-reaction-time`, and is rescued only by the credits above.
+
+### 4.3 (Removed: fail-operational is §4.2's derived verdict)
+
+### 4.4 Silence at a commanded topic
+
+What a final element's consumer does when the topic goes quiet is a fact
+of that consumer:
+
+- **Consumer in the contract:** its `sub.<e>.max_age` and `on_violation`
+  already say it. Derived; nothing new.
+- **Consumer external** (a base controller, a flight controller, a safety
+  PLC): one new fact on the external side,
+
+  ```yaml
+  topics:
+    /cmd_vel_filtered:
+      external: { side: sub, on_silence: { after: 500ms } }   # it stops by itself
+  ```
+
+  meaning the external consumer reaches its safe state after `after` of
+  silence. With it, a level may end in silence: the settle is `after` plus
+  the consumer's response. Without it, silence while a level holds is
+  `final-element-silent` (error).
+
+### 4.5 Independence, one form
+
+```yaml
+independence:
+  - of: [/fcc1, /fcc2, /fcc3]                       # nodes or functions, pairwise
+    not_sharing: [process, container, cpus]
+  - of: [/safety/cmd_vel_gate, /navigation/move_base]   # arbiter vs. what it overrides
+    not_sharing: [process, host]
+```
+
+- A requirement checked against deployment facts the model and play_launch
+  have: process, container, host, CPU set (`independence-violated`,
+  error).
+- **Freedom from interference is derived, with no key:** nodes of
+  different derived integrity in one process (a shared container under
+  `observable` or `stock`) are `interference-shared-process` (warning).
+  Under `isolated` the rule is silent.
+- Diversity (dissimilar software or hardware) is not a deployment fact and
+  stays out.
 
 ### 4.6 Communication fault classes in `on:`
 
-Extend the closed `on:` set with the three the interceptor can observe:
+The closed `on:` set gains the three the interceptor can observe:
+`repetition` (a stamp equal to the previous one from the same publisher),
+`resequencing` (an earlier stamp), `insertion` (a publisher on the topic
+the contract does not name; on a commanded topic this is `arbiter-bypass`,
+reported once). Corruption is left out: not observable above DDS.
 
-- `repetition`: a message whose stamp equals the previous one from the
-  same publisher;
-- `resequencing`: a stamp earlier than the previous one;
-- `insertion`: a publisher on the topic that the contract does not name
-  (on a final element's channel this is `arbiter-bypass`).
+### 4.7 Use-case specifics are extensions
 
-Corruption is left out: it is not observable above DDS, and a contract
-that claims to detect it would claim something nothing checks.
+| Need | Where |
+|---|---|
+| Protective field or separation distance | reference extension on `deadline_by` (`mobile.protective_stop`, `machine.iso13855`) |
+| Braking, descent, occlusion, valve stroke physics | existing reference extensions (`vehicle.braking`, `uav.descent`, `medical.occlusion`, `process.pst`) |
+| Alarm priorities and a clinician's response time (IEC 60601-1-8) | an extension deriving `settle` for an alarm reaction |
+| Value agreement across redundant members | recorded; needs a runtime extension hook |
+| A domain's integrity scale (IEC 61513, ...) | a profile |
 
 ## 5. Better models considered
 
@@ -231,21 +235,19 @@ that claims to detect it would claim something nothing checks.
   GSN tool needs; generating GSN from a checked contract is a possible
   later export.
 - **FDIR levels as a numbered hierarchy.** Missions number them
-  differently (§2, C3), so a fixed numbering would fit none exactly. The
-  ordered `recovery:` list keeps the escalation without the numbers.
+  differently (§2, C3), so a fixed numbering would fit none exactly, and
+  the steps are already facts elsewhere: a restart is the launch file's
+  `respawn`, a takeover is a standby's reaction, degradation is the modes.
+  The checker credits them in that order (§4.2) without a list to write.
 
 ## 6. Open questions
 
-1. Whether `k_of` agreement belongs on the function or on each final
-   element's arbiter (C2 votes at the actuator electronics, C6 at the logic
-   solver).
-2. Whether a restart's time should come from a measured startup only, or
-   may be stated, as a cost is (`budget`) when nothing is measured.
-3. Whether `fail_operational` is a mode property or follows from the mode
-   having no `fallback:` that can be reached in time.
-4. Which deployment facts count for `independent:`. Process, container,
-   host and CPU set are certain; a shared DDS participant, a shared power
-   supply or a shared sensor are not deployment facts play_launch has.
+1. `k` or IEC 61508's `m` for the count of a redundant group.
+2. Whether a node's startup time may be stated in the contract when no run
+   is given, as a cost can be, or comes only from a run.
+3. Which deployment facts count for `independence`. Process, container,
+   host and CPU set are certain; a shared DDS participant, power supply or
+   sensor are not facts play_launch has.
 
 ## 7. Not adopted
 

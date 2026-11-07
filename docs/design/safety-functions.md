@@ -1,19 +1,15 @@
 # Safety functions: what Safe-ROS teaches the contract
 
-**Status (2026-11-07): proposed, revised the same day after a use-case
-survey (§4); the key's name, `final_elements`, is decided. A survey of
-large systems (`fault-tolerance.md`, design issue 59) adds `silence:` to
-the final element (§5) and the redundancy, recovery and independence keys
-around it.** Nothing here is implemented. The first draft proposed a
-per-path `safe_state.value` and a per-topic `arbiter`. Seven use cases
-showed that the value and the arbiter belong to one thing, the actuator
-channel the safety function finally commands, and that what must hold
-there is an invariant over the whole degradation level, not one message.
-§5 is that model, and §6 the proposals revised to it. Design issue 58
-records it. Implementation is tracked by play_launch phase 100, which also
-carries the play_launch and nano-ros halves. Every key is additive: no
-existing spelling moves, so the rename schedule of `standard-names.md` §6
-does not apply.
+**Status (2026-11-07): proposed; revised three times the same day. A
+use-case survey (§4) found the final element; a survey of large systems
+(`fault-tolerance.md`, design issue 59) added silence, redundancy and
+independence; the third revision (§5) holds every key to the contract's
+primitives rule and moves use-case specifics to extensions, leaving one
+new key here, `modes.<m>.commands`, plus `hazards.<h>.requirement`.**
+Nothing here is implemented. Design issue 58 records it. Implementation
+is tracked by play_launch phase 100, which also carries the play_launch
+and nano-ros halves. Every key is additive: no existing spelling moves, so
+the rename schedule of `standard-names.md` §6 does not apply.
 
 ## 1. What Safe-ROS is
 
@@ -138,84 +134,80 @@ What the seven have in common, and where the first draft was wrong:
    U1's speed-dependent field sets are degradation levels selected by
    speed, each with its own distance; they need no new core key.
 
-## 5. The model: a final element per actuator channel
+## 5. The model, in primitives
 
-A safety function is sense, decide, act. The contract states the first two
-today. This adds the third as one declaration per channel, which every
-hazard and every degradation level that reaches it shares:
+**Revised 2026-11-07 (third revision).** The second revision added a
+`final_elements:` section (channel, arbiter, safe predicate, silence).
+Held against this repository's rule, that a contract states what the code
+does and what it must achieve and that anything computable from those is
+derived (play_launch `docs/design/contract-primitives.md`), and against
+the rule that use-case specifics belong in extensions, most of it was a
+second copy of something the contract or the launch tree already says:
+
+| Proposed | Verdict | Why |
+|---|---|---|
+| `final_elements.<e>.arbiter` | **derived** | The arbiter is the publisher of the commanded topic, which the resolved graph knows. What is a requirement is that there is exactly one, and that follows from the topic being commanded by a level (below). |
+| `final_elements.<e>.safe` | **folded** into `modes.<m>.commands` | The safe predicate is the minimal risk condition's own condition, and the minimal risk condition is a mode. Stating it on the element and on the mode would be two copies. |
+| `final_elements.<e>.channel` | **folded** | A channel is a topic a level commands; naming it in `commands` declares it. |
+| `final_elements.<e>.silence` | **derived**, one fact where it cannot be | What the consumer does when the channel goes quiet is its subscriber's `max_age` and `on_violation` when the consumer is in the contract. Only an external consumer needs it stated (`fault-tolerance.md` §4.4). |
+| `final_elements:` as a section | **dropped** | Nothing is left in it. "Final element" stays the checker's word for a topic some level commands, in diagnostics and `--explain`. |
+| `hazards.<h>.requirement` | **core** | A trace to the hazard analysis is not computable from anything, and every safety standard has one. |
+| protective-stop distance | **extension** | Use-case specific arithmetic, on the existing `deadline_by` pattern. |
+
+### The one new key: `modes.<m>.commands`
 
 ```yaml
-final_elements:
-  base_velocity:
-    channel: /cmd_vel_filtered            # the last topic before the actuator
-    arbiter: /safety/cmd_vel_interceptor  # the only node that may publish it
-    safe: [{ field: linear.x, equals: 0 }, { field: angular.z, equals: 0 }]
-
 modes:
   slow:
-    requires: [obstacle_clear]
-    commands: { base_velocity: [{ field: linear.x, le: 0.3 }] }
+    requires: [scan_ok]
+    commands:
+      /cmd_vel_filtered: [{ field: linear.x, le: 0.3 }]
   stopped:
     requires: []
-    reaction: safety.stop                 # reaches base_velocity through the arbiter
+    reaction: safety.stop
+    commands:
+      /cmd_vel_filtered: [{ field: linear.x, equals: 0 }, { field: angular.z, equals: 0 }]
 ```
 
-- **`final_elements.<e>.channel`** is the topic the actuator consumes, or
-  the last one before it when the actuator is outside ROS.
-- **`arbiter`** is the only node that may publish the channel. Static: it
-  is the only publisher in the resolved graph (`arbiter-bypass`, error),
-  and every reaction route that ends at the element passes through it
-  (`reaction-bypasses-arbiter`, error). Runtime: a publisher created on the
-  channel by another node is `arbiter-bypass` (the interceptor names each
-  endpoint's owner).
-- **`safe`** is the predicate of the minimal risk condition on this
-  element, in the `when:` predicate shape (`field`, then `equals`,
-  `not_equals`, `lt`, `le`, `gt`, `ge`), fields checked against the
-  `.msg`. One fact, stated once, shared by every hazard that ends there.
-- **`modes.<m>.commands`** gives a degradation level its own predicate per
-  element. A level that names no predicate for an element it reaches is
-  held to nothing there, except the minimal risk condition, which is held
-  to the element's `safe`.
-- **The invariant.** From the moment the reaction's derived bound expires
-  until the level is left (its `exit:` or recovery), every message on the
-  channel satisfies the level's predicate. A message that does not is
-  `safe-state-violated` (error) naming the level, the field and the value.
-  Silence on the channel while the level holds is reported as such
-  (`final-element-silent`), because a channel that stops publishing leaves
-  the actuator to its own timeout, which is U1's §2.1 defect.
-- **`silence`** states what the actuator does when the channel goes
-  quiet: `{ after: 500ms, becomes: safe }` for one that de-energises to
-  its safe state (a base command timeout, a valve that opens, brakes
-  without power), `hold` (the default) for one that keeps its last
-  command. With `becomes: safe`, a reaction may end in silence, and
-  `final-element-silent` is the reaction succeeding, not an error. From
-  `fault-tolerance.md` §4.4.
-- **`safe_state` on a path stays** what it is today, the settle and the
-  topic the reaction emits on; the walk checks that the route continues
-  from `emits` to a final element.
+- A requirement: while this level is active, every message on the named
+  topic satisfies the predicates (the `when:` shape: `field`, then
+  `equals`, `not_equals`, `lt`, `le`, `gt`, `ge`; fields checked against
+  the `.msg`).
+- A topic named in any level's `commands` is a **final element**. Derived
+  from that, with no further key:
+  - it has exactly one publisher in the resolved graph, its arbiter
+    (`arbiter-bypass`, error, statically and at run time from endpoint
+    owners);
+  - every reaction route of a level that commands it reaches it through
+    that publisher (`reaction-bypasses-arbiter`, error);
+  - the runtime invariant runs from the reaction's derived bound until the
+    level is left (`safe-state-violated`, error);
+  - silence on it while the level holds is judged by what its consumer
+    does on silence: the consumer's `sub.max_age` + `on_violation` when the
+    consumer is in the contract, the external side's fact when it is not
+    (`fault-tolerance.md` §4.4). A consumer that does nothing on silence
+    makes silence `final-element-silent` (error).
+- `paths.<p>.safe_state` is unchanged: `emits` and `settle` stay the
+  reaction's own facts. The walk checks that the route continues from
+  `emits` to the commanded topic.
+- This is still run-time assurance's shape (ASTM F3269): the arbiter is
+  the switch, the level's reaction the recovery function, its `commands`
+  what bounds the recovered behaviour.
 
-This is also the vocabulary of run-time assurance (ASTM F3269): a complex
-function, a safety monitor, a recovery control function and a switch. The
-switch is the arbiter, the recovery control function is the reaction, and
-the safe predicate is what bounds the recovered behaviour.
+## 6. Proposals, final
 
-## 6. Proposals, revised
+### S1. `modes.<m>.commands` (replaces `final_elements:`)
 
-### S1. `final_elements:` (replaces the first draft's S1 and S2)
-
-As §5. Model: `Contracts.final_elements` and `ModeContract.commands`,
-additive. Static rules: `arbiter-bypass`, `reaction-bypasses-arbiter`,
-`final-element-unreached` (a declared element no hazard's reaction
-reaches, warning), `safe-field-unknown`. Runtime rules:
-`safe-state-violated`, `final-element-silent`, runtime `arbiter-bypass`.
-The arbiter is dominance only; independence of the barrier stays the R6
-review's question.
+As §5. Model: `ModeContract.commands`, additive. Static rules:
+`arbiter-bypass`, `reaction-bypasses-arbiter`, `commands-field-unknown`.
+Runtime rules: `safe-state-violated`, `final-element-silent`, runtime
+`arbiter-bypass`. The arbiter is dominance only; independence is
+`fault-tolerance.md` §4.5.
 
 ### S2. The requirement a hazard implements: `hazards.<h>.requirement`
 
-Unchanged from the first draft. FRET's value to an assessor is a readable
-sentence traced to a numbered requirement of the hazard analysis; a hazard
-has free-text `description:` only.
+Core. FRET's value to an assessor is a readable sentence traced to a
+numbered requirement; a hazard has free-text `description:` only.
 
 ```yaml
 hazards:
@@ -224,61 +216,54 @@ hazards:
 ```
 
 The id goes into the model and every diagnostic about the hazard, and
-`check --explain` renders each hazard as one sentence with the contract's
-own numbers: "When /scan is omitted, the system shall reach stopped within
-300 ms, and while stopped base_velocity holds linear.x = 0 (R1)." The
-sentence now includes the final element's predicate, which the first
-draft could not state.
+`check --explain` renders each hazard as one sentence built from the
+contract's own numbers: "When /scan is omitted, the system shall reach
+stopped within 300 ms, and while stopped /cmd_vel_filtered holds
+linear.x = 0 (R1)."
 
 ### S3. A reaction that waits on the traffic it overrides
 
-Unchanged. Safe-ROS's interceptor emits the safe state only when the next
-`/cmd_vel` arrives: its path is `trigger: { input: [/cmd_vel] }` with the
-stop flag a `state: true` subscriber. A reaction arriving at a state
-subscriber waits for the node's next trigger; when that is another topic,
-the wait is bounded only by that topic's rate, and the fault may be what
-stopped it. First establish what the walk does in this shape; if it
-charges nothing, or the input's rate silently, add
-`reaction-waits-on-traffic` (error). With S1 the runtime half is already
-covered: the channel goes silent and `final-element-silent` reports it.
+No key; a rule, if needed. Safe-ROS's interceptor emits the safe state
+only when the next `/cmd_vel` arrives. First establish what the walk does
+in this shape; if it charges nothing, or the input's rate silently, add
+`reaction-waits-on-traffic` (error). At run time the invariant already
+reports it: the commanded topic goes silent.
 
-### S4. A protective stop on a moving robot: a reference extension
+### S4. A protective stop on a moving robot: extension
 
-Demoted to an example. The pattern exists (`deadline_by` with an
-extension). `mobile.protective_stop` checks
-`field >= v * reaction_total + v^2 / (2 * decel) + margin` with the field
-read by `$(param ...)`; speed-dependent field sets are degradation levels,
-one check each. Illustrative until ISO 3691-4's text is checked.
+`mobile.protective_stop`, a reference extension on the existing
+`deadline_by` pattern: `field >= v * reaction_total + v^2 / (2 * decel)
++ margin`, the field read by `$(param ...)`. Speed-dependent field sets
+are degradation levels, one check each. Illustrative until ISO 3691-4's
+text is checked.
 
 ### S5. Investigate: a profile for nuclear instrumentation and control
 
-Unchanged. Safe-ROS cites IEC 61513, whose classification (IEC 61226
-categories for functions, classes for systems) is not a SIL ladder. Find
-out whether it fits a profile's `integrity_scale` and `criticality` before
-proposing one.
+A profile is an extension-level artifact already. Find out whether IEC
+61513's classification (IEC 61226 categories, system classes) fits a
+profile's `integrity_scale` and `criticality` before proposing one.
 
 ### No new key: a monitor for the safety function itself
 
-The standards all require it (the third level of automotive three-level
-monitoring, IEC 61508's diagnostics) and the grammar already says it: a
-hazard whose `monitors:` is the safety function's own output, with
-`on: omission`. `reaction-unguarded` already warns when it is missing.
-This needs a guide example, not a key.
+A hazard whose `monitors:` is the safety function's own output, with
+`on: omission`; `reaction-unguarded` already warns when it is missing. A
+guide example, not a key.
 
 ## 7. Open questions for the decision
 
-1. ~~The key's name.~~ Decided 2026-11-07: `final_elements`, IEC 61511's
-   word, which this vocabulary's own rule prefers (`standard-names.md`
-   §1) and `process.pst` already uses.
+1. ~~The key's name.~~ `final_elements` was decided 2026-11-07, then the
+   section was dropped the same day (§5): the word stays as the checker's
+   name for a commanded topic.
 2. Whether the invariant starts at the reaction's derived bound, or at the
    first message after the fault that satisfies the predicate. The first is
-   the stronger check and catches a late reaction twice (once here, once in
-   `fault-reaction-time`).
+   the stronger check.
 3. Whether `commands` belongs on modes only, or also on an event-chain
-   reaction that is not a mode.
-4. A relational predicate (U3's speed limit as a function of the measured
-   distance) is out of scope; discrete zones as levels cover the practice.
-   Revisit if a use case needs the continuous form.
+   reaction that is not a mode. Primitives argue for modes only: a
+   one-level reaction can be written as a mode, and two places would be two
+   copies.
+4. A relational predicate (a speed limit as a function of a measured
+   distance) is out of scope; discrete levels cover the practice, and an
+   extension can check the continuous form statically.
 
 ## 8. Not adopted
 
