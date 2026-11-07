@@ -1497,10 +1497,11 @@ ingress, on_demand, tier) when their area is next touched.
 - nano-ros mirrors the model's level and tier types, so each model rename
   ships with a nano-ros pull request.
 
-## 58. A Safe State Is a Value, an Actuator Has an Arbiter, a Hazard Traces to a Requirement — Proposed
+## 58. A Safety Function Ends at a Final Element — Proposed
 
-**Status (2026-11-07):** proposed; design of record
-`docs/design/safety-functions.md`; implementation is play_launch phase 100.
+**Status (2026-11-07):** proposed, revised the same day after a use-case
+survey; design of record `docs/design/safety-functions.md`; implementation
+is play_launch phase 100.
 
 ### The question
 
@@ -1509,26 +1510,32 @@ formally verified and whose timing is not stated at all. This grammar is
 the reverse: it bounds detection, reaction and settle against the FTTI and
 says nothing about what the safe state commands, which node has the last
 word on the actuator, or which requirement of the hazard analysis a hazard
-implements. Safe-ROS's published code also shows two failure shapes the
-grammar should name: a reaction emitted only when the overridden traffic
-arrives, and a protective distance never checked against speed.
+implements.
 
 ### The ruling (proposed)
 
-Additive keys, no renames: `safe_state.value` (predicates the safe-state
-message must satisfy, checked at run time), `topics.<t>.arbiter` (the only
-node allowed to publish an actuator topic, checked statically and at run
-time), `hazards.<h>.requirement` (`{ id, source }`, carried into every
-diagnostic and rendered as one sentence in `--explain`), a reference
-extension for a moving robot's protective stop, and a rule
-`reaction-waits-on-traffic`. A nuclear instrumentation profile (IEC 61513)
-is to be investigated before it is proposed.
+A first draft added a value predicate per reaction path and an arbiter per
+topic. Seven use cases (mobile robot, automated driving, cobot, UAV,
+infusion pump, process plant, rail) showed that both belong to the third
+part of a safety instrumented function, the final element: the channel the
+actuator consumes, its arbiter, the predicate of the minimal risk
+condition there, and a predicate per degradation level. What must hold is
+an invariant for as long as the level lasts, not the first message after
+the fault. So: `final_elements:` (channel, arbiter, safe predicate) and
+`modes.<m>.commands`, checked statically (bypass, unreached) and at run
+time (`safe-state-violated`, `final-element-silent`, `arbiter-bypass`);
+`hazards.<h>.requirement` (`{ id, source }`, a sentence per hazard in
+`--explain`); `reaction-waits-on-traffic` if the walk misses that shape.
+A moving robot's protective stop is a reference extension on the existing
+`deadline_by` pattern, not a core key. An IEC 61513 profile is to be
+investigated.
 
 ### Consequences
 
-- The model gains `safe_state.value`, the arbiter and the requirement,
-  additively; nano-ros may generate the value and arbiter monitors.
-- `arbiter` is dominance only. Independence of the barrier stays R6's
+- The model gains `final_elements`, `ModeContract.commands` and the
+  requirement, additively; nano-ros may generate the invariant and bypass
+  monitors in the image.
+- The arbiter is dominance only. Independence of the barrier stays R6's
   question.
 - Proving a node's code is not the contract's job; `requirement.source`
   is where evidence of that can be named.
