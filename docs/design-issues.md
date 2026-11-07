@@ -1547,8 +1547,8 @@ state. Issue 58 covers one safety function beside a working system.
 
 ### The ruling (proposed)
 
-Twelve case studies. In the core: `k` on a redundant group (`all_of` with
-a threshold; members may be value functions), one `independence:` form
+Twelve case studies. In the core: `m` on a redundant group (`all_of` with
+IEC 61508's MooN threshold; members may be value functions), one `independence:` form
 checked against deployment facts, `on_silence` on an external subscriber
 side, and `on:` gains repetition, resequencing and insertion. Derived, no
 key: restart credit from the launch file's `respawn`, hot and cold standby

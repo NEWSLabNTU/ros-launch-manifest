@@ -1,10 +1,10 @@
 # Fault tolerance: safety when most of the system is safety critical
 
 **Status (2026-11-07): proposed; §4 revised the same day to the
-contract's primitives rule.** Nothing here is implemented. Design issue 59
+contract's primitives rule; §6's questions decided the same day.** Nothing here is implemented. Design issue 59
 records it; implementation is tracked by play_launch phase 101. It extends
 `safety-functions.md` (design issue 58). After the revision the core gains
-three things here: `k` on a redundant group, one `independence` form, and
+three things here: `m` on a redundant group (MooN), one `independence` form, and
 `on_silence` on an external subscriber side, plus three `on:` classes;
 recovery and fail-operational are derived, and use-case specifics are
 extensions (§4.7). Every key is additive.
@@ -115,38 +115,39 @@ to extensions for use-case specifics, most were second copies:
 | `k_of.agree` (value voting) | **extension territory** | Agreement is a comparison whose tolerance and metric are domain-specific (a pose, a pressure, a surface angle). A member wrong by its own value is already a value function (`of` + `when`). Comparing members against each other needs a runtime hook extensions do not have; recorded, not proposed. |
 | `silence:` on a final element | **derived**, one fact where it cannot be | §4.4. |
 | `independent` and `independent_of` | **one form** | Two spellings of one claim. §4.5. |
-| `k` on a redundant group | **core** | The count is a fact of the design and computable from nothing. |
+| `m` on a redundant group | **core** | The count is a fact of the design and computable from nothing. |
 | `on:` repetition, resequencing, insertion | **core** | Fault classes are the closed vocabulary every monitor uses. |
 
-### 4.1 A redundant group's count: `functions.<f>.k`
+### 4.1 A redundant group's count: `functions.<f>.m`
 
 ```yaml
 functions:
   attitude:
     all_of: [/fcc1/cmd, /fcc2/cmd, /fcc3/cmd]
-    k: 2                        # held while at least 2 members hold
+    m: 2                        # 2oo3: held while at least 2 members hold
 ```
 
-- `all_of` keeps its meaning with `k` absent (`k: 1`: held while any
-  member holds). `k` raises the threshold.
+- `all_of` keeps its meaning with `m` absent (`m: 1`, 1ooN: held while
+  any member holds). `m` raises the threshold.
 - Members may be functions, so a member lost by its own value (a value
   function, `of` + `when`) counts as lost. That is how a monitor-control
   lane that fails silent, or reports itself wrong, takes part in k-of-n
   without a voting key.
 - Runtime: the observer counts held members, as it evaluates a function
   today.
-- Name: IEC 61508 writes the architecture as MooN (2oo3). `k` keeps N
-  where it already is, the member list; whether to spell it `m` is §6.
+- Name: IEC 61508 writes the architecture as MooN (2oo3): M of N. N is
+  the member list's length, so only M is written, and it is spelled `m`
+  (decided 2026-11-07).
 
 ### 4.2 Recovery, credited and not written
 
 - **Restart.** A node with `respawn` is credited when detection plus
   `respawn_delay` plus its startup time fits the FTTI. The startup time
   comes from a run (`check --against <run-dir>`, as link transport does,
-  from `startup_timeline.json`); absent a run it is unknown, and the
-  restart is not credited. `recovery-unfit` (warning) names a restart that
+  from `startup_timeline.json`), and only from a run (decided
+  2026-11-07): absent one it is unknown, and the restart is not credited. `recovery-unfit` (warning) names a restart that
   cannot fit, so the hazard will degrade.
-- **Hot standby.** A redundant group above its `k` after the loss keeps
+- **Hot standby.** A redundant group at or above its `m` after the loss keeps
   the mode; nothing is entered and nothing is charged.
 - **Cold standby.** The standby's subscriber on the primary's output, with
   `max_age` and `on_violation: { reaction: take_over }`, is an ordinary
@@ -240,14 +241,16 @@ reported once). Corruption is left out: not observable above DDS.
   `respawn`, a takeover is a standby's reaction, degradation is the modes.
   The checker credits them in that order (§4.2) without a list to write.
 
-## 6. Open questions
+## 6. Decisions (2026-11-07)
 
-1. `k` or IEC 61508's `m` for the count of a redundant group.
-2. Whether a node's startup time may be stated in the contract when no run
-   is given, as a cost can be, or comes only from a run.
-3. Which deployment facts count for `independence`. Process, container,
-   host and CPU set are certain; a shared DDS participant, power supply or
-   sensor are not facts play_launch has.
+1. The count of a redundant group is spelled `m`, IEC 61508's MooN.
+2. A node's startup time comes only from a run (`check --against`); the
+   contract does not state one. A restart without a run is not credited,
+   and the output says so.
+3. `independence` counts four deployment facts: `process`, `container`,
+   `host` and `cpus` (the CPU set from the platform file). A shared DDS
+   participant, power supply or sensor is not a fact play_launch has, and
+   is not accepted in `not_sharing`.
 
 ## 7. Not adopted
 

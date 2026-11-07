@@ -5,7 +5,8 @@ use-case survey (§4) found the final element; a survey of large systems
 (`fault-tolerance.md`, design issue 59) added silence, redundancy and
 independence; the third revision (§5) holds every key to the contract's
 primitives rule and moves use-case specifics to extensions, leaving one
-new key here, `modes.<m>.commands`, plus `hazards.<h>.requirement`.**
+new key here, `modes.<m>.commands`, plus `hazards.<h>.requirement`. §7's
+questions are decided.**
 Nothing here is implemented. Design issue 58 records it. Implementation
 is tracked by play_launch phase 100, which also carries the play_launch
 and nano-ros halves. Every key is additive: no existing spelling moves, so
@@ -249,20 +250,20 @@ A hazard whose `monitors:` is the safety function's own output, with
 `on: omission`; `reaction-unguarded` already warns when it is missing. A
 guide example, not a key.
 
-## 7. Open questions for the decision
+## 7. Decisions (2026-11-07)
 
-1. ~~The key's name.~~ `final_elements` was decided 2026-11-07, then the
-   section was dropped the same day (§5): the word stays as the checker's
-   name for a commanded topic.
-2. Whether the invariant starts at the reaction's derived bound, or at the
-   first message after the fault that satisfies the predicate. The first is
-   the stronger check.
-3. Whether `commands` belongs on modes only, or also on an event-chain
-   reaction that is not a mode. Primitives argue for modes only: a
-   one-level reaction can be written as a mode, and two places would be two
-   copies.
-4. A relational predicate (a speed limit as a function of a measured
-   distance) is out of scope; discrete levels cover the practice, and an
+1. `final_elements` was decided as a section name, then the section was
+   dropped (§5); the word stays as the checker's name for a commanded
+   topic.
+2. The invariant starts at the reaction's derived bound, not at the first
+   message that satisfies the predicates. It is the stronger check, and a
+   late reaction is then reported twice, once by `fault-reaction-time` and
+   once here, each naming its own evidence.
+3. `commands` is on modes only. A one-level reaction is written as a mode
+   when it needs `commands`; allowing it on event chains too would be two
+   places for one fact.
+4. A relational predicate (a limit that is a function of a measured
+   quantity) is out of scope; discrete levels cover the practice, and an
    extension can check the continuous form statically.
 
 ## 8. Not adopted
