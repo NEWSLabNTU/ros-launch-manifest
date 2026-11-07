@@ -1540,6 +1540,44 @@ investigated.
 - Proving a node's code is not the contract's job; `requirement.source`
   is where evidence of that can be named.
 
+## 59. Most of the System Is Safety Critical — Proposed
+
+**Status (2026-11-07):** proposed; design of record
+`docs/design/fault-tolerance.md`; implementation is play_launch phase 101.
+
+### The question
+
+Issue 58 models one safety function beside a system that does the work.
+Aircraft flight control, spacecraft, level-4 driving and closed-loop
+medical devices are made safe differently: most components are safety
+critical, some phases have no safe state, and safety rests on redundancy,
+recovery and the independence of redundant members.
+
+### The ruling (proposed)
+
+Twelve case studies (Airbus and Boeing flight control, spacecraft FDIR,
+ARINC 653, fail-operational driving, nuclear defence in depth, closed-loop
+insulin, ventilators, surgical robots, Auto-GCAS, EN 50159, AUTOSAR
+watchdogs). The final element of issue 58 holds; five additions make it
+fit: `functions.<f>.k_of` (k-of-n with agreement), an ordered
+`recovery:` (restart, switchover) credited before degradation when it fits
+the FTTI, `fail_operational:` modes that must be covered by recovery or
+redundancy, `silence:` on a final element (silence as the safe state), and
+`independent:` checked against the deployment facts play_launch has, with
+freedom from interference derived from them. `on:` gains repetition,
+resequencing and insertion. Run-time assurance, AADL EMV2, GSN and
+numbered FDIR levels were considered as the whole model and not adopted.
+
+### Consequences
+
+- Independence becomes mechanical where it is a deployment fact (process,
+  container, host, CPU set) and stays a stated claim where it is not
+  (diversity, power, sensors).
+- `respawn` becomes a safety mechanism the checker credits, timed from
+  the model and the measured startup.
+- The model gains the new keys additively; nano-ros mirrors what its
+  image can check.
+
 ## Summary
 
 Design issues 1–51, #53 (equal periods, equal priorities) and #54 (the

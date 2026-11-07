@@ -1,7 +1,10 @@
 # Safety functions: what Safe-ROS teaches the contract
 
 **Status (2026-11-07): proposed, revised the same day after a use-case
-survey (§4).** Nothing here is implemented. The first draft proposed a
+survey (§4); the key's name, `final_elements`, is decided. A survey of
+large systems (`fault-tolerance.md`, design issue 59) adds `silence:` to
+the final element (§5) and the redundancy, recovery and independence keys
+around it.** Nothing here is implemented. The first draft proposed a
 per-path `safe_state.value` and a per-topic `arbiter`. Seven use cases
 showed that the value and the arbiter belong to one thing, the actuator
 channel the safety function finally commands, and that what must hold
@@ -180,6 +183,13 @@ modes:
   Silence on the channel while the level holds is reported as such
   (`final-element-silent`), because a channel that stops publishing leaves
   the actuator to its own timeout, which is U1's §2.1 defect.
+- **`silence`** states what the actuator does when the channel goes
+  quiet: `{ after: 500ms, becomes: safe }` for one that de-energises to
+  its safe state (a base command timeout, a valve that opens, brakes
+  without power), `hold` (the default) for one that keeps its last
+  command. With `becomes: safe`, a reaction may end in silence, and
+  `final-element-silent` is the reaction succeeding, not an error. From
+  `fault-tolerance.md` §4.4.
 - **`safe_state` on a path stays** what it is today, the settle and the
   topic the reaction emits on; the walk checks that the route continues
   from `emits` to a final element.
@@ -257,10 +267,9 @@ This needs a guide example, not a key.
 
 ## 7. Open questions for the decision
 
-1. The key's name. `final_elements` is IEC 61511's word, which this
-   vocabulary's own rule prefers (`standard-names.md` §1), and
-   `process.pst` already uses it. `actuators` reads more plainly to a ROS
-   author but names the device, not the command channel.
+1. ~~The key's name.~~ Decided 2026-11-07: `final_elements`, IEC 61511's
+   word, which this vocabulary's own rule prefers (`standard-names.md`
+   §1) and `process.pst` already uses.
 2. Whether the invariant starts at the reaction's derived bound, or at the
    first message after the fault that satisfies the predicate. The first is
    the stronger check and catches a late reaction twice (once here, once in
