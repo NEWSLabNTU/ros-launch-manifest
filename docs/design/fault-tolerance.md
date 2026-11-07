@@ -253,11 +253,12 @@ reported once). Corruption is left out: not observable above DDS.
 3. `independence` counts three deployment facts: `process`, `container`
    and `cpus` (the CPU set from the platform file). A shared DDS
    participant, power supply or sensor is not a fact play_launch has, and
-   is not accepted in `not_sharing`. `host` was decided first and is
-   proposed for removal (play_launch phase 102, finding 2): `Deploy.host`
-   left the model on 2026-07-31, so every node of one resolved model is on
-   one host, and independence across hosts is the separation of two
-   models, which no single check sees.
+   is not accepted in `not_sharing`. `host` was decided first and dropped
+   the same day (play_launch phase 102, finding 2): `Deploy.host` left the
+   model on 2026-07-31, so every node of one resolved model is on one
+   host, and independence across hosts is the separation of two models,
+   which no single check sees. `not_sharing: [host]` is a parse error
+   naming this.
 
 ## 7. Not adopted
 
