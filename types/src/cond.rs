@@ -170,6 +170,15 @@ fn cleanup_dangling_refs(
         .map(|s| s.as_str())
         .collect();
 
+    // A topic declared with no endpoints at all (a type for a topic the
+    // consumer derives from the launch tree, play_launch phase 102 E3) was
+    // never emptied by this cleanup, so it is kept.
+    let declared_bare: std::collections::HashSet<String> = manifest
+        .topics
+        .iter()
+        .filter(|(_, t)| t.publishers.is_empty() && t.subscribers.is_empty())
+        .map(|(k, _)| k.clone())
+        .collect();
     for topic in manifest.topics.values_mut() {
         cleanup_ref_list(&mut topic.publishers, &node_names, conditional_nodes);
         cleanup_ref_list(&mut topic.subscribers, &node_names, conditional_nodes);
@@ -187,8 +196,11 @@ fn cleanup_dangling_refs(
     // A topic that marks an external side stays: the mark is its content
     // (phase 90 G3 made `topics.<n>.external` the one place for what an
     // `external_topics:` entry said, and that entry was never dropped).
-    manifest.topics.retain(|_, t| {
-        !t.publishers.is_empty() || !t.subscribers.is_empty() || t.external.is_some()
+    manifest.topics.retain(|k, t| {
+        !t.publishers.is_empty()
+            || !t.subscribers.is_empty()
+            || t.external.is_some()
+            || declared_bare.contains(k)
     });
     manifest
         .services
@@ -630,6 +642,32 @@ topics:
         assert!(!m.topics.contains_key("half_topic"));
     }
 
+    /// play_launch phase 102 E3: a topic declared with only a type (the
+    /// type of a topic the consumer derives from the launch tree's remaps)
+    /// had no endpoint to lose, and is kept; Autoware's
+    /// `/planning/scenario_planning/max_velocity` was dropped this way and
+    /// its `commands` predicate read as untyped.
+    #[test]
+    fn a_topic_declared_with_only_a_type_is_kept() {
+        let yaml = r#"
+version: 1
+nodes:
+  opt_pub:
+    if: "false"
+    pub: [out]
+topics:
+  typed_only:
+    type: std_msgs/msg/Bool
+  gone_topic:
+    type: std_msgs/msg/String
+    pub: [opt_pub/out]
+"#;
+        let mut m = crate::parse_manifest_str(yaml).unwrap();
+        filter_manifest(&mut m);
+        assert!(m.topics.contains_key("typed_only"));
+        assert!(!m.topics.contains_key("gone_topic"));
+    }
+
     // ── Conditional includes (issue #0043) ──
 
     #[test]
@@ -768,8 +806,9 @@ topics:
     }
 
     /// Phase 90 G3: a topic with no endpoints that marks an external side is
-    /// kept, as the `external_topics:` entry it replaces always was; one with
-    /// neither endpoints nor a mark is dropped as before.
+    /// kept, as the `external_topics:` entry it replaces always was. Since
+    /// v0.3.14 one with neither is kept too: it states a type, and only a
+    /// topic the cleanup emptied is dropped (`a_topic_declared_with_only_a_type_is_kept`).
     #[test]
     fn test_an_external_topic_without_endpoints_is_kept() {
         let yaml = r#"
@@ -787,7 +826,7 @@ external_topics:
         let mut m = crate::parse_manifest_str(yaml).unwrap();
         filter_manifest(&mut m);
         assert!(m.topics.contains_key("/sensing/points"));
-        assert!(!m.topics.contains_key("/unused"));
+        assert!(m.topics.contains_key("/unused"));
         assert!(m.external_topics.contains_key("/tf"));
     }
 

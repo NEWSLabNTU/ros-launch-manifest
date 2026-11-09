@@ -25,7 +25,7 @@ pub const BUNDLED: [(&str, &str); 1] = [(
 /// `docs/design/extension-examples.md` as files, (file name, source). They
 /// are not bundled: a contract that wants one ships a copy in its package's
 /// `rlm/` directory. Each is marked illustrative in its header.
-pub const REFERENCE: [(&str, &str); 5] = [
+pub const REFERENCE: [(&str, &str); 6] = [
     (
         "iso13855.rlx",
         include_str!("../extensions/reference/iso13855.rlx"),
@@ -40,6 +40,10 @@ pub const REFERENCE: [(&str, &str); 5] = [
     ),
     ("ebd.rlx", include_str!("../extensions/reference/ebd.rlx")),
     ("pst.rlx", include_str!("../extensions/reference/pst.rlx")),
+    (
+        "protective_stop.rlx",
+        include_str!("../extensions/reference/protective_stop.rlx"),
+    ),
 ];
 
 /// The bundled extension the legacy keys belong to.

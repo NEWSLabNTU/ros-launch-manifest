@@ -1,0 +1,17 @@
+-- share/rlm_ext_mobile/rlm/protective_stop.rlx
+extension mobile.protective_stop 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.speed  : Velocity      "the highest speed while this field is active"
+key hazard.decel  : Acceleration  "the deceleration the base brakes at"
+key hazard.margin : Length        "allowance: sensor error, latency of the base, wear"
+key hazard.field  : Length        "the protective field, from the robot's front"
+input reaction_total : Time       -- core: detection + route + settle
+
+check stopping_distance: required <= field
+  where driven   = speed * reaction_total
+    and braking  = speed^2 / (2 decel)
+    and required = driven + braking + margin
+  worst_case: increasing in reaction_total, speed, margin
+  domain: speed in (0 m/s, 20 m/s], decel in (0 m/s^2, 20 m/s^2], margin >= 0 m,
+          reaction_total >= 0 s

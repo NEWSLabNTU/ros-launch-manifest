@@ -137,7 +137,7 @@ fn every_reference_extension_loads_and_proves_its_worst_case() {
         }
     }
     assert_eq!(
-        proved, 24,
+        proved, 27,
         "every claim of every reference extension is proved"
     );
 }

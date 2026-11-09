@@ -383,3 +383,65 @@ derive hazard.ftti : Time = (hazard_pressure - trip_setpoint) / max_rise_rate
 
 derive settle.duration : Time = valve_stroke
 ```
+
+## `mobile.protective_stop 0.1.0`
+
+**Reference, illustrative.**
+
+Requires: `rlm >= 0.2.0`.
+
+Keys a contract writes:
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `hazard.speed` | Velocity | no | the highest speed while this field is active |
+| `hazard.decel` | Acceleration | no | the deceleration the base brakes at |
+| `hazard.margin` | Length | no | allowance: sensor error, latency of the base, wear |
+| `hazard.field` | Length | no | the protective field, from the robot's front |
+
+Core values it reads:
+
+| input | dimension | default |
+|---|---|---|
+| `reaction_total` | Time | no |
+
+What it produces:
+
+| item | name | result | worst case |
+|---|---|---|---|
+| check | `stopping_distance` | verdict | increasing in `reaction_total`, `speed`, `margin` |
+
+sha256 of the canonical form: `31ed8ff5400c19609b0da643ecc2302f0661802d18aedfb704bb5138e1cebdff`. Source (`types/extensions/reference/protective_stop.rlx`):
+
+```
+-- Reference extension (mobile robots): the protective stop of a robot that
+-- watches a protective field ahead of it (play_launch phase 100 F5, rlm
+-- docs/design/safety-functions.md S4). ILLUSTRATIVE: the shape follows the
+-- stopping-distance argument of ISO 3691-4 and ISO 13855 -- the field must
+-- cover the distance driven while the stop is detected and commanded, plus
+-- the braking distance, plus an allowance -- but no clause of either
+-- standard has been checked against its text. Verify before calling this a
+-- reference implementation.
+--
+-- A contract states the speed and deceleration the robot runs at, and
+-- reads the field from the node that applies it:
+--   field: $(param /safety_node stop_distance) m
+-- so the check judges the number the image runs. Speed-dependent field
+-- sets are degradation levels, one hazard (and one check) each.
+extension mobile.protective_stop 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.speed  : Velocity      "the highest speed while this field is active"
+key hazard.decel  : Acceleration  "the deceleration the base brakes at"
+key hazard.margin : Length        "allowance: sensor error, latency of the base, wear"
+key hazard.field  : Length        "the protective field, from the robot's front"
+input reaction_total : Time       -- core: detection + route + settle
+
+check stopping_distance: required <= field
+  where driven   = speed * reaction_total
+    and braking  = speed^2 / (2 decel)
+    and required = driven + braking + margin
+  worst_case: increasing in reaction_total, speed, margin
+  domain: speed in (0 m/s, 20 m/s], decel in (0 m/s^2, 20 m/s^2], margin >= 0 m,
+          reaction_total >= 0 s
+```

@@ -153,7 +153,7 @@ fn accepted_files_are_the_design_examples() {
             block.push('\n');
         }
     }
-    assert_eq!(found, 6, "the design has six rlx examples");
+    assert_eq!(found, 7, "the design has seven rlx examples");
 }
 
 fn ascii(src: &str) -> String {

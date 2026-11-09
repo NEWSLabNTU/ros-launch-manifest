@@ -565,6 +565,65 @@ the timing unchanged.
 
 ---
 
+## 8. Mobile robot: a protective stop sized by its reaction
+
+Added with play_launch phase 100 F5 (`docs/design/safety-functions.md` S4),
+after the seven above. A mobile robot stops when an obstacle enters its
+protective field; the field must cover the distance driven while the stop
+is detected and commanded, the braking distance, and an allowance. The
+reaction time is the core's; the field is read from the node that applies
+it, so the check judges the number the image runs.
+
+```
+-- share/rlm_ext_mobile/rlm/protective_stop.rlx
+extension mobile.protective_stop 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.speed  : Velocity      "the highest speed while this field is active"
+key hazard.decel  : Acceleration  "the deceleration the base brakes at"
+key hazard.margin : Length        "allowance: sensor error, latency of the base, wear"
+key hazard.field  : Length        "the protective field, from the robot's front"
+input reaction_total : Time       -- core: detection + route + settle
+
+check stopping_distance: required <= field
+  where driven   = speed * reaction_total
+    and braking  = speed^2 / (2 decel)
+    and required = driven + braking + margin
+  worst_case: increasing in reaction_total, speed, margin
+  domain: speed in (0 m/s, 20 m/s], decel in (0 m/s^2, 20 m/s^2], margin >= 0 m,
+          reaction_total >= 0 s
+```
+
+```yaml
+use: { iso26262: "^1", mobile.protective_stop: "^0.1" }
+hazards:
+  collision:
+    monitors: [/too_close]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 1s
+    deadline_by: mobile.protective_stop/stopping_distance
+    reaction: safety.stop
+    speed: 1.0 m/s
+    decel: 1.5 m/s^2
+    margin: 0.1 m
+    field: $(param /safety_node stop_distance) m
+```
+
+```
+error[extension-check]: hazard 'collision': mobile.protective_stop/stopping_distance FAIL
+driven = speed * reaction_total = 407 mm
+braking = speed^2 / (2 decel) = 333.33 mm
+required = driven + braking + margin = 840.33 mm
+stopping_distance: required <= field: 840.33 mm <= 50 mm (margin -790.33 mm) FAIL
+worst case: proved increasing in reaction_total, speed, margin
+```
+
+What it shows: Safe-ROS's 5 cm field refused once the reaction the checker
+derived is charged (play_launch `contract_protective_stop`; a 0.9 m field
+passes, `contract_protective_stop_sized`). Fields that change with speed
+are degradation levels, one hazard and one check each.
+
 ## What the seven say about the core
 
 - Every domain's timing reduced to core bounds (detection, route, settle,

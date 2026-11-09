@@ -6,6 +6,27 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+### Added
+
+- **`mobile.protective_stop`**, a reference extension (play_launch phase
+  100 F5, `docs/design/safety-functions.md` S4): a protective field must
+  cover `speed * reaction_total + speed^2 / (2 decel) + margin`. Every
+  worst case is proved. Illustrative, as the other references are; section
+  8 of `docs/design/extension-examples.md`. Not bundled: a contract ships a
+  copy in its package's `rlm/` directory, so no grammar or model change.
+
+### Fixed
+
+- **A topic declared with only a type is kept.** `filter_manifest`
+  removed every topic left with no endpoints after conditional cleanup,
+  including one that never had any: `topics.<t>: { type: ... }`, which
+  gives the type of a topic the consumer derives from the launch tree
+  (play_launch phase 102 E3: Autoware's `/planning/scenario_planning/
+  max_velocity`, whose `commands` predicate then read as untyped). Only a
+  topic the cleanup emptied is removed now.
+
 ## v0.3.13 - 2026-11-09
 
 The contract safety model's grammar (play_launch phases 100 to 102 M1;
