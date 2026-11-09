@@ -6,7 +6,7 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.3.13 - 2026-11-09
 
 The contract safety model's grammar (play_launch phases 100 to 102 M1;
 `docs/design/safety-functions.md`, `docs/design/fault-tolerance.md`).
