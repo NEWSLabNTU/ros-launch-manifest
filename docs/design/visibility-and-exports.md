@@ -110,16 +110,17 @@ Rules:
 
 ### `visibility` shorthand
 
-For a single topic, `topics.<name>.visibility: private | internal | public`
+For a single topic, `topics.<name>.visibility: private | public`
 (requirement) avoids an `exports:` block:
 
 - `private`: no consumer outside the declaring scope (same as omitting it from
   a closed scope's exports);
-- `internal`: no consumer outside the contract tree's root, including tools;
 - `public`: the default.
 
-A topic may carry `visibility` or be governed by its scope's `exports`, not
-both (`visibility-and-exports`).
+There is no tree-wide level. "No consumer outside this whole tree" is stated
+by giving the tree's root scope an `exports:` block (decision 1). A topic may
+carry `visibility` or be governed by its scope's `exports`, not both
+(`visibility-and-exports`).
 
 ## The model
 
@@ -142,7 +143,7 @@ scope. Unknown is never treated as closed.
 | `external-not-exported` | error | rule 5 above |
 | `visibility-and-exports` | error | a topic carries both forms |
 | `closure-unknown` | warning | a non-public topic's `closed` is unknown; names the nodes that make it so |
-| `export-unused` | info | an exported topic no endpoint outside the scope uses, in any configured root |
+| `export-unused` | info | an exported topic no endpoint outside the scope uses, in any configured root (static graph only; decision 2) |
 
 ## Locality, derived once
 
@@ -185,9 +186,14 @@ scope for a session and reports that the optimization is off.
 - Security. Visibility is a design contract, not access control; SROS2
   governance is the tool for that.
 
-## Open questions
+## Decisions (2026-11-10)
 
-1. Should `internal` (tree root) exist at all, or is a closed root scope
-   enough?
-2. Should `export-unused` read observed runtime data (play_launch's monitor)
-   as well as the static graph?
+1. **No `internal` level.** A tree-wide level was a second spelling of a
+   closed root scope, and it changed meaning when a user launched a subtree
+   (the subtree's root became "the tree"). Visibility is `private | public`
+   plus `exports:`; a closed root scope says "nothing outside this tree".
+2. **`export-unused` is static.** The checker reads the static graph across
+   every configured root and never runtime history, so its answer does not
+   depend on which machine ran what. Observed-traffic suggestions are a
+   realizer's report (play_launch's monitor), and no realizer writes the
+   contract.
