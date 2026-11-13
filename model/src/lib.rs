@@ -2149,15 +2149,11 @@ pub struct PathContract {
     /// rather than authored; carried when the contract declares it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_latency_ms: Option<f64>,
-    /// Max `header.stamp` spread between a fan-in path's inputs that the
-    /// callback still treats as one set.
-    ///
-    /// `correlation` used to sit beside this (phase 70 removed it): declared,
-    /// lowered to an enum here, and branched on by nothing on either side of
-    /// the toolchain. Old models still carrying `correlation:` load — the
-    /// golden fixture keeps one on disk to prove it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tolerance_ms: Option<f64>,
+    // `tolerance_ms` was here until v0.3.16: the same quantity as
+    // `sync.max_interval`, and read by nothing on either side of the
+    // toolchain. `correlation` sat beside it until phase 70. Old models
+    // carrying either still load (the field is dropped on read); the golden
+    // fixture keeps both on disk to prove it.
     /// E2E drop budget (scope paths only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropContract>,

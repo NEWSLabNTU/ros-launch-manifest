@@ -455,7 +455,7 @@ pub const FIELDS: &[Field] = &[
         "links",
         Context::Manifest,
         Kind::Fact,
-        "Named links (play_launch phase 97): `<name>: { max_transport, clock, monitor }`, one transport stated once, with its source. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes.",
+        "Named links (play_launch phase 97): `<name>: { max_transport, clock }`, one transport stated once, with its source. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes.",
     ),
     live(
         "supervision",
@@ -588,13 +588,13 @@ pub const FIELDS: &[Field] = &[
         "max_transport",
         Context::Endpoint,
         Kind::Requirement,
-        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber, overriding the topic's (one topic does not have one cost: in-process, another process, another machine). Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
+        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber (one topic does not have one cost: in-process, another process, another machine). Written here it is deprecated since v0.3.16 (`deprecated-spelling`) and refused at the next release: name a link (`link:`), which states the number once with its source; `migrate` writes the link. Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
     ),
     live(
         "link",
         Context::Endpoint,
         Kind::Fact,
-        "Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A written `max_transport` stays legal and is reported as `transport-inline`.",
+        "Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A `max_transport` written on the subscriber instead is deprecated since v0.3.16.",
     ),
     removed(
         "max_transport_ms",
@@ -775,7 +775,7 @@ pub const FIELDS: &[Field] = &[
     removed(
         "max_transport",
         Context::Topic,
-        "Removed in v0.3.15 (deprecated since v0.1.60, phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber (`nodes.<n>.sub.<ep>.link` naming a `links:` entry, or its own `max_transport`). `play_launch migrate <contract> --write` copies the value onto each subscriber declared in the same file.",
+        "Removed in v0.3.15 (deprecated since v0.1.60, phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber through a link (`nodes.<n>.sub.<ep>.link` naming a `links:` entry). `play_launch migrate <contract> --write` writes the value as one link and names it on each of the topic's subscribers declared in the same file.",
     ),
     removed(
         "max_transport_ms",
@@ -929,16 +929,15 @@ pub const FIELDS: &[Field] = &[
         Context::Path,
         "Removed in phase 70 — nothing ever read it. State fan-in policy with `sync:`.",
     ),
-    live(
+    removed(
         "tolerance",
         Context::Path,
-        Kind::Fact,
-        "Max `header.stamp` spread between a fan-in path's inputs still treated as one set.",
+        "Removed in v0.3.16 — the stamp spread a fan-in path accepts is `sync.max_interval`, one quantity under one key. With a `sync:` block, write it there; without one no synchroniser waits, so the key bounded nothing: add `sync: { policy: approximate, max_interval: <d> }` if the path does synchronise (its derived output rate becomes the MIN of its inputs, not their sum), else delete it. `migrate` folds it into an existing `sync:`.",
     ),
     removed(
         "tolerance_ms",
         Context::Path,
-        "Removed in phase 70 — write `tolerance: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse.",
+        "Removed in phase 70; its successor `tolerance` was removed in v0.3.16 — write `sync: { max_interval: <n>ms }`.",
     ),
     live(
         "drop",
@@ -1928,6 +1927,13 @@ fn render_bounds() -> String {
 /// since v0.1.59 and v0.1.60.
 pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[];
 
+/// Deprecations no row can carry, because the key stays live in another use
+/// (play_launch phase 104 S1: value- and rule-level deprecations are where
+/// the retirement debt hid). `(what, release)`; the same test holds them to
+/// the schedule. A subscriber's `max_transport` is deprecated while a
+/// client's is not, and both are the `Endpoint` row.
+pub const DEPRECATED_USES: &[(&str, &str)] = &[("nodes.<n>.sub.<ep>.max_transport", "0.3.16")];
+
 /// Keys added since v0.1.49, with the release that added each: what the
 /// format reference prints beside them. A column on
 /// [`Field`] would touch every row; earlier keys are not dated (their
@@ -2176,6 +2182,16 @@ mod tests {
                 "{}.{} has been deprecated since v{since}: refuse it (a `removed` row)",
                 f.context.label(),
                 f.key
+            );
+        }
+        for (what, since) in DEPRECATED_USES {
+            assert!(
+                !crate::rule_names::overdue(
+                    since,
+                    crate::rule_names::Stage::Accepted,
+                    crate::GRAMMAR_VERSION
+                ),
+                "{what} has been deprecated since v{since}: refuse it"
             );
         }
     }

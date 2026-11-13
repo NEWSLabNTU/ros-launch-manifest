@@ -2708,7 +2708,8 @@ services:
 
 /// v0.3.4 (play_launch phase 97): a link with no `source:` is
 /// `link-unsourced`; a subscriber's own `max_transport` is
-/// `transport-inline`; a subscriber that names a sourced link is neither.
+/// `deprecated-spelling` (an info, `transport-inline`, until v0.3.16); a
+/// subscriber that names a sourced link is neither.
 #[test]
 fn links_are_sourced_and_inline_transport_is_reported() {
     let yaml = r#"
@@ -2735,8 +2736,11 @@ topics:
     assert!(unsourced[0].contains("'bare'"), "{d:?}");
     let inline: Vec<_> = d
         .iter()
-        .filter(|l| l.contains("transport-inline"))
+        .filter(|l| l.contains("[deprecated-spelling]"))
         .collect();
     assert_eq!(inline.len(), 1, "{d:?}");
-    assert!(inline[0].contains("'c/in'"), "{d:?}");
+    assert!(
+        inline[0].contains("'c/in'") && inline[0].contains("v0.3.16"),
+        "{d:?}"
+    );
 }

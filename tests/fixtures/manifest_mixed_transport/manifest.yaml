@@ -5,8 +5,8 @@
 #  in →   │                                                ├→ fusion (20ms) → out
 #         └→ camera_detector (30ms) ──[network: 10ms]──────┘
 #
-# Transport per subscriber (phase 90 G3: a transport is the hop into one
-# subscriber): fusion/camera 10ms (the network), fusion/lidar 0ms
+# Transport per subscriber, through the link each hop crosses (phase 90 G3:
+# a transport is the hop into one subscriber; v0.3.16: stated on a link): fusion/camera 10ms (the network), fusion/lidar 0ms
 # (intra-process collocation).
 #
 # Critical path with override:
@@ -23,6 +23,10 @@
 # while camera arrives over a network bridge). Without it the budget
 # would be inflated by 10ms of phantom transport.
 version: 1
+
+links:
+  in_process: { max_transport: { duration: 0ms, source: requirement } }
+  bridge: { max_transport: { duration: 10ms, source: requirement } }
 
 nodes:
   lidar_detector:
@@ -51,17 +55,16 @@ nodes:
     sub:
       lidar:
         min_rate_hz: 10
-        max_transport: 0ms     # intra-process from lidar_detector
+        link: in_process       # intra-process from lidar_detector
       camera:
         min_rate_hz: 10
-        max_transport: 10ms    # cross-network bridge
+        link: bridge           # cross-network bridge
     pub:
       out: { min_rate_hz: 10 }
     paths:
       main:
         trigger: { input: [lidar, camera] }
         output: [out]
-        tolerance: 50ms
         max_latency: 20ms
 
 topics:

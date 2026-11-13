@@ -84,13 +84,22 @@ pub const REWRITES: &[Rewrite] = &[
         find: external_topics_to_topics,
     },
     Rewrite {
-        id: "topic-max-transport-subscribers",
-        unit: "G3",
-        since: "0.1.60",
-        from: "topics.<t>.max_transport: <d>",
-        to: "nodes.<n>.sub.<ep>.max_transport: <d> on each subscriber listed in `topics.<t>.sub` that states none",
-        when: "every listed subscriber is declared in the same file (a subscriber that states its own keeps it); a topic with no listed subscriber, or one declared in another contract, is left for a hand edit",
-        find: topic_max_transport_subscribers,
+        id: "max-transport-link",
+        unit: "104 S1",
+        since: "0.3.16",
+        from: "topics.<t>.max_transport: <d>; nodes.<n>.sub.<ep>.max_transport: <d>",
+        to: "links.<name>: { max_transport: <d> } and `link: <name>` on the subscriber (one link per topic, named after it, for each listed subscriber that states none; one per subscriber, `<node>_<ep>`, for a subscriber's own)",
+        when: "a topic's: every listed subscriber is declared in the same file (one with its own transport or link keeps it), else left for a hand edit. A subscriber's: no `link:` beside it. The value is copied as written, so a link the value gives no `source:` is `link-unsourced` until one is added",
+        find: max_transport_links,
+    },
+    Rewrite {
+        id: "tolerance-sync",
+        unit: "104 S1",
+        since: "0.3.16",
+        from: "nodes.<n>.paths.<p>.tolerance: <d>",
+        to: "nodes.<n>.paths.<p>.sync.max_interval: <d>",
+        when: "the path has a `sync:` block whose `max_interval` is absent or written the same; without `sync:` it is left for a hand edit, since adding one turns the path's derived output rate from the SUM of its inputs into their MIN",
+        find: tolerance_sync,
     },
     Rewrite {
         id: "node-path-drop-topic",
@@ -1308,84 +1317,299 @@ fn flow_value(v: &Yaml) -> Option<String> {
     }
 }
 
-/// G3: a topic's `max_transport:` moves onto each subscriber the topic
-/// lists that states none of its own: exactly what the topic-level value
-/// meant (a subscriber's own value wins, the topic's applies otherwise).
-/// Every listed subscriber must be declared in the same file, or the topic
-/// is left for a hand edit: the value would otherwise be lost for the
-/// subscribers this file cannot see.
-fn topic_max_transport_subscribers(doc: &Doc) -> Vec<Edit> {
-    const ID: &str = "topic-max-transport-subscribers";
+/// play_launch phase 104 S1: a path's `tolerance:` is the same quantity as
+/// `sync.max_interval`, so it folds into an existing `sync:`. Only there:
+/// writing a `sync:` where none was changes the derived rate (the SUM of
+/// the inputs becomes their MIN), which no rewrite may do silently.
+fn tolerance_sync(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "tolerance-sync";
     let mut out = Vec::new();
     for (level, y) in manifest_levels(doc) {
-        let Some(topics) = y["topics"].as_hash() else {
+        let Some(nodes) = y["nodes"].as_hash() else {
             continue;
         };
-        for (k, t) in topics {
-            let Some(tname) = key_str(k) else { continue };
-            if t["max_transport"].is_badvalue() {
-                continue;
-            }
-            let kpath = with(&level, &["topics", &tname, "max_transport"]);
-            let dotted = kpath.join(".");
-            let Some(value) = doc.inline_value(&kpath) else {
-                doc.skip(ID, &dotted, "a block-form value: move it by hand");
+        for (nk, node) in nodes {
+            let Some(nname) = key_str(nk) else { continue };
+            let Some(paths) = node["paths"].as_hash() else {
                 continue;
             };
-            let subs = yaml_strings(&t["sub"]).unwrap_or_default();
-            if subs.is_empty() {
-                doc.skip(
-                    ID,
-                    &dotted,
-                    &format!(
-                        "`{tname}` lists no subscriber in this file: the value applies to \
-                         subscribers declared in another contract of the launch (or to none). \
-                         State `max_transport: {value}` on each of them, then delete this key"
-                    ),
-                );
-                continue;
-            }
-            let mut edits = Vec::new();
-            let mut why: Option<String> = None;
-            for sref in &subs {
-                let Some((node, ep)) = sref.rsplit_once('/') else {
-                    why = Some(format!("`{sref}` is not `<node>/<endpoint>`"));
-                    break;
+            for (pk, p) in paths {
+                let Some(pname) = key_str(pk) else { continue };
+                if p["tolerance"].is_badvalue() {
+                    continue;
+                }
+                let ppath = with(&level, &["nodes", &nname, "paths", &pname]);
+                let kpath = with(&ppath, &["tolerance"]);
+                let dotted = kpath.join(".");
+                let Some(value) = doc.inline_value(&kpath) else {
+                    doc.skip(ID, &dotted, "a block-form value: move it by hand");
+                    continue;
                 };
-                let props = &y["nodes"][node]["sub"][ep];
-                if y["nodes"][node]["sub"].as_hash().is_none() || props.is_badvalue() {
-                    why = Some(format!(
-                        "subscriber `{sref}` is not declared under `nodes.{node}.sub` in this \
-                         file (another contract, or a list-form `sub:`)"
-                    ));
-                    break;
+                if p["sync"].is_badvalue() {
+                    doc.skip(
+                        ID,
+                        &dotted,
+                        &format!(
+                            "the path has no `sync:`, so no synchroniser waits and the key \
+                             bounded nothing. If it does synchronise, add `sync: {{ policy: \
+                             approximate, max_interval: {value} }}` (its derived output rate \
+                             becomes the MIN of its inputs, not their SUM); otherwise delete it"
+                        ),
+                    );
+                    continue;
                 }
-                if !props["max_transport"].is_badvalue() {
-                    continue; // its own value wins, as it did
+                let spath = with(&ppath, &["sync"]);
+                let mut mine = Vec::new();
+                if p["sync"]["max_interval"].is_badvalue() {
+                    match doc.add_entry(&spath, &format!("max_interval: {value}")) {
+                        Some((at, text)) => mine.push(doc.edit(ID, &dotted, at..at, text)),
+                        None => {
+                            doc.skip(ID, &dotted, "`sync:` takes no entry here: move it by hand");
+                            continue;
+                        }
+                    }
+                } else {
+                    let mi = doc.inline_value(&with(&spath, &["max_interval"]));
+                    if mi.as_deref().map(str::trim) != Some(value.trim()) {
+                        doc.skip(
+                            ID,
+                            &dotted,
+                            &format!(
+                                "`sync.max_interval` is {} and `tolerance` is {value}: one \
+                                 quantity, two numbers. Keep the one that is right and delete \
+                                 `tolerance`",
+                                mi.unwrap_or_else(|| "written in block form".to_string())
+                            ),
+                        );
+                        continue;
+                    }
                 }
-                let epath = with(&level, &["nodes", node, "sub", ep]);
-                match doc.add_entry(&epath, &format!("max_transport: {value}")) {
-                    Some((at, text)) => edits.push(doc.edit(ID, &dotted, at..at, text)),
-                    None => {
+                let Some(del) = doc.entry_range(&kpath) else {
+                    doc.skip(ID, &dotted, "cannot delete the key");
+                    continue;
+                };
+                mine.push(doc.edit(ID, &dotted, del, String::new()));
+                out.extend(mine);
+            }
+        }
+    }
+    out
+}
+
+/// A link name derived from `base`, not yet taken in `taken`.
+fn fresh_link_name(base: &str, taken: &mut HashSet<String>) -> String {
+    let base: String = base
+        .trim_start_matches('/')
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut name = base.clone();
+    let mut i = 2;
+    while taken.contains(&name) {
+        name = format!("{base}_{i}");
+        i += 1;
+    }
+    taken.insert(name.clone());
+    name
+}
+
+/// G3 and play_launch phase 104 S1: a transport is stated through a link.
+///
+/// A topic's `max_transport:` (refused since v0.3.15) becomes one link,
+/// named after the topic, that each subscriber the topic lists names when
+/// it states no transport of its own: exactly what the topic-level value
+/// meant. Every listed subscriber must be declared in the same file, or the
+/// topic is left for a hand edit. A subscriber's own `max_transport:`
+/// (deprecated since v0.3.16) becomes a link of its own, `<node>_<ep>`, and
+/// the key becomes `link:`. Both go in one rewrite because both add to the
+/// level's one `links:` mapping, and two insertions at one place overlap.
+fn max_transport_links(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "max-transport-link";
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let mut taken: HashSet<String> = y["links"]
+            .as_hash()
+            .map(|h| h.keys().filter_map(key_str).collect())
+            .unwrap_or_default();
+        // (link name, value text, the dotted path it came from)
+        let mut links: Vec<(String, String, String)> = Vec::new();
+        let mut edits = Vec::new();
+
+        // A topic's value: one link, named on each listed subscriber.
+        if let Some(topics) = y["topics"].as_hash() {
+            for (k, t) in topics {
+                let Some(tname) = key_str(k) else { continue };
+                if t["max_transport"].is_badvalue() {
+                    continue;
+                }
+                let kpath = with(&level, &["topics", &tname, "max_transport"]);
+                let dotted = kpath.join(".");
+                let Some(value) = doc.inline_value(&kpath) else {
+                    doc.skip(ID, &dotted, "a block-form value: move it by hand");
+                    continue;
+                };
+                let subs = yaml_strings(&t["sub"]).unwrap_or_default();
+                if subs.is_empty() {
+                    doc.skip(
+                        ID,
+                        &dotted,
+                        &format!(
+                            "`{tname}` lists no subscriber in this file: the value applies to \
+                             subscribers declared in another contract of the launch (or to \
+                             none). Write `links.<name>: {{ max_transport: {value} }}`, name it \
+                             with `link: <name>` on each of them, then delete this key"
+                        ),
+                    );
+                    continue;
+                }
+                let mut name: Option<String> = None;
+                let mut mine = Vec::new();
+                let mut why: Option<String> = None;
+                for sref in &subs {
+                    let Some((node, ep)) = sref.rsplit_once('/') else {
+                        why = Some(format!("`{sref}` is not `<node>/<endpoint>`"));
+                        break;
+                    };
+                    let props = &y["nodes"][node]["sub"][ep];
+                    if y["nodes"][node]["sub"].as_hash().is_none() || props.is_badvalue() {
                         why = Some(format!(
-                            "subscriber `{sref}` has no mapping to add the key to (a null \
-                             value): write it as `{ep}: {{ max_transport: {value} }}`"
+                            "subscriber `{sref}` is not declared under `nodes.{node}.sub` in \
+                             this file (another contract, or a list-form `sub:`)"
                         ));
+                        break;
+                    }
+                    if !props["max_transport"].is_badvalue() || !props["link"].is_badvalue() {
+                        continue; // its own value wins, as it did
+                    }
+                    let lname = name
+                        .get_or_insert_with(|| fresh_link_name(&tname, &mut taken))
+                        .clone();
+                    let epath = with(&level, &["nodes", node, "sub", ep]);
+                    match doc.add_entry(&epath, &format!("link: {lname}")) {
+                        Some((at, text)) => mine.push(doc.edit(ID, &dotted, at..at, text)),
+                        None => {
+                            why = Some(format!(
+                                "subscriber `{sref}` has no mapping to add the key to (a null \
+                                 value): write it as `{ep}: {{ link: <name> }}`"
+                            ));
+                            break;
+                        }
+                    }
+                }
+                if let Some(why) = why {
+                    if let Some(n) = name {
+                        taken.remove(&n);
+                    }
+                    doc.skip(ID, &dotted, &why);
+                    continue;
+                }
+                let Some(del) = doc.entry_range(&kpath) else {
+                    doc.skip(ID, &dotted, "cannot delete the topic's key");
+                    continue;
+                };
+                mine.push(doc.edit(ID, &dotted, del, String::new()));
+                if let Some(n) = name {
+                    links.push((n, value, dotted));
+                }
+                edits.extend(mine);
+            }
+        }
+
+        // A subscriber's own value: a link of its own.
+        if let Some(nodes) = y["nodes"].as_hash() {
+            for (nk, node) in nodes {
+                let Some(nname) = key_str(nk) else { continue };
+                let Some(subs) = node["sub"].as_hash() else {
+                    continue;
+                };
+                for (ek, props) in subs {
+                    let Some(ep) = key_str(ek) else { continue };
+                    if props["max_transport"].is_badvalue() || !props["link"].is_badvalue() {
+                        continue; // none, or both (refused by the parser)
+                    }
+                    let kpath = with(&level, &["nodes", &nname, "sub", &ep, "max_transport"]);
+                    let dotted = kpath.join(".");
+                    let (Some(kr), Some(value)) = (doc.key(&kpath), doc.inline_value(&kpath))
+                    else {
+                        doc.skip(
+                            ID,
+                            &dotted,
+                            "a block-form value: move it into a link by hand",
+                        );
+                        continue;
+                    };
+                    let vs = doc.value_start(&kr);
+                    let ve = doc.inline_value_end(vs, doc.flow.contains(&kpath));
+                    let lname = fresh_link_name(&format!("{nname}_{ep}"), &mut taken);
+                    edits.push(doc.edit(ID, &dotted, kr, "link".to_string()));
+                    edits.push(doc.edit(ID, &dotted, vs..ve, lname.clone()));
+                    links.push((lname, value, dotted));
+                }
+            }
+        }
+
+        if links.is_empty() {
+            out.extend(edits);
+            continue;
+        }
+        let entries: Vec<String> = links
+            .iter()
+            .map(|(n, v, _)| format!("{n}: {{ max_transport: {v} }}"))
+            .collect();
+        let at_dotted = links[0].2.clone();
+        let lpath = with(&level, &["links"]);
+        let insertion = if y["links"].as_hash().is_some() {
+            let mut first: Option<usize> = None;
+            let mut text = String::new();
+            for e in &entries {
+                match doc.add_entry(&lpath, e) {
+                    Some((at, t))
+                        if first.is_none_or(|f| f == at)
+                            && !(t.starts_with(' ') && t.ends_with(' ')) =>
+                    {
+                        first = Some(at);
+                        text.push_str(&t);
+                    }
+                    _ => {
+                        first = None;
                         break;
                     }
                 }
             }
-            if let Some(why) = why {
-                doc.skip(ID, &dotted, &why);
-                continue;
+            first.map(|at| (at, text))
+        } else if level.is_empty() {
+            let b = doc.src.as_bytes();
+            let mut text = String::new();
+            if !b.is_empty() && b[b.len() - 1] != b'\n' {
+                text.push('\n');
             }
-            let Some(del) = doc.entry_range(&kpath) else {
-                doc.skip(ID, &dotted, "cannot delete the topic's key");
-                continue;
-            };
-            edits.push(doc.edit(ID, &dotted, del, String::new()));
-            out.extend(edits);
-        }
+            text.push_str("\nlinks:\n");
+            for e in &entries {
+                text.push_str(&format!("  {e}\n"));
+            }
+            Some((b.len(), text))
+        } else {
+            doc.add_entry(&level, &format!("links: {{ {} }}", entries.join(", ")))
+        };
+        let Some((at, text)) = insertion else {
+            for (_, _, d) in &links {
+                doc.skip(
+                    ID,
+                    d,
+                    "the level's `links:` cannot take an entry (an empty flow mapping, or no \
+                     block entries): write the link by hand",
+                );
+            }
+            continue;
+        };
+        edits.push(doc.edit(ID, &at_dotted, at..at, text));
+        out.extend(edits);
     }
     out
 }
@@ -2475,44 +2699,43 @@ topics:
 ";
 
     #[test]
-    fn g3b_a_topic_transport_moves_onto_each_subscriber_that_states_none() {
+    fn s1_a_topic_transport_becomes_one_link_and_an_inline_one_its_own() {
         let m = migrate_str(TRANSPORT).unwrap();
-        assert!(
-            ids(&m)
-                .iter()
-                .all(|i| *i == "topic-max-transport-subscribers")
-        );
+        assert!(ids(&m).iter().all(|i| *i == "max-transport-link"));
         let want = "\
 version: 1
 nodes:
   near:
     sub:
-      objects: { max_transport: 0ms }   # its own wins
+      objects: { link: near_objects }   # its own wins
   far:
     sub:
-      objects: { min_rate_hz: 10, max_transport: { duration: 10ms, source: requirement } }
+      objects: { min_rate_hz: 10, link: objects }
   empty:
     sub:
-      objects: { max_transport: { duration: 10ms, source: requirement } }
+      objects: { link: objects }
   block:
     sub:
       objects:
         min_rate_hz: 10
-        max_transport: { duration: 10ms, source: requirement }
+        link: objects
         # a comment inside stays
 topics:
   /objects:
     type: T
     sub: [near/objects, far/objects, empty/objects, block/objects]
   /flow: { type: T, max_transport: 3ms }
+
+links:
+  objects: { max_transport: { duration: 10ms, source: requirement } }
+  near_objects: { max_transport: 0ms }
 ";
         assert_eq!(m.output, want);
         // `/flow` lists no subscriber here: the value may belong to another
         // contract's subscribers, so it is left, and said so.
         assert_eq!(m.skipped.len(), 1, "{:?}", m.skipped);
         assert!(m.skipped[0].contains("/flow") && m.skipped[0].contains("lists no subscriber"));
-        // v0.3.15 refuses the topic key, so the file before cannot be read
-        // any more; the transport each subscriber paid is written here.
+        // The transport each subscriber paid is its link's.
         let after = crate::parse_manifest_str(
             &m.output
                 .replace("  /flow: { type: T, max_transport: 3ms }\n", ""),
@@ -2524,16 +2747,116 @@ topics:
             ("empty", 10.0),
             ("block", 10.0),
         ] {
-            let own = after.nodes[n].subscribers["objects"]
-                .max_transport
-                .as_ref()
-                .and_then(|b| b.ms());
+            let sub = &after.nodes[n].subscribers["objects"];
+            let link = sub.link.as_deref().expect("a link");
             assert_eq!(
-                own,
+                after.links[link].max_transport.ms(),
                 Some(paid),
-                "{n}: the transport it paid is the one it states"
+                "{n}: the transport it paid is its link's"
             );
         }
+    }
+
+    #[test]
+    fn s1_inline_transports_join_an_existing_links_block_under_fresh_names() {
+        let src = "\
+version: 1
+links:
+  a_in: { max_transport: { duration: 1ms, source: requirement } }
+nodes:
+  a:
+    sub:
+      in:
+        max_transport: 2ms
+  b:
+    sub:
+      in: { max_transport: 4ms }
+      other: { link: a_in }
+";
+        let m = migrate_str(src).unwrap();
+        assert_eq!(
+            m.output,
+            "\
+version: 1
+links:
+  a_in: { max_transport: { duration: 1ms, source: requirement } }
+  a_in_2: { max_transport: 2ms }
+  b_in: { max_transport: 4ms }
+nodes:
+  a:
+    sub:
+      in:
+        link: a_in_2
+  b:
+    sub:
+      in: { link: b_in }
+      other: { link: a_in }
+"
+        );
+        crate::parse_manifest_str(&m.output).unwrap();
+    }
+
+    const TOLERANCE: &str = "\
+version: 1
+nodes:
+  n:
+    paths:
+      folded:
+        sync: { policy: approximate }
+        tolerance: 50ms
+      same:
+        sync: { policy: approximate, max_interval: 20ms }
+        tolerance: 20ms
+      differs:
+        sync: { policy: approximate, max_interval: 20ms }
+        tolerance: 30ms
+      bare:
+        tolerance: 50ms
+";
+
+    #[test]
+    fn s1_tolerance_folds_into_an_existing_sync_only() {
+        let m = migrate_str(TOLERANCE).unwrap();
+        assert!(ids(&m).iter().all(|i| *i == "tolerance-sync"));
+        assert_eq!(
+            m.output,
+            "\
+version: 1
+nodes:
+  n:
+    paths:
+      folded:
+        sync: { policy: approximate, max_interval: 50ms }
+      same:
+        sync: { policy: approximate, max_interval: 20ms }
+      differs:
+        sync: { policy: approximate, max_interval: 20ms }
+        tolerance: 30ms
+      bare:
+        tolerance: 50ms
+"
+        );
+        assert_eq!(m.skipped.len(), 2, "{:?}", m.skipped);
+        assert!(
+            m.skipped
+                .iter()
+                .any(|s| s.contains("differs") && s.contains("two numbers"))
+        );
+        // No `sync:`: adding one changes the derived rate, so it is the
+        // author's call, and the message says what each choice means.
+        assert!(
+            m.skipped
+                .iter()
+                .any(|s| s.contains("bare") && s.contains("SUM") && s.contains("MIN"))
+        );
+    }
+
+    #[test]
+    fn s1_tolerance_is_refused_naming_max_interval() {
+        let e = crate::parse_manifest_str(TOLERANCE)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("max_interval") && e.contains("v0.3.16"), "{e}");
     }
 
     #[test]

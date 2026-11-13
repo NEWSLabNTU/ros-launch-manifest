@@ -1925,12 +1925,6 @@ pub struct PathDecl {
     pub output: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_latency: Option<crate::bound::Bound>,
-    /// Maximum `header.stamp` spread between the inputs of a fan-in path
-    /// that the callback will still treat as one set. A window the
-    /// synchroniser may wait for, so `sync-budget` checks it against
-    /// `max_latency`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tolerance: Option<crate::duration::Duration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
     /// Explicit closed-taxonomy cause of this path's output (Vocabulary

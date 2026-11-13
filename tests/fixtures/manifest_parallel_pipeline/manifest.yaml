@@ -41,7 +41,6 @@ nodes:
       main:
         trigger: { input: [lidar, camera] }
         output: [out]
-        tolerance: 50ms
         max_latency: 20ms
 
 topics:

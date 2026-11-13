@@ -1,9 +1,9 @@
 # One topic, two subscribers, one transport each (play_launch issue #0042,
 # design issue #55).
 #
-# `max_transport` is stated on each subscriber endpoint (phase 90 G3; the
-# topic-level form, read as every subscriber's default, is deprecated). The
-# reason is placement: the same ROS topic reaching a subscriber in the
+# A transport is stated for each subscriber endpoint, through the link its
+# hop crosses (phase 90 G3 moved it off the topic; v0.3.16 off the
+# subscriber, onto a named link). The reason is placement: the same ROS topic reaching a subscriber in the
 # publisher's own process is a pointer handoff, and reaching one on another
 # machine is the network. One number per topic cannot say both.
 #
@@ -30,6 +30,10 @@
 # fits is the only one that is right.
 version: 1
 
+links:
+  in_process: { max_transport: { duration: 0ms, source: requirement } }
+  network: { max_transport: { duration: 10ms, source: requirement } }
+
 nodes:
   producer:
     sub:
@@ -48,7 +52,7 @@ nodes:
     sub:
       objects:
         min_rate_hz: 10
-        max_transport: 0ms
+        link: in_process
     pub:
       out: { min_rate_hz: 10 }
     paths:
@@ -61,7 +65,7 @@ nodes:
   # assumption about the network rather than a promise.
   remote:
     sub:
-      objects: { min_rate_hz: 10, max_transport: 10ms }
+      objects: { min_rate_hz: 10, link: network }
     pub:
       out: { min_rate_hz: 10 }
     paths:

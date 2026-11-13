@@ -3465,8 +3465,7 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
              states its policy with `sync:`, which IS checked:\n\
              \x20 sync: { policy: approximate, max_interval: <window> }   # was `timestamp`\n\
              \x20 (no `sync:` at all)                                       # was `latest`\n\
-             `tolerance:` stays: it is the stamp spread the callback accepts, \
-             and `sync-budget` checks it against `max_latency`.",
+             `sync-budget` checks the window against `max_latency`.",
         ));
     }
     reject_unknown_keys(yaml, ctx, Context::Path)?;
@@ -3479,7 +3478,6 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         unless_condition: yaml_string(yaml, "unless", ctx)?,
         output: yaml_string_list(yaml, "output", ctx)?,
         max_latency: yaml_bound(yaml, "max_latency", ctx, Context::Path)?,
-        tolerance: yaml_duration(yaml, "tolerance")?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         trigger,
         sync,
@@ -5475,7 +5473,6 @@ nodes:
       fusion:
         trigger: { input: [lidar_objects, camera_objects] }
         output: [fused]
-        tolerance: 50ms
         max_latency: 20ms
 "#;
         let m = parse_manifest_str(yaml).unwrap();
@@ -5484,7 +5481,6 @@ nodes:
             path.effective_trigger(),
             EffectiveTrigger::Input(vec!["lidar_objects".into(), "camera_objects".into()])
         );
-        assert_eq!(path.tolerance.map(|d| d.as_millis_f64()), Some(50.0));
     }
 
     #[test]

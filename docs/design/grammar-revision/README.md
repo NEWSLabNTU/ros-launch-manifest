@@ -1,6 +1,6 @@
 # Grammar revision: open issues by topic
 
-Status: **exploration** (2026-11-13). Nothing here is decided. This file is
+Status: **exploration** (2026-11-13); the S1 decisions (T1, and T2's `tolerance`) were taken in v0.3.15 and v0.3.16. Otherwise nothing here is decided. This file is
 the overview; each topic has its own file (`T1.md` ... `T10.md`) with the
 verified issues, the counts behind them, every revision method compared
 (change, cost, breakage, migration, risks), a recommendation, and the

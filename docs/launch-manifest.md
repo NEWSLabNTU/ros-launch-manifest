@@ -666,7 +666,9 @@ both `link:` and `max_transport:` on one subscriber is refused. A
 best-effort link (serial, TCP, DDS between processes or hosts) has no
 derivable worst case; its bound is measured, and a link with no
 `source:` is `link-unsourced` (a warning). A `max_transport` written on
-a subscriber stays legal and is reported as `transport-inline` (info).
+a subscriber instead is deprecated since v0.3.16 (`deprecated-spelling`,
+a warning; it was the info `transport-inline` from v0.3.4) and refused at
+the next release; `play_launch migrate` writes the link.
 No runtime monitor holds a link: the bound is measured and sourced, and
 `play_launch check --against <run>` holds it (`transport-exceeded`, an
 error, when a message in the run took longer). `monitor:` is parsed and
@@ -991,8 +993,7 @@ nodes:
       main:
         trigger: { input: [lidar_objects, radar_objects] }
         output: [merged]
-        sync: { policy: approximate, max_interval: 50ms }
-        tolerance: 50ms          # stamp spread the callback still accepts
+        sync: { policy: approximate, max_interval: 50ms }   # stamp spread still one set
         max_latency: 20ms
 ```
 
@@ -1738,7 +1739,7 @@ topic names on a scope. The fields below are the common ones:
 | `min_latency`  | Best-case latency. Exists so `max_jitter` is falsifiable — usually measured, not authored | `max_jitter` reported unverifiable |
 | `max_jitter`   | Permitted variation in this path's latency | Not checked |
 | `sync`         | Fan-in policy: `exact`, `approximate` or `timeout_any` with its window | Inputs unsynchronised; each fires the callback |
-| `tolerance`    | Max `header.stamp` spread between inputs still treated as one set | Not checked against the budget |
+| `tolerance`    | Removed in v0.3.16: the same quantity as `sync.max_interval`, which is where it is written; `play_launch migrate` folds it into an existing `sync:` | See `sync` |
 | `drop`         | Event chain only: the E2E loss budget, `{ max_count: N / W, max_consecutive: K }`; refused on a node path since v0.1.60 (state it on the output topic) | Drop not checked |
 | `miss`         | What a missed deadline costs: `{ tolerate: N / W, consecutive: K, action: continue \| skip_next \| abort }` | Not checked |
 | `safe_state`   | What this path emits when it is a hazard reaction, and the plant's settle time | Path is not a reaction |
@@ -2622,7 +2623,7 @@ second table.
 | 19 | `jitter-range` (70 W2) | `min_latency` above `max_latency`; both bounds declared and `max_latency - min_latency > max_jitter` (errors); `max_jitter` with no `min_latency`, so the bound is unverifiable (info — an absent floor is unknown, not zero) | Error/Info |
 | 20 | `drop-tightness` (90 G3) | A topic on an event chain's route (in the same manifest) permits a larger drop rate (`max_count`) than the event chain's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
 | 21 | `link-unsourced` (v0.3.4) | A link (`links:`) whose `max_transport` states no `source:`: a best-effort transport has no derivable worst case, so its number is evidence only with the measurement it came from | Warning |
-| 22 | `transport-inline` (v0.3.4) | A `max_transport` written on a subscriber rather than named through a link | Info |
+| 22 | `transport-inline` (v0.3.4) | A `max_transport` written on a subscriber rather than named through a link; reported as `deprecated-spelling` since v0.3.16, refused at the next release | Warning |
 
 The cross-scope rules run in the consumer's merge layer
 (`ros-launch-resolve`, invoked by `play_launch check`), which has the

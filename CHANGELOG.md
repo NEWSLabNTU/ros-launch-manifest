@@ -6,6 +6,49 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.16 - 2026-11-14
+
+The two remaining decisions of the grammar revision's S1 (play_launch phase
+104; `docs/design/grammar-revision/T1.md` 1b and `T2.md`). GRAMMAR_VERSION
+0.3.16. The model stays schema 5: a model written before still loads (the
+removed field is dropped on read).
+
+### Removed
+
+- **`nodes.<n>.paths.<p>.tolerance`**: the stamp spread a fan-in path
+  accepts is `sync.max_interval`, one quantity under one key. The key is
+  refused naming `sync.max_interval`; `PathDecl.tolerance` and the model's
+  `PathContract.tolerance_ms` (read by nothing) are gone. Without a `sync:`
+  block no synchroniser waits, so the key bounded nothing; adding one
+  turns the path's derived output rate from the SUM of its inputs into
+  their MIN, so that choice is the author's: `migrate` folds the value
+  into an existing `sync:` (absent `max_interval`, or the same one) and
+  otherwise reports the path with both choices.
+
+### Deprecated
+
+- **A `max_transport` written on a subscriber** (`nodes.<n>.sub.<ep>`):
+  name a link (`links.<l>: { max_transport }`, `sub.<ep>.link: <l>`). It
+  was the info `transport-inline`, "legal for one release of overlap",
+  from v0.3.4 and never scheduled; it is now a `deprecated-spelling`
+  warning, refused at the next release. A transport is a platform fact,
+  best effort and measured, and a link is where it is stated once with
+  its source. A client's `max_transport` (the request leg) is unchanged.
+- `field_table::DEPRECATED_USES`: deprecations no row can carry, because
+  the key stays live in another use (this one: the `Endpoint` row serves
+  clients too). The overdue test holds them to the schedule.
+
+### Changed
+
+- **`migrate`**: `max-transport-link` replaces
+  `topic-max-transport-subscribers`. A topic's `max_transport` becomes one
+  link, named after the topic, that each listed subscriber stating none
+  names; a subscriber's own becomes a link `<node>_<ep>`. One step, not
+  two through the deprecated inline form. `tolerance-sync` is new. The
+  value is copied as written, so a migrated link without a `source:` is
+  `link-unsourced` until a measurement is added.
+- The `links` row no longer lists `monitor` (removed in v0.3.15).
+
 ## v0.3.15 - 2026-11-13
 
 The removal release of the grammar revision (play_launch phase 104 S1) and
