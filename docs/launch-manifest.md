@@ -1066,7 +1066,7 @@ nodes:
     pub:
       tracked: { min_rate_hz: 10 }
     paths:
-      main: { input: detected, output: [tracked], max_latency: 20ms }
+      main: { trigger: { input: [detected] }, output: [tracked], max_latency: 20ms }
 
 topics:
   # relative → /perception/object_recognition/tracking/objects
@@ -1091,7 +1091,7 @@ nodes:
     pub:
       predicted: { min_rate_hz: 10 }
     paths:
-      main: { input: tracked, output: [predicted], max_latency: 15ms }
+      main: { trigger: { input: [tracked] }, output: [predicted], max_latency: 15ms }
 
 topics:
   # absolute — subscribes to tracking's output topic
@@ -2616,7 +2616,6 @@ second table.
 | 12 | `satisfiability`   | Arg combination produces dangling entities; unreachable nodes. Built without the `smt` feature it becomes a stub emitting one Info saying the analysis was not run | Error/Warning |
 | 13 | `state-consistency` | Node has ≥2 sibling subs tagged `state: true` and *exactly one* other sub is neither tagged `state:` nor referenced as a path `input` — likely a missed `state:` tag | Warning |
 | 14 | `explicit-trigger` (44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation | Info |
-| 15 | `inherited-rate` (44.1/44.2) | A path has a non-`Input` explicit `trigger:` (`timer`/`once`/`aperiodic`) alongside a stale, now-ignored legacy `input:` list | Warning |
 | 16 | `once-durability` (44.1/44.2) | A `once`-triggered path's output topic is not `durability: transient_local` — late joiners lose the startup-latch message | Warning |
 | 17 | `sync-feasibility` (44.1/44.2) | `sync:` `max_interval`/`timeout` too narrow for the slowest declared input's inter-arrival period | Warning |
 | 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |

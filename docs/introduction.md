@@ -52,7 +52,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [no_ground_pointcloud]
         max_latency: 30ms
 
@@ -114,13 +114,13 @@ nodes:
     sub: { input: { min_rate_hz: 10 } }
     pub: { out: { min_rate_hz: 10 } }
     paths:
-      main: { input: input, output: [out], max_latency: 50ms }
+      main: { trigger: { input: [input] }, output: [out], max_latency: 50ms }
 
   camera_detector:
     sub: { input: { min_rate_hz: 10 } }
     pub: { out: { min_rate_hz: 10 } }
     paths:
-      main: { input: input, output: [out], max_latency: 30ms }
+      main: { trigger: { input: [input] }, output: [out], max_latency: 30ms }
 
   fusion:
     sub:
@@ -129,7 +129,7 @@ nodes:
     pub: { out: { min_rate_hz: 10 } }
     paths:
       main:
-        input: [lidar, camera]
+        trigger: { input: [lidar, camera] }
         output: [out]
         max_latency: 20ms
 
@@ -155,7 +155,7 @@ topics:
 
 paths:
   pipeline:
-    input: /sensor/raw
+    trigger: { input: [/sensor/raw] }
     output: [/perception/fused_objects]
     max_latency: 70ms
 ```

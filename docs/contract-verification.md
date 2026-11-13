@@ -106,7 +106,6 @@ in `default_rules()`.
 | 12 | `satisfiability` | Warning / Error / Info | **Z3-backed.** Node unreachable under all valid arg assignments (W); some valid arg assignment produces a dangling entity (E). Skips topics whose subscribers are all state-only. Built without the `smt` feature, a stub with the same id emits one Info saying the analysis was not run — checking less is never silent |
 | 13 | `state-consistency` | Warning | Likely-missing `state: true` on a subscriber that is neither state-tagged nor referenced by any path trigger (two noise-gated heuristics) |
 | 14 | `explicit-trigger` | Info | Path has no explicit `trigger:` — migration lint toward the Vocabulary v2 taxonomy |
-| 15 | `inherited-rate` | Warning | Non-`input` explicit trigger combined with a stale legacy `input:` list |
 | 16 | `once-durability` | Warning | `once`-triggered path publishes to a topic whose effective durability is not `transient_local` |
 | 17 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
 | 18 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |

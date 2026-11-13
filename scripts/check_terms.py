@@ -230,8 +230,27 @@ def scan(root: Path) -> list[str]:
             for start, body in js_literals(text):
                 scan_body(rel(p), lines, start, body, COMPILED, hits)
 
+    # The field table is in ALLOWED_FILES for its `removed` and `deprecated`
+    # rows, which must name the old spelling. Its LIVE rows are the format
+    # reference a user reads, so their text is scanned (play_launch phase
+    # 103 D9: a live row still listed `trigger: spontaneous`).
+    table = root / "types/src/field_table.rs"
+    if table.is_file():
+        text = table.read_text().split("#[cfg(test)]")[0]
+        lines = text.splitlines()
+        for m in LIVE_ROW.finditer(text):
+            row_start = text.count("\n", 0, m.start(1)) + 1
+            for start, body in rust_literals(m.group(1)):
+                scan_body(
+                    rel(table), lines, row_start + start - 1, strip_placeholders(body), COMPILED, hits
+                )
+
     # A literal spanning lines reports each match once.
     return sorted(set(hits))
+
+
+# A `live(...)` row of the field table, up to the `),` closing it.
+LIVE_ROW = re.compile(r"\n    live\(\s*\n(.*?)\n    \),", re.S)
 
 
 def self_test() -> int:

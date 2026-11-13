@@ -1,5 +1,5 @@
 # Timer-driven node: controller reads state topics and publishes periodically.
-# Tests: periodic paths (empty input = timer-driven), state endpoints, rate chain.
+# Tests: paths with no input trigger, state endpoints, rate chain.
 version: 1
 
 nodes:
@@ -9,7 +9,6 @@ nodes:
         min_rate_hz: 50
     paths:
       periodic:
-        input: []
         output: [current_pose]
         max_latency: 2ms
 
@@ -25,7 +24,6 @@ nodes:
         min_rate_hz: 10
     paths:
       periodic:
-        input: []
         output: [trajectory]
         max_latency: 30ms
 
@@ -40,7 +38,6 @@ nodes:
         min_rate_hz: 30
     paths:
       periodic:
-        input: []
         output: [control_cmd]
         max_latency: 5ms
 

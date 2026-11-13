@@ -70,17 +70,17 @@ nodes:
     pub: [output]
     sub: [input]
     paths:
-      main: { input: input, output: [output], max_latency: 5ms }
+      main: { trigger: { input: [input] }, output: [output], max_latency: 5ms }
   ground:
     pub: [output]
     sub: [input]
     paths:
-      main: { input: input, output: [output], max_latency: 15ms }
+      main: { trigger: { input: [input] }, output: [output], max_latency: 15ms }
   centerpoint:
     pub: [objects]
     sub: [pointcloud]
     paths:
-      main: { input: pointcloud, output: [objects], max_latency: 30ms }
+      main: { trigger: { input: [pointcloud] }, output: [objects], max_latency: 30ms }
 topics:
   cropped:
     type: PointCloud2
@@ -100,7 +100,7 @@ topics:
     sub: []
 paths:
   main:
-    input: raw_data
+    trigger: { input: [raw_data] }
     output: [detections]
     max_latency: 60ms
 "#;
@@ -373,12 +373,12 @@ nodes:
     sub: [input]
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency: 30ms }
+      main: { trigger: { input: [input] }, output: [output], max_latency: 30ms }
   b:
     sub: [input]
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency: 40ms }
+      main: { trigger: { input: [input] }, output: [output], max_latency: 40ms }
 topics:
   mid:
     type: String
@@ -386,7 +386,7 @@ topics:
     sub: [b/input]
 paths:
   main:
-    input: raw
+    trigger: { input: [raw] }
     output: [out]
     max_latency: 50ms
 "#;
@@ -459,7 +459,7 @@ nodes:
   a:
     paths:
       main:
-        input: x
+        trigger: { input: [x] }
         output: [y]
 topics:
   y:
@@ -484,7 +484,7 @@ nodes:
   a:
     paths:
       main:
-        input: x
+        trigger: { input: [x] }
         output: [y]
 topics:
   y:
@@ -495,7 +495,7 @@ topics:
       max_consecutive: 3
 paths:
   main:
-    input: raw
+    trigger: { input: [raw] }
     output: [out]
     drop:
       max_count: 3 / 100
@@ -548,7 +548,7 @@ nodes:
     pub: [output]
     paths:
       main:
-        input: input
+        trigger: { input: [input] }
         output: [output]
         max_latency: 10ms
 "#;
@@ -572,12 +572,12 @@ nodes:
         min_rate_hz: 10
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency: 5ms }
+      main: { trigger: { input: [input] }, output: [output], max_latency: 5ms }
   ground:
     sub: [input]
     pub: [output]
     paths:
-      main: { input: input, output: [output], max_latency: 15ms }
+      main: { trigger: { input: [input] }, output: [output], max_latency: 15ms }
   centerpoint:
     sub: [pointcloud]
     pub:
@@ -585,7 +585,7 @@ nodes:
         min_rate_hz: 10
     paths:
       main:
-        input: pointcloud
+        trigger: { input: [pointcloud] }
         output: [objects]
         max_latency: 30ms
 topics:
@@ -605,7 +605,7 @@ topics:
     rate_hz: 10
 paths:
   main:
-    input: raw_data
+    trigger: { input: [raw_data] }
     output: [detections]
     max_latency: 60ms
     drop: 6 / 100
@@ -699,12 +699,11 @@ nodes:
   a:
     paths:
       main:
-        input: []
         output: [out]
         max_latency: 200ms
 paths:
   main:
-    input: raw
+    trigger: { input: [raw] }
     output: [out]
     max_latency: 50ms
 "#;
@@ -1145,12 +1144,12 @@ nodes:
 paths:
   debug_path:
     if: "false"
-    input: raw
+    trigger: { input: [raw] }
     output: [out]
     max_latency: 100ms
   active_path:
     if: "true"
-    input: raw
+    trigger: { input: [raw] }
     output: [out]
     max_latency: 50ms
 "#;
@@ -2024,13 +2023,13 @@ nodes:
     pub: [pose]
     sub: [pointcloud]
     paths:
-      main: { input: pointcloud, output: [pose], max_latency: 30ms }
+      main: { trigger: { input: [pointcloud] }, output: [pose], max_latency: 30ms }
   eagleye_node:
     if: $(var mode) == 'eagleye'
     pub: [pose]
     sub: [gnss]
     paths:
-      main: { input: gnss, output: [pose], max_latency: 15ms }
+      main: { trigger: { input: [gnss] }, output: [pose], max_latency: 15ms }
   twist_node:
     if: $(var use_twist)
     pub: [twist]
@@ -2042,7 +2041,7 @@ nodes:
         state: true
     pub: [output]
     paths:
-      main: { input: pose_in, output: [output], max_latency: 5ms }
+      main: { trigger: { input: [pose_in] }, output: [output], max_latency: 5ms }
 
 topics:
   pose:
@@ -2059,7 +2058,7 @@ topics:
 
 paths:
   main:
-    input: pointcloud
+    trigger: { input: [pointcloud] }
     output: [localization]
     max_latency: 40ms
 "#;
@@ -2590,35 +2589,6 @@ topics:
     );
 }
 
-/// The `external_topics:` block is the other spelling of the same fact, and
-/// the rule must read both — an author who writes the manifest-wide list
-/// rather than the per-topic field is making the same statement.
-#[test]
-fn test_dangling_topic_external_topics_block_is_accepted() {
-    let diags = dangling_diags(
-        r#"
-version: 1
-nodes:
-  consumer:
-    sub:
-      data: {}
-external_topics:
-  /external/in:
-    external: pub
-    type: std_msgs/msg/String
-topics:
-  /external/in:
-    type: std_msgs/msg/String
-    sub: [consumer/data]
-"#,
-    );
-    assert!(
-        diags.is_empty(),
-        "an `external_topics:` entry must silence the same warning the per-topic field does: \
-         {diags:?}"
-    );
-}
-
 /// `service-wiring` asks `dangling-entity`'s question from the other end, so
 /// it must accept the same answer: a service whose server is external is
 /// served.
@@ -2695,7 +2665,7 @@ fn test_registry_has_no_placeholder_rules() {
         !ids.iter().any(|id| id == "consistency"),
         "the no-op `consistency` rule must not be registered: {ids:?}"
     );
-    assert_eq!(ids.len(), 22, "registered rules: {ids:?}");
+    assert_eq!(ids.len(), 21, "registered rules: {ids:?}");
     let mut sorted = ids.clone();
     sorted.sort();
     sorted.dedup();

@@ -159,21 +159,15 @@ pub struct TopicView {
     pub publishers: Vec<String>,
     /// Subscriber endpoint refs.
     pub subscribers: Vec<String>,
-    /// Worst-case transport for this hop, for every subscriber that does
-    /// not state its own; an undeclared hop contributes 0.
-    pub max_transport_ms: Option<f64>,
     /// Subscriber endpoint ref -> the transport that subscriber declared
-    /// for itself. Normally empty: it holds only the endpoints that
-    /// override, so the common edge costs one miss in a tiny map.
+    /// for itself (v0.3.15: the only place a transport is stated; the
+    /// topic-level value was removed). An undeclared hop contributes 0.
     pub sub_max_transport_ms: BTreeMap<String, f64>,
 }
 
 impl TopicView {
     /// The transport charged for the edge that ENDS at `sub_ep`: the
-    /// subscriber's own value if it declared one, else the topic's.
-    ///
-    /// The precedence itself is `types::edge_transport_ms`, which the
-    /// per-manifest `chain-latency` fallback reads too (phase 97 P1). The reason it is per
+    /// subscriber's own value. The reason it is per
     /// subscriber is placement: a subscriber in the publisher's process pays a
     /// pointer handoff where one across the network pays the network, on the
     /// same topic (design issue #55).
@@ -182,16 +176,13 @@ impl TopicView {
     /// spelling `subscribers` and the keys of `sub_max_transport_ms` use.
     /// A caller that splits refs into `(node, endpoint)` pairs must keep
     /// the ref to ask here, or every lookup misses and every edge silently
-    /// falls back to the topic default.
+    /// reads as no transport.
     ///
     /// The gate is a consumer-side end-to-end test: one contract, both
     /// consumers, a FORK so the override decides which
     /// branch is the critical path rather than only shifting a total.
     pub fn transport_ms(&self, sub_ep: &str) -> Option<f64> {
-        ros_launch_manifest_types::edge_transport_ms(
-            self.sub_max_transport_ms.get(sub_ep).copied(),
-            self.max_transport_ms,
-        )
+        self.sub_max_transport_ms.get(sub_ep).copied()
     }
 }
 
@@ -274,11 +265,6 @@ impl ModelView {
                     TopicView {
                         publishers: wiring.publishers.clone(),
                         subscribers: wiring.subscribers.clone(),
-                        max_transport_ms: model
-                            .contracts
-                            .topics
-                            .get(fqn)
-                            .and_then(|t| t.max_transport_ms),
                         sub_max_transport_ms: wiring
                             .subscribers
                             .iter()

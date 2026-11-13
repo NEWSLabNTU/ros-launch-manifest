@@ -138,12 +138,16 @@ fn fixture_ndt_service() {
 fn fixture_periodic_parses() {
     let m = parse_manifest(&fixture_path("manifest_periodic")).unwrap();
     assert_eq!(m.nodes.len(), 3);
-    // All paths should have empty input (timer-driven)
+    // No path is input-triggered (they were written with an empty legacy
+    // `input:`, which never made a timer; it was removed in v0.3.15).
     for (name, node) in &m.nodes {
         for (path_name, path) in &node.paths {
             assert!(
-                path.input.is_empty(),
-                "node {name} path {path_name} should have empty input (periodic)"
+                !matches!(
+                    path.effective_trigger(),
+                    ros_launch_manifest_types::EffectiveTrigger::Input(_)
+                ),
+                "node {name} path {path_name} should not be input-triggered"
             );
         }
     }
@@ -945,13 +949,12 @@ fn fixture_qos_match_canonical_vector_map_clean() {
 /// topic-level default the remote one used to inherit is deprecated, and
 /// `migrate` copied it onto that subscriber). The derivation asserts what
 /// the two values do to a route
-/// (`derive::tests::a_subscriber_transport_beats_the_topic_on_its_own_edge`);
+/// (`derive::tests::each_subscriber_transport_is_charged_on_its_own_edge`);
 /// this asserts the grammar carries them, which is where the value starts.
 #[test]
 fn fixture_endpoint_transport_declares_both_values() {
     let m = parse_manifest(&fixture_path("manifest_endpoint_transport")).unwrap();
-    let topic = &m.topics["/perception/objects"];
-    assert_eq!(topic.max_transport, None, "no topic-level default");
+    assert!(m.topics.contains_key("/perception/objects"));
     assert_eq!(
         m.nodes["collocated"].subscribers["objects"]
             .max_transport

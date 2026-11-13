@@ -195,29 +195,6 @@ nodes:
 // ── Legacy compatibility ──
 
 #[test]
-fn legacy_input_list_derives_input_trigger_without_explicit_trigger() {
-    let yaml = r#"
-version: 1
-nodes:
-  ndt:
-    sub: [sensor_points]
-    pub: [ndt_pose]
-    paths:
-      localization:
-        input: sensor_points
-        output: [ndt_pose]
-        max_latency: 50ms
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let path = &m.nodes["ndt"].paths["localization"];
-    assert_eq!(path.trigger, None);
-    assert_eq!(
-        path.effective_trigger(),
-        EffectiveTrigger::Input(vec!["sensor_points".into()])
-    );
-}
-
-#[test]
 fn path_with_no_trigger_and_no_input_is_unclassified_never_assumed_timer() {
     let yaml = r#"
 version: 1
@@ -235,7 +212,7 @@ nodes:
 }
 
 #[test]
-fn explicit_trigger_wins_over_legacy_input_when_agreeing() {
+fn an_input_trigger_is_the_effective_trigger() {
     let yaml = r#"
 version: 1
 nodes:
@@ -244,14 +221,12 @@ nodes:
     pub: [out]
     paths:
       p:
-        input: a
         trigger: { input: [a] }
         output: [out]
 "#;
     let m = parse_manifest_str(yaml).unwrap();
     let path = &m.nodes["n"].paths["p"];
     assert_eq!(path.trigger, Some(Trigger::Input(vec!["a".into()])));
-    assert_eq!(path.input, vec!["a".to_string()]);
     assert_eq!(
         path.effective_trigger(),
         EffectiveTrigger::Input(vec!["a".into()])
@@ -292,13 +267,15 @@ fn real_autoware_contracts_parse_with_legacy_trigger_derivation() {
             .unwrap_or_else(|e| panic!("failed to read fixture {full_path}: {e}"));
         let m = parse_manifest_str(&src)
             .unwrap_or_else(|e| panic!("fixture {file} failed to parse: {e}"));
-        // The legacy spelling, restored: `trigger: { input: [x] }` -> `input: [x]`.
+        // The legacy spelling, restored, is refused since v0.3.15.
         let legacy_src = src
             .replace("trigger: { input: ", "input: ")
             .replace("] }", "]");
         assert_ne!(legacy_src, src, "fixture {file} has no trigger to restore");
-        let legacy = parse_manifest_str(&legacy_src)
-            .unwrap_or_else(|e| panic!("fixture {file} (legacy) failed to parse: {e}"));
+        assert!(
+            parse_manifest_str(&legacy_src).is_err(),
+            "fixture {file}: the legacy `input:` is refused"
+        );
 
         for (node, path_name, expected_inputs) in *expectations {
             let path = m.nodes[*node].paths.get(*path_name).unwrap_or_else(|| {
@@ -310,24 +287,16 @@ fn real_autoware_contracts_parse_with_legacy_trigger_derivation() {
                 EffectiveTrigger::Input(expected.clone()),
                 "fixture {file}: path '{path_name}' effective trigger mismatch"
             );
-            let old = &legacy.nodes[*node].paths[*path_name];
-            assert_eq!(
-                old.trigger, None,
-                "fixture {file}: '{path_name}' legacy form"
-            );
-            assert_eq!(
-                old.effective_trigger(),
-                EffectiveTrigger::Input(expected),
-                "fixture {file}: path '{path_name}' legacy effective trigger mismatch"
-            );
         }
     }
 }
 
 // ── Validation error cases ──
 
+/// v0.3.15: the legacy `input:` beside a trigger is refused like any other
+/// use of it (the two used to be compared as sets).
 #[test]
-fn trigger_input_disagreeing_with_legacy_input_is_error() {
+fn legacy_input_beside_a_trigger_is_refused() {
     let yaml = r#"
 version: 1
 nodes:
@@ -340,32 +309,8 @@ nodes:
         trigger: { input: [b] }
         output: [out]
 "#;
-    let err = parse_manifest_str(yaml).unwrap_err();
-    let msg = err.to_string();
-    assert!(msg.contains("disagrees"), "got: {msg}");
-}
-
-#[test]
-fn trigger_input_redundant_with_legacy_input_is_ok() {
-    // Same set, different order — must not error (agreeing/redundant OK).
-    let yaml = r#"
-version: 1
-nodes:
-  n:
-    sub: [a, b]
-    pub: [out]
-    paths:
-      p:
-        input: [a, b]
-        trigger: { input: [b, a] }
-        output: [out]
-"#;
-    let m = parse_manifest_str(yaml).unwrap();
-    let path = &m.nodes["n"].paths["p"];
-    assert_eq!(
-        path.trigger,
-        Some(Trigger::Input(vec!["b".into(), "a".into()]))
-    );
+    let msg = parse_manifest_str(yaml).unwrap_err().to_string();
+    assert!(msg.contains("v0.3.15"), "got: {msg}");
 }
 
 #[test]
@@ -599,7 +544,7 @@ nodes:
     pub: [out]
     paths:
       p:
-        input: [a, b]
+        trigger: { input: [a, b] }
         sync: { policy: exact, max_interval: 10ms }
         output: [out]
 "#;

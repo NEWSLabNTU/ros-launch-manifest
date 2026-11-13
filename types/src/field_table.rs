@@ -48,8 +48,6 @@ pub enum Context {
     SrvEndpoint,
     /// A value under `topics:`.
     Topic,
-    /// A value under `external_topics:`.
-    ExternalTopic,
     /// A value under `services:`.
     Service,
     /// A value under `actions:`.
@@ -122,8 +120,6 @@ pub enum Context {
     SuperviseResume,
     /// `links.<name>` (play_launch phase 97).
     Link,
-    /// `links.<name>.monitor` (play_launch phase 97).
-    LinkMonitor,
     /// `policy:` at a manifest's top (phase 93).
     Policy,
     /// `supervision:` at a manifest's top (phase 93).
@@ -160,7 +156,6 @@ impl Context {
             Context::Endpoint => "pub/sub/cli.<endpoint>",
             Context::SrvEndpoint => "srv.<endpoint>",
             Context::Topic => "topics.<name>",
-            Context::ExternalTopic => "external_topics.<name>",
             Context::Service => "services.<name>",
             Context::Action => "actions.<name>",
             Context::IncludeExternal => "includes.<name>",
@@ -192,7 +187,6 @@ impl Context {
             Context::SuperviseEarly => "safe_state.settle.supervise.early",
             Context::SuperviseResume => "<budget>.supervise.resume",
             Context::Link => "links.<name>",
-            Context::LinkMonitor => "links.<name>.monitor",
             Context::Policy => "policy",
             Context::Supervision => "supervision",
             Context::TimerRate => "trigger.timer.rate_hz (map form)",
@@ -285,6 +279,7 @@ const fn live(key: &'static str, context: Context, kind: Kind, doc: &'static str
     }
 }
 
+#[allow(dead_code)] // the next rename's
 const fn alias(key: &'static str, context: Context, canonical: &'static str) -> Field {
     Field {
         key,
@@ -296,6 +291,7 @@ const fn alias(key: &'static str, context: Context, canonical: &'static str) -> 
     }
 }
 
+#[allow(dead_code)] // the next deprecation's
 const fn deprecated(
     key: &'static str,
     context: Context,
@@ -427,11 +423,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this.",
     ),
-    deprecated(
+    removed(
         "external_topics",
         Context::Manifest,
-        "topics.<name>.external",
-        "Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release.",
+        "Removed in v0.3.15 (deprecated since v0.1.59, phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate <contract> --write` does it.",
     ),
     removed(
         "chains",
@@ -777,11 +772,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Consequence,
         "Publication rate. Derivable from the timers that drive it — see `derivable-rate`.",
     ),
-    deprecated(
+    removed(
         "max_transport",
         Context::Topic,
-        "nodes.<n>.sub.<ep>.max_transport",
-        "Deprecated in v0.1.60 (phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber's endpoint. Still read for one release as the `max_transport` of every subscriber of this topic that states none of its own (charged as the subscriber's is: path and chain latencies, and a reaction route's guard edge). `play_launch migrate` copies the value onto each such subscriber declared in the same file and deletes this key. Removed in the next grammar release.",
+        "Removed in v0.3.15 (deprecated since v0.1.60, phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber (`nodes.<n>.sub.<ep>.link` naming a `links:` entry, or its own `max_transport`). `play_launch migrate <contract> --write` copies the value onto each subscriber declared in the same file.",
     ),
     removed(
         "max_transport_ms",
@@ -799,26 +793,6 @@ pub const FIELDS: &[Field] = &[
         Context::Topic,
         Kind::Meta,
         "Mark one side of this topic as provided by an external system: `pub | sub | both`, or the map `{ side, on_silence }`.",
-    ),
-    // ── external_topics.<name> ──
-    live(
-        "side",
-        Context::ExternalTopic,
-        Kind::Meta,
-        "Which side is external: pub | sub | both.",
-    ),
-    alias("external", Context::ExternalTopic, "side"),
-    live(
-        "type",
-        Context::ExternalTopic,
-        Kind::Fact,
-        "ROS message type, when known.",
-    ),
-    live(
-        "qos",
-        Context::ExternalTopic,
-        Kind::Fact,
-        "QoS the external side uses, when known.",
     ),
     // ── services.<name> ──
     live(
@@ -928,11 +902,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Declare this path unless the condition holds.",
     ),
-    deprecated(
+    removed(
         "input",
         Context::Path,
-        "trigger: { input: [...] }",
-        "Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`, read as that trigger when no `trigger:` is written; `play_launch migrate` rewrites it. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified. Removed in the next grammar release.",
+        "Removed in v0.3.15 (deprecated since v0.1.59, phase 90 G3): write `trigger: { input: [...] }`, which `play_launch migrate <contract> --write` does. A path with no `trigger:` is unclassified; a timer is `trigger: { timer: ... }`.",
     ),
     live(
         "output",
@@ -977,7 +950,7 @@ pub const FIELDS: &[Field] = &[
         "trigger",
         Context::Path,
         Kind::Fact,
-        "What causes this path's output: timer | input | once | spontaneous. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick.",
+        "What causes this path's output: timer | input | once | aperiodic. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick.",
     ),
     live(
         "sync",
@@ -1210,7 +1183,7 @@ pub const FIELDS: &[Field] = &[
         "on",
         Context::Hazard,
         Kind::Fact,
-        "Fault classes the monitors report, one or a list: omission | late | loss | reported | repetition | resequencing | insertion. `repetition` is a stamp equal to the publisher's previous one, `resequencing` an earlier one, `insertion` a publisher the contract does not name on the topic. Omitted means every class, the strictest reading; `[]` is an error.",
+        "Fault classes the monitors report, one or a list: omission | late | loss | reported | repetition | resequencing | insertion. `repetition` is a stamp equal to the publisher's previous one, `resequencing` an earlier one, `insertion` a publisher the contract does not name on the topic. Omitted means omission, late, loss, reported and overrun (since v0.3.15, `FaultKind::DEFAULT`): the classes before v0.3.13, so a class added since counts only where it is named and never changes what an `on:`-less hazard means. `[]` is an error.",
     ),
     live(
         "ftti",
@@ -1222,13 +1195,13 @@ pub const FIELDS: &[Field] = &[
         "enters",
         Context::Hazard,
         Kind::Meta,
-        "The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
+        "The mode this hazard takes away (since v0.3.15 the stated meaning; the key's name is older). The reaction is that mode's `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is different: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
     ),
     live(
         "reaction",
         Context::Hazard,
         Kind::Meta,
-        "The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
+        "The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is refused since v0.3.15 (it was the pre-0.1.59 spelling of `enters`): write `enters: <mode>`, which `play_launch migrate` does.",
     ),
     live(
         "when",
@@ -1445,7 +1418,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "The function whose holding ends the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-exit-unwired`).",
     ),
-    alias("on", Context::Exit, "holds"),
+    removed(
+        "on",
+        Context::Exit,
+        "Removed in v0.3.15 (renamed `holds:` in v0.1.59, phase 90 G4), so that `on` names fault classes only. Write `holds: <function>`; `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "to",
         Context::Exit,
@@ -1637,23 +1614,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "`synced` or `unsynced` (the default): whether the two ends' clocks are comparable. Synced: a message's stamp age at the receiver is its transport, so it can be measured per message. Unsynced: only arrivals can be timed, so `measure` cannot propose the bound.",
     ),
-    live(
+    removed(
         "monitor",
         Context::Link,
-        Kind::Fact,
-        "Reserved, parsed and not read: a runtime link monitor, `{ reaction: <path> }` or `{ enters: <mode> }`. No consumer builds one and no rule reads it (play_launch phase 97 P5, not adopted): a link's bound is measured and sourced, and `check --against` holds it against runs. A best-effort link on an unsynchronised wire could only be monitored by the gap between arrivals, which duplicates the receiver's own silence detector.",
-    ),
-    live(
-        "reaction",
-        Context::LinkMonitor,
-        Kind::Fact,
-        "The path a link fault starts: a path of the subscriber's node, else an event chain of the manifest. Exactly one of `reaction` and `enters`. Reserved: `monitor` is not read.",
-    ),
-    live(
-        "enters",
-        Context::LinkMonitor,
-        Kind::Fact,
-        "The mode a link fault enters; its `reaction:` event chain is what runs. Exactly one of `reaction` and `enters`. Reserved: `monitor` is not read.",
+        "Removed in v0.3.15: it was parsed and read by nothing (play_launch phase 97 P5, a runtime link monitor, was not adopted). A link's bound is measured and sourced, and `check --against` holds it against runs; a fault on the link is detected by the receiver's own silence detector.",
     ),
     // -- <budget>.supervise.resume (v0.3.2) --
     live(
@@ -1957,6 +1921,13 @@ fn render_bounds() -> String {
     out
 }
 
+/// The release each `deprecated` or `alias` row was deprecated in (play_launch
+/// phase 104 S1). Every such row needs an entry, and a test fails once one
+/// stays deprecated past its schedule (`rule_names::overdue`): the five
+/// aliases v0.3.15 removed had been "removed in the next grammar release"
+/// since v0.1.59 and v0.1.60.
+pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[];
+
 /// Keys added since v0.1.49, with the release that added each: what the
 /// format reference prints beside them. A column on
 /// [`Field`] would touch every row; earlier keys are not dated (their
@@ -2014,8 +1985,6 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Link, "max_transport", "0.3.4"),
     (Context::Link, "clock", "0.3.4"),
     (Context::Link, "monitor", "0.3.4"),
-    (Context::LinkMonitor, "reaction", "0.3.4"),
-    (Context::LinkMonitor, "enters", "0.3.4"),
     (Context::Manifest, "integrity_levels", "0.3.3"),
     (Context::Mode, "min_dwell", "0.3.3"),
     (Context::Policy, "unsupervised_measured", "0.1.61"),
@@ -2179,6 +2148,38 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// play_launch phase 104 S1: every deprecated row says when, and none
+    /// is past its schedule.
+    #[test]
+    fn no_deprecated_row_is_overdue() {
+        for f in FIELDS
+            .iter()
+            .filter(|f| matches!(f.status, Status::Deprecated | Status::DeprecatedAlias))
+        {
+            let since = DEPRECATED_IN
+                .iter()
+                .find(|(c, k, _)| *c == f.context && *k == f.key)
+                .map(|(_, _, v)| *v)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}.{} is deprecated and DEPRECATED_IN does not say since when",
+                        f.context.label(),
+                        f.key
+                    )
+                });
+            assert!(
+                !crate::rule_names::overdue(
+                    since,
+                    crate::rule_names::Stage::Accepted,
+                    crate::GRAMMAR_VERSION
+                ),
+                "{}.{} has been deprecated since v{since}: refuse it (a `removed` row)",
+                f.context.label(),
+                f.key
+            );
+        }
+    }
+
     use super::*;
 
     /// The consequences are the retirement backlog, and the list must not grow

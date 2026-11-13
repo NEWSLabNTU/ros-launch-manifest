@@ -134,20 +134,8 @@ impl Model {
         self
     }
 
-    /// `topics.<t>.max_transport`: the hop cost every subscriber pays
-    /// unless it states its own.
-    fn topic_transport(mut self, fqn: &str, ms: f64) -> Self {
-        self.0
-            .contracts
-            .topics
-            .entry(s(fqn))
-            .or_default()
-            .max_transport_ms = Some(ms);
-        self
-    }
-
-    /// `sub.<ep>.max_transport`: this subscriber's own hop cost, which
-    /// beats the topic's on the edges that end here.
+    /// `sub.<ep>.max_transport`: this subscriber's own hop cost, charged
+    /// on the edges that end here.
     fn sub_transport(mut self, ep_ref: &str, ms: f64) -> Self {
         self.0
             .contracts
@@ -1059,16 +1047,14 @@ fn a_fork_join_route_is_the_slowest_branch() {
 }
 
 /// `manifest_endpoint_transport`: one topic, two subscribers, one
-/// transport each. The topic's `max_transport` is the default and a
-/// subscriber's own beats it on the edges that END at that subscriber
-/// (design issue #55) — the resolver's precedence,
-/// which the model could not carry until `SubContract` gained the field.
+/// transport each, charged on the edges that END at that subscriber (design
+/// issue #55). Since v0.3.15 a transport is stated on the subscriber only.
 ///
 /// Two scope paths, one per branch, because one route total cannot fail in
 /// both directions: ignoring the override moves the collocated branch and
 /// leaves the remote one, applying it everywhere does the opposite.
 #[test]
-fn a_subscriber_transport_beats_the_topic_on_its_own_edge() {
+fn each_subscriber_transport_is_charged_on_its_own_edge() {
     let model = Model::new(&[("/p", None)])
         .node("/p/producer", "/p", None)
         .node("/p/collocated", "/p", None)
@@ -1084,7 +1070,7 @@ fn a_subscriber_transport_beats_the_topic_on_its_own_edge() {
         )
         .topic("/p/fast", &["/p/collocated/out"], &[])
         .topic("/p/slow", &["/p/remote/out"], &[])
-        .topic_transport("/p/objects", 10.0)
+        .sub_transport("/p/remote/objects", 10.0)
         .sub_transport("/p/collocated/objects", 0.0)
         .scope_path(
             "/p",
@@ -1113,13 +1099,9 @@ fn a_subscriber_transport_beats_the_topic_on_its_own_edge() {
     assert_eq!(
         objects.transport_ms("/p/remote/objects"),
         Some(10.0),
-        "the topic's, for the subscriber that declared none"
+        "the remote subscriber's own"
     );
-    assert_eq!(
-        objects.sub_max_transport_ms.len(),
-        1,
-        "only the overriding endpoint is carried"
-    );
+    assert_eq!(objects.sub_max_transport_ms.len(), 2);
     assert_eq!(
         view.topics["/p/fast"].transport_ms("/p/collocated/out"),
         None,

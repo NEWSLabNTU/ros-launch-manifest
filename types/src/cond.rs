@@ -819,15 +819,11 @@ topics:
     external: pub
   /unused:
     type: std_msgs/msg/String
-external_topics:
-  /tf:
-    side: pub
 "#;
         let mut m = crate::parse_manifest_str(yaml).unwrap();
         filter_manifest(&mut m);
         assert!(m.topics.contains_key("/sensing/points"));
         assert!(m.topics.contains_key("/unused"));
-        assert!(m.external_topics.contains_key("/tf"));
     }
 
     #[test]

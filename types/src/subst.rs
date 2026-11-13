@@ -136,7 +136,6 @@ pub fn substitute_manifest(
         for path in node.paths.values_mut() {
             path.if_condition = substitute_opt(&path.if_condition, args)?;
             path.unless_condition = substitute_opt(&path.unless_condition, args)?;
-            path.input = substitute_vec(&path.input, args)?;
             path.output = substitute_vec(&path.output, args)?;
             substitute_trigger(path, args)?;
         }
@@ -173,7 +172,6 @@ pub fn substitute_manifest(
     for path in m.paths.values_mut() {
         path.if_condition = substitute_opt(&path.if_condition, args)?;
         path.unless_condition = substitute_opt(&path.unless_condition, args)?;
-        path.input = substitute_vec(&path.input, args)?;
         path.output = substitute_vec(&path.output, args)?;
         substitute_trigger(path, args)?;
     }
@@ -195,13 +193,6 @@ pub fn substitute_manifest(
             g.members = substitute_vec(&g.members, args)?;
         }
         h.reaction = substitute_opt(&h.reaction, args)?;
-    }
-
-    // External topics: type field
-    for ext in m.external_topics.values_mut() {
-        if let Some(t) = &ext.msg_type {
-            ext.msg_type = Some(substitute_str(t, args)?);
-        }
     }
 
     Ok(m)

@@ -6,6 +6,68 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.15 - 2026-11-13
+
+The removal release of the grammar revision (play_launch phase 104 S1) and
+the specification half of the defects the review found (phase 103;
+`docs/design/grammar-revision/`). GRAMMAR_VERSION 0.3.15. The model stays
+schema 5: its additions are optional, and a model written before still
+loads (removed fields are dropped on read).
+
+### Removed
+
+Each was deprecated at v0.1.59 or v0.1.60 with "removed in the next grammar
+release" and stayed accepted for 33 releases. Each is now refused with a
+message naming its replacement; `migrate` still rewrites every one.
+
+- **`external_topics:`**: write `topics.<name>.external`. The type, its
+  parser and the `dangling-entity` reading of it are gone.
+- **`topics.<t>.max_transport`**: a transport is stated on the subscriber
+  (`sub.<ep>.link` or its own `max_transport`). The model's
+  `TopicContract.max_transport_ms` and `edge_transport_ms` are gone; a
+  hop's transport is the subscriber's.
+- **`paths.<p>.input`**: write `trigger: { input: [...] }`. The
+  `inherited-rate` rule, which only reported a stale legacy list, is gone.
+- **`modes.<m>.exit.on`**: write `holds:`. `ModeExit.spelled_on` is gone.
+- **`links.<l>.monitor`**: parsed and read by nothing (phase 97 P5 was not
+  adopted). `LinkMonitor` and the model's `LinkMonitorContract` are gone.
+- A mode named in `hazards.<h>.reaction` is refused by the consumer (its
+  field-table text says so); write `enters:`.
+
+The rule-id renames refused since v0.3.9 (`fault-reaction-budget`,
+`degradation-level-budget`, `budget-overflow`) and the key rename
+`guards` -> `monitors` are retired: an old id in `acknowledged:` now reads
+as `ack-stale`.
+
+### Added
+
+- **A schedule that enforces itself.** `rule_names::overdue` and
+  `field_table::DEPRECATED_IN`: every deprecated row states its release,
+  and a test fails once a deprecation, or a rename, sits at a stage past
+  its schedule (one release per stage, plus one of slack).
+- **`PredicateValueContract::Constant { value }`**: a message constant's
+  value, filled by a producer that can read the `.msg` (`ConstantValue`).
+  A run time compares the field with the value, never the name; `None`
+  means it could not be resolved, and a consumer must say so.
+- **`FaultKind::DEFAULT`** and `HazardDecl::classes` / `HazardContract::
+  classes`: what an omitted `on:` means, stated once for every realizer:
+  omission, late, loss, reported and overrun. A class added since v0.3.13,
+  or later, counts only where it is named.
+- `check-terms` scans the field table's live rows (a live row still listed
+  `trigger: spontaneous`). `docs/key-inventory.md` is regenerated (it
+  listed 16 island contracts; the tree has 1).
+
+### Changed
+
+- **`hazards.<h>.enters` is the mode the hazard takes away**, and its
+  reaction is that mode's `fallback:` sequence, each level by its own
+  `reaction:`; the named mode's own `reaction:` is not what the hazard
+  runs. This is the meaning the checker always used; the field table now
+  states it, beside `supervise.enters` (the level a miss enters).
+- A rate key given a value with a unit (`rate_hz: 100Hz`) says the key's
+  name carries the unit, instead of "remove the quotes"; a timer rate's
+  error names `trigger.timer`.
+
 ## v0.3.14 - 2026-11-09
 
 ### Added

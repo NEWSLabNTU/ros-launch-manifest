@@ -2266,15 +2266,12 @@ includes:
             .replace("        input: /i\n", "        trigger: { input: [/i] }\n");
         assert_eq!(m.output, want);
         assert!(!migrate_str(&m.output).unwrap().changed());
-        // Every path reads the same trigger before and after.
-        let (a, b) = (
-            crate::parse_manifest_str(src).unwrap(),
-            crate::parse_manifest_str(&m.output).unwrap(),
-        );
-        for (name, p) in &a.nodes["n"].paths {
-            assert_eq!(
-                format!("{:?}", p.effective_trigger()),
-                format!("{:?}", b.nodes["n"].paths[name].effective_trigger()),
+        // The source is refused since v0.3.15; the migrated file reads every
+        // path as input-triggered.
+        let b = crate::parse_manifest_str(&m.output).unwrap();
+        for (name, p) in &b.nodes["n"].paths {
+            assert!(
+                matches!(p.effective_trigger(), crate::EffectiveTrigger::Input(_)),
                 "{name}"
             );
         }
@@ -2349,7 +2346,6 @@ services: {}
 ";
         assert_eq!(m.output, want);
         let after = crate::parse_manifest_str(&m.output).unwrap();
-        assert!(after.external_topics.is_empty());
         assert_eq!(
             after.topics["/far"].external,
             Some(crate::ExternalSide::Sub)
@@ -2515,15 +2511,28 @@ topics:
         // contract's subscribers, so it is left, and said so.
         assert_eq!(m.skipped.len(), 1, "{:?}", m.skipped);
         assert!(m.skipped[0].contains("/flow") && m.skipped[0].contains("lists no subscriber"));
-        let before = crate::parse_manifest_str(TRANSPORT).unwrap();
-        let after = crate::parse_manifest_str(&m.output).unwrap();
-        for n in ["near", "far", "empty", "block"] {
-            let own = after.nodes[n].subscribers["objects"].max_transport.as_ref();
-            let was = before.nodes[n].subscribers["objects"]
+        // v0.3.15 refuses the topic key, so the file before cannot be read
+        // any more; the transport each subscriber paid is written here.
+        let after = crate::parse_manifest_str(
+            &m.output
+                .replace("  /flow: { type: T, max_transport: 3ms }\n", ""),
+        )
+        .unwrap();
+        for (n, paid) in [
+            ("near", 0.0),
+            ("far", 10.0),
+            ("empty", 10.0),
+            ("block", 10.0),
+        ] {
+            let own = after.nodes[n].subscribers["objects"]
                 .max_transport
                 .as_ref()
-                .or(before.topics["/objects"].max_transport.as_ref());
-            assert_eq!(own, was, "{n}: the transport it paid is the one it states");
+                .and_then(|b| b.ms());
+            assert_eq!(
+                own,
+                Some(paid),
+                "{n}: the transport it paid is the one it states"
+            );
         }
     }
 

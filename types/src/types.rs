@@ -63,14 +63,6 @@ pub struct Manifest {
     pub includes: BTreeMap<String, IncludeDecl>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, PathDecl>,
-    /// Topics this manifest's subtree consumes from / produces to systems
-    /// outside the loaded manifest tree (Issue #51). Each entry marks the
-    /// listed FQN as expected-external on the named side; the
-    /// `dangling-entity` rule skips that side when it would otherwise
-    /// fire. An internal `pub:`/`sub:` declaration anywhere in the merged
-    /// tree overrides the external mark.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub external_topics: BTreeMap<String, ExternalTopicDecl>,
     /// Hazards (phase 71): the one place a fault-tolerant time interval is
     /// written. FDTI and FRTI are derived from the guards' detectors and the
     /// reaction's route; the FTTI is physics and belongs to the hazard.
@@ -631,17 +623,12 @@ impl std::fmt::Display for ParamRef {
 /// `modes.<m>.exit` (v0.1.46): `{ holds: <function>, to: <mode> }`.
 ///
 /// v0.1.59 renamed `on:` to `holds:`, so that `on` names fault classes only
-/// (`hazards.<h>.on`, `on_violation.on`). `on:` still parses for one release
-/// and sets [`Self::spelled_on`], which the consumer reports as deprecated.
+/// (`hazards.<h>.on`, `on_violation.on`); `on:` is refused since v0.3.15.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ModeExit {
     /// The function whose holding ends the ladder -- typically a value
     /// function (`of:` + `when:`), such as "the control mode is MANUAL".
     pub holds: String,
-    /// `true` when the contract wrote the deprecated `on:` instead of
-    /// `holds:`.
-    #[serde(skip)]
-    pub spelled_on: bool,
     /// The mode the ladder ends in. Outside every `fallback:` list: an exit
     /// is not a rung (`mode-exit-target` in the consumer).
     pub to: String,
@@ -833,9 +820,9 @@ pub struct HazardDecl {
     pub monitors: Vec<MonitorGroup>,
     /// Which fault classes the guards report, as a set: `on: omission` and
     /// `on: [omission, late]` both parse (phase 82). EMPTY means the key was
-    /// omitted, which a consumer reads as "every class" -- the strictest
-    /// reading, so declaring less never buys slack. An explicit `on: []` is
-    /// a parse error, so empty is never ambiguous. Order is as written,
+    /// omitted, which means `FaultKind::DEFAULT` (read it through
+    /// `HazardDecl::classes`). An explicit `on: []` is a parse error, so
+    /// empty is never ambiguous. Order is as written,
     /// duplicates dropped. `reported` names an application detector's
     /// output topic -- the fault is whatever that node checks.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -896,6 +883,16 @@ pub struct RequirementRef {
 }
 
 impl HazardDecl {
+    /// The fault classes this hazard claims: its `on:`, or
+    /// `FaultKind::DEFAULT` when `on:` was omitted.
+    pub fn classes(&self) -> Vec<FaultKind> {
+        if self.on.is_empty() {
+            FaultKind::DEFAULT.to_vec()
+        } else {
+            self.on.clone()
+        }
+    }
+
     /// The name the hazard's reaction starts from: the mode it `enters`, or
     /// the `reaction` it names. The consumer resolves it the one way it
     /// always has (a mode of the hazard's scope first, else a scope path),
@@ -1122,6 +1119,21 @@ pub enum FaultKind {
     Resequencing,
     /// A message from a publisher the contract does not name on the topic.
     Insertion,
+}
+
+impl FaultKind {
+    /// The classes an omitted `on:` means (v0.3.15; play_launch phase 103 D5):
+    /// the five the grammar had before v0.3.13. A class added since, or any
+    /// later one, counts only where a hazard names it, so adding a class
+    /// never changes what an existing `on:`-less hazard means. This is the
+    /// one definition: the Linux and RTOS realizers both read it.
+    pub const DEFAULT: [FaultKind; 5] = [
+        FaultKind::Omission,
+        FaultKind::Late,
+        FaultKind::Loss,
+        FaultKind::Reported,
+        FaultKind::Overrun,
+    ];
 }
 
 /// Where the runtime observer reads a violation.
@@ -1627,11 +1639,6 @@ pub struct LinkDecl {
     /// be measured and monitored: a stamp's age (synced), or only the gap
     /// between arrivals (unsynced, the default).
     pub clock: LinkClock,
-    /// The runtime monitor: a message older than the bound (synced), or a
-    /// gap between arrivals longer than the sender's period + the bound
-    /// (unsynced), is a link fault that starts the reaction.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub monitor: Option<LinkMonitor>,
 }
 
 /// `links.<name>.clock` (phase 97).
@@ -1655,15 +1662,6 @@ impl LinkClock {
     }
 }
 
-/// `links.<name>.monitor` (phase 97): what a link fault starts, resolved
-/// per subscriber as a supervision's reaction is (a path of the
-/// subscriber's node, else an event chain; or a mode).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct LinkMonitor {
-    #[serde(flatten)]
-    pub reaction: SuperviseReaction,
-}
-
 /// Topic declaration.
 #[derive(Debug, Clone, Serialize)]
 pub struct TopicDecl {
@@ -1681,9 +1679,6 @@ pub struct TopicDecl {
     pub qos: Option<QosDecl>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_hz: Option<f64>,
-    /// Worst-case transport latency (ms) for this topic hop.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_transport: Option<crate::bound::Bound>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropSpec>,
     /// Per-topic external override. When set, the matching side
@@ -1744,30 +1739,6 @@ pub enum ExternalEndpointSide {
     /// Both sides are external -- declared here only so a type or a QoS can
     /// be stated about a service this tree merely passes through.
     Both,
-}
-
-/// External-topic declaration (Issue #51). Marks an FQN as
-/// expected-external from the declaring scope's subtree.
-///
-/// Deprecated in v0.1.59 (phase 90 G3): the `external_topics:` section is the
-/// second place for what `topics.<name>.external` states. It still parses for
-/// one release; the checker warns and `migrate` moves each entry under
-/// `topics:`.
-#[derive(Debug, Clone, Serialize)]
-pub struct ExternalTopicDecl {
-    /// Side that is externally provided. Required.
-    #[serde(rename = "external")]
-    pub side: ExternalSide,
-    /// Optional ROS message type. When set, cross-checked against any
-    /// internal `topics:` declaration of the same FQN by the
-    /// `consistency` rule.
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub msg_type: Option<String>,
-    /// Optional QoS profile (offered by the external producer or
-    /// requested by the external consumer). Cross-checked under the
-    /// `qos-match` rule.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub qos: Option<QosDecl>,
 }
 
 /// Service declaration.
@@ -1949,12 +1920,6 @@ pub struct PathDecl {
     pub if_condition: Option<String>,
     #[serde(rename = "unless", skip_serializing_if = "Option::is_none")]
     pub unless_condition: Option<String>,
-    /// The legacy `input:` list, deprecated in v0.1.59 (phase 90 G3) for
-    /// `trigger: { input: [...] }`; read through
-    /// [`PathDecl::effective_trigger`]. Node paths: endpoint names. Scope
-    /// paths: topic names (relative/absolute).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub input: Vec<String>,
     /// Node paths: endpoint names. Scope paths: topic names (relative/absolute).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
@@ -2042,9 +2007,6 @@ impl PathDecl {
                 Trigger::Once => EffectiveTrigger::Once,
                 Trigger::Aperiodic => EffectiveTrigger::Aperiodic,
             };
-        }
-        if !self.input.is_empty() {
-            return EffectiveTrigger::Input(self.input.clone());
         }
         EffectiveTrigger::Unclassified
     }

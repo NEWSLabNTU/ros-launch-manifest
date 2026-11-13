@@ -9,7 +9,6 @@ nodes:
         min_rate_hz: 10
     paths:
       periodic:
-        input: []
         output: [raw_points]
         max_latency: 1ms
 

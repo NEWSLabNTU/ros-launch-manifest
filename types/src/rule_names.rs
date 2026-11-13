@@ -108,24 +108,24 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
     },
     // Phase 98 N6 M3 (v0.3.8): "budget" in the sense of a time limit is a
     // deadline or a bound; `budget` stays the reservation's CPU time.
-    // Accepted in v0.3.8, refused since v0.3.9.
+    // Accepted in v0.3.8, refused in v0.3.9, retired in v0.3.15.
     RenamedRule {
         old: "fault-reaction-budget",
         new: "fault-reaction-time",
         since: "0.3.8",
-        stage: Stage::Refused,
+        stage: Stage::Retired,
     },
     RenamedRule {
         old: "degradation-level-budget",
         new: "degradation-level-time",
         since: "0.3.8",
-        stage: Stage::Refused,
+        stage: Stage::Retired,
     },
     RenamedRule {
         old: "budget-overflow",
         new: "latency-bound-overflow",
         since: "0.3.8",
-        stage: Stage::Refused,
+        stage: Stage::Retired,
     },
 ];
 
@@ -164,12 +164,12 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         new: "min_dwell",
         stage: Stage::Retired,
     },
-    // Phase 98 N6 (v0.3.7), refused since v0.3.9.
+    // Phase 98 N6 (v0.3.7), refused in v0.3.9, retired in v0.3.15.
     RenamedKey {
         section: "hazards",
         old: "guards",
         new: "monitors",
-        stage: Stage::Refused,
+        stage: Stage::Retired,
     },
 ];
 
@@ -254,8 +254,78 @@ pub fn renamed(id: &str) -> Option<&'static RenamedRule> {
     RENAMED_RULES.iter().find(|r| r.old == bare)
 }
 
+/// Releases a deprecation may stay at one stage before its next step is
+/// overdue (play_launch phase 104 S1). The schedule (`standard-names.md`
+/// section 6) moves one stage per release; one more is allowed for the wait
+/// on a published play_launch and nano-ros's matching pull request.
+pub const STAGE_SLACK: u32 = 2;
+
+/// Grammar releases from `from` to `to` (`0.3.8` to `0.3.15` is 7). A move
+/// to another minor or major release is `None`, which a schedule check
+/// reads as overdue: every stage must be finished before such a release.
+pub fn releases_between(from: &str, to: &str) -> Option<u32> {
+    let split = |v: &str| -> Option<(u32, u32, u32)> {
+        let mut it = v.trim_start_matches('v').split('.');
+        Some((
+            it.next()?.parse().ok()?,
+            it.next()?.parse().ok()?,
+            it.next()?.parse().ok()?,
+        ))
+    };
+    let (a, b) = (split(from)?, split(to)?);
+    if (a.0, a.1) != (b.0, b.1) || b.2 < a.2 {
+        return None;
+    }
+    Some(b.2 - a.2)
+}
+
+/// A rename still at a stage the schedule says it should have left:
+/// `Accepted` more than [`STAGE_SLACK`] releases after `since`, or
+/// `Refused` more than twice that.
+pub fn overdue(since: &str, stage: Stage, now: &str) -> bool {
+    let limit = match stage {
+        Stage::Accepted => STAGE_SLACK,
+        Stage::Refused => 2 * STAGE_SLACK,
+        Stage::Retired => return false,
+    };
+    releases_between(since, now).is_none_or(|n| n > limit)
+}
+
 #[cfg(test)]
 mod tests {
+    /// play_launch phase 104 S1: no rename sits at a stage past its
+    /// schedule. It failed before v0.3.15 on the four renames refused since
+    /// v0.3.9, which had stayed refused for six releases.
+    #[test]
+    fn no_rename_is_overdue() {
+        for r in RENAMED_RULES {
+            assert!(
+                !overdue(r.since, r.stage, crate::GRAMMAR_VERSION),
+                "rule rename {} -> {} (since v{}) is overdue at stage {:?}",
+                r.old,
+                r.new,
+                r.since,
+                r.stage
+            );
+        }
+    }
+
+    /// The schedule check itself, with a back-dated entry as the negative
+    /// control.
+    #[test]
+    fn the_schedule_check_flags_a_back_dated_stage() {
+        assert!(overdue("0.3.8", Stage::Refused, "0.3.15"));
+        assert!(overdue("0.3.10", Stage::Accepted, "0.3.15"));
+        assert!(!overdue("0.3.14", Stage::Accepted, "0.3.15"));
+        assert!(!overdue("0.3.12", Stage::Refused, "0.3.15"));
+        assert!(!overdue("0.1.1", Stage::Retired, "0.3.15"));
+        assert!(
+            overdue("0.2.9", Stage::Accepted, "0.3.0"),
+            "another minor is overdue"
+        );
+        assert_eq!(releases_between("0.3.8", "0.3.15"), Some(7));
+    }
+
     use super::*;
 
     #[test]
@@ -282,13 +352,14 @@ mod tests {
                 Stage::Retired => assert!(!matched && !noticed_, "{}", r.old),
             }
         }
-        assert_eq!(noticed("fault-reaction-budget"), "fault-reaction-time");
+        // The M3 ids are retired since v0.3.15: neither matched nor noticed.
+        assert_eq!(noticed("fault-reaction-budget"), "fault-reaction-budget");
         assert_eq!(
             noticed("mode:degradation-level-budget"),
-            "mode:degradation-level-time"
+            "mode:degradation-level-budget"
         );
-        assert_eq!(noticed("budget-overflow"), "latency-bound-overflow");
         assert_eq!(accepted("budget-overflow"), "budget-overflow");
+        assert_eq!(current("budget-overflow"), "latency-bound-overflow");
         assert_eq!(current("ladder-rung-budget"), "degradation-level-time");
         assert_eq!(noticed("ladder-rung-budget"), "ladder-rung-budget");
         assert_eq!(noticed("scope-budget"), "scope-budget");
@@ -318,10 +389,11 @@ mod tests {
     }
 
     /// Phase 98 N6: a rename applies to an indexed segment too. `guards`
-    /// is refused since v0.3.9 (noticed, not matched); `window` is retired.
+    /// and `window` are retired (since v0.3.15 and v0.3.9): only `migrate`
+    /// still maps them.
     #[test]
-    fn guards_in_a_path_is_noticed_and_window_is_retired() {
-        assert_eq!(noticed_path("hazards.h.guards[1]"), "hazards.h.monitors[1]");
+    fn guards_and_window_in_a_path_are_retired() {
+        assert_eq!(noticed_path("hazards.h.guards[1]"), "hazards.h.guards[1]");
         assert_eq!(accepted_path("hazards.h.guards[1]"), "hazards.h.guards[1]");
         assert_eq!(current_path("hazards.h.guards"), "hazards.h.monitors");
         assert_eq!(noticed_path("topics.guards"), "topics.guards");

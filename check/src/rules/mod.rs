@@ -7,7 +7,6 @@ mod drop_tightness;
 mod endpoint_topic;
 mod endpoint_unique;
 mod explicit_trigger;
-mod inherited_rate;
 mod jitter_range;
 mod links;
 mod once_durability;
@@ -92,7 +91,6 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(state_consistency::StateConsistencyRule),
         // Vocabulary v2 rules (Phase 44.2).
         Box::new(explicit_trigger::ExplicitTriggerRule),
-        Box::new(inherited_rate::InheritedRateRule),
         Box::new(once_durability::OnceDurabilityRule),
         Box::new(sync_feasibility::SyncFeasibilityRule),
         Box::new(queue_drain_rate::QueueDrainRateRule),

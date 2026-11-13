@@ -29,7 +29,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `independence` | requirement | since v0.3.13 | Independence requirements, a list of `{ of, not_sharing }`: the nodes or functions in `of` share none of the deployment facts in `not_sharing`, pairwise (`independence-violated`). Freedom from interference between nodes of different integrity in one process is derived, with no key (`interference-shared-process`). |
 | `severity_levels` |  | **removed** | Renamed `integrity_levels:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it. |
 | `integrity_levels` | meta | since v0.3.3 | The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this. |
-| `external_topics` |  | deprecated — use `topics.<name>.external` | Deprecated in v0.1.59 (phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate` does it. Removed in the next grammar release. |
+| `external_topics` |  | **removed** | Removed in v0.3.15 (deprecated since v0.1.59, phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate <contract> --write` does it. |
 | `chains` |  | **removed** | Removed in phase 68 — state the requirement as an event chain and let the route be derived. |
 | `if` | meta |  | Only on an INLINE `includes:` entry, whose value is a nested manifest: include this child only when the condition holds. Refused at the root of a standalone manifest. |
 | `unless` | meta |  | Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest. |
@@ -108,19 +108,10 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `sub` | meta |  | Subscribing endpoints, as `node/endpoint`. |
 | `qos` | fact |  | Topic-level QoS, overridable per endpoint. |
 | `rate_hz` | **consequence** |  | Publication rate. Derivable from the timers that drive it — see `derivable-rate`. |
-| `max_transport` |  | deprecated — use `nodes.<n>.sub.<ep>.max_transport` | Deprecated in v0.1.60 (phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber's endpoint. Still read for one release as the `max_transport` of every subscriber of this topic that states none of its own (charged as the subscriber's is: path and chain latencies, and a reaction route's guard edge). `play_launch migrate` copies the value onto each such subscriber declared in the same file and deletes this key. Removed in the next grammar release. |
+| `max_transport` |  | **removed** | Removed in v0.3.15 (deprecated since v0.1.60, phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber (`nodes.<n>.sub.<ep>.link` naming a `links:` entry, or its own `max_transport`). `play_launch migrate <contract> --write` copies the value onto each subscriber declared in the same file. |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `drop` | requirement |  | Permitted message loss on this topic. |
 | `external` | meta |  | Mark one side of this topic as provided by an external system: `pub | sub | both`, or the map `{ side, on_silence }`. |
-
-## `external_topics.<name>`
-
-| key | kind | status | meaning |
-|---|---|---|---|
-| `side` | meta |  | Which side is external: pub | sub | both. |
-| `external` |  | deprecated — use `side` | Deprecated spelling. |
-| `type` | fact |  | ROS message type, when known. |
-| `qos` | fact |  | QoS the external side uses, when known. |
 
 ## `services.<name>`
 
@@ -165,7 +156,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `if` | meta |  | Declare this path only when the condition holds. |
 | `unless` | meta |  | Declare this path unless the condition holds. |
-| `input` |  | deprecated — use `trigger: { input: [...] }` | Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`, read as that trigger when no `trigger:` is written; `play_launch migrate` rewrites it. An empty or missing `input:` does NOT make a timer: a timer is `trigger: { timer: ... }`, and a path with neither is unclassified. Removed in the next grammar release. |
+| `input` |  | **removed** | Removed in v0.3.15 (deprecated since v0.1.59, phase 90 G3): write `trigger: { input: [...] }`, which `play_launch migrate <contract> --write` does. A path with no `trigger:` is unclassified; a timer is `trigger: { timer: ... }`. |
 | `output` | fact |  | Endpoints (node path) or topics (event chain) this path produces. |
 | `max_latency` | requirement |  | Latency budget for this path. On a NODE path: take -> publish of one callback, and the cost a reaction route charges for the hop; an embedded realizer may ALSO turn it into a derived node deadline and a runtime latency monitor in the image, so a cost that must not be a deadline (a queueing wait, a link) belongs in its own key (`max_transport`, a timer's `jitter`), not here. On a EVENT CHAIN: the NOMINAL end-to-end traversal of the subtree, checked by `chain-latency`; a hazard's fault route is derived separately by walking the reactions, and does not read it. |
 | `max_latency_ms` |  | **removed** | Removed in phase 70 — write `max_latency: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
@@ -173,7 +164,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `tolerance` | fact |  | Max `header.stamp` spread between a fan-in path's inputs still treated as one set. |
 | `tolerance_ms` |  | **removed** | Removed in phase 70 — write `tolerance: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `drop` | requirement |  | Event chain only: the end-to-end loss budget, `max_count: N / W` and `max_consecutive: K` (or the bare `N / W`). No topic on the path's route may permit more loss than the whole (`drop-tightness`). On a node path it is refused since v0.1.60 (phase 90 G3): nothing read it there; the loss belongs on the topic the path outputs (`topics.<t>.drop`), where `play_launch migrate` moves it. |
-| `trigger` | fact |  | What causes this path's output: timer | input | once | spontaneous. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick. |
+| `trigger` | fact |  | What causes this path's output: timer | input | once | aperiodic. A timer path is a node path whose `input` is empty and whose trigger carries the rate; a downstream node's timer that reads a message (a `state: true` subscriber, a latched service request) is where a reaction waits for a tick. |
 | `sync` | fact |  | Fan-in synchronization policy for an input trigger with two or more endpoints. |
 | `max_jitter` | requirement |  | Permitted variation in this path's latency. |
 | `min_latency` | fact |  | Best-case latency. Exists so that `max_jitter` is falsifiable. |
@@ -258,10 +249,10 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `description` | meta |  | What the hazardous event is. |
 | `guards` |  | **removed** | Renamed `monitors:` in v0.3.7 (phase 98): the topics watched for a fault are its monitored signals (in formal methods a guard is a transition's condition). `play_launch migrate <contract> --write` rewrites it. |
 | `monitors` | meta | since v0.3.7 | The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
-| `on` | fact |  | Fault classes the monitors report, one or a list: omission | late | loss | reported | repetition | resequencing | insertion. `repetition` is a stamp equal to the publisher's previous one, `resequencing` an earlier one, `insertion` a publisher the contract does not name on the topic. Omitted means every class, the strictest reading; `[]` is an error. |
+| `on` | fact |  | Fault classes the monitors report, one or a list: omission | late | loss | reported | repetition | resequencing | insertion. `repetition` is a stamp equal to the publisher's previous one, `resequencing` an earlier one, `insertion` a publisher the contract does not name on the topic. Omitted means omission, late, loss, reported and overrun (since v0.3.15, `FaultKind::DEFAULT`): the classes before v0.3.13, so a class added since counts only where it is named and never changes what an `on:`-less hazard means. `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-time`. |
-| `enters` | meta | since v0.1.59 | The mode the hazard enters: the first degradation level of the `fallback:` sequence it walks to a safe state, each level checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
-| `reaction` | meta |  | The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is the pre-0.1.59 spelling of `enters` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
+| `enters` | meta | since v0.1.59 | The mode this hazard takes away (since v0.3.15 the stated meaning; the key's name is older). The reaction is that mode's `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is different: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. |
+| `reaction` | meta |  | The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is refused since v0.3.15 (it was the pre-0.1.59 spelling of `enters`): write `enters: <mode>`, which `play_launch migrate` does. |
 | `when` | fact |  | The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`). |
 | `detection` | fact |  | Fault to detection when that is physics, not a detector's timeout (an occlusion building pressure), a duration or `{ duration, source }`. Charged before the detection the consumer derives from the detectors, so stating it never buys slack. Usually derived by an extension (`source: { derived: ... }`). |
 | `deadline_by` | requirement |  | `<extension>/<check>`: the check that is this hazard's requirement when it is not a time (a safety distance). A hazard states `ftti`, `deadline_by`, or both. |
@@ -337,7 +328,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `holds` | fact | since v0.1.59 | The function whose holding ends the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-exit-unwired`). |
-| `on` |  | deprecated — use `holds` | Deprecated spelling. |
+| `on` |  | **removed** | Removed in v0.3.15 (renamed `holds:` in v0.1.59, phase 90 G4), so that `on` names fault classes only. Write `holds: <function>`; `play_launch migrate <contract> --write` rewrites it. |
 | `to` | meta |  | The mode the fallback sequence ends in. Not a member of any `fallback:` list (`mode-exit-target`). |
 
 ## `safe_state.settle`
@@ -404,14 +395,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 |---|---|---|---|
 | `max_transport` | requirement | since v0.3.4 | The bound on one message's transport across the link, from the publish to the subscriber's take. Required. A best-effort link (serial, TCP, DDS between processes or hosts) has no derivable worst case: state it measured, with `source: { measured: { max, n, margin, run } }` (`link-unsourced` otherwise). `play_launch check --against <run>` holds it: a message in a run over the bound is `transport-exceeded`. |
 | `clock` | fact | since v0.3.4 | `synced` or `unsynced` (the default): whether the two ends' clocks are comparable. Synced: a message's stamp age at the receiver is its transport, so it can be measured per message. Unsynced: only arrivals can be timed, so `measure` cannot propose the bound. |
-| `monitor` | fact | since v0.3.4 | Reserved, parsed and not read: a runtime link monitor, `{ reaction: <path> }` or `{ enters: <mode> }`. No consumer builds one and no rule reads it (play_launch phase 97 P5, not adopted): a link's bound is measured and sourced, and `check --against` holds it against runs. A best-effort link on an unsynchronised wire could only be monitored by the gap between arrivals, which duplicates the receiver's own silence detector. |
-
-## `links.<name>.monitor`
-
-| key | kind | status | meaning |
-|---|---|---|---|
-| `reaction` | fact | since v0.3.4 | The path a link fault starts: a path of the subscriber's node, else an event chain of the manifest. Exactly one of `reaction` and `enters`. Reserved: `monitor` is not read. |
-| `enters` | fact | since v0.3.4 | The mode a link fault enters; its `reaction:` event chain is what runs. Exactly one of `reaction` and `enters`. Reserved: `monitor` is not read. |
+| `monitor` |  | **removed** | Removed in v0.3.15: it was parsed and read by nothing (play_launch phase 97 P5, a runtime link monitor, was not adopted). A link's bound is measured and sourced, and `check --against` holds it against runs; a fault on the link is detected by the receiver's own silence detector. |
 
 ## `<budget>.supervise.resume`
 
@@ -516,7 +500,7 @@ Every key below is a spelling of one bound: a value with a unit, what it limits 
 | `max_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at most | Hz |  |
 | `max_age` | `pub/sub/cli.<endpoint>` | age | at most | duration | `{ duration, source, param }`; `param`: a parameter of the subscriber's node, seconds (`max-age-param`) |
 | `max_transport` | `pub/sub/cli.<endpoint>` | transport | at most | duration | `{ duration, source }` |
-| `max_transport` | `topics.<name>` | transport | at most | duration | `{ duration, source }` **deprecated** (phase 90 G3) |
+| `max_transport` | `topics.<name>` | transport | at most | duration | `{ duration, source }` |
 | `max_transport` | `links.<name>` | transport | at most | duration | `{ duration, source }` |
 | `max_transport` | `services.<name>` | transport | at most | duration | `{ duration, source }` |
 | `max_response` | `srv.<endpoint>` | response | at most | duration | `{ duration, source }` |

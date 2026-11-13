@@ -13,8 +13,7 @@
 //! A subscriber is **unaccounted** when it is neither
 //! - tagged `state: true`, **nor**
 //! - referenced by any of the node's paths' [`EffectiveTrigger::Input`]
-//!   endpoint list (the *effective* trigger — explicit `trigger: {input:
-//!   [...]}` or the legacy `input:` derivation both count).
+//!   endpoint list (the *effective* trigger, `trigger: { input: [...] }`).
 //!
 //! Two branches, calibrated against the real 75-file autoware-contract
 //! corpus (P44 W2 review finding: the unqualified generalized rule
@@ -229,36 +228,6 @@ nodes:
         assert!(run(yaml).is_empty());
     }
 
-    /// Branch 1 negative: the untagged sub is accounted for via the legacy
-    /// `input:` list (no explicit trigger — effective_trigger() still
-    /// derives Input).
-    #[test]
-    fn untagged_sub_referenced_by_legacy_input_does_not_warn() {
-        let yaml = r#"
-version: 1
-nodes:
-  n:
-    sub:
-      a:
-        state: true
-      b:
-        state: true
-      c: {}
-    pub:
-      out: {}
-    paths:
-      main:
-        input: [c]
-        output: [out]
-"#;
-        assert!(run(yaml).is_empty());
-    }
-
-    /// Branch 1 positive: a path-declaring node with exactly one
-    /// unaccounted sub warns even with ZERO state-tagged siblings — the
-    /// generalization over the old heuristic (which required ≥2). The
-    /// real-world shape: external_cmd_converter (paths: main, state subs,
-    /// lone unaccounted 'heartbeat').
     #[test]
     fn path_node_with_lone_unaccounted_sub_warns_without_state_siblings() {
         let yaml = r#"

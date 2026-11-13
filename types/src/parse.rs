@@ -487,7 +487,6 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         actions: parse_actions(doc, ctx)?,
         includes: parse_includes(doc, ctx)?,
         paths: parse_paths(doc, ctx, false)?,
-        external_topics: parse_external_topics(doc, ctx)?,
         hazards: parse_hazards(doc, ctx)?,
         integrity_levels: yaml_string_list(doc, "integrity_levels", ctx)?,
         functions: parse_functions(doc, ctx)?,
@@ -680,8 +679,7 @@ fn parse_acknowledged(doc: &Yaml, ctx: &str) -> Result<Vec<AckDecl>, ParseError>
     Ok(out)
 }
 
-/// `links:` (play_launch phase 97): `<name>: { max_transport, clock,
-/// monitor }`.
+/// `links:` (play_launch phase 97): `<name>: { max_transport, clock }`.
 fn parse_links(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, LinkDecl>, ParseError> {
     let mut out = BTreeMap::new();
     let section = &doc["links"];
@@ -692,7 +690,7 @@ fn parse_links(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, LinkDecl>, Pars
             return Err(type_err(
                 ctx,
                 "links",
-                "a mapping of link name -> `{ max_transport, clock, monitor }`",
+                "a mapping of link name -> `{ max_transport, clock }`",
                 other,
             ));
         }
@@ -704,7 +702,7 @@ fn parse_links(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, LinkDecl>, Pars
             return Err(type_err(
                 ctx,
                 &format!("links.{name}"),
-                "`{ max_transport, clock, monitor }`",
+                "`{ max_transport, clock }`",
                 v,
             ));
         }
@@ -733,52 +731,11 @@ fn parse_links(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, LinkDecl>, Pars
                 ));
             }
         };
-        let monitor = match &v["monitor"] {
-            Yaml::BadValue => None,
-            m @ Yaml::Hash(_) => {
-                let mctx = &format_path(lctx, "monitor");
-                reject_unknown_keys(m, mctx, Context::LinkMonitor)?;
-                let reaction = match (
-                    yaml_string(m, "reaction", mctx)?,
-                    yaml_string(m, "enters", mctx)?,
-                ) {
-                    (Some(r), None) => SuperviseReaction::Reaction(r),
-                    (None, Some(e)) => SuperviseReaction::Enters(e),
-                    (Some(_), Some(_)) => {
-                        return Err(field_err(
-                            mctx,
-                            "enters",
-                            "a link fault either starts a path (`reaction: <path>`) or enters \
-                             a mode (`enters: <mode>`), not both -- keep one",
-                        ));
-                    }
-                    (None, None) => {
-                        return Err(field_err(
-                            mctx,
-                            "reaction",
-                            "required: what a link fault starts -- a path of the subscriber's \
-                             node or an event chain (`reaction: <path>`), or a mode \
-                             (`enters: <mode>`)",
-                        ));
-                    }
-                };
-                Some(LinkMonitor { reaction })
-            }
-            other => {
-                return Err(type_err(
-                    lctx,
-                    "monitor",
-                    "`{ reaction: <path> }` or `{ enters: <mode> }`",
-                    other,
-                ));
-            }
-        };
         out.insert(
             name,
             LinkDecl {
                 max_transport,
                 clock,
-                monitor,
             },
         );
     }
@@ -1927,9 +1884,8 @@ fn parse_param_ref(raw: &str, ctx: &str, key: &str) -> Result<ParamRef, ParseErr
 }
 
 /// `modes.<m>.exit` (v0.1.46): `{ holds: <function>, to: <mode> }`, both
-/// required. `on:` is the pre-0.1.59 spelling of `holds:` (deprecated: it
-/// parses, and [`ModeExit::spelled_on`] records it for the consumer's
-/// warning); writing both is an error.
+/// required. `on:`, the pre-0.1.59 spelling of `holds:`, is refused since
+/// v0.3.15 by its `removed` row.
 fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
     let section = &doc["exit"];
     if section.is_badvalue() {
@@ -1945,17 +1901,7 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
         ));
     };
     reject_unknown_keys(section, ectx, Context::Exit)?;
-    let holds = yaml_string(section, "holds", ectx)?;
-    let on = yaml_string(section, "on", ectx)?;
-    if holds.is_some() && on.is_some() {
-        return Err(field_err(
-            ectx,
-            "on",
-            "`on:` is the old spelling of `holds:` -- write `holds:` alone",
-        ));
-    }
-    let spelled_on = on.is_some();
-    let holds = holds.or(on).ok_or_else(|| {
+    let holds = yaml_string(section, "holds", ectx)?.ok_or_else(|| {
         field_err(
             ectx,
             "holds",
@@ -1969,11 +1915,7 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
             "required: the mode the fallback sequence ends in when the exit is taken",
         )
     })?;
-    Ok(Some(ModeExit {
-        holds,
-        spelled_on,
-        to,
-    }))
+    Ok(Some(ModeExit { holds, to }))
 }
 
 /// `yaml_duration` reports with an empty context; put the real one back.
@@ -3201,7 +3143,6 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
             subscribers: vec![],
             qos: None,
             rate_hz: None,
-            max_transport: None,
             drop: None,
             external: None,
             on_silence: None,
@@ -3217,7 +3158,6 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
         rate_hz: yaml_rate_at(yaml, "rate_hz", ctx)?,
-        max_transport: yaml_bound(yaml, "max_transport", ctx, Context::Topic)?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external,
         on_silence,
@@ -3273,53 +3213,6 @@ fn parse_topic_external(
         ));
     }
     Ok((Some(side), on_silence))
-}
-
-/// Parse the manifest-level `external_topics:` block.
-fn parse_external_topics(
-    doc: &Yaml,
-    ctx: &str,
-) -> Result<BTreeMap<String, ExternalTopicDecl>, ParseError> {
-    let mut out = BTreeMap::new();
-    let section = &doc["external_topics"];
-    if section.is_badvalue() {
-        return Ok(out);
-    }
-    let hash = section
-        .as_hash()
-        .ok_or_else(|| field_err(ctx, "external_topics", "expected mapping"))?;
-    for (k, v) in hash {
-        let name = yaml_str_owned(k);
-        let path = format_path(ctx, &format!("external_topics.{name}"));
-        reject_unknown_keys(v, &path, Context::ExternalTopic)?;
-        // Accept either `side:` or `external:` as the side selector.
-        // Try whichever is present; if both are present, `side:` wins.
-        let side_present = !v["side"].is_badvalue();
-        let external_present = !v["external"].is_badvalue();
-        let side = if side_present {
-            parse_external_side(v, "side", &path)?
-        } else if external_present {
-            parse_external_side(v, "external", &path)?
-        } else {
-            None
-        };
-        let side = side.ok_or_else(|| {
-            field_err(
-                &path,
-                "side",
-                "external_topics entry must have a 'side: pub|sub|both' (or 'external:') field",
-            )
-        })?;
-        out.insert(
-            name,
-            ExternalTopicDecl {
-                side,
-                msg_type: yaml_string(v, "type", ctx)?,
-                qos: parse_qos(v, &path)?,
-            },
-        );
-    }
-    Ok(out)
 }
 
 /// Parse an `ExternalSide` enum from a string-valued YAML field.
@@ -3577,33 +3470,13 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         ));
     }
     reject_unknown_keys(yaml, ctx, Context::Path)?;
-    let input = parse_string_or_list(yaml, "input", ctx)?;
     let trigger = parse_trigger(yaml, ctx)?;
-
-    // Vocabulary v2 §1: explicit trigger.input and legacy input: may both
-    // be present; they must agree (as sets) or it's a parse error.
-    if let Some(Trigger::Input(trigger_eps)) = &trigger
-        && !input.is_empty()
-    {
-        let mut a: Vec<&str> = trigger_eps.iter().map(String::as_str).collect();
-        let mut b: Vec<&str> = input.iter().map(String::as_str).collect();
-        a.sort_unstable();
-        b.sort_unstable();
-        if a != b {
-            return Err(field_err(
-                ctx,
-                "trigger.input",
-                "disagrees with the legacy 'input:' list on this path",
-            ));
-        }
-    }
 
     let sync = parse_sync(yaml, ctx)?;
 
     let path = PathDecl {
         if_condition: yaml_string(yaml, "if", ctx)?,
         unless_condition: yaml_string(yaml, "unless", ctx)?,
-        input,
         output: yaml_string_list(yaml, "output", ctx)?,
         max_latency: yaml_bound(yaml, "max_latency", ctx, Context::Path)?,
         tolerance: yaml_duration(yaml, "tolerance")?,
@@ -3768,7 +3641,9 @@ fn timer_rate(timer: &Yaml, ctx: &str) -> Result<Option<(f64, Option<BudgetSourc
                     .map(|hz| (hz, None)),
             );
         }
-        return Ok(yaml_f64(timer, "rate_hz", ctx)?.map(|hz| (hz, None)));
+        return Ok(
+            yaml_f64(timer, "rate_hz", &format_path(ctx, "trigger.timer"))?.map(|hz| (hz, None)),
+        );
     };
     let rctx = &format_path(ctx, "trigger.timer.rate_hz");
     reject_unknown_keys(v, rctx, Context::TimerRate)?;
@@ -4289,11 +4164,25 @@ fn yaml_f64(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<f64>, ParseError>
             .map(Some)
             .map_err(|_| type_err(ctx, key, "a number", &doc[key])),
         Yaml::Integer(i) => Ok(Some(*i as f64)),
-        Yaml::String(_) => Err(field_err(
+        // A quoted number. yaml-rust2 hands `"100"` and `100Hz` over alike,
+        // as a string, so the message is chosen by what the text is.
+        Yaml::String(s) if s.trim().parse::<f64>().is_ok() => Err(field_err(
             ctx,
             key,
             "expected a number, got a quoted string — remove the quotes. A quoted \
              number used to be read as absent, which deleted the declaration in silence",
+        )),
+        Yaml::String(s) => Err(field_err(
+            ctx,
+            key,
+            &if key.ends_with("_hz") {
+                format!(
+                    "expected a number, got `{s}`. The key's name carries the unit (Hz), so \
+                     write the number alone (`{key}: 100`)"
+                )
+            } else {
+                format!("expected a number, got `{s}`")
+            },
         )),
         other => Err(type_err(ctx, key, "a number", other)),
     }
@@ -4447,6 +4336,16 @@ mod tests {
         assert!(err.contains("property of a ROUTE"), "got: {err}");
     }
 
+    /// A timer rate's error names the timer's path (play_launch phase 103
+    /// D9: it named `paths.<p>.rate_hz`, a key that does not exist).
+    #[test]
+    fn a_timer_rate_error_names_the_timer() {
+        let yaml = "nodes:\n  n:\n    paths:\n      p:\n        trigger: { timer: { rate_hz: 10Hz } }\n        output: [o]\n";
+        let err = parse_manifest_str(yaml).unwrap_err().to_string();
+        assert!(err.contains("trigger.timer"), "got: {err}");
+        assert!(err.contains("`10Hz`"), "got: {err}");
+    }
+
     /// A value of the wrong TYPE is an error (phase 70), not an absent field.
     /// Each of these used to parse clean with the declaration deleted.
     #[test]
@@ -4461,6 +4360,12 @@ mod tests {
             (
                 "topics:\n  t:\n    type: T\n    rate_hz: \"100\"\n",
                 "remove the quotes",
+            ),
+            // a rate with a unit, under a key whose name carries the unit
+            // (play_launch phase 103 D9: it said "remove the quotes")
+            (
+                "topics:\n  t:\n    type: T\n    rate_hz: 100Hz\n",
+                "expected a number, got `100Hz`. The key's name carries the unit",
             ),
             // a quoted boolean
             ("nodes:\n  n:\n    lifecycle: \"true\"\n", "without quotes"),
@@ -4499,14 +4404,18 @@ mod tests {
         assert!(err.contains("paths.clean.drop.max_count"), "got: {err}");
     }
 
-    /// The one bare scalar that is still accepted: `input:` as a single name.
+    /// v0.3.15: the legacy `input:` is refused, naming `trigger:`.
     #[test]
-    fn input_still_accepts_a_single_name() {
-        let m = super::parse_manifest_str(
+    fn legacy_input_is_refused_naming_the_trigger() {
+        let e = super::parse_manifest_str(
             "nodes:\n  n:\n    sub:\n      a: {}\n    pub:\n      o: {}\n    paths:\n      p:\n        input: a\n        output: [o]\n",
         )
-        .unwrap();
-        assert_eq!(m.nodes["n"].paths["p"].input, vec!["a"]);
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.contains("trigger: { input: [...] }") && e.contains("v0.3.15"),
+            "{e}"
+        );
     }
 
     /// Phase 75: functions, modes and per-mode overrides parse, and a
@@ -5370,15 +5279,15 @@ nodes:
     pub: [ndt_pose, exe_time_ms]
     paths:
       localization:
-        input: sensor_points
+        trigger: { input: [sensor_points] }
         output: [ndt_pose]
         max_latency: 50ms
       debug:
-        input: sensor_points
+        trigger: { input: [sensor_points] }
         output: [exe_time_ms]
 paths:
   localization:
-    input: sensor_points
+    trigger: { input: [sensor_points] }
     output: [ndt_pose]
     drop:
       max_count: 10 / 100
@@ -5389,7 +5298,10 @@ paths:
         assert_eq!(ndt.paths.len(), 2);
 
         let loc = &ndt.paths["localization"];
-        assert_eq!(loc.input, vec!["sensor_points"]);
+        assert_eq!(
+            loc.effective_trigger(),
+            EffectiveTrigger::Input(vec!["sensor_points".into()])
+        );
         assert_eq!(loc.output, vec!["ndt_pose"]);
         assert_eq!(loc.max_latency.ms(), Some(50.0));
         let drop = m.paths["localization"].drop.as_ref().unwrap();
@@ -5398,7 +5310,10 @@ paths:
         assert_eq!(drop.max_consecutive.count(), Some(5));
 
         let debug = &ndt.paths["debug"];
-        assert_eq!(debug.input, vec!["sensor_points"]);
+        assert_eq!(
+            debug.effective_trigger(),
+            EffectiveTrigger::Input(vec!["sensor_points".into()])
+        );
         assert!(debug.max_latency.is_none());
     }
 
@@ -5533,14 +5448,17 @@ includes:
 version: 1
 paths:
   main:
-    input: raw_data
+    trigger: { input: [raw_data] }
     output: [detections]
     max_latency: 50ms
 "#;
         let m = parse_manifest_str(yaml).unwrap();
 
         let main = &m.paths["main"];
-        assert_eq!(main.input, vec!["raw_data"]);
+        assert_eq!(
+            main.effective_trigger(),
+            EffectiveTrigger::Input(vec!["raw_data".into()])
+        );
         assert_eq!(main.output, vec!["detections"]);
         assert_eq!(main.max_latency.ms(), Some(50.0));
     }
@@ -5555,14 +5473,17 @@ nodes:
     pub: [fused]
     paths:
       fusion:
-        input: [lidar_objects, camera_objects]
+        trigger: { input: [lidar_objects, camera_objects] }
         output: [fused]
         tolerance: 50ms
         max_latency: 20ms
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let path = &m.nodes["fusion"].paths["fusion"];
-        assert_eq!(path.input, vec!["lidar_objects", "camera_objects"]);
+        assert_eq!(
+            path.effective_trigger(),
+            EffectiveTrigger::Input(vec!["lidar_objects".into(), "camera_objects".into()])
+        );
         assert_eq!(path.tolerance.map(|d| d.as_millis_f64()), Some(50.0));
     }
 
@@ -5686,42 +5607,14 @@ nodes:
         assert_eq!(eff.durability, None);
     }
 
+    /// v0.3.15: the `external_topics:` section is refused, naming where
+    /// each entry goes (deprecated since v0.1.59).
     #[test]
-    fn test_external_topics_block() {
-        use crate::types::ExternalSide;
-        let yaml = r#"
-version: 1
-external_topics:
-  /tf:
-    external: pub
-    type: tf2_msgs/msg/TFMessage
-  /vehicle/engage:
-    external: pub
-  /debug/marker:
-    external: sub
-  /passthrough/relay:
-    external: both
-    type: std_msgs/msg/String
-    qos: { reliability: best_effort }
-"#;
-        let m = parse_manifest_str(yaml).unwrap();
-        assert_eq!(m.external_topics.len(), 4);
-
-        let tf = &m.external_topics["/tf"];
-        assert_eq!(tf.side, ExternalSide::Pub);
-        assert_eq!(tf.msg_type.as_deref(), Some("tf2_msgs/msg/TFMessage"));
-
-        let engage = &m.external_topics["/vehicle/engage"];
-        assert_eq!(engage.side, ExternalSide::Pub);
-        assert!(engage.msg_type.is_none());
-
-        let marker = &m.external_topics["/debug/marker"];
-        assert_eq!(marker.side, ExternalSide::Sub);
-
-        let passthrough = &m.external_topics["/passthrough/relay"];
-        assert_eq!(passthrough.side, ExternalSide::Both);
-        let qos = passthrough.qos.as_ref().unwrap();
-        assert_eq!(qos.reliability.as_deref(), Some("best_effort"));
+    fn test_external_topics_block_is_refused() {
+        let yaml = "version: 1\nexternal_topics:\n  /tf:\n    external: pub\n";
+        let err = parse_manifest_str(yaml).unwrap_err().to_string();
+        assert!(err.contains("Removed in v0.3.15"), "got: {err}");
+        assert!(err.contains("topics.<name>.external"), "got: {err}");
     }
 
     #[test]
@@ -5747,8 +5640,8 @@ topics:
     fn test_external_invalid_side_errors() {
         let yaml = r#"
 version: 1
-external_topics:
-  /tf: { external: maybe }
+topics:
+  /tf: { type: tf2_msgs/msg/TFMessage, external: maybe }
 "#;
         let err = parse_manifest_str(yaml).unwrap_err();
         let msg = err.to_string();
@@ -6016,7 +5909,6 @@ nodes:
             tor.exit,
             Some(ModeExit {
                 holds: "driver_took_over".into(),
-                spelled_on: false,
                 to: "manual".into()
             })
         );
@@ -6390,22 +6282,15 @@ nodes:
     }
 
     /// v0.1.59 (phase 90 G4): `exit.on` became `exit.holds`, so `on` names
-    /// fault classes only. The old spelling parses for one release and is
-    /// marked for the consumer's warning; both at once is an error.
+    /// fault classes only. Since v0.3.15 the old spelling is refused, naming
+    /// the new one.
     #[test]
-    fn exit_on_is_the_old_spelling_of_holds() {
+    fn exit_on_is_refused_naming_holds() {
         let m = |exit: &str| format!("version: 1\nmodes:\n  m:\n    min_dwell: 10s\n{exit}");
         let new = parse_manifest_str(&m("    exit: { holds: driver, to: manual }\n")).unwrap();
-        let old = parse_manifest_str(&m("    exit: { on: driver, to: manual }\n")).unwrap();
-        let (n, o) = (
-            new.modes["m"].exit.clone().unwrap(),
-            old.modes["m"].exit.clone().unwrap(),
-        );
-        assert_eq!((n.holds.as_str(), n.spelled_on), ("driver", false));
-        assert_eq!((o.holds.as_str(), o.spelled_on), ("driver", true));
-        assert_eq!((n.to, o.to), ("manual".to_string(), "manual".to_string()));
-        let e = err_of(&m("    exit: { holds: a, on: a, to: manual }\n"));
-        assert!(e.contains("old spelling of `holds:`"), "{e}");
+        assert_eq!(new.modes["m"].exit.clone().unwrap().holds, "driver");
+        let e = err_of(&m("    exit: { on: driver, to: manual }\n"));
+        assert!(e.contains("`holds:`") && e.contains("v0.3.15"), "{e}");
     }
 
     /// v0.1.59 (phase 90 G4): a hazard enters a mode or reacts by one scope
@@ -6542,17 +6427,16 @@ nodes:
         assert!(m.paths["e2e"].drop.is_some());
     }
 
-    /// Phase 90 G3: the topic-level `max_transport` still parses for one
-    /// release (deprecated, not removed).
+    /// v0.3.15: the topic-level `max_transport` is refused (deprecated
+    /// since v0.1.60), naming the subscriber.
     #[test]
-    fn g3_a_topic_max_transport_still_parses() {
-        let m = parse_manifest_str("version: 1\ntopics:\n  /t: { type: T, max_transport: 5ms }\n")
-            .unwrap();
-        assert_eq!(m.topics["/t"].max_transport.ms(), Some(5.0));
-        assert_eq!(
-            crate::field_table::lookup(crate::field_table::Context::Topic, "max_transport")
-                .map(|f| f.status),
-            Some(crate::field_table::Status::Deprecated)
+    fn g3_a_topic_max_transport_is_refused() {
+        let e = parse_manifest_str("version: 1\ntopics:\n  /t: { type: T, max_transport: 5ms }\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("Removed in v0.3.15") && e.contains("subscriber"),
+            "{e}"
         );
     }
 

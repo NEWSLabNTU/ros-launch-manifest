@@ -706,7 +706,6 @@ impl crate::types::Manifest {
         }
         for (t, d) in &self.topics {
             let at = format!("topics.{t}");
-            put(&mut out, &at, "max_transport", &d.max_transport);
             if let Some(dr) = &d.drop {
                 put(&mut out, &at, "drop.max_count", &dr.max_count);
                 put(&mut out, &at, "drop.max_consecutive", &dr.max_consecutive);
@@ -823,14 +822,14 @@ mod tests {
         let m = crate::parse_manifest_str(
             "hazards:\n  h: { monitors: [/a], ftti: { duration: 1s, source: requirement }, detection: 1s }\n\
              modes:\n  m: { requires: [/a], min_dwell: { duration: 10s, param: n.t } }\n\
-             topics:\n  /a: { type: std_msgs/msg/Empty, max_transport: 2ms, \
+             topics:\n  /a: { type: std_msgs/msg/Empty, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\
              services:\n  /s: { type: x/srv/S, max_transport: 1ms }\n\
              nodes:\n  n:\n    pub:\n      o: { min_rate_hz: 10, max_rate_hz: 20 }\n\
              \x20   sub:\n      a: { max_age: { duration: 500ms, param: t }, max_transport: 3ms, \
              on_violation: { reaction: r, within: 20ms } }\n\
              \x20   srv:\n      s: { max_response: 5ms }\n\
-             \x20   paths:\n      r:\n        input: [a]\n        output: [o]\n\
+             \x20   paths:\n      r:\n        trigger: { input: [a] }\n        output: [o]\n\
              \x20       max_latency: 50ms\n        min_latency: 1ms\n        max_jitter: 4ms\n\
              \x20       miss: { tolerate: 2 / 100, consecutive: 1 }\n\
              \x20       safe_state: { emits: o, settle: { decel: d, jerk: j, duration: 2s, \
@@ -867,7 +866,7 @@ mod tests {
                 row.key
             );
         }
-        assert_eq!(bounds.len(), 22, "{spelled:?}");
+        assert_eq!(bounds.len(), 21, "{spelled:?}");
         assert!(bounds.iter().any(|(p, _)| p == "services./s.max_transport"));
         let get = |k: &str| bounds.iter().find(|(p, _)| p == k).unwrap().1;
         assert_eq!(

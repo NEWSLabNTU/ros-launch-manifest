@@ -179,8 +179,9 @@ fn contracts_layer_numbers() {
     assert_eq!(e2e.max_latency_ms, Some(85.0));
     assert_eq!(e2e.drop.as_ref().unwrap().max_drop_rate, Some(0.08));
     // topic channel contract
+    // The golden file still carries the topic's `max_transport_ms: 5.0`, a
+    // field v0.3.15 removed: an old model loads, and the field is dropped.
     let pc = &c.topics["/sensing/pointcloud"];
-    assert_eq!(pc.max_transport_ms, Some(5.0));
     assert_eq!(
         pc.qos.as_ref().unwrap().reliability.as_deref(),
         Some("best_effort")
@@ -289,8 +290,8 @@ fn a_subscriber_carries_its_own_transport_and_an_older_model_carries_none() {
             .unwrap()
             .matches("max_transport_ms")
             .count(),
-        1,
-        "the topic's, and nothing invented for the subscriber"
+        0,
+        "nothing invented for the subscriber (and the topic's own was removed in v0.3.15)"
     );
 
     // One that was not: the two values are different fields and both survive.
@@ -311,11 +312,7 @@ fn a_subscriber_carries_its_own_transport_and_an_older_model_carries_none() {
         back.contracts.sub_endpoints[SUB].max_transport_ms,
         Some(0.5)
     );
-    assert_eq!(
-        back.contracts.topics[TOPIC].max_transport_ms,
-        Some(5.0),
-        "the topic default is untouched by the override"
-    );
+    assert!(back.contracts.topics.contains_key(TOPIC));
 }
 
 /// The golden model with every issue-#52 key deleted from the text: what a

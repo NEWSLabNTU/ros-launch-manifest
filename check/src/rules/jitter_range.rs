@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn scope_paths_are_checked_too() {
-        let yaml = "version: 1\npaths:\n  e2e:\n    input: [/a]\n    output: [/b]\n    max_latency: 80ms\n    min_latency: 20ms\n    max_jitter: 10ms\n";
+        let yaml = "version: 1\npaths:\n  e2e:\n    trigger: { input: [/a] }\n    output: [/b]\n    max_latency: 80ms\n    min_latency: 20ms\n    max_jitter: 10ms\n";
         let errs = errors(yaml);
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(errs[0].starts_with("event chain 'e2e'"), "{errs:?}");

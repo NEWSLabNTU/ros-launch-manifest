@@ -1068,19 +1068,6 @@ pub struct LinkContract {
     /// Where a measured bound was observed (`source.measured.run`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
-    /// The runtime monitor that holds the bound, when declared.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub monitor: Option<LinkMonitorContract>,
-}
-
-/// What a link fault starts: a path (a node path of the subscriber, else an
-/// event chain), or a mode. Exactly one is set.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkMonitorContract {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reaction: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enters: Option<String>,
 }
 
 /// One mode after merge (phase 75).
@@ -1185,13 +1172,35 @@ pub enum CompareOp {
 /// The constant of a predicate. A message constant name is carried as
 /// `{ constant: MANUAL }` so a reader never mistakes it for a string
 /// literal.
+///
+/// v0.3.15: `value` is the constant's value, filled by a producer that can
+/// read the message definition (`uint8 MANUAL = 4` gives `value: 4`). A
+/// run time compares a field with `value`, never with the name. `None`
+/// means the producer could not resolve it (the definition was not on its
+/// index, or a model written before v0.3.15); a consumer then cannot judge
+/// the predicate and must say so rather than read it as held.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PredicateValueContract {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Constant { constant: String },
+    Constant {
+        constant: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<ConstantValue>,
+    },
+    Str(String),
+}
+
+/// A message constant's value (v0.3.15), typed by the field it is compared
+/// with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConstantValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
     Str(String),
 }
 
@@ -1313,6 +1322,18 @@ pub struct HazardContract {
     /// The hazard analysis's requirement this hazard implements (v0.3.13).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirement: Option<RequirementContract>,
+}
+
+impl HazardContract {
+    /// The fault classes this hazard claims: its `on`, or
+    /// `FaultKind::DEFAULT` when the contract omitted `on:`.
+    pub fn classes(&self) -> Vec<FaultKind> {
+        if self.on.is_empty() {
+            FaultKind::DEFAULT.to_vec()
+        } else {
+            self.on.clone()
+        }
+    }
 }
 
 /// `hazards.<h>.requirement` after merge (v0.3.13).
@@ -1470,6 +1491,21 @@ pub enum FaultKind {
     Resequencing,
     /// A publisher the contract does not name on the topic (v0.3.13).
     Insertion,
+}
+
+impl FaultKind {
+    /// The classes an omitted `on:` means (v0.3.15; play_launch phase 103 D5):
+    /// the five the grammar had before v0.3.13. A class added since, or any
+    /// later one, counts only where a hazard names it, so adding a class
+    /// never changes what an existing `on:`-less hazard means. This is the
+    /// one definition: the Linux and RTOS realizers both read it.
+    pub const DEFAULT: [FaultKind; 5] = [
+        FaultKind::Omission,
+        FaultKind::Late,
+        FaultKind::Loss,
+        FaultKind::Reported,
+        FaultKind::Overrun,
+    ];
 }
 
 /// A supervised budget lowered to a route monitor (phase 93): the budget
@@ -2206,10 +2242,6 @@ pub struct TopicContract {
     /// Negotiated channel rate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_hz: Option<f64>,
-    /// Worst-case transport latency for this hop; undeclared hops contribute
-    /// 0 to scope budgets (absorbed into the residual).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_transport_ms: Option<f64>,
     /// Transport drop budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drop: Option<DropContract>,
@@ -2580,6 +2612,7 @@ mod tests {
                 op: CompareOp::Equals,
                 value: PredicateValueContract::Constant {
                     constant: "MANUAL".into(),
+                    value: None,
                 },
             }),
             m: None,
@@ -2587,6 +2620,25 @@ mod tests {
         let y = serde_yaml_ng::to_string(&f).unwrap();
         assert!(y.contains("constant: MANUAL"), "{y}");
         assert_eq!(serde_yaml_ng::from_str::<FunctionContract>(&y).unwrap(), f);
+        // v0.3.15: a constant carries its value when the producer resolved
+        // it, and reads back the same; one written before reads as `None`.
+        let resolved = PredicateValueContract::Constant {
+            constant: "MANUAL".into(),
+            value: Some(ConstantValue::Int(4)),
+        };
+        let y = serde_yaml_ng::to_string(&resolved).unwrap();
+        assert!(y.contains("value: 4"), "{y}");
+        assert_eq!(
+            serde_yaml_ng::from_str::<PredicateValueContract>(&y).unwrap(),
+            resolved
+        );
+        assert_eq!(
+            serde_yaml_ng::from_str::<PredicateValueContract>("constant: MANUAL").unwrap(),
+            PredicateValueContract::Constant {
+                constant: "MANUAL".into(),
+                value: None
+            }
+        );
         let lit = PredicateValueContract::Str("MANUAL".into());
         let y = serde_yaml_ng::to_string(&lit).unwrap();
         assert_eq!(

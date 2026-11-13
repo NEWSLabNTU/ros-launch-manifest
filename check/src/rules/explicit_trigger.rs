@@ -2,11 +2,9 @@
 //! (Vocabulary v2, Phase 44.1 §5).
 //!
 //! Fires (info severity — authoring hygiene, not a defect) whenever a
-//! path has no explicit `trigger:` field, regardless of whether the
-//! legacy `input:` list derives `EffectiveTrigger::Input` or the path is
-//! fully `Unclassified`. Migration aid: existing contracts stay valid
-//! (info, not warning/error) while nudging authors toward the explicit
-//! four-way taxonomy.
+//! path has no explicit `trigger:` field: the path is `Unclassified`
+//! (the legacy `input:` list that used to derive an input trigger was
+//! removed in v0.3.15).
 
 use super::ValidationRule;
 use crate::{CheckContext, Severity, graph::DataflowGraph};
@@ -78,7 +76,6 @@ nodes:
       out: {}
     paths:
       main:
-        input: [a]
         output: [out]
 "#;
         let diags = run(yaml);
@@ -128,7 +125,6 @@ nodes:
 version: 1
 paths:
   e2e:
-    input: [a]
     output: [b]
 "#;
         let diags = run(yaml);
