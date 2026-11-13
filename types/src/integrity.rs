@@ -52,8 +52,8 @@ pub fn criticality_map<S: AsRef<str>>(scale: &[S]) -> Vec<(&str, Option<&'static
 pub fn render_markdown() -> String {
     let mut out = String::from("## Integrity level to criticality\n\n");
     out.push_str(
-        "A node a hazard reaches (it feeds, detects for, or reacts for the hazard) \
-         takes a scheduling criticality from the hazard's `integrity`, the MAX over \
+        "A node a hazard reaches (it feeds, detects for, reacts for, or commands for \
+         the hazard) takes a scheduling criticality from the hazard's `integrity`, the MAX over \
          every hazard that reaches it. The first entry of `integrity_levels` is \"no \
          safety requirement\" and derives nothing; the other `n` entries split into \
          three buckets by `ceil(3 rank / n)` (1 low, 2 medium, 3 high). A written \

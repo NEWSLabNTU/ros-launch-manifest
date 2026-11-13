@@ -770,7 +770,11 @@ it
   closure of one. State edges are included: a stale map produces a hazardous
   plan as surely as a stale scan does;
 - **detects** it — subscribes to a guard and declares an `on_violation`;
-- **reacts** to it — lies on the reaction walk to the safe state.
+- **reacts** to it — lies on the reaction walk to the safe state;
+- **commands** for it — carries a degradation level's reaction output on to
+  a topic the level `commands`, or is that topic's arbiter. Only what is
+  downstream of the reaction counts, so a QM source feeding the same
+  arbiter inherits nothing.
 
 Over several hazards the node takes the **max**, never a sum.
 

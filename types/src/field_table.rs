@@ -528,7 +528,7 @@ pub const FIELDS: &[Field] = &[
         "criticality",
         Context::Node,
         Kind::Consequence,
-        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node monitors, reacts for, or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under \"Severity to criticality\" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there.",
+        "Scheduling criticality: high | medium | low. A CONSEQUENCE of the hazards a node monitors, reacts for, commands for (on a degradation level's path to a topic it `commands`, or that topic's arbiter), or feeds (phase 72): the MAX over the hazards that reach it, never a sum, so a node reached by two ASIL_B hazards is ASIL_B; the severity-to-criticality map is under \"Severity to criticality\" below. Written on a node a hazard reaches it is an error (`derivable-criticality`, `criticality-mismatch`: delete it). Written on a node no hazard reaches it stands, and is the scheduler mapper's input there.",
     ),
     live(
         "concurrency",
@@ -1266,7 +1266,7 @@ pub const FIELDS: &[Field] = &[
         "min_dwell",
         Context::Mode,
         Kind::Requirement,
-        "A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`.",
+        "A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. When a timer path of the owner reaches the level below, the route starts there, its tick charged on the first hop, whichever node detected the fault. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`.",
     ),
     removed(
         "window",

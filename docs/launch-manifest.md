@@ -2298,7 +2298,7 @@ it; every safety standard allocates severity *inward from an outcome*,
 and since phase 71 the outcomes are declared. The derivation is
 `manifest_loader.rs::derive_criticality_from_hazards`.
 
-A hazard reaches a node three ways:
+A hazard reaches a node four ways:
 
 - **feeds** — a publisher of a guard topic is an element whose fault *is*
   the hazard, and the severity propagates **upstream** from it along every
@@ -2307,6 +2307,13 @@ A hazard reaches a node three ways:
 - **detects** — a subscriber of a guard topic that declares an
   `on_violation`.
 - **reacts** — every node on the reaction walk to the safe state.
+- **commands** — every node that carries a degradation level's reaction
+  output on to a topic the level `commands`, and that topic's arbiter (its
+  one publisher). The reaction ends where the level is committed; the
+  command it puts on the actuator still runs through these nodes. Only
+  hops downstream of the reaction's output count: a node that feeds the
+  same arbiter from elsewhere (a QM controller beside the fallback) is not
+  on the path and inherits nothing.
 
 A node takes the **max** over the hazards that reach it, ranked by
 position in `integrity_levels:` — never a sum. `sched_derive` reads the
@@ -2527,7 +2534,11 @@ below's own reaction route, charged from the deadline, whose first hop is
 the node that owns the window noticing that the deadline has passed. A node
 that evaluates the deadline on a timer notices it up to one period late, so
 that hop must hold the period (`dwell-expiry`); a node that arms a one-shot
-timer at the deadline needs only its call. The window ends where the
+timer at the deadline needs only its call. When a timer path of the owner
+reaches the level below, that path is the route from the deadline, its
+first hop charged the tick (period plus release jitter) on top of its
+`max_latency`, whichever node detected the fault: the detector starts the
+fallback sequence, the owner ends the dwell. The window ends where the
 deadline is, not where the node notices it, which is why the notice is never
 charged twice. A degradation level left early because a function it requires is lost
 (the fault that removes it) is not waited out; its fallback sequence falls to the degradation level
@@ -2583,7 +2594,7 @@ The consumer's rules for these keys:
 | `dwell-at-mrc` | Error | The last degradation level of a fallback sequence has a `min_dwell` |
 | `dwell-param` | Error | The named parameter's resolved launch value, in seconds, is not the dwell, or it has none |
 | `dwell-unbound` | Warning | A `min_dwell` with no `param:` |
-| `dwell-expiry` | Error / Warning | The route of a degradation level below a dwelling level does not start at the node the dwell's `param:` names, or charges that node less than the period of its timer that publishes the degradation level with a `min_dwell`'s output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the degradation level's output, so when the deadline is noticed is undeclared (warning) |
+| `dwell-expiry` | Error / Warning | The route of a degradation level below a dwelling level does not start at the node the dwell's `param:` names and no timer path of that node reaches the level's output, or it starts there with an input path that charges the node less than the period of its timer that publishes the dwelling level's output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the dwelling level's output and none reaches the level below, so when the deadline is noticed is undeclared (warning). A timer path of the owner that reaches the level below is its route from the deadline, the tick charged on its first hop, whichever node detected the fault |
 | `mode-exit-target` | Error | `to:` is not a mode, or is a degradation level of some `fallback:` fallback sequence |
 | `mode-exit-unwired` | Error | No node publishing the degradation level's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
 | `degradation-level-time` | Error | Now cumulative: detection + every degradation level with a `min_dwell` passed (route + dwell) + the degradation level's route + settle, against the interval |
