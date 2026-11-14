@@ -3472,6 +3472,15 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
     let trigger = parse_trigger(yaml, ctx)?;
 
     let sync = parse_sync(yaml, ctx)?;
+    // `parse_trigger` returns no trigger for a timer whose rate is an
+    // unevaluated reference; keep the reference so the path still reads as
+    // timer-triggered (rlm#9).
+    let timer_rate_unread = match (&trigger, &yaml["trigger"]["timer"]) {
+        (None, t @ Yaml::Hash(_)) => ref_text(&t["rate_hz"])
+            .or_else(|| ref_text(&t["rate_hz"]["value"]))
+            .map(str::to_string),
+        _ => None,
+    };
 
     let path = PathDecl {
         if_condition: yaml_string(yaml, "if", ctx)?,
@@ -3494,6 +3503,7 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
             }
             _ => None,
         },
+        timer_rate_unread,
     };
 
     // Vocabulary v2 §2: sync only meaningful with an input trigger with

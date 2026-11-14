@@ -1972,6 +1972,14 @@ pub struct PathDecl {
     /// reason as [`Self::timer_param`]. `None` for the bare number.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer_rate_source: Option<BudgetSource>,
+    /// A timer whose `rate_hz` is a reference the parser could not evaluate
+    /// (`rate_hz: $(param rate) Hz` with no launch tree to read it from):
+    /// the reference text. The path IS timer-triggered, so `explicit-trigger`
+    /// stays quiet; only the period is unknown, so [`Self::trigger`] stays
+    /// `None` (a timer is never given a guessed rate) and a rule that needs
+    /// the period says so where it would have used it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_rate_unread: Option<String>,
 }
 
 impl PathDecl {

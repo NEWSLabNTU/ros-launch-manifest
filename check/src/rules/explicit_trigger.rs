@@ -5,6 +5,12 @@
 //! path has no explicit `trigger:` field: the path is `Unclassified`
 //! (the legacy `input:` list that used to derive an input trigger was
 //! removed in v0.3.15).
+//!
+//! A timer whose `rate_hz` is a reference not evaluated at check time
+//! (`rate_hz: $(param rate) Hz` with no launch tree) IS an explicit timer
+//! trigger: only its period is unknown (`PathDecl::timer_rate_unread`), so
+//! this rule stays quiet on it (rlm#9). A rule that needs the period reports
+//! the unknown value where it would have used it (`queue-drain-rate`).
 
 use super::ValidationRule;
 use crate::{CheckContext, Severity, graph::DataflowGraph};
@@ -20,7 +26,7 @@ impl ValidationRule for ExplicitTriggerRule {
     fn check(&self, manifest: &Manifest, _graph: &DataflowGraph, ctx: &mut CheckContext) {
         for (node_name, node) in &manifest.nodes {
             for (path_name, path) in &node.paths {
-                if path.trigger.is_none() {
+                if path.trigger.is_none() && path.timer_rate_unread.is_none() {
                     ctx.emit(
                         self.id(),
                         Severity::Info,
@@ -35,7 +41,7 @@ impl ValidationRule for ExplicitTriggerRule {
         }
         // Scope-level (top-of-manifest) paths carry the same PathDecl shape.
         for (path_name, path) in &manifest.paths {
-            if path.trigger.is_none() {
+            if path.trigger.is_none() && path.timer_rate_unread.is_none() {
                 ctx.emit(
                     self.id(),
                     Severity::Info,
@@ -130,5 +136,46 @@ paths:
         let diags = run(yaml);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].path.starts_with("paths."));
+    }
+
+    #[test]
+    fn timer_with_unread_param_rate_is_explicit() {
+        // rlm#9: an unevaluated `$(param ...) Hz` rate is still a timer.
+        let yaml = r#"
+version: 1
+nodes:
+  n:
+    params:
+      rate: { type: double }
+    pub:
+      out: {}
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: $(param rate) Hz } }
+        output: [out]
+"#;
+        let manifest = parse_manifest_str(yaml).unwrap();
+        let path = &manifest.nodes["n"].paths["tick"];
+        assert!(path.trigger.is_none(), "no guessed rate");
+        assert_eq!(path.timer_rate_unread.as_deref(), Some("$(param rate) Hz"));
+        assert!(run(yaml).is_empty(), "got: {:?}", run(yaml));
+    }
+
+    #[test]
+    fn timer_with_unread_map_form_rate_is_explicit() {
+        let yaml = r#"
+version: 1
+nodes:
+  n:
+    params:
+      rate: { type: double }
+    pub:
+      out: {}
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: { value: $(param rate) Hz } } }
+        output: [out]
+"#;
+        assert!(run(yaml).is_empty(), "got: {:?}", run(yaml));
     }
 }

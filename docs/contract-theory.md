@@ -901,7 +901,7 @@ the reaction. The single-path form above is the one-degradation level case, unch
 
 `functions.<f>` names a guard group; `modes.<m>` carries `requires` (the
 functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
-`overrides`. Three rules:
+`overrides`. Four rules:
 
 - **`degradation-level-time`** (error) — each degradation level is judged against the FTTI
   **in its own right**: $T_{\text{FDTI}} + \text{route} + \text{settle}$ for
@@ -915,6 +915,11 @@ functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
   with it.
 - **`mode-requires-unguarded`** (warning) — a mode requires a function no
   subscriber watches, so its loss would never be observed.
+- **`enters-not-removed`** (warning) -- the hazard must take away the mode it
+  enters: the functions its fault removes must include one the mode
+  requires. A redundant group of $n$ members held while $m$ hold, losing
+  $k$ of them, is removed only when $n - k < m$; so a hazard on one sensor
+  of a 2-of-2 group removes it, and of a 1-of-2 group does not.
 
 `modes.<m>.overrides` pins a requirement value for one mode by naming its
 contract path, so every requirement keeps one value where it is declared

@@ -1004,7 +1004,7 @@ pub const FIELDS: &[Field] = &[
         "rate_hz",
         Context::TriggerTimer,
         Kind::Fact,
-        "Timer rate, Hz. Required, and must be greater than zero. A bare number, or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives.",
+        "Timer rate, Hz. Required, and must be greater than zero. A bare number, or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. A reference the checker cannot evaluate (`$(param rate) Hz` with no launch tree) still makes the path timer-triggered; only the period is unknown, and a rule that needs it says the comparison was not made.",
     ),
     live(
         "jitter",
@@ -1194,7 +1194,7 @@ pub const FIELDS: &[Field] = &[
         "enters",
         Context::Hazard,
         Kind::Meta,
-        "The mode this hazard takes away (since v0.3.15 the stated meaning; the key's name is older). The reaction is that mode's `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is different: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`.",
+        "The mode this hazard takes away (since v0.3.15 the stated meaning; the key's name is older). The reaction is that mode's `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is different: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. The hazard must take the mode away: the functions its fault removes, a redundant group's `m` counted, must include at least one the mode `requires`, or the entry is `enters-not-removed` (warning).",
     ),
     live(
         "reaction",
@@ -1365,7 +1365,7 @@ pub const FIELDS: &[Field] = &[
         "m",
         Context::Function,
         Kind::Fact,
-        "A redundant group's count, IEC 61508's MooN: held while at least `m` of the `all_of` members hold. Only beside `all_of`; an integer from 1 to the member count. Omitted: 1 (held while any member holds).",
+        "A redundant group's count, IEC 61508's MooN: held while at least `m` of the `all_of` members hold. Only beside `all_of`; an integer from 1 to the member count. Omitted: 1 (held while any member holds). A hazard that loses k members removes the group only when fewer than `m` remain (`n - k < m`), which is what `enters-not-removed` counts.",
     ),
     // -- when --
     live(

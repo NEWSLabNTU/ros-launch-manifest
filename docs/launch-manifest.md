@@ -2360,6 +2360,19 @@ its lookup (a mode of the hazard's scope first), reports
 rewrites it. `enters:` naming something that is not a mode of the scope is
 `enters-unknown-mode` (error).
 
+**A hazard enters a mode it takes away.** `enters-not-removed` (warning)
+fires when none of the functions the hazard's fault removes is one the
+entered mode `requires`: the hazard would then name a fallback sequence its
+own fault never starts. A function is removed when the hazard monitors it
+by name, or when the fault reaches one of its topics and its kind (a value
+function under `reported` or silence, a plain one under silence); a
+redundant group `{ all_of, m }` of n members that loses k of them is
+removed only when `n - k < m`. So a 2-of-2 group (`m: 2`) is removed by the
+loss of either member, and a 1-of-2 group (`m: 1`, the default) is not: a
+hazard on one member of a 1-of-2 group that `enters:` a mode requiring only
+that group is the warning. A bare topic in `requires:` is removed by
+silence on it.
+
 - `functions.<f>` names a **guard group**: what a set of topics together
   provides. The three shapes are a bare topic, a list (any member lost is
   the fault) and `{ all_of: [...] }` (lost only when every member is,
@@ -2631,10 +2644,10 @@ second table.
 | 11 | `dangling-entity`  | Topic with 0 publishers or 0 subscribers (warning); service/action with 0 servers (error) — **unless** the missing side is declared `external:`, which for a service is the normal case, a client and its server often being two images | Error/Warning |
 | 12 | `satisfiability`   | Arg combination produces dangling entities; unreachable nodes. Built without the `smt` feature it becomes a stub emitting one Info saying the analysis was not run | Error/Warning |
 | 13 | `state-consistency` | Node has ≥2 sibling subs tagged `state: true` and *exactly one* other sub is neither tagged `state:` nor referenced as a path `input` — likely a missed `state:` tag | Warning |
-| 14 | `explicit-trigger` (44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation | Info |
+| 14 | `explicit-trigger` (44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation. A timer whose `rate_hz` is a reference not evaluated here (`$(param rate) Hz` without a launch tree) is explicit: only its period is unknown | Info |
 | 16 | `once-durability` (44.1/44.2) | A `once`-triggered path's output topic is not `durability: transient_local` — late joiners lose the startup-latch message | Warning |
 | 17 | `sync-feasibility` (44.1/44.2) | `sync:` `max_interval`/`timeout` too narrow for the slowest declared input's inter-arrival period | Warning |
-| 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period | Warning |
+| 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period (warning); the timer's rate is a reference not evaluated here, so the comparison was not made (info) | Warning/Info |
 | 19 | `jitter-range` (70 W2) | `min_latency` above `max_latency`; both bounds declared and `max_latency - min_latency > max_jitter` (errors); `max_jitter` with no `min_latency`, so the bound is unverifiable (info — an absent floor is unknown, not zero) | Error/Info |
 | 20 | `drop-tightness` (90 G3) | A topic on an event chain's route (in the same manifest) permits a larger drop rate (`max_count`) than the event chain's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
 | 21 | `link-unsourced` (v0.3.4) | A link (`links:`) whose `max_transport` states no `source:`: a best-effort transport has no derivable worst case, so its number is evidence only with the measurement it came from | Warning |
@@ -2661,6 +2674,7 @@ across manifest files. The ones that bear on this document:
 | `derivable-criticality`, `criticality-mismatch`, `integrity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale | Info/Warning/Error |
 | `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
 | `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path | Error |
+| `enters-not-removed` | A hazard `enters:` a mode none of whose `requires:` its fault removes, a redundant group's `m` counted (`n - k < m`) | Warning |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, re-run after merge | Error/Warning |
 
 A mode with `overrides:` re-runs the requirement checks on the modified

@@ -105,7 +105,7 @@ in `default_rules()`.
 | 11 | `dangling-entity` | Warning / Error | Topic with 0 pubs or 0 subs (W); service/action with 0 servers (E) — unless that side is declared `external:` |
 | 12 | `satisfiability` | Warning / Error / Info | **Z3-backed.** Node unreachable under all valid arg assignments (W); some valid arg assignment produces a dangling entity (E). Skips topics whose subscribers are all state-only. Built without the `smt` feature, a stub with the same id emits one Info saying the analysis was not run — checking less is never silent |
 | 13 | `state-consistency` | Warning | Likely-missing `state: true` on a subscriber that is neither state-tagged nor referenced by any path trigger (two noise-gated heuristics) |
-| 14 | `explicit-trigger` | Info | Path has no explicit `trigger:` — migration lint toward the Vocabulary v2 taxonomy |
+| 14 | `explicit-trigger` | Info | Path has no explicit `trigger:` — migration lint toward the Vocabulary v2 taxonomy; a timer whose rate is an unevaluated reference is explicit |
 | 16 | `once-durability` | Warning | `once`-triggered path publishes to a topic whose effective durability is not `transient_local` |
 | 17 | `sync-feasibility` | Warning | `sync.max_interval` / `sync.timeout` shorter than the slowest declared input period |
 | 18 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
@@ -173,6 +173,7 @@ invokes. Cross-scope rule ids, emitted from
 | `derivable-criticality` / `criticality-mismatch`, `integrity-unknown` | A declared `criticality` against the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale |
 | `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for deriving them |
 | `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level judged against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path |
+| `enters-not-removed` | A hazard enters a mode it does not take away: none of the functions its fault removes, a redundant group's `m` counted, is one the mode requires (warning) |
 | `lifespan-age`, `response-blocking`, `concurrency-decl`, `path-exclusion` | Declarations that contradict each other across the merged tree |
 
 Two properties of that layer are worth stating, because neither follows

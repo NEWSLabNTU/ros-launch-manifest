@@ -6,6 +6,32 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+GRAMMAR_VERSION 0.3.18 under "Unreleased".
+
+### Fixed
+
+- **`explicit-trigger` on a timer whose rate is an unevaluated reference**
+  (#9). `trigger: { timer: { rate_hz: $(param rate) Hz } }` checked
+  without a launch tree to read `rate` from used to report the path as
+  having no trigger. It is an explicit timer trigger whose period is
+  unknown: the parser keeps the reference in the new
+  `PathDecl::timer_rate_unread` (the trigger itself stays `None`, so no
+  rate is guessed), `explicit-trigger` stays quiet on it, and
+  `queue-drain-rate`, the one in-crate rule that needs the period, reports
+  an info saying the comparison was not made.
+
+### Documentation
+
+- **`enters-not-removed` (warning), rule text** (#10). A hazard's
+  `enters:` must name a mode the hazard takes away: the functions its
+  fault removes, a redundant group's `m` counted (a group of n members
+  losing k is removed only when `n - k < m`), must include at least one
+  the mode `requires`. Stated in `launch-manifest.md`,
+  `contract-theory.md`, `contract-verification.md` and the format
+  reference (`enters`, `functions.<f>.m`); play_launch implements it.
+
 ## v0.3.17 - 2026-11-14
 
 Closes the grammar revision's S1 (play_launch phase 104). GRAMMAR_VERSION

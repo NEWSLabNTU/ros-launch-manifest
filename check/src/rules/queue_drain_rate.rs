@@ -52,6 +52,22 @@ impl ValidationRule for QueueDrainRateRule {
             }
 
             for (path_name, path) in &node.paths {
+                // A timer whose rate is an unevaluated reference (rlm#9): the
+                // comparison needs the period, so say it was not made.
+                if let Some(text) = &path.timer_rate_unread {
+                    ctx.emit(
+                        self.id(),
+                        crate::Severity::Info,
+                        &format!("nodes.{node_name}.paths.{path_name}"),
+                        format!(
+                            "node '{node_name}' timer path '{path_name}' has rate_hz `{text}`, \
+                             not evaluated here: its drain rate was not compared with the \
+                             'buffer: queue' subscriptions' producer rates \
+                             ({producer_rate_sum}, from {queue_subs:?})"
+                        ),
+                    );
+                    continue;
+                }
                 let EffectiveTrigger::Timer { rate_hz } = path.effective_trigger() else {
                     continue;
                 };
@@ -214,5 +230,41 @@ topics:
     rate_hz: 100
 "#;
         assert!(run(yaml).is_empty());
+    }
+
+    #[test]
+    fn timer_with_unread_rate_reports_the_comparison_not_made() {
+        // rlm#9: the rate is a `$(param ...)` reference with no launch tree.
+        let yaml = r#"
+version: 1
+nodes:
+  ekf:
+    params:
+      rate: { type: double }
+    sub:
+      twist:
+        state: true
+        buffer: queue
+    pub:
+      out: {}
+    paths:
+      predict:
+        trigger: { timer: { rate_hz: $(param rate) Hz } }
+        output: [out]
+topics:
+  twist:
+    type: t
+    pub: [x/twist]
+    sub: [ekf/twist]
+    rate_hz: 100
+"#;
+        let diags = run(yaml);
+        assert_eq!(diags.len(), 1, "got: {diags:?}");
+        assert_eq!(diags[0].severity, crate::Severity::Info);
+        assert!(
+            diags[0].message.contains("not evaluated"),
+            "{}",
+            diags[0].message
+        );
     }
 }
