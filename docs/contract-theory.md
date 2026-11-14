@@ -896,11 +896,11 @@ against its own reaction path's `max_latency`.
 
 ### Operational Modes
 
-A hazard's `reaction:` may name a **mode**, and then the fallback sequence is
-the reaction. The single-path form above is the one-degradation level case, unchanged.
+A hazard may name a **mode** it takes away, `leaves: <mode>`, and then that
+mode's fallback sequence is the reaction. The single-path form above is the one-degradation level case, unchanged.
 
-`functions.<f>` names a guard group; `modes.<m>` carries `requires` (the
-functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
+`capabilities.<c>` names a capability; `modes.<m>` carries `requires` (the
+capabilities it needs), `fallback` (the ordered fallback sequence), `reaction` and
 `overrides`. Four rules:
 
 - **`degradation-level-time`** (error) — each degradation level is judged against the FTTI
@@ -913,10 +913,10 @@ functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
   safe state, and **a last degradation level that requires anything this hazard's own
   monitors lose is not a minimal risk condition**: losing the guard takes the whole fallback sequence
   with it.
-- **`mode-requires-unguarded`** (warning) — a mode requires a function no
+- **`mode-requires-unguarded`** (warning) — a mode requires a capability no
   subscriber watches, so its loss would never be observed.
-- **`enters-not-removed`** (warning) -- the hazard must take away the mode it
-  enters: the functions its fault removes must include one the mode
+- **`leaves-not-removed`** (warning) -- the hazard must take away the mode it
+  leaves: the capabilities its fault removes must include one the mode
   requires. A redundant group of $n$ members held while $m$ hold, losing
   $k$ of them, is removed only when $n - k < m$; so a hazard on one sensor
   of a 2-of-2 group removes it, and of a 1-of-2 group does not.

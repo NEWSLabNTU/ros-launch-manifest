@@ -6,6 +6,51 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.19 - 2026-11-15
+
+The first S3 rename (play_launch phase 104, `docs/design/grammar-revision/`
+README, "S3 decisions"): one key per meaning. Release R for each rename:
+the old spelling reads with `deprecated-spelling`, is refused at R+1, and
+`play_launch migrate` rewrites it. GRAMMAR_VERSION 0.3.19; the model and the
+Rust field names are unchanged (`Manifest::functions`, `HazardDecl::enters`),
+so nano-ros pays a tag bump only.
+
+### Changed
+
+- **`functions:` is `capabilities:`** (decision 2). What a mode `requires`
+  and a fault removes is a capability, the automated-driving literature's
+  word (capability monitoring); IEC 61508's "safety function" is
+  detect-and-react, which this key is not. `capabilities.<c>` takes the same
+  three shapes, `m`, `of` and `when`.
+- **A hazard's `enters:` is `leaves:`** (decision 1b). It names the mode the
+  fault takes away, which the system leaves by that mode's `fallback:`
+  sequence; `supervise.enters` names the level a miss enters, the opposite
+  direction under the same word. The two rules named for the key follow:
+  `leaves-unknown-mode` and `leaves-not-removed` (`enters-unknown-mode` and
+  `enters-not-removed` in `acknowledged:` still match this release, through
+  `rule_names::RENAMED_RULES`).
+- **A client names a mode with `enters:`** (decisions 1 and 6):
+  `on_timeout`, `on_timeout.then` and `on_rejected` take `{ enters: <mode> }`
+  or `{ reaction: <event chain> }`, exactly one, as a hazard does. `reaction:`
+  keeps ISO 26262's word for the behaviour from detection to the safe
+  state, now naming a path or an event chain everywhere. A mode under a
+  client's `reaction:` still reads; only the consumer can tell a mode from a
+  chain, so it reports the old spelling (`field_table::DEPRECATED_USES`).
+  `OnTimeout::enters` and `EndpointProps::on_rejected_enters` say which key
+  was written.
+
+### Added
+
+- `Manifest::deprecated_spellings` again (removed in v0.3.9 with the last
+  rename it carried): every old key the parser read, by dotted path, for
+  the consumer's one `deprecated-spelling` loop. Not serialized.
+- `migrate`: `functions-capabilities`, `hazard-enters-leaves` and
+  `call-reaction-enters` (a client's `reaction:` naming a mode of the same
+  manifest level). `hazard-reaction-enters` and `guard-all-of-function`
+  write the new spellings.
+- `rule_names::RENAMED_KEYS`: `functions` and `hazards.<h>.enters`, so an
+  `acknowledged:` path through the old key matches this release.
+
 ## v0.3.18 - 2026-11-14
 
 The fallback-sequence grammar of milestone M1g, and the fixes of #9 and

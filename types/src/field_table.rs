@@ -91,10 +91,10 @@ pub enum Context {
     SafeState,
     /// `arrival_curve` on a subscriber (v0.1.64; `ingress` before v0.3.7).
     ArrivalCurve,
-    /// The map form of `functions.<name>` (v0.1.46): `{ all_of: [...] }` or
+    /// The map form of `capabilities.<name>` (v0.1.46): `{ all_of: [...] }` or
     /// `{ of: [...], when: {...} }`.
     Function,
-    /// A `when:` predicate, on a hazard or a function (v0.1.46).
+    /// A `when:` predicate, on a hazard or a capability (v0.1.46).
     Predicate,
     /// `modes.<name>.exit` (v0.1.46).
     Exit,
@@ -179,7 +179,7 @@ impl Context {
             Context::OnViolation => "on_violation",
             Context::SafeState => "safe_state",
             Context::ArrivalCurve => "arrival_curve",
-            Context::Function => "functions.<name>",
+            Context::Function => "capabilities.<name>",
             Context::Predicate => "when",
             Context::Exit => "modes.<name>.exit",
             Context::Advance => "modes.<name>.advance",
@@ -400,11 +400,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Hazards: what is watched, how long the system has, and which path reaches the safe state.",
     ),
+    alias("functions", Context::Manifest, "capabilities"),
     live(
-        "functions",
+        "capabilities",
         Context::Manifest,
         Kind::Meta,
-        "Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name.",
+        "Named capabilities: what a set of topics together provides, available while its topics are and lost when a fault removes them (capability monitoring in the automated-driving literature; `functions:` before v0.3.19). A mode `requires` capabilities; a hazard may monitor one by name.",
     ),
     live(
         "modes",
@@ -416,7 +417,7 @@ pub const FIELDS: &[Field] = &[
         "independence",
         Context::Manifest,
         Kind::Requirement,
-        "Independence requirements, a list of `{ of, not_sharing }`: the nodes or functions in `of` share none of the deployment facts in `not_sharing`, pairwise (`independence-violated`). Freedom from interference between nodes of different integrity in one process is derived, with no key (`interference-shared-process`).",
+        "Independence requirements, a list of `{ of, not_sharing }`: the nodes or capabilities in `of` share none of the deployment facts in `not_sharing`, pairwise (`independence-violated`). Freedom from interference between nodes of different integrity in one process is derived, with no key (`interference-shared-process`).",
     ),
     removed(
         "severity_levels",
@@ -658,13 +659,13 @@ pub const FIELDS: &[Field] = &[
         "on_timeout",
         Context::Endpoint,
         Kind::Fact,
-        "Client: what the code does when `timeout` passes, `{ reaction: <mode | event chain> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`.",
+        "Client: what the code does when `timeout` passes, `{ enters: <mode> }`, `{ reaction: <event chain> }` or `{ retry: { attempts, backoff }, then: { enters | reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`.",
     ),
     live(
         "on_rejected",
         Context::Endpoint,
         Kind::Fact,
-        "Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`.",
+        "Client: what the code does when the server answers and refuses (`success: false`), `{ enters: <mode> }` or `{ reaction: <event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`.",
     ),
     live(
         "buffer",
@@ -1182,7 +1183,7 @@ pub const FIELDS: &[Field] = &[
         "monitors",
         Context::Hazard,
         Kind::Meta,
-        "The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is.",
+        "The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a capability by name: a redundant set is `capabilities.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is.",
     ),
     live(
         "on",
@@ -1196,17 +1197,18 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-time`.",
     ),
+    alias("enters", Context::Hazard, "leaves"),
     live(
-        "enters",
+        "leaves",
         Context::Hazard,
         Kind::Meta,
-        "The mode this hazard takes away (since v0.3.15 the stated meaning; the key's name is older). The reaction is that mode's `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is different: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. The hazard must take the mode away: the functions its fault removes, a redundant group's `m` counted, must include at least one the mode `requires`, or the entry is `enters-not-removed` (warning).",
+        "The mode this hazard takes away (`enters:` before v0.3.19). The system leaves it by its `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is the opposite direction: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `leaves` and `reaction`; a name that is not a mode of this scope is `leaves-unknown-mode`. The hazard must take the mode away: the capabilities its fault removes, a redundant group's `m` counted, must include at least one the mode `requires`, or the entry is `leaves-not-removed` (warning).",
     ),
     live(
         "reaction",
         Context::Hazard,
         Kind::Meta,
-        "The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is refused since v0.3.15 (it was the pre-0.1.59 spelling of `enters`): write `enters: <mode>`, which `play_launch migrate` does.",
+        "The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `leaves` and `reaction`. A mode named here is refused since v0.3.15 (it was the pre-0.1.59 spelling of `leaves`): write `leaves: <mode>`, which `play_launch migrate` does.",
     ),
     live(
         "when",
@@ -1248,7 +1250,7 @@ pub const FIELDS: &[Field] = &[
         "requires",
         Context::Mode,
         Kind::Fact,
-        "Functions (or bare topics) this mode needs; it is available while every one holds.",
+        "Capabilities (or bare topics) this mode needs; it is available while every one holds.",
     ),
     live(
         "fallback",
@@ -1283,7 +1285,7 @@ pub const FIELDS: &[Field] = &[
         "exit",
         Context::Mode,
         Kind::Requirement,
-        "`{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`. `to` is outside every `fallback:` list, or (since v0.3.18) a level ABOVE this one in a fallback sequence that lists both, which the exit re-enters: its dwell restarts, and a fault from then on is walked as any other (`mode-exit-target`).",
+        "`{ holds: <capability>, to: <mode> }`: while this level is active, the capability holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`. `to` is outside every `fallback:` list, or (since v0.3.18) a level ABOVE this one in a fallback sequence that lists both, which the exit re-enters: its dwell restarts, and a fault from then on is walked as any other (`mode-exit-target`).",
     ),
     live(
         "commands",
@@ -1295,13 +1297,13 @@ pub const FIELDS: &[Field] = &[
         "requires_lost",
         Context::Mode,
         Kind::Fact,
-        "Functions (or bare topics) of which at least one must be LOST for this level to be available, beside every `requires` holding: a level that exists only after a loss (holding the lane while the main computer is gone). A hazard whose fault removes none of them skips the level: the walk neither checks nor charges it, as it skips a level whose `requires` the fault removes. A name may not be in both lists (a parse error). Never on the minimal risk condition, which must always be available (`requires-lost-at-mrc`).",
+        "Capabilities (or bare topics) of which at least one must be LOST for this level to be available, beside every `requires` holding: a level that exists only after a loss (holding the lane while the main computer is gone). A hazard whose fault removes none of them skips the level: the walk neither checks nor charges it, as it skips a level whose `requires` the fault removes. A name may not be in both lists (a parse error). Never on the minimal risk condition, which must always be available (`requires-lost-at-mrc`).",
     ),
     live(
         "advance",
         Context::Mode,
         Kind::Requirement,
-        "`{ holds: <function> }`: while this level is active, the function holding takes the next level of the fallback sequence at once, before the dwell's least time: the way DOWN out of a dwell early (a deadline shortened by the situation). Only on a level with a `min_dwell` (a parse error otherwise). It only shortens the level, so what the levels below are charged is unchanged. Some node implementing the level must take the function's topic on a path trigger (`mode-advance-unwired`).",
+        "`{ holds: <capability> }`: while this level is active, the capability holding takes the next level of the fallback sequence at once, before the dwell's least time: the way DOWN out of a dwell early (a deadline shortened by the situation). Only on a level with a `min_dwell` (a parse error otherwise). It only shortens the level, so what the levels below are charged is unchanged. Some node implementing the level must take the capability's topic on a path trigger (`mode-advance-unwired`).",
     ),
     live(
         "within",
@@ -1313,7 +1315,7 @@ pub const FIELDS: &[Field] = &[
     removed(
         "all_of",
         Context::HazardMonitor,
-        "Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and monitor it by name: `monitors: [<f>]`; `play_launch migrate` does it.",
+        "Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `capabilities.<f>: { all_of: [...] }` states by name. Declare the capability and monitor it by name: `monitors: [<f>]`; `play_launch migrate` does it.",
     ),
     // ── on_violation ──
     live(
@@ -1366,7 +1368,7 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration ; response ; source }` plus the keys of a used extension that derives `settle.duration` (v0.2.0: the braking profile `decel`, `jerk` with the hazard's `entry_speed` is the bundled `vehicle.braking`'s; `settle-derived` prints its trace). `response` is added to either (omitted: 0). Both a duration and a derivation: the derivation is charged and the two compared (`settle-conflict`).",
     ),
-    // -- functions.<name> (map form) --
+    // -- capabilities.<name> (map form) --
     live(
         "all_of",
         Context::Function,
@@ -1377,13 +1379,13 @@ pub const FIELDS: &[Field] = &[
         "of",
         Context::Function,
         Kind::Meta,
-        "The topics a value function reads. Requires `when:`; without one, write the bare list.",
+        "The topics a value capability reads. Requires `when:`; without one, write the bare list.",
     ),
     live(
         "when",
         Context::Function,
         Kind::Fact,
-        "The predicate that LOSES the function by value. A value function is lost by the value or by silence.",
+        "The predicate that LOSES the capability by value. A value capability is lost by the value or by silence.",
     ),
     live(
         "m",
@@ -1439,12 +1441,12 @@ pub const FIELDS: &[Field] = &[
         "holds",
         Context::Exit,
         Kind::Fact,
-        "The function whose holding ends the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-exit-unwired`).",
+        "The capability whose holding ends the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-exit-unwired`).",
     ),
     removed(
         "on",
         Context::Exit,
-        "Removed in v0.3.15 (renamed `holds:` in v0.1.59, phase 90 G4), so that `on` names fault classes only. Write `holds: <function>`; `play_launch migrate <contract> --write` rewrites it.",
+        "Removed in v0.3.15 (renamed `holds:` in v0.1.59, phase 90 G4), so that `on` names fault classes only. Write `holds: <capability>`; `play_launch migrate <contract> --write` rewrites it.",
     ),
     live(
         "to",
@@ -1457,7 +1459,7 @@ pub const FIELDS: &[Field] = &[
         "holds",
         Context::Advance,
         Kind::Fact,
-        "The function whose holding leaves the dwelling level early, to the next level of the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-advance-unwired`).",
+        "The capability whose holding leaves the dwelling level early, to the next level of the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-advance-unwired`).",
     ),
     // -- modes.<name>.min_dwell.duration, range form --
     live(
@@ -1703,10 +1705,16 @@ pub const FIELDS: &[Field] = &[
     ),
     // -- cli.<endpoint>.on_timeout (v0.2.5) --
     live(
+        "enters",
+        Context::OnTimeout,
+        Kind::Meta,
+        "The mode the call falls to when the wait passes. Without `retry:`. Exactly one of `enters` and `reaction`.",
+    ),
+    live(
         "reaction",
         Context::OnTimeout,
         Kind::Meta,
-        "The mode the hazard falls to, or the event chain that runs, when the wait passes. Without `retry:`.",
+        "The event chain that runs when the wait passes. Without `retry:`. A mode named here is the pre-v0.3.19 spelling of `enters:` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
     ),
     live(
         "retry",
@@ -1718,7 +1726,7 @@ pub const FIELDS: &[Field] = &[
         "then",
         Context::OnTimeout,
         Kind::Meta,
-        "What the code does after the last attempt, `{ reaction }`. Only beside `retry:`.",
+        "What the code does after the last attempt, `{ enters: <mode> }` or `{ reaction: <event chain> }`. Only beside `retry:`.",
     ),
     live(
         "attempts",
@@ -1733,10 +1741,16 @@ pub const FIELDS: &[Field] = &[
         "The wait between two tries (a duration, `$(param …)`-capable).",
     ),
     live(
+        "enters",
+        Context::CallReaction,
+        Kind::Meta,
+        "The mode the call falls to. Exactly one of `enters` and `reaction` is required.",
+    ),
+    live(
         "reaction",
         Context::CallReaction,
         Kind::Meta,
-        "The mode the hazard falls to, or the event chain that runs. Required.",
+        "The event chain that runs. A mode named here is the pre-v0.3.19 spelling of `enters:` (`deprecated-spelling`; `play_launch migrate` rewrites it).",
     ),
     // -- topics.<name>.external, map form (v0.3.13) --
     live(
@@ -1775,7 +1789,7 @@ pub const FIELDS: &[Field] = &[
         "of",
         Context::Independence,
         Kind::Meta,
-        "The nodes or functions that must be independent, pairwise. At least two.",
+        "The nodes or capabilities that must be independent, pairwise. At least two.",
     ),
     live(
         "not_sharing",
@@ -1920,7 +1934,7 @@ fn render_values() -> String {
      leaves the value unknown (the key absent), never zero.\n\n\
      **A predicate's value** (since v0.3.18): the constant of `equals`, \
      `not_equals`, `lt`, `le`, `gt` or `ge`, in a `when:` (on a hazard or a \
-     function) or in a mode's `commands`, may be such a value, for example \
+     capability) or in a mode's `commands`, may be such a value, for example \
      `{ field: longitudinal.velocity, le: $(let v_odd) }`. The grammar does not \
      know the field's dimension, so any is accepted and the value is the number \
      in SI units: a `$(let)` of `60 km/h` compares as 16.67. There, and only \
@@ -1980,14 +1994,19 @@ fn render_bounds() -> String {
 /// stays deprecated past its schedule (`rule_names::overdue`): the five
 /// aliases v0.3.15 removed had been "removed in the next grammar release"
 /// since v0.1.59 and v0.1.60.
-pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[];
+pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
+    (Context::Manifest, "functions", "0.3.19"),
+    (Context::Hazard, "enters", "0.3.19"),
+];
 
 /// Deprecations no row can carry, because the key stays live in another use
 /// (play_launch phase 104 S1: value- and rule-level deprecations are where
 /// the retirement debt hid). `(what, release)`; the same test holds them to
 /// the schedule. A subscriber's `max_transport` is deprecated while a
 /// client's is not, and both are the `Endpoint` row.
-pub const DEPRECATED_USES: &[(&str, &str)] = &[];
+pub const DEPRECATED_USES: &[(&str, &str)] = &[
+    ("a mode under a client's `on_timeout`/`then`/`on_rejected` `reaction:`", "0.3.19"),
+];
 
 /// Keys added since v0.1.49, with the release that added each: what the
 /// format reference prints beside them. A column on
@@ -2073,6 +2092,10 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Retry, "attempts", "0.2.5"),
     (Context::Retry, "backoff", "0.2.5"),
     (Context::CallReaction, "reaction", "0.2.5"),
+    (Context::Manifest, "capabilities", "0.3.19"),
+    (Context::Hazard, "leaves", "0.3.19"),
+    (Context::OnTimeout, "enters", "0.3.19"),
+    (Context::CallReaction, "enters", "0.3.19"),
     (Context::Manifest, "independence", "0.3.13"),
     (Context::Hazard, "requirement", "0.3.13"),
     (Context::Mode, "commands", "0.3.13"),

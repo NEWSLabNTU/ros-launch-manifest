@@ -52,7 +52,7 @@ pub const REWRITES: &[Rewrite] = &[
         unit: "G4",
         since: "0.1.59",
         from: "hazards.<h>.reaction: <mode>",
-        to: "hazards.<h>.enters: <mode>",
+        to: "hazards.<h>.leaves: <mode> (`enters:` from v0.1.59 to v0.3.18)",
         when: "the name is a mode declared in the same file (the checker's lookup: a mode first); an event chain stays `reaction:`",
         find: hazard_reaction_enters,
     },
@@ -115,7 +115,7 @@ pub const REWRITES: &[Rewrite] = &[
         unit: "G7",
         since: "0.1.59",
         from: "hazards.<h>.guards: [{ all_of: [...] }]",
-        to: "functions.<h>_all_of: { all_of: [...] }, guards: [<h>_all_of]",
+        to: "capabilities.<h>_all_of: { all_of: [...] }, guards: [<h>_all_of]",
         when: "always (the inline group is removed; the same group named in `functions:`)",
         find: guard_all_of_function,
     },
@@ -190,6 +190,33 @@ pub const REWRITES: &[Rewrite] = &[
         to: "nodes.<n>.pub.<e>.aperiodic: true; `trigger: aperiodic`",
         when: "always (an activation with no period and no minimum separation is aperiodic in the periodic / sporadic / aperiodic task model)",
         find: aperiodic,
+    },
+    Rewrite {
+        id: "functions-capabilities",
+        unit: "104 S3",
+        since: "0.3.19",
+        from: "functions.<f>: {...}",
+        to: "capabilities.<f>: {...}",
+        when: "always (what a mode requires and a fault removes is a capability; IEC 61508's safety function is detect-and-react)",
+        find: functions_capabilities,
+    },
+    Rewrite {
+        id: "hazard-enters-leaves",
+        unit: "104 S3",
+        since: "0.3.19",
+        from: "hazards.<h>.enters: <mode>",
+        to: "hazards.<h>.leaves: <mode>",
+        when: "always (the hazard takes the mode away and the system leaves it by its fallback sequence; `supervise.enters` names the level entered)",
+        find: hazard_enters_leaves,
+    },
+    Rewrite {
+        id: "call-reaction-enters",
+        unit: "104 S3",
+        since: "0.3.19",
+        from: "cli.<e>.on_timeout.reaction / on_timeout.then.reaction / on_rejected.reaction: <mode>",
+        to: "the same with `enters: <mode>`",
+        when: "the name is a mode declared at the same manifest level (the checker's lookup); an event chain stays `reaction:`",
+        find: call_reaction_enters,
     },
     Rewrite {
         id: "rule-id-renamed",
@@ -586,7 +613,7 @@ fn hazard_reaction_enters(doc: &Doc) -> Vec<Edit> {
     let mut out = Vec::new();
     for (k, v) in hazards {
         let Some(name) = key_str(k) else { continue };
-        if !v["enters"].is_badvalue() {
+        if !v["enters"].is_badvalue() || !v["leaves"].is_badvalue() {
             continue; // both written: a parse error the checker reports
         }
         let Some(r) = v["reaction"].as_str() else {
@@ -596,7 +623,7 @@ fn hazard_reaction_enters(doc: &Doc) -> Vec<Edit> {
             && let Some(e) = doc.rename_key(
                 "hazard-reaction-enters",
                 &["hazards", &name, "reaction"],
-                "enters",
+                "leaves",
             )
         {
             out.push(e);
@@ -750,6 +777,84 @@ fn endpoint_maps(doc: &Doc, side: &str) -> Vec<(Vec<String>, Yaml)> {
             for (ek, e) in eps {
                 if let Some(ep) = key_str(ek) {
                     out.push((with(&level, &["nodes", &node, side, &ep]), e.clone()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// S3 (v0.3.19): `functions:` becomes `capabilities:` at every manifest
+/// level.
+fn functions_capabilities(doc: &Doc) -> Vec<Edit> {
+    let maps = manifest_levels(doc);
+    rename_in(doc, "functions-capabilities", maps, "functions", "capabilities")
+}
+
+/// Every `hazards.<h>` mapping, at every manifest level.
+fn hazard_maps(doc: &Doc) -> Vec<(Vec<String>, Yaml)> {
+    let mut maps = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        if let Some(hazards) = y["hazards"].as_hash() {
+            for (k, h) in hazards {
+                if let Some(name) = key_str(k) {
+                    maps.push((with(&level, &["hazards", &name]), h.clone()));
+                }
+            }
+        }
+    }
+    maps
+}
+
+/// S3 (v0.3.19): a hazard's `enters:` becomes `leaves:`.
+fn hazard_enters_leaves(doc: &Doc) -> Vec<Edit> {
+    rename_in(doc, "hazard-enters-leaves", hazard_maps(doc), "enters", "leaves")
+}
+
+/// S3 (v0.3.19): a client's `reaction:` naming a mode of the same manifest
+/// level becomes `enters:`, in `on_timeout`, `on_timeout.then` and
+/// `on_rejected`.
+fn call_reaction_enters(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "call-reaction-enters";
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let modes: HashSet<String> = y["modes"]
+            .as_hash()
+            .map(|h| h.keys().filter_map(key_str).collect())
+            .unwrap_or_default();
+        if modes.is_empty() {
+            continue;
+        }
+        let Some(nodes) = y["nodes"].as_hash() else {
+            continue;
+        };
+        for (k, n) in nodes {
+            let Some(node) = key_str(k) else { continue };
+            let Some(eps) = n["cli"].as_hash() else {
+                continue;
+            };
+            for (ek, e) in eps {
+                let Some(ep) = key_str(ek) else { continue };
+                for (tail, m) in [
+                    (vec!["on_timeout"], &e["on_timeout"]),
+                    (vec!["on_timeout", "then"], &e["on_timeout"]["then"]),
+                    (vec!["on_rejected"], &e["on_rejected"]),
+                ] {
+                    let Some(r) = m["reaction"].as_str() else {
+                        continue;
+                    };
+                    if !modes.contains(r) {
+                        continue;
+                    }
+                    let mut path = with(&level, &["nodes", &node, "cli", &ep]);
+                    path.extend(tail.iter().map(|s| s.to_string()));
+                    path.push("reaction".to_string());
+                    if !m["enters"].is_badvalue() {
+                        doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+                        continue;
+                    }
+                    let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+                    out.extend(doc.rename_key(ID, &refs, "enters"));
                 }
             }
         }
@@ -1732,7 +1837,13 @@ fn guard_all_of_function(doc: &Doc) -> Vec<Edit> {
         let Some(hazards) = y["hazards"].as_hash() else {
             continue;
         };
-        let mut taken: HashSet<String> = y["functions"]
+        // `capabilities:` since v0.3.19; `functions:` read for one release.
+        let fkey = if y["capabilities"].is_badvalue() && !y["functions"].is_badvalue() {
+            "functions"
+        } else {
+            "capabilities"
+        };
+        let mut taken: HashSet<String> = y[fkey]
             .as_hash()
             .map(|h| h.keys().filter_map(key_str).collect())
             .unwrap_or_default();
@@ -1801,7 +1912,7 @@ fn guard_all_of_function(doc: &Doc) -> Vec<Edit> {
         if new_fns.is_empty() {
             continue;
         }
-        let fpath = with(&level, &["functions"]);
+        let fpath = with(&level, &[fkey]);
         let hpath = with(&level, &["hazards"]);
         let lines = |ind: usize| -> String {
             new_fns
@@ -1822,7 +1933,7 @@ fn guard_all_of_function(doc: &Doc) -> Vec<Edit> {
             let ci = doc.child_indent(&hr).unwrap_or(col + 2);
             Some((
                 doc.block_end(&hr),
-                format!("{}functions:\n{}", " ".repeat(col), lines(ci)),
+                format!("{}capabilities:\n{}", " ".repeat(col), lines(ci)),
             ))
         } else {
             None
@@ -1831,7 +1942,7 @@ fn guard_all_of_function(doc: &Doc) -> Vec<Edit> {
             doc.skip(
                 ID,
                 &fpath.join("."),
-                "no block `functions:` or `hazards:` to place the function in",
+                "no block `capabilities:` or `hazards:` to place the capability in",
             );
             continue;
         };
@@ -2397,11 +2508,78 @@ hazards:
         let want = LADDER
             .replace("version: 1\n", "version: 1\nuse:\n  iso26262: \"^1\"\n")
             .replace("exit: { on: driver", "exit: { holds: driver")
-            .replace("reaction: driving ", "enters: driving ");
+            .replace("reaction: driving ", "leaves: driving ");
         assert_eq!(m.output, want);
         assert!(m.skipped.is_empty());
         // Idempotent: a migrated file has nothing left to rewrite.
         assert!(!migrate_str(&m.output).unwrap().changed());
+    }
+
+    /// S3 (v0.3.19): `functions:` is `capabilities:`, a hazard's `enters:`
+    /// is `leaves:`, and a client's `reaction:` naming a mode is `enters:`;
+    /// a client's event chain stays `reaction:`.
+    #[test]
+    fn s3_renames_capabilities_leaves_and_call_enters() {
+        let src = "version: 1
+functions:
+  loc: [/loc/pose]
+modes:
+  driving: { requires: [loc], fallback: [stop] }
+  stop: { requires: [], reaction: sys.stop }
+hazards:
+  blind:
+    monitors: [loc]
+    enters: driving
+nodes:
+  n:
+    cli:
+      op:
+        call: blocking
+        timeout: 1s
+        on_timeout: { reaction: stop }
+        on_rejected:
+          reaction: sys.stop
+      op2:
+        call: blocking
+        timeout: 1s
+        on_timeout: { retry: { attempts: 2, backoff: 1ms }, then: { reaction: stop } }
+";
+        let m = migrate_str(src).unwrap();
+        let ids: Vec<_> = m.edits.iter().map(|e| (e.rewrite, e.path.as_str())).collect();
+        assert_eq!(
+            ids,
+            vec![
+                ("functions-capabilities", "functions"),
+                ("hazard-enters-leaves", "hazards.blind.enters"),
+                ("call-reaction-enters", "nodes.n.cli.op.on_timeout.reaction"),
+                ("call-reaction-enters", "nodes.n.cli.op2.on_timeout.then.reaction"),
+            ]
+        );
+        let want = src
+            .replace("functions:\n", "capabilities:\n")
+            .replace("    enters: driving", "    leaves: driving")
+            .replace("on_timeout: { reaction: stop }", "on_timeout: { enters: stop }")
+            .replace("then: { reaction: stop }", "then: { enters: stop }");
+        assert_eq!(m.output, want);
+        let parsed = crate::parse::parse_manifest_str(&m.output).unwrap();
+        assert!(parsed.deprecated_spellings.is_empty());
+        assert!(parsed.nodes["n"].cli["op"].on_timeout.as_ref().unwrap().enters);
+        assert!(!parsed.nodes["n"].cli["op"].on_rejected_enters);
+        assert!(!migrate_str(&m.output).unwrap().changed());
+        // The old file reads, each old key noted for the consumer's warning.
+        let old = crate::parse::parse_manifest_str(src).unwrap();
+        let noted: Vec<_> = old
+            .deprecated_spellings
+            .iter()
+            .map(|d| (d.at.as_str(), d.old, d.new))
+            .collect();
+        assert_eq!(
+            noted,
+            vec![
+                ("hazards.blind.enters", "enters", "leaves"),
+                ("functions", "functions", "capabilities"),
+            ]
+        );
     }
 
     #[test]
@@ -2420,7 +2598,7 @@ hazards:
 
     #[test]
     fn a_file_with_nothing_to_rewrite_is_unchanged() {
-        let src = "version: 1\nhazards:\n  h:\n    enters: d\nmodes:\n  d: {}\n";
+        let src = "version: 1\nhazards:\n  h:\n    leaves: d\nmodes:\n  d: {}\n";
         let m = migrate_str(src).unwrap();
         assert!(!m.changed());
         assert_eq!(m.output, src);
@@ -2635,7 +2813,7 @@ hazards:
   lost:
     monitors: [/odom, lost_all_of]
     reaction: s.stop
-functions:
+capabilities:
   blind_all_of: { all_of: [/ndt, /gnss] }
   lost_all_of: { all_of: [/a, /b] }
 modes: {}
@@ -2662,7 +2840,7 @@ hazards:
             m.output,
             "\
 version: 1
-functions:
+capabilities:
   pose: [/ndt]
   h_all_of: { all_of: [/a, /b] }
 hazards:

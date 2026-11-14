@@ -127,6 +127,20 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
         since: "0.3.8",
         stage: Stage::Retired,
     },
+    // S3 (v0.3.19): a hazard's `enters:` is `leaves:`, and its two rules
+    // are named for the key.
+    RenamedRule {
+        old: "enters-unknown-mode",
+        new: "leaves-unknown-mode",
+        since: "0.3.19",
+        stage: Stage::Accepted,
+    },
+    RenamedRule {
+        old: "enters-not-removed",
+        new: "leaves-not-removed",
+        since: "0.3.19",
+        stage: Stage::Accepted,
+    },
 ];
 
 /// A renamed key as a diagnostic path spells it: the segment `old` under a
@@ -170,6 +184,19 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         old: "guards",
         new: "monitors",
         stage: Stage::Retired,
+    },
+    // S3 (v0.3.19).
+    RenamedKey {
+        section: "",
+        old: "functions",
+        new: "capabilities",
+        stage: Stage::Accepted,
+    },
+    RenamedKey {
+        section: "hazards",
+        old: "enters",
+        new: "leaves",
+        stage: Stage::Accepted,
     },
 ];
 

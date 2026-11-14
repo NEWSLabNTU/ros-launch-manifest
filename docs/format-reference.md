@@ -24,9 +24,10 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `includes` | meta |  | Child scopes, each an inline manifest (the file-reference form was removed in v0.1.59). |
 | `paths` | meta |  | Event chains: end-to-end requirements naming two topics and a budget. |
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
-| `functions` | meta |  | Named guard groups: what a set of topics together provides. A mode requires functions; a hazard may guard one by name. |
+| `functions` |  | deprecated — use `capabilities` | Deprecated spelling. |
+| `capabilities` | meta | since v0.3.19 | Named capabilities: what a set of topics together provides, available while its topics are and lost when a fault removes them (capability monitoring in the automated-driving literature; `functions:` before v0.3.19). A mode `requires` capabilities; a hazard may monitor one by name. |
 | `modes` | meta |  | Operational modes: what each requires, and the fallback sequence (the ordered degradation levels) to fall to when it is lost. |
-| `independence` | requirement | since v0.3.13 | Independence requirements, a list of `{ of, not_sharing }`: the nodes or functions in `of` share none of the deployment facts in `not_sharing`, pairwise (`independence-violated`). Freedom from interference between nodes of different integrity in one process is derived, with no key (`interference-shared-process`). |
+| `independence` | requirement | since v0.3.13 | Independence requirements, a list of `{ of, not_sharing }`: the nodes or capabilities in `of` share none of the deployment facts in `not_sharing`, pairwise (`independence-violated`). Freedom from interference between nodes of different integrity in one process is derived, with no key (`interference-shared-process`). |
 | `severity_levels` |  | **removed** | Renamed `integrity_levels:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it. |
 | `integrity_levels` | meta | since v0.3.3 | The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this. |
 | `external_topics` |  | **removed** | Removed in v0.3.15 (deprecated since v0.1.59, phase 90 G3): the second place for the fact `topics.<name>.external` states. Move each entry under `topics:` as `<name>: { external: <side>, type, qos }`; `play_launch migrate <contract> --write` does it. |
@@ -77,8 +78,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `budget_period` | requirement | since v0.1.68 | Subscriber: the server period P of `budget`. Only beside `budget`. |
 | `call` | fact | since v0.1.69 | Client: how the code waits for the response. `blocking`: the callback that sends the request waits for it, so under a preemptive executor the server must run at a more urgent level (a less urgent one is a priority inversion, its own level a deadlock). `async`: the request is sent and a later callback takes the response. Absent means not stated: a consumer checks a stated call and reports an unstated one. Refused under `pub:`/`sub:`. |
 | `timeout` | fact | since v0.2.5 | Client: how long the code waits for the response before it gives up (a duration, `$(param …)`-capable): `spin_until_future_complete` with a timeout, a pending-request prune, a tick-counting poll. A fact about the code, not a requirement. Absent means the client may wait forever (rclcpp's default), so a reaction route through the call is unbounded unless the degradation level is supervised (`call-unbounded`). Refused under `pub:`/`sub:`. |
-| `on_timeout` | fact | since v0.2.5 | Client: what the code does when `timeout` passes, `{ reaction: <mode | event chain> }` or `{ retry: { attempts, backoff }, then: { reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`. |
-| `on_rejected` | fact | since v0.2.5 | Client: what the code does when the server answers and refuses (`success: false`), `{ reaction: <mode | event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`. |
+| `on_timeout` | fact | since v0.2.5 | Client: what the code does when `timeout` passes, `{ enters: <mode> }`, `{ reaction: <event chain> }` or `{ retry: { attempts, backoff }, then: { enters | reaction } }`. A route through the call is charged the worse of the success branch and `timeout x attempts + backoff x (attempts - 1)` + this reaction's route. Refused under `pub:`/`sub:`. |
+| `on_rejected` | fact | since v0.2.5 | Client: what the code does when the server answers and refuses (`success: false`), `{ enters: <mode> }` or `{ reaction: <event chain> }`. Needed when the route continues at the client after a blocking call (`call-rejected-unhandled`). Refused under `pub:`/`sub:`. |
 | `buffer` | fact |  | Buffering discriminator for a state subscriber: latest | queue. |
 | `on_demand` |  | **removed** | Renamed `aperiodic:` in v0.3.7 (phase 98): an activation with no period and no minimum separation is an aperiodic task. `play_launch migrate <contract> --write` rewrites it. |
 | `aperiodic` | fact | since v0.3.7 | Publisher: aperiodic -- publishes only when asked (a service call, an operator) and promises no rate. Unlike an omitted `min_rate_hz`, which says nothing, this is acted on: no rate is derived for the topic, no runtime rate monitor is generated for the endpoint, and a subscriber's `min_rate_hz` or a topic `rate_hz` against it is a `rate-hierarchy` error. Refused beside `min_rate_hz`, and under `sub:`/`cli:`. |
@@ -248,11 +249,12 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `severity` |  | **removed** | Renamed `integrity:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it. |
 | `description` | meta |  | What the hazardous event is. |
 | `guards` |  | **removed** | Renamed `monitors:` in v0.3.7 (phase 98): the topics watched for a fault are its monitored signals (in formal methods a guard is a transition's condition). `play_launch migrate <contract> --write` rewrites it. |
-| `monitors` | meta | since v0.3.7 | The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a function by name: a redundant set is `functions.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
+| `monitors` | meta | since v0.3.7 | The monitored signals: topics watched for the fault. A bare name is one guard (a topic, or a capability by name: a redundant set is `capabilities.<f>: { all_of: [...] }`, guarded as `f`); a list is a group lost when any member is. |
 | `on` | fact |  | Fault classes the monitors report, one or a list: omission | late | loss | reported | repetition | resequencing | insertion. `repetition` is a stamp equal to the publisher's previous one, `resequencing` an earlier one, `insertion` a publisher the contract does not name on the topic. Omitted means omission, late, loss, reported and overrun (since v0.3.15, `FaultKind::DEFAULT`): the classes before v0.3.13, so a class added since counts only where it is named and never changes what an `on:`-less hazard means. `[]` is an error. |
 | `ftti` | requirement |  | Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-time`. |
-| `enters` | meta | since v0.1.59 | The mode this hazard takes away (since v0.3.15 the stated meaning; the key's name is older). The reaction is that mode's `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is different: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `enters` and `reaction`; a name that is not a mode of this scope is `enters-unknown-mode`. The hazard must take the mode away: the functions its fault removes, a redundant group's `m` counted, must include at least one the mode `requires`, or the entry is `enters-not-removed` (warning). |
-| `reaction` | meta |  | The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `enters` and `reaction`. A mode named here is refused since v0.3.15 (it was the pre-0.1.59 spelling of `enters`): write `enters: <mode>`, which `play_launch migrate` does. |
+| `enters` |  | deprecated — use `leaves` | Deprecated spelling. |
+| `leaves` | meta | since v0.3.19 | The mode this hazard takes away (`enters:` before v0.3.19). The system leaves it by its `fallback:` sequence: each level in order, by its own `reaction:`, each checked in its own right (`degradation-level-time`) and the minimal risk condition (the last level) against `ftti`. The named mode's own `reaction:`, if it has one, is not what this hazard runs. (`supervise.enters` is the opposite direction: it names the level a miss enters, whose own `reaction:` runs.) Exactly one of `leaves` and `reaction`; a name that is not a mode of this scope is `leaves-unknown-mode`. The hazard must take the mode away: the capabilities its fault removes, a redundant group's `m` counted, must include at least one the mode `requires`, or the entry is `leaves-not-removed` (warning). |
+| `reaction` | meta |  | The event chain whose route reaches the safe state: a one-level reaction. Exactly one of `leaves` and `reaction`. A mode named here is refused since v0.3.15 (it was the pre-0.1.59 spelling of `leaves`): write `leaves: <mode>`, which `play_launch migrate` does. |
 | `when` | fact |  | The value that is the fault, `{ field: <name>, <op>: <constant> }` (the constant may be read from the launch tree, since v0.3.18), on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`). |
 | `detection` | fact |  | Fault to detection when that is physics, not a detector's timeout (an occlusion building pressure), a duration or `{ duration, source }`. Charged before the detection the consumer derives from the detectors, so stating it never buys slack. Usually derived by an extension (`source: { derived: ... }`). |
 | `deadline_by` | requirement |  | `<extension>/<check>`: the check that is this hazard's requirement when it is not a time (a safety distance). A hazard states `ftti`, `deadline_by`, or both. |
@@ -264,23 +266,23 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | key | kind | status | meaning |
 |---|---|---|---|
 | `description` | meta |  | What this mode is. |
-| `requires` | fact |  | Functions (or bare topics) this mode needs; it is available while every one holds. |
+| `requires` | fact |  | Capabilities (or bare topics) this mode needs; it is available while every one holds. |
 | `fallback` | requirement |  | Modes to fall to, in order, when this one is lost: the fallback sequence of degradation levels. The last is the minimal risk condition (MRC) and must require nothing losable. |
 | `reaction` | meta |  | The event chain that reaches this mode's safe state. |
 | `overrides` | requirement |  | Requirement values that apply IN THIS MODE, pinned over the scalar declared elsewhere. |
 | `min_dwell` | requirement | since v0.3.3 | A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. When a timer path of the owner reaches the level below, the route starts there, its tick charged on the first hop, whichever node detected the fault. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Since v0.3.18 the duration may be a range, `{ duration: { min: 8s, max: 15s }, param }`: `min` is the least time promised, `max` the longest the level lasts while available, and every level below is charged `max` (a single duration is both); the parameter's value must lie in the range (`dwell-param`). Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`. |
 | `window` |  | **removed** | Renamed `min_dwell:` in v0.3.3 (phase 98): a least time in a mode before the next is the switched-systems dwell time. `play_launch migrate <contract> --write` rewrites it. |
-| `exit` | requirement |  | `{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`. `to` is outside every `fallback:` list, or (since v0.3.18) a level ABOVE this one in a fallback sequence that lists both, which the exit re-enters: its dwell restarts, and a fault from then on is walked as any other (`mode-exit-target`). |
+| `exit` | requirement |  | `{ holds: <capability>, to: <mode> }`: while this level is active, the capability holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`. `to` is outside every `fallback:` list, or (since v0.3.18) a level ABOVE this one in a fallback sequence that lists both, which the exit re-enters: its dwell restarts, and a fault from then on is walked as any other (`mode-exit-target`). |
 | `commands` | requirement | since v0.3.13 | What this level commands: `{ <topic>: [<predicate>, ...] }`, each predicate in the `when:` shape (`{ field, <op>: <constant> }`; since v0.3.18 the value may read the launch tree, as in `when:`). While the level is active, every message on the topic satisfies every predicate (`safe-state-violated`). A topic named here is a final element: it has one publisher, its arbiter (`arbiter-bypass`); the level's reaction reaches it (`commands-unreached`); silence on it is judged by its consumer (`final-element-silent`). |
-| `requires_lost` | fact | since v0.3.18 | Functions (or bare topics) of which at least one must be LOST for this level to be available, beside every `requires` holding: a level that exists only after a loss (holding the lane while the main computer is gone). A hazard whose fault removes none of them skips the level: the walk neither checks nor charges it, as it skips a level whose `requires` the fault removes. A name may not be in both lists (a parse error). Never on the minimal risk condition, which must always be available (`requires-lost-at-mrc`). |
-| `advance` | requirement | since v0.3.18 | `{ holds: <function> }`: while this level is active, the function holding takes the next level of the fallback sequence at once, before the dwell's least time: the way DOWN out of a dwell early (a deadline shortened by the situation). Only on a level with a `min_dwell` (a parse error otherwise). It only shortens the level, so what the levels below are charged is unchanged. Some node implementing the level must take the function's topic on a path trigger (`mode-advance-unwired`). |
+| `requires_lost` | fact | since v0.3.18 | Capabilities (or bare topics) of which at least one must be LOST for this level to be available, beside every `requires` holding: a level that exists only after a loss (holding the lane while the main computer is gone). A hazard whose fault removes none of them skips the level: the walk neither checks nor charges it, as it skips a level whose `requires` the fault removes. A name may not be in both lists (a parse error). Never on the minimal risk condition, which must always be available (`requires-lost-at-mrc`). |
+| `advance` | requirement | since v0.3.18 | `{ holds: <capability> }`: while this level is active, the capability holding takes the next level of the fallback sequence at once, before the dwell's least time: the way DOWN out of a dwell early (a deadline shortened by the situation). Only on a level with a `min_dwell` (a parse error otherwise). It only shortens the level, so what the levels below are charged is unchanged. Some node implementing the level must take the capability's topic on a path trigger (`mode-advance-unwired`). |
 | `within` | requirement | since v0.3.18 | This level's own deadline: the longest from the fault to the level being entered, a duration or `{ duration, source }`. For every hazard whose walk reaches the level, the level's row (detection + every dwelling level waited out above it, its route and its charged dwell + the level's route + its settle) must fit it (`level-within`). Judged beside the hazard's `ftti`, not instead of it: a level without a dwell is judged against both, a dwelling level against its `within` only. A level a hazard skips is not judged for that hazard. |
 
 ## `hazards.<name>.monitors[]`
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `all_of` |  | **removed** | Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `functions.<f>: { all_of: [...] }` states by name. Declare the function and monitor it by name: `monitors: [<f>]`; `play_launch migrate` does it. |
+| `all_of` |  | **removed** | Removed in v0.1.59 (phase 90 G7) -- an inline redundant group is the same group `capabilities.<f>: { all_of: [...] }` states by name. Declare the capability and monitor it by name: `monitors: [<f>]`; `play_launch migrate` does it. |
 
 ## `on_violation`
 
@@ -305,13 +307,13 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `emits` | fact |  | The endpoint this reaction commands the safe state on. |
 | `settle` | fact |  | How long the plant takes to reach the safe state once commanded. `settle: <d>` is shorthand for `settle: { duration: <d> }`; the map is `{ duration ; response ; source }` plus the keys of a used extension that derives `settle.duration` (v0.2.0: the braking profile `decel`, `jerk` with the hazard's `entry_speed` is the bundled `vehicle.braking`'s; `settle-derived` prints its trace). `response` is added to either (omitted: 0). Both a duration and a derivation: the derivation is charged and the two compared (`settle-conflict`). |
 
-## `functions.<name>`
+## `capabilities.<name>`
 
 | key | kind | status | meaning |
 |---|---|---|---|
 | `all_of` | meta |  | Members of a redundant group, lost only when every member is. At least two. |
-| `of` | meta |  | The topics a value function reads. Requires `when:`; without one, write the bare list. |
-| `when` | fact |  | The predicate that LOSES the function by value. A value function is lost by the value or by silence. |
+| `of` | meta |  | The topics a value capability reads. Requires `when:`; without one, write the bare list. |
+| `when` | fact |  | The predicate that LOSES the capability by value. A value capability is lost by the value or by silence. |
 | `m` | fact | since v0.3.13 | A redundant group's count, IEC 61508's MooN: held while at least `m` of the `all_of` members hold. Only beside `all_of`; an integer from 1 to the member count. Omitted: 1 (held while any member holds). A hazard that loses k members removes the group only when fewer than `m` remain (`n - k < m`), which is what `enters-not-removed` counts. |
 
 ## `when`
@@ -330,15 +332,15 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `holds` | fact | since v0.1.59 | The function whose holding ends the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-exit-unwired`). |
-| `on` |  | **removed** | Removed in v0.3.15 (renamed `holds:` in v0.1.59, phase 90 G4), so that `on` names fault classes only. Write `holds: <function>`; `play_launch migrate <contract> --write` rewrites it. |
+| `holds` | fact | since v0.1.59 | The capability whose holding ends the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-exit-unwired`). |
+| `on` |  | **removed** | Removed in v0.3.15 (renamed `holds:` in v0.1.59, phase 90 G4), so that `on` names fault classes only. Write `holds: <capability>`; `play_launch migrate <contract> --write` rewrites it. |
 | `to` | meta |  | The mode the exit ends in: one outside every `fallback:` list, or (since v0.3.18) a level above this one in a fallback sequence that lists both, re-entered with its dwell restarted (`mode-exit-target`). |
 
 ## `modes.<name>.advance`
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `holds` | fact | since v0.3.18 | The function whose holding leaves the dwelling level early, to the next level of the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-advance-unwired`). |
+| `holds` | fact | since v0.3.18 | The capability whose holding leaves the dwelling level early, to the next level of the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-advance-unwired`). |
 
 ## `modes.<name>.min_dwell.duration (range form)`
 
@@ -438,9 +440,10 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the event chain that runs, when the wait passes. Without `retry:`. |
+| `enters` | meta | since v0.3.19 | The mode the call falls to when the wait passes. Without `retry:`. Exactly one of `enters` and `reaction`. |
+| `reaction` | meta | since v0.2.5 | The event chain that runs when the wait passes. Without `retry:`. A mode named here is the pre-v0.3.19 spelling of `enters:` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
 | `retry` | fact | since v0.2.5 | The code asks again: `{ attempts, backoff }`. Sound only when every server declares `idempotent: true` (`call-retry-not-idempotent`), and bounded only with `attempts` and `then:` (`call-retry-unbounded`). |
-| `then` | meta | since v0.2.5 | What the code does after the last attempt, `{ reaction }`. Only beside `retry:`. |
+| `then` | meta | since v0.2.5 | What the code does after the last attempt, `{ enters: <mode> }` or `{ reaction: <event chain> }`. Only beside `retry:`. |
 
 ## `cli.<endpoint>.on_timeout.retry`
 
@@ -453,7 +456,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `reaction` | meta | since v0.2.5 | The mode the hazard falls to, or the event chain that runs. Required. |
+| `enters` | meta | since v0.3.19 | The mode the call falls to. Exactly one of `enters` and `reaction` is required. |
+| `reaction` | meta | since v0.2.5 | The event chain that runs. A mode named here is the pre-v0.3.19 spelling of `enters:` (`deprecated-spelling`; `play_launch migrate` rewrites it). |
 
 ## `topics.<name>.external (map form)`
 
@@ -479,7 +483,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `of` | meta | since v0.3.13 | The nodes or functions that must be independent, pairwise. At least two. |
+| `of` | meta | since v0.3.13 | The nodes or capabilities that must be independent, pairwise. At least two. |
 | `not_sharing` | requirement | since v0.3.13 | The deployment facts no two of them share: process | container | cpus. At least one. A host is not one: one resolved model runs on one host. |
 
 ## `policy`
@@ -554,7 +558,7 @@ A `$(param)` or `$(var)` takes a **unit, always** (`$(param watchdog_ms) ms`): a
 
 The consumer that holds the launch tree evaluates every reference per scope instance and hands each rule a plain number; a contract read alone leaves the value unknown (the key absent), never zero.
 
-**A predicate's value** (since v0.3.18): the constant of `equals`, `not_equals`, `lt`, `le`, `gt` or `ge`, in a `when:` (on a hazard or a function) or in a mode's `commands`, may be such a value, for example `{ field: longitudinal.velocity, le: $(let v_odd) }`. The grammar does not know the field's dimension, so any is accepted and the value is the number in SI units: a `$(let)` of `60 km/h` compares as 16.67. There, and only there, a `$(param)` or `$(var)` may be written without a unit: it is then a plain number in the field's own unit. Unknown without a launch tree, the predicate stays in the contract and is not judged; it is never read as held. A value relative to the field's own past (the value it had when the level was entered) is not in the grammar.
+**A predicate's value** (since v0.3.18): the constant of `equals`, `not_equals`, `lt`, `le`, `gt` or `ge`, in a `when:` (on a hazard or a capability) or in a mode's `commands`, may be such a value, for example `{ field: longitudinal.velocity, le: $(let v_odd) }`. The grammar does not know the field's dimension, so any is accepted and the value is the number in SI units: a `$(let)` of `60 km/h` compares as 16.67. There, and only there, a `$(param)` or `$(var)` may be written without a unit: it is then a plain number in the field's own unit. Unknown without a launch tree, the predicate stays in the contract and is not judged; it is never read as held. A value relative to the field's own past (the value it had when the level was entered) is not in the grammar.
 
 ## Integrity level to criticality
 

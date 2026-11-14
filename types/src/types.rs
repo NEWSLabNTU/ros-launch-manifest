@@ -118,6 +118,14 @@ pub struct Manifest {
     /// written one; an unresolved one leaves its key absent.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub value_refs: Vec<crate::values::ValueRef>,
+    /// Keys and values written under a spelling the S3 rename release
+    /// (v0.3.19) replaced, read for one release and reported by the
+    /// consumer as `deprecated-spelling`; `migrate` rewrites each.
+    /// Collected for the whole file on the root manifest, each with its
+    /// full dotted path. Not serialized: a serialized manifest is written
+    /// in the new names.
+    #[serde(skip)]
+    pub deprecated_spellings: Vec<DeprecatedSpelling>,
     // Where each budget comes from (phase 10 B7) is the `source` of its
     // [`crate::Bound`] (phase 90 G2); [`Manifest::budget_sources`] lists
     // them by dotted contract path.
@@ -910,9 +918,11 @@ pub struct HazardDecl {
     /// written; empty without `use:`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ext: Vec<ExtKey>,
-    /// The mode this hazard enters (v0.1.59): the top of the fallback ladder
-    /// it walks to a safe state. Exactly one of `enters` and `reaction` is
-    /// written; the parser refuses both.
+    /// The mode this hazard takes away, `leaves:` (`enters:` from v0.1.59
+    /// to v0.3.18, read for one release): the mode whose fallback sequence
+    /// it walks to a safe state. Exactly one of `leaves` and `reaction` is
+    /// written; the parser refuses both. The field keeps its old name, as
+    /// the model's does, so a consumer's code does not move this release.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enters: Option<String>,
     /// The scope path whose route reaches the safe state: a one-rung
@@ -964,11 +974,13 @@ impl HazardDecl {
         self.enters.as_ref().or(self.reaction.as_ref())
     }
 
-    /// The key [`Self::entry`] was written under, for diagnostic paths:
-    /// `enters` or `reaction`.
+    /// The key of [`Self::entry`] in a diagnostic path: `leaves` or
+    /// `reaction`. A path names the current spelling (`leaves`, since
+    /// v0.3.19) even where the file wrote `enters:`, as an `acknowledged:`
+    /// path through the old key is mapped onto it.
     pub fn entry_key(&self) -> &'static str {
         if self.enters.is_some() {
-            "enters"
+            "leaves"
         } else {
             "reaction"
         }
@@ -1551,9 +1563,15 @@ pub struct EndpointProps {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_timeout: Option<OnTimeout>,
     /// Client only (since v0.2.5): what the code does when the server
-    /// answers and refuses (`success: false`), as `{ reaction }`.
+    /// answers and refuses (`success: false`): the mode it falls to or the
+    /// event chain it runs, `{ enters }` or `{ reaction }`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_rejected: Option<String>,
+    /// `on_rejected` was written `enters:` (since v0.3.19): the name is a
+    /// mode. `false` with a name is `reaction:`, an event chain (a mode
+    /// there is the pre-v0.3.19 spelling the consumer reports).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub on_rejected_enters: bool,
 }
 
 /// A client's `timeout:` (since v0.2.5). A value read from the launch tree
@@ -1583,10 +1601,15 @@ impl CallTimeout {
 /// there.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct OnTimeout {
-    /// The mode the hazard falls to, or the scope path that runs: `reaction:`
-    /// directly, or `then: { reaction }` after the retries.
+    /// The mode the call falls to, or the event chain that runs: directly,
+    /// or in `then:` after the retries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
+    /// The name was written `enters:` (since v0.3.19): a mode. `false` with
+    /// a name is `reaction:`, an event chain (a mode there is the
+    /// pre-v0.3.19 spelling the consumer reports).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub enters: bool,
     /// The retries before the reaction, when stated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry: Option<RetryDecl>,
@@ -2314,4 +2337,16 @@ mod tests {
         assert!(ep.state.is_none());
         assert!(ep.required.is_none());
     }
+}
+
+/// A key or value written under a spelling the S3 rename release replaced
+/// (see [`Manifest::deprecated_spellings`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DeprecatedSpelling {
+    /// Dotted contract path of the key (for a value, of the key holding it).
+    pub at: String,
+    /// The old spelling as written.
+    pub old: &'static str,
+    /// What to write instead.
+    pub new: &'static str,
 }

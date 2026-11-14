@@ -30,7 +30,7 @@ model says "manifest". They are one artifact, not two.
 - **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
 - **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, scope `paths:` and the derived route.
 - **[Fault detection and reaction](#fault-detection-and-reaction)** — `hazards:`, `on_violation:`, `safe_state:`, and the FTTI arithmetic.
-- **[Operational modes](#operational-modes)** — `functions:`, `modes:`, the fallback sequence and per-mode `overrides:`.
+- **[Operational modes](#operational-modes)** — `capabilities:`, `modes:`, the fallback sequence and per-mode `overrides:`.
 - **[Static Validation](#static-validation)** — checker rules and example diagnostics.
 
 ## From Launch Files to Manifests
@@ -1267,7 +1267,7 @@ complete top-level vocabulary, and nothing else, is:
 | `external_topics` | [External Topics](#external-topics) |
 | `hazards` | [Fault detection and reaction](#fault-detection-and-reaction) |
 | `integrity_levels` | [Integrity scale](#integrity-scale) |
-| `functions`, `modes` | [Operational modes](#operational-modes) |
+| `capabilities`, `modes` | [Operational modes](#operational-modes) |
 | `acknowledged` | [Acknowledged findings](#acknowledged-findings) |
 
 > `exclude_patterns` was accepted here until phase 70. It had three
@@ -2142,7 +2142,7 @@ one requirement on a hazard, one reaction edge on the subscriber that
 detects, one fact on the reaction path. FDTI and FRTI are derived.
 
 ```yaml
-functions:
+capabilities:
   pose_estimation: { all_of: [/loc/ndt, /loc/gnss] }   # a redundant set
 
 hazards:
@@ -2150,7 +2150,7 @@ hazards:
     integrity: ASIL_D                      # from the HARA; consumed, never computed
     monitors:
       - /safety/scan                      # any guard faulting is the hazard …
-      - pose_estimation                   # … a function by name: this one faults when ALL its members do
+      - pose_estimation                   # … a capability by name: this one faults when ALL its members do
     on: omission                          # omission | late | loss | reported, or a list of them
     ftti: 500ms                           # physics: fault → hazardous event, absent reaction
     reaction: safety.stop                 # the event chain whose route reaches the safe state
@@ -2346,45 +2346,55 @@ node exactly as if nothing had been declared.
 
 ## Operational modes
 
-A hazard may **enter a mode** instead of reacting by one event chain, and
-then the fallback sequence *is* the reaction: `enters: <mode>`. Phase 71's
-single-path form, `reaction: <event chain>`, is the one-degradation level case,
-byte-identical. A hazard writes exactly one of the two. So `reaction`
-names a path wherever it appears: an event chain on a hazard and on a mode, a
-path of the subscriber's own node on `on_violation`.
+A hazard may **leave a mode** instead of reacting by one event chain, and
+then the mode's fallback sequence *is* the reaction: `leaves: <mode>`. Phase
+71's single-path form, `reaction: <event chain>`, is the one-degradation
+level case, byte-identical. A hazard writes exactly one of the two. So
+`reaction` names a path wherever it appears: an event chain on a hazard, on
+a mode and on a client's `on_timeout`/`on_rejected`, a path of the
+subscriber's own node on `on_violation`; and a mode is named by `leaves:`
+(the mode a fault takes away) or `enters:` (the mode or level a miss or a
+failed call falls to, `supervise.enters` and a client's `enters:`).
 
-Before v0.1.59 a hazard wrote the mode it enters as `reaction: <mode>`. That
-spelling still parses for one release; the checker tells it from a path by
-its lookup (a mode of the hazard's scope first), reports
-`deprecated-spelling` (warning) naming `enters:`, and `play_launch migrate`
-rewrites it. `enters:` naming something that is not a mode of the scope is
-`enters-unknown-mode` (error).
+Before v0.3.19 a hazard's `leaves:` was spelled `enters:`, the word
+`supervise.enters` uses in the opposite direction, and a client's mode was
+written `reaction: <mode>`. Both still parse for one release with
+`deprecated-spelling` (warning), and `play_launch migrate` rewrites them;
+the client's case is told from an event chain by the checker's lookup (a
+mode of the scope first). Before v0.1.59 a hazard wrote its mode as
+`reaction: <mode>`, refused since v0.3.15. `leaves:` naming something that
+is not a mode of the scope is `leaves-unknown-mode` (error).
 
-**A hazard enters a mode it takes away.** `enters-not-removed` (warning)
-fires when none of the functions the hazard's fault removes is one the
-entered mode `requires`: the hazard would then name a fallback sequence its
-own fault never starts. A function is removed when the hazard monitors it
-by name, or when the fault reaches one of its topics and its kind (a value
-function under `reported` or silence, a plain one under silence); a
+**A hazard leaves a mode it takes away.** `leaves-not-removed` (warning)
+fires when none of the capabilities the hazard's fault removes is one the
+mode `requires`: the hazard would then name a fallback sequence its own
+fault never starts. A capability is removed when the hazard monitors it by
+name, or when the fault reaches one of its topics and its kind (a value
+capability under `reported` or silence, a plain one under silence); a
 redundant group `{ all_of, m }` of n members that loses k of them is
 removed only when `n - k < m`. So a 2-of-2 group (`m: 2`) is removed by the
 loss of either member, and a 1-of-2 group (`m: 1`, the default) is not: a
-hazard on one member of a 1-of-2 group that `enters:` a mode requiring only
+hazard on one member of a 1-of-2 group that `leaves:` a mode requiring only
 that group is the warning. A bare topic in `requires:` is removed by
 silence on it.
 
-- `functions.<f>` names a **guard group**: what a set of topics together
-  provides. The three shapes are a bare topic, a list (any member lost is
-  the fault) and `{ all_of: [...] }` (lost only when every member is,
-  which needs at least two members).
-- `modes.<m>` carries `requires:` (the functions, or bare topics, the mode
-  needs — it is available while every one holds), `fallback:` (the ordered
-  fallback sequence to fall down when it is lost), `reaction:` (the event chain
-  reaching this mode's safe state), `overrides:` and `description:`.
+- `capabilities.<c>` (`functions:` before v0.3.19) names a **capability**:
+  what a set of topics together provides, available while they are and
+  lost when a fault removes them. The three shapes are a bare topic, a list
+  (any member lost is the fault) and `{ all_of: [...] }` (lost only when
+  every member is, which needs at least two members). The word is the
+  automated-driving literature's (capability monitoring); IEC 61508's
+  "safety function" is a detect-and-react function, which a capability is
+  not.
+- `modes.<m>` carries `requires:` (the capabilities, or bare topics, the
+  mode needs — it is available while every one holds), `fallback:` (the
+  ordered fallback sequence to fall down when it is lost), `reaction:` (the
+  event chain reaching this mode's safe state), `overrides:` and
+  `description:`.
 
 ```yaml
 version: 1
-functions:
+capabilities:
   pose_estimation: { all_of: [/loc/ndt, /loc/gnss] }
   trajectory: [/planning/trajectory]
   scan: /sensing/scan
@@ -2409,7 +2419,7 @@ hazards:
   lost_pose:
     monitors: [pose_estimation]
     ftti: 2s
-    enters: autonomous
+    leaves: autonomous
 ```
 
 **Each degradation level is judged in its own right.** A graded reaction is a promise,
@@ -2422,14 +2432,14 @@ guaranteed to reach. Autoware's real four-mode fallback sequence proves
 the emergency stop beneath it, the minimal risk condition, can.
 
 **A fallback sequence must terminate.** `fallback-without-mrc` (error) fires two ways:
-a mode a hazard enters with no `fallback:` at all, and — the one worth
+a mode a hazard leaves with no `fallback:` at all, and — the one worth
 stating — a **last degradation level that requires something the hazard's own monitors
 can take away**. That is not a minimal risk condition: losing the guard takes the whole
 fallback sequence with it. A degradation level naming a mode that does not exist, or a degradation level with
 no `reaction:` path of its own, is `reaction-unreachable`.
 
 **A mode that cannot fall is not a mode.** `mode-requires-unguarded`
-(error) fires when a mode requires a function no subscriber of which
+(error) fires when a mode requires a capability no subscriber of which
 declares an `on_violation`: nothing would notice it was lost, so the mode
 can never be declared unavailable and the fallback sequence below it can never be
 taken.
@@ -2442,13 +2452,13 @@ budget), so that all of them report the same verdict and the same binding
 row. The arithmetic of the last two steps is
 `ros_launch_manifest_derive::levels`.
 
-1. **The sequence.** A hazard that `enters: <mode>` runs that mode's
+1. **The sequence.** A hazard that `leaves: <mode>` runs that mode's
    `fallback:` levels in order, each by its own `reaction:`. A hazard with
    `reaction: <event chain>` runs one level, which is its minimal risk
    condition.
 2. **Skipped levels.** The hazard skips a level when the level `requires` a
-   function the fault removes, or when the level has `requires_lost:` and
-   the fault removes none of those functions. A skipped level is neither
+   capability the fault removes, or when the level has `requires_lost:` and
+   the fault removes none of those capabilities. A skipped level is neither
    judged nor charged, and it is not in the model's `degradation_levels`
    for that hazard.
 3. **One row per level run**: detection + every dwelling level run above
@@ -2478,12 +2488,12 @@ minimal risk condition on the floor, without a second hazard on the same
 monitor.
 
 **A level entered on a loss (`requires_lost:`).** `requires_lost: [f, ...]`
-makes a level available only while at least one of the named functions is
+makes a level available only while at least one of the named capabilities is
 lost (and every `requires` holds). A level that holds the lane while the
-main computer is gone lists that computer's function: a hazard that leaves
+main computer is gone lists that computer's capability: a hazard that leaves
 the computer running (an operating-domain condition) skips the level and
 is charged nothing for it, and the run time selects the level only while
-the function is lost. A name may not be in both lists (a parse error), and
+the capability is lost. A name may not be in both lists (a parse error), and
 the minimal risk condition may not have one: it must always be available
 (`requires-lost-at-mrc`).
 
@@ -2494,18 +2504,18 @@ parameter file the launch selects). `min` is the promise to whoever the
 level waits for (the level below starts no sooner); `max` is the longest
 the level lasts while available, and every level below is charged `max`.
 The parameter's launch value must lie in `[min, max]` (`dwell-param`).
-`advance: { holds: <function> }` lets the level go DOWN early: while the
-level is active, the function holding takes the next level at once, before
+`advance: { holds: <capability> }` lets the level go DOWN early: while the
+level is active, the capability holding takes the next level at once, before
 `min` (a deadline the situation shortens). It only shortens the level, so
 no charge changes; some node implementing the level must take the
-function's topic on a path trigger (`mode-advance-unwired`).
+capability's topic on a path trigger (`mode-advance-unwired`).
 
 **An exit back to a level above (`exit.to` a level).** An exit's `to` may
 name a level above the exiting one in a fallback sequence that lists both:
 the one reversible step, handing authority back to a constrained mode
 rather than to the top. Taking the exit re-enters that level: its dwell
 restarts, and what it commands applies again. A consumer adds no row and
-no term for a re-entry. The exit is taken only when its function holds,
+no term for a re-entry. The exit is taken only when its capability holds,
 which ends the episode the fault opened; a fault after the re-entry is
 walked from the top like any other, and its rows already bound it (the
 re-entered level's remaining dwell is at most its `max`, which the rows
@@ -2553,9 +2563,9 @@ bundled extension `vehicle.braking`, which the contract names in `use:`.
 ```yaml
 version: 1
 use: { vehicle.braking: "^1" }
-functions:
+capabilities:
   hpc_alive: [/system/operation_mode/availability]
-  hpc_in_odd:                                  # a VALUE function
+  hpc_in_odd:                                  # a VALUE capability
     of: [/system/operation_mode/availability]
     when: { field: autonomous, equals: false } # the predicate that LOSES it
   driver_took_over:
@@ -2568,7 +2578,7 @@ hazards:
     when: { field: autonomous, equals: false }
     entry_speed: 30 km/h                       # the speed bound (vehicle.braking)
     ftti: 30s
-    enters: l3_engaged
+    leaves: l3_engaged
 modes:
   l3_engaged:
     requires: [hpc_alive, hpc_in_odd]
@@ -2606,15 +2616,15 @@ path reaches into nested messages) and exactly one operator of `equals`,
 The constant is a bool, a number, a string, or -- in upper snake case -- a
 message constant name (`MANUAL`), resolved against the `.msg` that declares
 the field. There are no conjunctions: a second condition is a second
-function. On a hazard it is the value that IS the fault; on a function
-(`{ of: [...], when: {...} }`) it is the predicate that LOSES the function,
-which is also lost by silence. So a function that should HOLD on a value is
+capability. On a hazard it is the value that IS the fault; on a capability
+(`{ of: [...], when: {...} }`) it is the predicate that LOSES the capability,
+which is also lost by silence. So a capability that should HOLD on a value is
 written with the negated operator, as `driver_took_over` is above.
 
-**Which fault removes which function.** A `reported` fault removes the value
-functions on its topic; an omission, late or loss fault removes both kinds,
+**Which fault removes which capability.** A `reported` fault removes the value
+capabilities on its topic; an omission, late or loss fault removes both kinds,
 because silence also means "not known to be in range". The fallback sequence a hazard
-takes skips every degradation level that requires a removed function, and neither checks
+takes skips every degradation level that requires a removed capability, and neither checks
 nor charges it: above, `hpc_loss` (omission) lands straight on
 `emergency_stop`, while `odd_exit` waits out the takeover request.
 
@@ -2635,7 +2645,7 @@ first hop charged the tick (period plus release jitter) on top of its
 `max_latency`, whichever node detected the fault: the detector starts the
 fallback sequence, the owner ends the dwell. The window ends where the
 deadline is, not where the node notices it, which is why the notice is never
-charged twice. A degradation level left early because a function it requires is lost
+charged twice. A degradation level left early because a capability it requires is lost
 (the fault that removes it) is not waited out; its fallback sequence falls to the degradation level
 that fault lands on. It is never a safe state, so it is never the minimal risk condition, and
 it has no settle; what it costs -- its route plus its window -- is charged to
@@ -2643,13 +2653,13 @@ every degradation level below it. Written out: the degradation level below start
 `duration` after the degradation level went on, and no later than
 `route + duration + route below` after the fault was detected.
 
-**`exit: { holds: <function>, to: <mode> }`** is allowed only on a windowed
+**`exit: { holds: <capability>, to: <mode> }`** is allowed only on a windowed
 degradation level (a parse error otherwise), so the grammar still has no general
-transitions. While the degradation level is active, the function holding ends the fallback sequence
+transitions. While the degradation level is active, the capability holding ends the fallback sequence
 in `to`, which is outside every `fallback:` list or (since v0.3.18) a level
 above this one in a sequence that lists both, re-entered (see "Which levels
 a hazard runs" above). Before v0.1.59 the
-function was written `on:`; that spelling still parses for one release, with
+capability was written `on:`; that spelling still parses for one release, with
 a `deprecated-spelling` warning (`on` names fault classes everywhere else:
 `hazards.<h>.on`, `on_violation.on`), and `play_launch migrate` rewrites it.
 
@@ -2693,10 +2703,10 @@ The consumer's rules for these keys:
 | `dwell-unbound` | Warning | A `min_dwell` with no `param:` |
 | `dwell-expiry` | Error / Warning | The route of a degradation level below a dwelling level does not start at the node the dwell's `param:` names and no timer path of that node reaches the level's output, or it starts there with an input path that charges the node less than the period of its timer that publishes the dwelling level's output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the dwelling level's output and none reaches the level below, so when the deadline is noticed is undeclared (warning). A timer path of the owner that reaches the level below is its route from the deadline, the tick charged on its first hop, whichever node detected the fault |
 | `mode-exit-target` | Error | `to:` is not a mode, or is a degradation level of a fallback sequence that does not list the exiting level above it (v0.3.18: a level above the exiting one in the same sequence is a re-entry) |
-| `mode-advance-unwired` | Error | No node publishing the dwelling level's reaction output takes the `advance` function's topic on a path trigger (v0.3.18) |
+| `mode-advance-unwired` | Error | No node publishing the dwelling level's reaction output takes the `advance` capability's topic on a path trigger (v0.3.18) |
 | `requires-lost-at-mrc` | Error | The last degradation level of a fallback sequence has a `requires_lost:` (v0.3.18) |
 | `level-within` | Error | A level's row (detection + the dwelling levels above + route + settle) exceeds its own `within` (v0.3.18) |
-| `mode-exit-unwired` | Error | No node publishing the degradation level's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
+| `mode-exit-unwired` | Error | No node publishing the degradation level's reaction output takes the exit capability's topic on a path trigger, so there is no take to trace |
 | `degradation-level-time` | Error | Now cumulative: detection + every degradation level with a `min_dwell` passed (route + dwell, a range's `max`) + the degradation level's route + settle, against the interval. Not on a dwelling level, which is judged against its own `within` only |
 | `settle-derived` | Info | The derivation's trace, printed (any extension's settle) |
 | `settle-entry-missing` | Warning | A derived settle reached by a hazard that writes no value for a key the derivation needs (a braking profile and no `entry_speed`) |
@@ -2757,7 +2767,7 @@ across manifest files. The ones that bear on this document:
 | `derivable-criticality`, `criticality-mismatch`, `integrity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale | Info/Warning/Error |
 | `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
 | `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path | Error |
-| `enters-not-removed` | A hazard `enters:` a mode none of whose `requires:` its fault removes, a redundant group's `m` counted (`n - k < m`) | Warning |
+| `leaves-not-removed` | A hazard `leaves:` a mode none of whose `requires:` its fault removes, a redundant group's `m` counted (`n - k < m`) | Warning |
 | `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, re-run after merge | Error/Warning |
 
 A mode with `overrides:` re-runs the requirement checks on the modified

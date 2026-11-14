@@ -23,10 +23,44 @@ struct ValuePass {
     refs: Vec<ValueRef>,
     lets: Vec<String>,
     node: Option<String>,
+    spellings: Vec<DeprecatedSpelling>,
 }
 
 thread_local! {
     static VALUE_PASS: std::cell::RefCell<ValuePass> = std::cell::RefCell::new(ValuePass::default());
+}
+
+/// An old spelling read for one release (the S3 rename, v0.3.19); the
+/// consumer warns.
+fn note_spelling(at: String, old: &'static str, new: &'static str) {
+    VALUE_PASS.with(|p| {
+        p.borrow_mut()
+            .spellings
+            .push(DeprecatedSpelling { at, old, new })
+    });
+}
+
+/// The key `new`, or its old spelling `old` read for one release (noted
+/// for the consumer's `deprecated-spelling`). Returns the key the document
+/// wrote, `new` when it wrote neither; both is an error naming the new key.
+fn spelled_key(
+    doc: &Yaml,
+    ctx: &str,
+    old: &'static str,
+    new: &'static str,
+) -> Result<&'static str, ParseError> {
+    if doc[old].is_badvalue() {
+        return Ok(new);
+    }
+    if !doc[new].is_badvalue() {
+        return Err(field_err(
+            ctx,
+            old,
+            &format!("`{old}:` is the old spelling of `{new}:` -- write `{new}:` alone"),
+        ));
+    }
+    note_spelling(format_path(ctx, old), old, new);
+    Ok(old)
 }
 
 /// A scalar that reads the launch tree or a `let:` entry: its text.
@@ -212,6 +246,12 @@ pub fn parse_manifest_str_with_values(
     let result = with_unknown_keys_collected(|| parse_manifest_yaml(&docs[0], ""));
     let pass = VALUE_PASS.with(|p| std::mem::replace(&mut *p.borrow_mut(), outer));
     let mut m = result?;
+    let mut seen_at = std::collections::BTreeSet::new();
+    m.deprecated_spellings = pass
+        .spellings
+        .into_iter()
+        .filter(|s| seen_at.insert(s.at.clone()))
+        .collect();
     crate::transport::apply_links(&mut m, &BTreeMap::new())?;
     let mut seen = std::collections::BTreeSet::new();
     m.value_refs = pass
@@ -472,6 +512,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
     let manifest = Manifest {
         lets,
         value_refs: Vec::new(),
+        deprecated_spellings: Vec::new(),
         version: yaml_u32(doc, "version", ctx)?.unwrap_or(1),
         rlm: if ctx.is_empty() {
             doc["rlm"].as_str().map(str::to_string)
@@ -1436,7 +1477,7 @@ fn parse_hazard_guard(v: &Yaml, ctx: &str, key: &str) -> Result<MonitorGroup, Pa
         return Err(type_err(
             ctx,
             key,
-            "a topic name, a list of them, or the name of a function",
+            "a topic name, a list of them, or the name of a capability",
             v,
         ));
     }
@@ -1445,16 +1486,18 @@ fn parse_hazard_guard(v: &Yaml, ctx: &str, key: &str) -> Result<MonitorGroup, Pa
 
 fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, FunctionDecl>, ParseError> {
     let mut out = BTreeMap::new();
-    let section = &doc["functions"];
+    // S3 (v0.3.19): `functions:` is the old spelling of `capabilities:`.
+    let key = spelled_key(doc, ctx, "functions", "capabilities")?;
+    let section = &doc[key];
     if section.is_badvalue() {
         return Ok(out);
     }
     let hash = section
         .as_hash()
-        .ok_or_else(|| type_err(ctx, "functions", "a mapping", section))?;
+        .ok_or_else(|| type_err(ctx, key, "a mapping", section))?;
     for (k, v) in hash {
         let name = yaml_str_owned(k);
-        let fctx = format_path(ctx, &format!("functions.{name}"));
+        let fctx = format_path(ctx, &format!("{key}.{name}"));
         out.insert(name, parse_function(v, &fctx)?);
     }
     Ok(out)
@@ -1471,7 +1514,7 @@ fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, FunctionDec
 fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
     let Yaml::Hash(_) = v else {
         return Ok(FunctionDecl {
-            group: parse_guard_group(v, ctx, "functions.<name>")?,
+            group: parse_guard_group(v, ctx, "capabilities.<name>")?,
             when: None,
             m: None,
         });
@@ -1487,7 +1530,7 @@ fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
     }
     match (has("all_of"), has("of"), has("when")) {
         (true, false, false) => {
-            let group = parse_guard_group(v, ctx, "functions.<name>")?;
+            let group = parse_guard_group(v, ctx, "capabilities.<name>")?;
             let m = match yaml_u32(v, "m", ctx)? {
                 None => None,
                 Some(m) if m >= 1 && (m as usize) <= group.members.len() => Some(m),
@@ -1512,7 +1555,7 @@ fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
         (true, _, _) => Err(field_err(
             ctx,
             "all_of",
-            "a redundant group takes no `of:` or `when:` -- a value function is `{ of: [...], \
+            "a redundant group takes no `of:` or `when:` -- a value capability is `{ of: [...], \
              when: {...} }`, lost by value on ANY member, and a redundant group is lost only by \
              silence",
         )),
@@ -1522,7 +1565,7 @@ fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
                 return Err(field_err(
                     ctx,
                     "of",
-                    "a value function reads at least one topic",
+                    "a value capability reads at least one topic",
                 ));
             }
             Ok(FunctionDecl {
@@ -1548,7 +1591,7 @@ fn parse_function(v: &Yaml, ctx: &str) -> Result<FunctionDecl, ParseError> {
         (false, false, false) => Err(field_err(
             ctx,
             "all_of",
-            "an empty mapping -- a function is a topic, a list, `{ all_of: [...] }` or \
+            "an empty mapping -- a capability is a topic, a list, `{ all_of: [...] }` or \
              `{ of: [...], when: {...} }`",
         )),
     }
@@ -1613,7 +1656,7 @@ fn parse_predicate_map(section: &Yaml, pctx: &str) -> Result<ValuePredicate, Par
                 named[1],
                 &format!(
                     "{} operators ({}) -- a predicate has exactly one. There are no \
-                     conjunctions: a second condition is a second function",
+                     conjunctions: a second condition is a second capability",
                     many.len(),
                     named.join(", ")
                 ),
@@ -1752,7 +1795,7 @@ fn parse_independence(doc: &Yaml, ctx: &str) -> Result<Vec<IndependenceDecl>, Pa
             return Err(field_err(
                 &ictx,
                 "of",
-                "independence is between at least two nodes or functions",
+                "independence is between at least two nodes or capabilities",
             ));
         }
         let mut not_sharing: Vec<SharedFact> = Vec::new();
@@ -1902,7 +1945,7 @@ fn parse_advance(doc: &Yaml, ctx: &str) -> Result<Option<ModeAdvance>, ParseErro
         return Err(type_err(
             ctx,
             "advance",
-            "a mapping `{ holds: <function> }`",
+            "a mapping `{ holds: <capability> }`",
             section,
         ));
     };
@@ -1911,7 +1954,7 @@ fn parse_advance(doc: &Yaml, ctx: &str) -> Result<Option<ModeAdvance>, ParseErro
         field_err(
             actx,
             "holds",
-            "required: the function whose holding leaves the level early, to the next level",
+            "required: the capability whose holding leaves the level early, to the next level",
         )
     })?;
     Ok(Some(ModeAdvance { holds }))
@@ -2020,7 +2063,7 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
         return Err(type_err(
             ctx,
             "exit",
-            "a mapping `{ holds: <function>, to: <mode> }`",
+            "a mapping `{ holds: <capability>, to: <mode> }`",
             section,
         ));
     };
@@ -2029,7 +2072,7 @@ fn parse_exit(doc: &Yaml, ctx: &str) -> Result<Option<ModeExit>, ParseError> {
         field_err(
             ectx,
             "holds",
-            "required: the function whose holding ends the fallback sequence",
+            "required: the capability whose holding ends the fallback sequence",
         )
     })?;
     let to = yaml_string(section, "to", ectx)?.ok_or_else(|| {
@@ -2276,17 +2319,19 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
                 })?)
             }
         };
-        // v0.1.59: a hazard either enters a mode (the ladder) or reacts by
-        // one scope path, never both. `reaction:` naming a mode is the old
-        // spelling of `enters:`; the consumer tells the two apart by lookup.
-        let enters = yaml_string(v, "enters", &hctx)?;
+        // v0.1.59: a hazard either leaves a mode (its fallback sequence) or
+        // reacts by one event chain, never both. S3 (v0.3.19): `enters:` is
+        // the old spelling of `leaves:` (it named the mode the fault takes
+        // away, while `supervise.enters` names the level a miss enters).
+        let leaves_key = spelled_key(v, &hctx, "enters", "leaves")?;
+        let enters = yaml_string(v, leaves_key, &hctx)?;
         let reaction = yaml_string(v, "reaction", &hctx)?;
         if enters.is_some() && reaction.is_some() {
             return Err(field_err(
                 &hctx,
-                "enters",
-                "a hazard either enters a mode (`enters: <mode>`, its fallback sequence) or \
-                 reacts by one event chain (`reaction: <path>`), not both -- keep one",
+                leaves_key,
+                "a hazard either leaves a mode (`leaves: <mode>`, its fallback sequence) or \
+                 reacts by one event chain (`reaction: <chain>`), not both -- keep one",
             ));
         }
         out.insert(
@@ -2885,6 +2930,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     }
     reject_unknown_keys(yaml, ctx, Context::Endpoint)?;
     let (min_interarrival, budget, budget_period) = parse_input_release(yaml, ctx)?;
+    let on_rejected = parse_call_reaction(yaml, "on_rejected", ctx)?;
     let props = EndpointProps {
         min_rate_hz: yaml_rate_bound(yaml, "min_rate_hz", ctx, Context::Endpoint)?,
         max_rate_hz: yaml_rate_bound(yaml, "max_rate_hz", ctx, Context::Endpoint)?,
@@ -2904,7 +2950,8 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         call: parse_call_mode(yaml, ctx)?,
         timeout: parse_call_timeout(yaml, ctx)?,
         on_timeout: parse_on_timeout(yaml, ctx)?,
-        on_rejected: parse_call_reaction(yaml, "on_rejected", ctx)?,
+        on_rejected: on_rejected.as_ref().map(|t| t.0.clone()),
+        on_rejected_enters: on_rejected.is_some_and(|t| t.1),
     };
     if let (Some(gap), Some(need)) = (
         props.min_interarrival,
@@ -3011,9 +3058,34 @@ fn parse_call_timeout(doc: &Yaml, ctx: &str) -> Result<Option<CallTimeout>, Pars
     Ok(Some(CallTimeout { duration, read }))
 }
 
-/// A client's `{ reaction: <mode | scope path> }` at `doc[key]` (since
-/// v0.2.5): `on_rejected`, and `on_timeout.then`.
-fn parse_call_reaction(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String>, ParseError> {
+/// One of `enters: <mode>` and `reaction: <event chain>` in a client's
+/// reaction (S3, v0.3.19): the target and whether `enters:` was written.
+/// Which kind the name is, the consumer decides by lookup, as for a hazard;
+/// a mode under `reaction:` is the old spelling it reports.
+fn call_target(section: &Yaml, ctx: &str) -> Result<Option<(String, bool)>, ParseError> {
+    let enters = yaml_string(section, "enters", ctx)?.filter(|r| !r.is_empty());
+    let reaction = yaml_string(section, "reaction", ctx)?.filter(|r| !r.is_empty());
+    match (enters, reaction) {
+        (Some(_), Some(_)) => Err(field_err(
+            ctx,
+            "enters",
+            "a call either falls to a mode (`enters: <mode>`) or runs an event chain \
+             (`reaction: <chain>`), not both -- keep one",
+        )),
+        (Some(m), None) => Ok(Some((m, true))),
+        (None, Some(r)) => Ok(Some((r, false))),
+        (None, None) => Ok(None),
+    }
+}
+
+/// A client's `{ enters: <mode> }` or `{ reaction: <event chain> }` at
+/// `doc[key]` (since v0.2.5; `enters` since v0.3.19): `on_rejected`, and
+/// `on_timeout.then`.
+fn parse_call_reaction(
+    doc: &Yaml,
+    key: &str,
+    ctx: &str,
+) -> Result<Option<(String, bool)>, ParseError> {
     let section = &doc[key];
     if section.is_badvalue() {
         return Ok(None);
@@ -3023,22 +3095,22 @@ fn parse_call_reaction(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<String
         return Err(field_err(
             ctx,
             key,
-            "expected a mapping `{ reaction: <mode | event chain> }`",
+            "expected a mapping `{ enters: <mode> }` or `{ reaction: <event chain> }`",
         ));
     }
     reject_unknown_keys(section, rctx, Context::CallReaction)?;
-    let reaction = yaml_string(section, "reaction", rctx)?.filter(|r| !r.is_empty());
-    reaction.map(Some).ok_or_else(|| {
+    call_target(section, rctx)?.map(Some).ok_or_else(|| {
         field_err(
             rctx,
-            "reaction",
-            "required: the mode the hazard falls to, or the event chain that runs",
+            "enters",
+            "required: the mode the call falls to (`enters:`), or the event chain that runs \
+             (`reaction:`)",
         )
     })
 }
 
-/// `on_timeout:` on a client (since v0.2.5): `{ reaction }`, or `{ retry: {
-/// attempts, backoff }, then: { reaction } }`. A retry with no `attempts` or
+/// `on_timeout:` on a client (since v0.2.5): `{ enters | reaction }`, or `{ retry: {
+/// attempts, backoff }, then: { enters | reaction } }`. A retry with no `attempts` or
 /// no `then:` parses: whether it bounds a route is the consumer's question
 /// (`call-retry-unbounded`), asked only of a call on a reaction route.
 fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseError> {
@@ -3051,20 +3123,23 @@ fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseErr
         return Err(field_err(
             ctx,
             "on_timeout",
-            "expected a mapping `{ reaction: <mode | event chain> }` or `{ retry: { attempts, \
-             backoff }, then: { reaction } }`",
+            "expected a mapping `{ enters: <mode> }`, `{ reaction: <event chain> }` or `{ \
+             retry: { attempts, backoff }, then: { enters | reaction } }`",
         ));
     }
     reject_unknown_keys(section, octx, Context::OnTimeout)?;
-    let reaction = yaml_string(section, "reaction", octx)?;
+    let target = call_target(section, octx)?;
     let has_retry = !section["retry"].is_badvalue();
     let has_then = !section["then"].is_badvalue();
-    if reaction.is_some() && (has_retry || has_then) {
+    if target.is_some() && (has_retry || has_then) {
+        let key = if target.as_ref().is_some_and(|t| t.1) { "enters" } else { "reaction" };
         return Err(field_err(
             octx,
-            "reaction",
-            "`reaction:` is what the code does when the first wait passes; with `retry:` the \
-             reaction comes after the last attempt, so write it as `then: { reaction }`",
+            key,
+            &format!(
+                "`{key}:` is what the code does when the first wait passes; with `retry:` the \
+                 reaction comes after the last attempt, so write it as `then: {{ {key} }}`"
+            ),
         ));
     }
     if has_then && !has_retry {
@@ -3072,20 +3147,21 @@ fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseErr
             octx,
             "then",
             "`then:` is what the code does after its retries; without `retry:` write \
-             `reaction:` directly",
+             `enters:` or `reaction:` directly",
         ));
     }
     if !has_retry {
-        let Some(r) = reaction.filter(|r| !r.is_empty()) else {
+        let Some((r, enters)) = target else {
             return Err(field_err(
                 octx,
-                "reaction",
-                "required: the mode the hazard falls to, or the event chain that runs, when \
-                 the wait passes (or `retry:` with `then:`)",
+                "enters",
+                "required: the mode the call falls to (`enters:`), or the event chain that \
+                 runs (`reaction:`), when the wait passes (or `retry:` with `then:`)",
             ));
         };
         return Ok(Some(OnTimeout {
             reaction: Some(r),
+            enters,
             retry: None,
         }));
     }
@@ -3128,7 +3204,8 @@ fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseErr
     };
     let then = parse_call_reaction(section, "then", octx)?;
     Ok(Some(OnTimeout {
-        reaction: then,
+        enters: then.as_ref().is_some_and(|t| t.1),
+        reaction: then.map(|t| t.0),
         retry: Some(retry),
     }))
 }
@@ -5061,6 +5138,51 @@ hazards:
     /// `on_demand: true` is a publisher's
     /// statement that it promises no rate; beside a `min_rate_hz`, or on a
     /// subscriber, it is refused.
+    /// S3 (v0.3.19): both spellings of one key are an error naming the new
+    /// one; a client names a mode with `enters:` and an event chain with
+    /// `reaction:`, never both.
+    #[test]
+    fn s3_old_and_new_spelling_together_are_refused() {
+        for (yaml, needle) in [
+            (
+                "functions: { a: [/t] }\ncapabilities: { b: [/u] }\n",
+                "`functions:` is the old spelling of `capabilities:`",
+            ),
+            (
+                "hazards:\n  h: { monitors: [/t], enters: m, leaves: m }\n",
+                "`enters:` is the old spelling of `leaves:`",
+            ),
+            (
+                "hazards:\n  h: { monitors: [/t], leaves: m, reaction: c }\n",
+                "either leaves a mode",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      c: { timeout: 1s, on_timeout: { enters: m, reaction: c } }\n",
+                "either falls to a mode",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      c: { on_rejected: {} }\n",
+                "required: the mode the call falls to",
+            ),
+        ] {
+            let err = super::parse_manifest_str(yaml)
+                .expect_err(yaml)
+                .to_string();
+            assert!(err.contains(needle), "{yaml}: {err}");
+        }
+        let m = super::parse_manifest_str(
+            "capabilities: { a: [/t] }\nhazards:\n  h: { monitors: [a], leaves: m }\nnodes:\n  n:\n    cli:\n      c: { timeout: 1s, on_timeout: { enters: m }, on_rejected: { reaction: chain } }\n",
+        )
+        .unwrap();
+        assert!(m.functions.contains_key("a"));
+        assert_eq!(m.hazards["h"].enters.as_deref(), Some("m"));
+        let c = &m.nodes["n"].cli["c"];
+        assert!(c.on_timeout.as_ref().unwrap().enters);
+        assert_eq!(c.on_rejected.as_deref(), Some("chain"));
+        assert!(!c.on_rejected_enters);
+        assert!(m.deprecated_spellings.is_empty());
+    }
+
     #[test]
     fn on_demand_is_a_publishers_statement() {
         let m = super::parse_manifest_str(
@@ -6117,7 +6239,7 @@ nodes:
         assert!(e.contains("no operator"), "{e}");
         let e = err_of(&h("{ field: speed, gt: 1.0, lt: 5.0 }"));
         assert!(
-            e.contains("exactly one") && e.contains("second function"),
+            e.contains("exactly one") && e.contains("second capability"),
             "{e}"
         );
         let e = err_of(&h("{ field: autonomous, lt: false }"));
@@ -6160,7 +6282,7 @@ nodes:
 
     #[test]
     fn a_function_map_is_closed() {
-        let f = |body: &str| format!("version: 1\nfunctions:\n  f: {body}\n");
+        let f = |body: &str| format!("version: 1\ncapabilities:\n  f: {body}\n");
         let e = err_of(&f("{ of: [/t] }"));
         assert!(e.contains("without `when:`"), "{e}");
         let e = err_of(&f("{ when: { field: a, equals: 1 } }"));
@@ -6170,7 +6292,7 @@ nodes:
         let e = err_of(&f("{ of: [], when: { field: a, equals: 1 } }"));
         assert!(e.contains("at least one topic"), "{e}");
         let e = err_of(&f("{ any_of: [/a] }"));
-        assert!(e.contains("unknown key in `functions.<name>`"), "{e}");
+        assert!(e.contains("unknown key in `capabilities.<name>`"), "{e}");
         // The phase-75 shapes are unchanged.
         let m = parse_manifest_str(&f("{ all_of: [/a, /b] }")).unwrap();
         assert!(m.functions["f"].group.all_of && m.functions["f"].when.is_none());
@@ -6503,26 +6625,29 @@ nodes:
         assert!(e.contains("modes.m.advance"), "{e}");
     }
 
-    /// v0.1.59 (phase 90 G4): a hazard enters a mode or reacts by one scope
-    /// path, never both. `reaction:` keeps parsing whatever it names; the
-    /// consumer tells a mode from a path by lookup.
+    /// v0.1.59 (phase 90 G4): a hazard leaves a mode (`enters:` before
+    /// v0.3.19) or reacts by one event chain, never both. `reaction:` keeps
+    /// parsing whatever it names; the consumer tells a mode from a path by
+    /// lookup.
     #[test]
-    fn a_hazard_enters_a_mode_or_reacts_by_a_path_not_both() {
+    fn a_hazard_leaves_a_mode_or_reacts_by_a_path_not_both() {
         let h = |body: &str| format!("version: 1\nhazards:\n  h:\n{body}");
-        let m = parse_manifest_str(&h("    enters: driving\n")).unwrap();
-        let d = &m.hazards["h"];
-        assert_eq!(
-            (d.enters.as_deref(), d.reaction.as_deref(), d.entry_key()),
-            (Some("driving"), None, "enters")
-        );
-        assert_eq!(d.entry().map(String::as_str), Some("driving"));
+        for key in ["leaves", "enters"] {
+            let m = parse_manifest_str(&h(&format!("    {key}: driving\n"))).unwrap();
+            let d = &m.hazards["h"];
+            assert_eq!(
+                (d.enters.as_deref(), d.reaction.as_deref(), d.entry_key()),
+                (Some("driving"), None, "leaves")
+            );
+            assert_eq!(d.entry().map(String::as_str), Some("driving"));
+        }
         let m = parse_manifest_str(&h("    reaction: safety.stop\n")).unwrap();
         let d = &m.hazards["h"];
         assert_eq!(
             (d.entry().map(String::as_str), d.entry_key()),
             (Some("safety.stop"), "reaction")
         );
-        let e = err_of(&h("    enters: driving\n    reaction: safety.stop\n"));
+        let e = err_of(&h("    leaves: driving\n    reaction: safety.stop\n"));
         assert!(e.contains("not both"), "{e}");
     }
 
