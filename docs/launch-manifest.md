@@ -600,15 +600,17 @@ full composition and checking rules.
 have subscribers with very different transport latency: an
 intra-process subscriber sees ~0ms, a same-machine SHM subscriber sees
 < 1ms, and a cross-network subscriber sees 5–10ms. To express this,
-`max_transport` is declared **on the subscriber endpoint**. The checker
-uses it as the edge weight from the publisher to that subscriber in
-critical-path computation:
+each subscriber endpoint names the **link** its hop crosses, and the
+link's `max_transport` is that subscriber's. The checker uses it as the
+edge weight from the publisher to that subscriber in critical-path
+computation:
 
 ```
-edge[pub → sub].transport = sub.max_transport
-                         ?? topic.max_transport   # deprecated (v0.1.60)
-                         ?? 0
+edge[pub → sub].transport = links[sub.link].max_transport ?? 0
 ```
+
+(A topic-level `max_transport` was refused in v0.3.15, one written on the
+subscriber itself in v0.3.17; `play_launch migrate` rewrites both.)
 
 Critical path becomes per-sink:
 `latency = max_pred( pred.latency + edge[pred → node].transport )
@@ -621,19 +623,21 @@ topics:
     pub: [lidar/output]
     sub: [perception/input, debug_recorder/input, remote_viz/input]
 
+links:
+  in_process: { max_transport: 0ms }   # intra-process
+  shm: { max_transport: 1ms }          # same-machine SHM
+  network: { max_transport: 10ms }     # the network
+
 nodes:
   perception:
     sub:
-      input:
-        max_transport: 0ms             # intra-process
+      input: { link: in_process }
   debug_recorder:
     sub:
-      input:
-        max_transport: 1ms             # same-machine SHM
+      input: { link: shm }
   remote_viz:
     sub:
-      input:
-        max_transport: 10ms            # the network
+      input: { link: network }
 ```
 
 The transport is sub-side only — a publisher does not know which
@@ -666,9 +670,9 @@ both `link:` and `max_transport:` on one subscriber is refused. A
 best-effort link (serial, TCP, DDS between processes or hosts) has no
 derivable worst case; its bound is measured, and a link with no
 `source:` is `link-unsourced` (a warning). A `max_transport` written on
-a subscriber instead is deprecated since v0.3.16 (`deprecated-spelling`,
-a warning; it was the info `transport-inline` from v0.3.4) and refused at
-the next release; `play_launch migrate` writes the link.
+a subscriber instead is refused since v0.3.17 (the info
+`transport-inline` from v0.3.4, deprecated in v0.3.16); `play_launch
+migrate` writes the link.
 No runtime monitor holds a link: the bound is measured and sourced, and
 `play_launch check --against <run>` holds it (`transport-exceeded`, an
 error, when a message in the run took longer). `monitor:` is parsed and
@@ -2634,7 +2638,6 @@ second table.
 | 19 | `jitter-range` (70 W2) | `min_latency` above `max_latency`; both bounds declared and `max_latency - min_latency > max_jitter` (errors); `max_jitter` with no `min_latency`, so the bound is unverifiable (info — an absent floor is unknown, not zero) | Error/Info |
 | 20 | `drop-tightness` (90 G3) | A topic on an event chain's route (in the same manifest) permits a larger drop rate (`max_count`) than the event chain's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
 | 21 | `link-unsourced` (v0.3.4) | A link (`links:`) whose `max_transport` states no `source:`: a best-effort transport has no derivable worst case, so its number is evidence only with the measurement it came from | Warning |
-| 22 | `transport-inline` (v0.3.4) | A `max_transport` written on a subscriber rather than named through a link; reported as `deprecated-spelling` since v0.3.16, refused at the next release | Warning |
 
 The cross-scope rules run in the consumer's merge layer
 (`ros-launch-resolve`, invoked by `play_launch check`), which has the

@@ -588,13 +588,13 @@ pub const FIELDS: &[Field] = &[
         "max_transport",
         Context::Endpoint,
         Kind::Requirement,
-        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber (one topic does not have one cost: in-process, another process, another machine). Written here it is deprecated since v0.3.16 (`deprecated-spelling`) and refused at the next release: name a link (`link:`), which states the number once with its source; `migrate` writes the link. Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
+        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber (one topic does not have one cost: in-process, another process, another machine). Not written on the subscriber since v0.3.17 (deprecated in v0.3.16): the subscriber names a link (`link:`), which states the number once with its source, and the link's value is the subscriber's; `migrate` writes the link. Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
     ),
     live(
         "link",
         Context::Endpoint,
         Kind::Fact,
-        "Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A `max_transport` written on the subscriber instead is deprecated since v0.3.16.",
+        "Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A `max_transport` written on the subscriber instead is refused since v0.3.17.",
     ),
     removed(
         "max_transport_ms",
@@ -1932,7 +1932,7 @@ pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[];
 /// the retirement debt hid). `(what, release)`; the same test holds them to
 /// the schedule. A subscriber's `max_transport` is deprecated while a
 /// client's is not, and both are the `Endpoint` row.
-pub const DEPRECATED_USES: &[(&str, &str)] = &[("nodes.<n>.sub.<ep>.max_transport", "0.3.16")];
+pub const DEPRECATED_USES: &[(&str, &str)] = &[];
 
 /// Keys added since v0.1.49, with the release that added each: what the
 /// format reference prints beside them. A column on

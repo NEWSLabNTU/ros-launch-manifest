@@ -5545,11 +5545,14 @@ nodes:
     sub:
       pointcloud:
         qos: { reliability: reliable }
-        max_transport: 0ms
+        link: in_process
   remote_viz:
     sub:
       pointcloud:
-        max_transport: 10ms
+        link: network
+links:
+  in_process: { max_transport: 0ms }
+  network: { max_transport: 10ms }
 "#;
         let m = parse_manifest_str(yaml).unwrap();
         let lidar_pub = &m.nodes["lidar"].publishers["pointcloud"];
@@ -6519,6 +6522,11 @@ modes:
   tor:
     requires: []
     min_dwell: { duration: 10s, param: n.timeout, source: requirement }
+links:
+  serial:
+    max_transport:
+      duration: 56ms
+      source: { measured: { max: 46.42ms, n: 12, margin: 0.2 } }
 nodes:
   n:
     params:
@@ -6529,9 +6537,7 @@ nodes:
     sub:
       a:
         max_age: { duration: 500ms, param: timeout, source: requirement }
-        max_transport:
-          duration: 56ms
-          source: { measured: { max: 46.42ms, n: 12, margin: 0.2 } }
+        link: serial
         on_violation:
           reaction: react
           within: { duration: 149ms, source: derived }

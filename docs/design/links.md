@@ -54,7 +54,7 @@ topics:
   of overlap) and is reported as `transport-inline` (info) suggesting a link.
   (Superseded: the overlap was never scheduled. The topic's was refused in
   v0.3.15; the subscriber's is `deprecated-spelling` since v0.3.16 and
-  refused at the next release, play_launch phase 104 S1.)
+  refused in v0.3.17, play_launch phase 104 S1.)
 
 ### L2. One reader for transport
 

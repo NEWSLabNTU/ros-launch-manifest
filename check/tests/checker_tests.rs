@@ -2665,7 +2665,7 @@ fn test_registry_has_no_placeholder_rules() {
         !ids.iter().any(|id| id == "consistency"),
         "the no-op `consistency` rule must not be registered: {ids:?}"
     );
-    assert_eq!(ids.len(), 21, "registered rules: {ids:?}");
+    assert_eq!(ids.len(), 20, "registered rules: {ids:?}");
     let mut sorted = ids.clone();
     sorted.sort();
     sorted.dedup();
@@ -2707,11 +2707,11 @@ services:
 }
 
 /// v0.3.4 (play_launch phase 97): a link with no `source:` is
-/// `link-unsourced`; a subscriber's own `max_transport` is
-/// `deprecated-spelling` (an info, `transport-inline`, until v0.3.16); a
-/// subscriber that names a sourced link is neither.
+/// `link-unsourced`; a subscriber that names a sourced link is not. A
+/// subscriber's own `max_transport` (the info `transport-inline` from
+/// v0.3.4, `deprecated-spelling` at v0.3.16) is refused since v0.3.17.
 #[test]
-fn links_are_sourced_and_inline_transport_is_reported() {
+fn links_are_sourced_and_inline_transport_is_refused() {
     let yaml = r#"
 version: 1
 links:
@@ -2725,22 +2725,24 @@ nodes:
     sub: { in: { link: serial } }
   b:
     sub: { in: { link: bare } }
-  c:
-    sub: { in: { max_transport: 3ms } }
 topics:
-  /t: { type: T, pub: [p/out], sub: [a/in, b/in, c/in] }
+  /t: { type: T, pub: [p/out], sub: [a/in, b/in] }
 "#;
     let d = all_diags(yaml);
     let unsourced: Vec<_> = d.iter().filter(|l| l.contains("link-unsourced")).collect();
     assert_eq!(unsourced.len(), 1, "{d:?}");
     assert!(unsourced[0].contains("'bare'"), "{d:?}");
-    let inline: Vec<_> = d
-        .iter()
-        .filter(|l| l.contains("[deprecated-spelling]"))
-        .collect();
-    assert_eq!(inline.len(), 1, "{d:?}");
+    let inline = yaml.replace(
+        "  b:\n    sub: { in: { link: bare } }\n",
+        "  b:\n    sub: { in: { link: bare } }\n  c:\n    sub: { in: { max_transport: 3ms } }\n",
+    );
+    let e = ros_launch_manifest_types::parse_manifest_str(&inline)
+        .unwrap_err()
+        .to_string();
     assert!(
-        inline[0].contains("'c/in'") && inline[0].contains("v0.3.16"),
-        "{d:?}"
+        e.contains("nodes.c.sub.in.max_transport")
+            && e.contains("v0.3.17")
+            && e.contains("migrate"),
+        "{e}"
     );
 }

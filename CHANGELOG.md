@@ -6,6 +6,21 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.17 - 2026-11-14
+
+Closes the grammar revision's S1 (play_launch phase 104). GRAMMAR_VERSION
+0.3.17; the model stays schema 5.
+
+### Removed
+
+- **A `max_transport` written on a subscriber** is a parse error naming
+  the link form and `migrate` (deprecated in v0.3.16, an info from
+  v0.3.4). A subscriber's transport is its link's: `links.<l>: {
+  max_transport }` and `sub.<ep>.link: <l>`. The `transport-inline` rule is
+  gone, and `field_table::DEPRECATED_USES` is empty again. A client's
+  `max_transport` (the request leg) is unchanged; `migrate`'s
+  `max-transport-link` still rewrites the old form.
+
 ## v0.3.16 - 2026-11-14
 
 The two remaining decisions of the grammar revision's S1 (play_launch phase

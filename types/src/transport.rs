@@ -64,8 +64,10 @@ impl Manifest {
 /// precedence, the model, the walk -- reads a link's number without knowing
 /// links exist. A link is visible to the manifest that declares it and to
 /// its inline includes (an include's own link of the same name shadows).
-/// Refused: a name no visible link has, and a `link` beside a written
-/// `max_transport` (two numbers for one hop).
+/// Refused: a name no visible link has, a `link` beside a written
+/// `max_transport` (two numbers for one hop), and since v0.3.17 a
+/// `max_transport` written on the subscriber at all (deprecated in v0.3.16;
+/// a transport is a platform fact, stated once on a link with its source).
 pub(crate) fn apply_links(
     m: &mut Manifest,
     outer: &BTreeMap<String, LinkDecl>,
@@ -101,6 +103,15 @@ pub(crate) fn apply_links(
                     return Err(both(format!("nodes.{n}.sub.{ep}.max_transport")));
                 }
                 props.max_transport = Some(find(format!("nodes.{n}.sub.{ep}.link"), name)?);
+            } else if props.max_transport.is_some() {
+                return Err(ParseError::Field {
+                    path: format!("nodes.{n}.sub.{ep}.max_transport"),
+                    message: "Removed in v0.3.17 (deprecated since v0.3.16): a subscriber's \
+                              transport is stated on the link its hop crosses. Write \
+                              `links.<name>: { max_transport: <d> }` and `link: <name>` here; \
+                              `play_launch migrate <contract> --write` does it"
+                        .to_string(),
+                });
             }
         }
     }
@@ -116,16 +127,19 @@ pub(crate) fn apply_links(
 mod tests {
     use crate::parse_manifest_str;
 
-    /// Per-subscriber values (the only place a transport is stated): the hop is
-    /// charged its largest subscriber's value, not nothing.
+    /// Per-subscriber values (each subscriber's link): the hop is charged its
+    /// largest subscriber's value, not nothing.
     #[test]
     fn per_subscriber_values_alone_are_read() {
         let m = parse_manifest_str(
             "version: 1\n\
+             links:\n\
+             \x20 far: { max_transport: 56ms }\n\
+             \x20 near: { max_transport: 3ms }\n\
              nodes:\n\
              \x20 p: { pub: { out: {} } }\n\
-             \x20 a: { sub: { in: { max_transport: 56ms } } }\n\
-             \x20 b: { sub: { in: { max_transport: 3ms } } }\n\
+             \x20 a: { sub: { in: { link: far } } }\n\
+             \x20 b: { sub: { in: { link: near } } }\n\
              \x20 c: { sub: { in: {} } }\n\
              topics:\n\
              \x20 /t: { type: T, pub: [p/out], sub: [a/in, b/in, c/in] }\n",

@@ -74,7 +74,6 @@ pub fn default_rules() -> Vec<Box<dyn ValidationRule>> {
         Box::new(rate_hierarchy::RateHierarchyRule),
         Box::new(scope_budget::ScopeBudgetRule),
         Box::new(links::LinkSourceRule),
-        Box::new(links::TransportInlineRule),
         Box::new(causal_dag::CausalDagRule),
         Box::new(drop_sanity::DropSanityRule),
         Box::new(service_wiring::ServiceWiringRule),

@@ -825,8 +825,9 @@ mod tests {
              topics:\n  /a: { type: std_msgs/msg/Empty, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\
              services:\n  /s: { type: x/srv/S, max_transport: 1ms }\n\
+             links:\n  l: { max_transport: 3ms }\n\
              nodes:\n  n:\n    pub:\n      o: { min_rate_hz: 10, max_rate_hz: 20 }\n\
-             \x20   sub:\n      a: { max_age: { duration: 500ms, param: t }, max_transport: 3ms, \
+             \x20   sub:\n      a: { max_age: { duration: 500ms, param: t }, link: l, \
              on_violation: { reaction: r, within: 20ms } }\n\
              \x20   srv:\n      s: { max_response: 5ms }\n\
              \x20   paths:\n      r:\n        trigger: { input: [a] }\n        output: [o]\n\
