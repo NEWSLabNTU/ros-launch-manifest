@@ -1229,6 +1229,14 @@ pub enum PredicateValueContract {
         value: Option<ConstantValue>,
     },
     Str(String),
+    /// A value the contract reads from the launch tree or a `let:` entry
+    /// (v0.3.18) that the producer could not evaluate, as written: `{ read:
+    /// "$(param gate v_max)" }`. A producer that evaluates it writes the
+    /// number instead (SI units). A consumer never judges this one and
+    /// must say so, as for a constant with no value.
+    Read {
+        read: String,
+    },
 }
 
 /// A message constant's value (v0.3.15), typed by the field it is compared
@@ -2672,6 +2680,14 @@ mod tests {
                 constant: "MANUAL".into(),
                 value: None
             }
+        );
+        let read = PredicateValueContract::Read {
+            read: "$(param gate v_max)".into(),
+        };
+        let y = serde_yaml_ng::to_string(&read).unwrap();
+        assert_eq!(
+            serde_yaml_ng::from_str::<PredicateValueContract>(&y).unwrap(),
+            read
         );
         let lit = PredicateValueContract::Str("MANUAL".into());
         let y = serde_yaml_ng::to_string(&lit).unwrap();
