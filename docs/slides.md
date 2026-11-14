@@ -55,10 +55,10 @@ nodes:
   controller:
     pub:
       cmd:
-        min_rate_hz: 30           # I produce at least 30 Hz
+        min_rate: 30Hz           # I produce at least 30 Hz
     sub:
       trajectory:
-        min_rate_hz: 10           # I need at least 10 Hz
+        min_rate: 10Hz           # I need at least 10 Hz
       map:
         state: true               # polled, not causal
         required: true            # must receive at least once
@@ -79,7 +79,7 @@ topics:
     type: autoware_control_msgs/msg/Control
     pub: [controller/cmd]
     sub: [validator/input]
-    rate_hz: 30
+    rate: 30Hz
     drop:
       max_count: 1 / 100          # 1% transport loss allowed
       max_consecutive: 3          # never 3+ drops in a row
@@ -98,7 +98,7 @@ code, and convention. The manifest makes it **explicit and checkable**.
 The publisher produces, transport may drop, subscriber demands:
 
 ```
-pub.min_rate_hz  >=  rate_hz  >=  rate_hz × (1 - n/w)  >=  sub.min_rate_hz
+pub.min_rate  >=  rate  >=  rate × (1 - n/w)  >=  sub.min_rate
      30                30          30 × 0.99 = 29.7           29
                                    drop: { max_count: 1 / 100 }
 ```

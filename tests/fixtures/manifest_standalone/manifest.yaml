@@ -15,7 +15,7 @@ nodes:
   consumer:
     sub:
       odometry:
-        min_rate_hz: 50
+        min_rate: 50Hz
         max_age: 100ms
 
 topics:

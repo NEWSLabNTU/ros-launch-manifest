@@ -83,7 +83,7 @@ impl std::fmt::Display for BoundKind {
 }
 
 /// Which side a bound limits: an upper bound (`max_latency`, `ftti`) or a
-/// lower one (`min_latency`, `min_rate_hz`, a dwell's least time).
+/// lower one (`min_latency`, `min_rate`, a dwell's least time).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Limit {
@@ -416,7 +416,7 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         Form::Map,
     ),
     bk(
-        "min_rate_hz",
+        "min_rate",
         Context::Endpoint,
         BoundKind::Rate,
         Limit::Min,
@@ -424,7 +424,7 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         Form::Bare,
     ),
     bk(
-        "max_rate_hz",
+        "max_rate",
         Context::Endpoint,
         BoundKind::Rate,
         Limit::Max,
@@ -675,8 +675,8 @@ impl crate::types::Manifest {
             }
         }
         fn endpoint<'a>(out: &mut Vec<(String, &'a Bound)>, at: &str, e: &'a EndpointProps) {
-            put(out, at, "min_rate_hz", &e.min_rate_hz);
-            put(out, at, "max_rate_hz", &e.max_rate_hz);
+            put(out, at, "min_rate", &e.min_rate_hz);
+            put(out, at, "max_rate", &e.max_rate_hz);
             put(out, at, "max_age", &e.max_age);
             put(out, at, "max_transport", &e.max_transport);
             if let Some(ov) = &e.on_violation {
@@ -741,8 +741,8 @@ impl crate::types::Manifest {
     ///
     /// [`Manifest::bounds`]: crate::types::Manifest::bounds
     ///
-    /// A timer's `rate_hz` written in its map form (`rate_hz: { value,
-    /// source }`, phase 93) is listed too, as `...trigger.timer.rate_hz`:
+    /// A timer's `rate` written in its map form (`rate: { value, source }`,
+    /// phase 93) is listed too, as `...trigger.timer.rate`:
     /// it is not a bound, but its source is stated the same way.
     pub fn budget_sources(&self) -> std::collections::BTreeMap<String, &BudgetSource> {
         let mut out: std::collections::BTreeMap<String, &BudgetSource> = self
@@ -753,13 +753,13 @@ impl crate::types::Manifest {
         for (n, nd) in &self.nodes {
             for (p, pd) in &nd.paths {
                 if let Some(s) = &pd.timer_rate_source {
-                    out.insert(format!("nodes.{n}.paths.{p}.trigger.timer.rate_hz"), s);
+                    out.insert(format!("nodes.{n}.paths.{p}.trigger.timer.rate"), s);
                 }
             }
         }
         for (p, pd) in &self.paths {
             if let Some(s) = &pd.timer_rate_source {
-                out.insert(format!("event_chains.{p}.trigger.timer.rate_hz"), s);
+                out.insert(format!("event_chains.{p}.trigger.timer.rate"), s);
             }
         }
         out
@@ -890,7 +890,7 @@ mod tests {
             get("nodes.n.sub.a.max_age").param,
             Some(ParamBinding::Own("t".into()))
         );
-        assert_eq!(get("nodes.n.pub.o.min_rate_hz").hz(), Some(10.0));
+        assert_eq!(get("nodes.n.pub.o.min_rate").hz(), Some(10.0));
         assert_eq!(get("topics./a.drop.max_consecutive").count(), Some(2));
         assert_eq!(
             get("nodes.n.paths.r.miss.tolerate").count_per(),

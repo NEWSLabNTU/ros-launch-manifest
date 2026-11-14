@@ -16,7 +16,7 @@ The obvious fix — write the requirements down beside the launch file — has a
 failure mode of its own, and it is worth stating before the grammar, because
 the grammar is shaped by it. Measured on a three-node fixture in `play_launch`:
 the number `100` appeared **nine times** in one contract, once as a timer's
-`rate_hz` and eight more as topic rates and `min_rate_hz` floors that followed
+`rate` and eight more as topic rates and `min_rate` floors that followed
 from it. Roughly a third of the file was a second copy of something already
 stated. Every copy is a chance to disagree, and a contract that disagrees with
 itself is worse than none: it reports clean while describing a system nobody
@@ -49,7 +49,7 @@ nodes:
         state: true
     pub:
       no_ground_pointcloud:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [input] }
@@ -67,7 +67,7 @@ topics:
   /perception/obstacle_segmentation/pointcloud:
     type: sensor_msgs/msg/PointCloud2
     pub: [scan_ground_filter/no_ground_pointcloud]
-    rate_hz: 10
+    rate: 10Hz
 ```
 
 Three things in that snippet are worth pointing at, because they are the three
@@ -111,22 +111,22 @@ version: 1
 
 nodes:
   lidar_detector:
-    sub: { input: { min_rate_hz: 10 } }
-    pub: { out: { min_rate_hz: 10 } }
+    sub: { input: { min_rate: 10Hz } }
+    pub: { out: { min_rate: 10Hz } }
     paths:
       main: { trigger: { input: [input] }, output: [out], max_latency: 50ms }
 
   camera_detector:
-    sub: { input: { min_rate_hz: 10 } }
-    pub: { out: { min_rate_hz: 10 } }
+    sub: { input: { min_rate: 10Hz } }
+    pub: { out: { min_rate: 10Hz } }
     paths:
       main: { trigger: { input: [input] }, output: [out], max_latency: 30ms }
 
   fusion:
     sub:
-      lidar: { min_rate_hz: 10 }
-      camera: { min_rate_hz: 10 }
-    pub: { out: { min_rate_hz: 10 } }
+      lidar: { min_rate: 10Hz }
+      camera: { min_rate: 10Hz }
+    pub: { out: { min_rate: 10Hz } }
     paths:
       main:
         trigger: { input: [lidar, camera] }
@@ -137,21 +137,21 @@ topics:
   /sensor/raw:
     type: sensor_msgs/msg/PointCloud2
     sub: [lidar_detector/input, camera_detector/input]
-    rate_hz: 10
+    rate: 10Hz
   /perception/lidar_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [lidar_detector/out]
     sub: [fusion/lidar]
-    rate_hz: 10
+    rate: 10Hz
   /perception/camera_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [camera_detector/out]
     sub: [fusion/camera]
-    rate_hz: 10
+    rate: 10Hz
   /perception/fused_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [fusion/out]
-    rate_hz: 10
+    rate: 10Hz
 
 event_chains:
   pipeline:
@@ -217,7 +217,7 @@ manifest that no longer parses is reported as such rather than skipped.
 
 ```
 warning[dangling-entity]: topic '/perception/objects' has no publishers (no data source) (at topics./perception/objects)
-error[rate-hierarchy]: topic rate_hz (10) < subscriber 'planner/objects' min_rate_hz (20) (at topics./perception/objects)
+error[rate-hierarchy]: topic rate (10 Hz) < subscriber 'planner/objects' min_rate (20 Hz) (at topics./perception/objects)
 ```
 
 The YAML path is part of the line (`check/src/emit/terminal.rs`), so the

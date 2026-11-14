@@ -6,6 +6,37 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.21 - 2026-11-15
+
+The third S3 rename: a rate is a value with its unit. GRAMMAR_VERSION
+0.3.21; the model and the Rust field names are unchanged (`*_rate_hz`, in
+Hz).
+
+### Changed
+
+- **Rate keys lose their `_hz` and take a unit** (T6, decision 5):
+  `min_rate: 100Hz` and `max_rate:` on an endpoint, a topic's `rate:`, a
+  timer's `trigger.timer.rate:` (also `{ value: 10Hz, source }`) and an
+  arrival curve's `rate:`. The value is read through rlx's unit table: `Hz`
+  or `kHz`, with or without a space; a bare number is refused (`has no
+  unit`), and so is a unit of another dimension (`10ms` names a period).
+  `$(param x) Hz` reads as before. The old `_hz` keys read for one release,
+  a number of Hz, with a `deprecated-spelling` note; both spellings at once
+  is an error naming the new key. A timer keeps `rate` rather than taking
+  a period: every other key is a rate, the checker sums rates, and the
+  launch parameters contracts read are mostly rates.
+- Bound keys and budget sources say `min_rate`, `max_rate` and
+  `...trigger.timer.rate`. An `acknowledged:` path, or a mode override's
+  target, through an old `_hz` key still matches this release; an override
+  value under a new key is written with its unit and carried in Hz.
+- A key suggestion names the current key, never a deprecated spelling.
+
+### Added
+
+- `migrate`: `rate-units` rewrites each old rate key and its number
+  (`min_rate_hz: 10` becomes `min_rate: 10Hz`, in a timer's map form and
+  in a mode's `overrides:` too); a reference keeps its text.
+
 ## v0.3.20 - 2026-11-15
 
 The second S3 rename: an end-to-end requirement is an event chain.

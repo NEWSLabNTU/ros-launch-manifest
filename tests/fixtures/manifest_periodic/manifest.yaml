@@ -6,7 +6,7 @@ nodes:
   localization:
     pub:
       current_pose:
-        min_rate_hz: 50
+        min_rate: 50Hz
     paths:
       periodic:
         output: [current_pose]
@@ -21,7 +21,7 @@ nodes:
         required: true
     pub:
       trajectory:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       periodic:
         output: [trajectory]
@@ -35,7 +35,7 @@ nodes:
         state: true
     pub:
       control_cmd:
-        min_rate_hz: 30
+        min_rate: 30Hz
     paths:
       periodic:
         output: [control_cmd]
@@ -46,7 +46,7 @@ topics:
     type: geometry_msgs/msg/PoseStamped
     pub: [localization/current_pose]
     sub: [trajectory_planner/current_pose]
-    rate_hz: 50
+    rate: 50Hz
     qos:
       reliability: reliable
 
@@ -62,7 +62,7 @@ topics:
     type: autoware_msgs/msg/Trajectory
     pub: [trajectory_planner/trajectory]
     sub: [controller/trajectory]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: reliable
 
@@ -70,7 +70,7 @@ topics:
     type: geometry_msgs/msg/TwistStamped
     pub: []
     sub: [controller/current_velocity]
-    rate_hz: 50
+    rate: 50Hz
     qos:
       reliability: best_effort
 
@@ -78,5 +78,5 @@ topics:
     type: autoware_msgs/msg/ControlCommand
     pub: [controller/control_cmd]
     sub: []
-    rate_hz: 30
+    rate: 30Hz
 

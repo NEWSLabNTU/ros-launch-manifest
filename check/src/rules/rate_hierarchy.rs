@@ -37,7 +37,7 @@ impl ValidationRule for RateHierarchyRule {
                             self.id(),
                             &format!("topics.{topic_name}"),
                             format!(
-                                "publisher '{pub_ref}' min_rate_hz ({rate}) < topic rate_hz ({topic_rate})"
+                                "publisher '{pub_ref}' min_rate ({rate} Hz) < topic rate ({topic_rate} Hz)"
                             ),
                         );
                 }
@@ -59,7 +59,7 @@ impl ValidationRule for RateHierarchyRule {
                         self.id(),
                         &format!("topics.{topic_name}"),
                         format!(
-                            "topic rate_hz ({topic_rate}) < subscriber '{sub_ref}' min_rate_hz ({sub_rate})"
+                            "topic rate ({topic_rate} Hz) < subscriber '{sub_ref}' min_rate ({sub_rate} Hz)"
                         ),
                     );
             }
@@ -76,7 +76,7 @@ impl ValidationRule for RateHierarchyRule {
                         self.id(),
                         &format!("topics.{topic_name}"),
                         format!(
-                            "topic rate_hz ({topic_rate}) > publisher '{pub_ref}' max_rate_hz ({max})"
+                            "topic rate ({topic_rate} Hz) > publisher '{pub_ref}' max_rate ({max} Hz)"
                         ),
                     );
                 }
@@ -90,8 +90,8 @@ impl ValidationRule for RateHierarchyRule {
                         self.id(),
                         &format!("topics.{topic_name}"),
                         format!(
-                            "topic rate_hz ({topic_rate}) > subscriber '{sub_ref}' max_rate_hz \
-                             ({max}) — it will be overrun regardless of scheduling"
+                            "topic rate ({topic_rate} Hz) > subscriber '{sub_ref}' max_rate \
+                             ({max} Hz) — it will be overrun regardless of scheduling"
                         ),
                     );
                 }
@@ -151,7 +151,7 @@ fn check_on_demand(
             id,
             &format!("topics.{topic_name}"),
             format!(
-                "topic rate_hz ({rate}) beside aperiodic publisher '{first}', which promises no \
+                "topic rate ({rate} Hz) beside aperiodic publisher '{first}', which promises no \
                  rate (`aperiodic: true`)"
             ),
         );
@@ -171,7 +171,7 @@ fn check_on_demand(
                 id,
                 &format!("topics.{topic_name}"),
                 format!(
-                    "subscriber '{sub_ref}' requires min_rate_hz ({rate}), but every publisher of \
+                    "subscriber '{sub_ref}' requires min_rate ({rate} Hz), but every publisher of \
                      the topic is aperiodic (`aperiodic: true` on '{first}') and promises no rate"
                 ),
             );
@@ -211,7 +211,7 @@ mod max_rate_tests {
         let yaml = "version: 1\nnodes:\n  src:\n    pub:\n      out: {}\n  ekf:\n    sub:\n      in:\n        max_rate_hz: 20\ntopics:\n  data:\n    type: T\n    rate_hz: 50\n    pub: [src/out]\n    sub: [ekf/in]\n";
         let errs = errors(yaml);
         assert_eq!(errs.len(), 1, "{errs:?}");
-        assert!(errs[0].contains("max_rate_hz (20)"), "{errs:?}");
+        assert!(errs[0].contains("max_rate (20 Hz)"), "{errs:?}");
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod max_rate_tests {
         let errs = errors(yaml);
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(
-            errs[0].contains("publisher 'src/out' max_rate_hz (10)"),
+            errs[0].contains("publisher 'src/out' max_rate (10 Hz)"),
             "{errs:?}"
         );
     }
@@ -237,7 +237,7 @@ mod max_rate_tests {
         let errs = errors(&base.replace("SUB", "{ min_rate_hz: 10 }"));
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(
-            errs[0].contains("subscriber 'planner/limit' requires min_rate_hz (10)"),
+            errs[0].contains("subscriber 'planner/limit' requires min_rate (10 Hz)"),
             "{errs:?}"
         );
         let errs = errors(&format!("{}    rate_hz: 10\n", base.replace("SUB", "{}")));

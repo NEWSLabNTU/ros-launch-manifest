@@ -61,8 +61,10 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `min_rate_hz` | fact (pub) / requirement (sub) |  | Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out. |
-| `max_rate_hz` | fact (pub) / requirement (sub) |  | Upper bound on this endpoint's rate. |
+| `min_rate_hz` |  | deprecated — use `min_rate` | Deprecated spelling. |
+| `min_rate` | fact (pub) / requirement (sub) | since v0.3.21 | Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `min_rate_hz: <number of Hz>` before v0.3.21. |
+| `max_rate_hz` |  | deprecated — use `max_rate` | Deprecated spelling. |
+| `max_rate` | fact (pub) / requirement (sub) | since v0.3.21 | Upper bound on this endpoint's rate. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `max_rate_hz: <number of Hz>` before v0.3.21. |
 | `max_age` | requirement |  | Subscriber: maximum data age at receive (now - header.stamp). |
 | `max_age_ms` |  | **removed** | Removed in phase 70 — write `max_age: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `state` | fact |  | Subscriber: read-latest rather than causal. The node caches the message and a timer path reads it, so a reaction arriving here waits for that timer: the walk charges one period (the timer's `jitter` too, when stated) as a sampling hop, shown as `(+Nms sampling)` in a route. |
@@ -109,7 +111,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `pub` | meta |  | Publishing endpoints, as `node/endpoint`. |
 | `sub` | meta |  | Subscribing endpoints, as `node/endpoint`. |
 | `qos` | fact |  | Topic-level QoS, overridable per endpoint. |
-| `rate_hz` | **consequence** |  | Publication rate. Derivable from the timers that drive it — see `derivable-rate`. |
+| `rate_hz` |  | deprecated — use `rate` | Deprecated spelling. |
+| `rate` | **consequence** | since v0.3.21 | Publication rate. Derivable from the timers that drive it — see `derivable-rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz: <number of Hz>` before v0.3.21. |
 | `max_transport` |  | **removed** | Removed in v0.3.15 (deprecated since v0.1.60, phase 90 G3): a transport is the hop into ONE subscriber, stated on that subscriber through a link (`nodes.<n>.sub.<ep>.link` naming a `links:` entry). `play_launch migrate <contract> --write` writes the value as one link and names it on each of the topic's subscribers declared in the same file. |
 | `max_transport_ms` |  | **removed** | Removed in phase 70 — write `max_transport: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
 | `drop` | requirement |  | Permitted message loss on this topic. |
@@ -185,7 +188,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `rate_hz` | fact |  | Timer rate, Hz. Required, and must be greater than zero. A bare number, or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. A reference the checker cannot evaluate (`$(param rate) Hz` with no launch tree) still makes the path timer-triggered; only the period is unknown, and a rule that needs it says the comparison was not made. |
+| `rate_hz` |  | deprecated — use `rate` | Deprecated spelling. |
+| `rate` | fact | since v0.3.21 | Timer rate. Required, and must be greater than zero. A frequency with its unit (`10Hz`; a bare number is refused), or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. A reference the checker cannot evaluate (`$(param rate) Hz` with no launch tree) still makes the path timer-triggered; only the period is unknown, and a rule that needs it says the comparison was not made. `rate_hz: <number of Hz>` before v0.3.21. |
 | `jitter` | fact | since v0.1.49 | Release jitter: how late a tick may be released after its nominal instant, measured (a duration, less than one period). A reaction that waits for this timer is charged `period + jitter` (the reaction walk's sampling hop and `dwell-expiry`'s notice) instead of a bare period. Absent: ticks are on time. A budget: the map form `{ duration, source }` applies. |
 | `param` | fact | since v0.1.58 | The parameter of this path's node that holds the timer's RATE, Hz (`update_rate`). Its resolved launch value must equal `rate_hz` (`timer-param`). At most one of `param` and `period_param`. |
 | `period_param` | fact | since v0.1.58 | The parameter of this path's node that holds the timer's PERIOD, seconds. Its resolved launch value must equal `1 / rate_hz` (`timer-param`). |
@@ -298,7 +302,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `rate_hz` | requirement | since v0.1.64 | Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate_hz`. |
+| `rate_hz` |  | deprecated — use `rate` | Deprecated spelling. |
+| `rate` | requirement | since v0.3.21 | Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz: <number of Hz>` before v0.3.21. |
 | `burst` | requirement | since v0.1.64 | Messages that may arrive back to back before pacing applies. An integer >= 1. |
 
 ## `safe_state`
@@ -517,8 +522,8 @@ Every key below is a spelling of one bound: a value with a unit, what it limits 
 | `min_latency` | `paths.<name> / event_chains.<name>` | latency | at least | duration |  |
 | `max_jitter` | `paths.<name> / event_chains.<name>` | jitter | at most | duration | `{ duration, source }` |
 | `jitter` | `trigger.timer` | jitter | at most | duration | `{ duration, source }` |
-| `min_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at least | Hz |  |
-| `max_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at most | Hz |  |
+| `min_rate` | `pub/sub/cli.<endpoint>` | rate | at least | Hz |  |
+| `max_rate` | `pub/sub/cli.<endpoint>` | rate | at most | Hz |  |
 | `max_age` | `pub/sub/cli.<endpoint>` | age | at most | duration | `{ duration, source, param }`; `param`: a parameter of the subscriber's node, seconds (`max-age-param`) |
 | `max_transport` | `pub/sub/cli.<endpoint>` | transport | at most | duration | `{ duration, source }` |
 | `max_transport` | `topics.<name>` | transport | at most | duration | `{ duration, source }` |

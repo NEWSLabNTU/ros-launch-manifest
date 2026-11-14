@@ -310,7 +310,7 @@ topics:
     let errs = errors(yaml);
     assert!(
         errs.iter()
-            .any(|e| e.contains("min_rate_hz (5) < topic rate_hz (10)")),
+            .any(|e| e.contains("min_rate (5 Hz) < topic rate (10 Hz)")),
         "expected rate hierarchy error: {errs:?}"
     );
 }
@@ -333,7 +333,7 @@ topics:
     let errs = errors(yaml);
     assert!(
         errs.iter()
-            .any(|e| e.contains("topic rate_hz (10) < subscriber")),
+            .any(|e| e.contains("topic rate (10 Hz) < subscriber")),
         "expected rate hierarchy error: {errs:?}"
     );
 }

@@ -5,18 +5,18 @@ nodes:
   talker:
     pub:
       chatter:
-        min_rate_hz: 1
+        min_rate: 1Hz
   listener:
     sub:
       chatter:
-        min_rate_hz: 1
+        min_rate: 1Hz
 
 topics:
   chatter:
     type: std_msgs/msg/String
     pub: [talker/chatter]
     sub: [listener/chatter]
-    rate_hz: 1
+    rate: 1Hz
     qos:
       reliability: reliable
       durability: volatile

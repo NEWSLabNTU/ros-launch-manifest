@@ -60,7 +60,7 @@ impl ValidationRule for QueueDrainRateRule {
                         crate::Severity::Info,
                         &format!("nodes.{node_name}.paths.{path_name}"),
                         format!(
-                            "node '{node_name}' timer path '{path_name}' has rate_hz `{text}`, \
+                            "node '{node_name}' timer path '{path_name}' has rate `{text}`, \
                              not evaluated here: its drain rate was not compared with the \
                              'buffer: queue' subscriptions' producer rates \
                              ({producer_rate_sum}, from {queue_subs:?})"
@@ -76,7 +76,7 @@ impl ValidationRule for QueueDrainRateRule {
                         self.id(),
                         &format!("nodes.{node_name}.paths.{path_name}"),
                         format!(
-                            "node '{node_name}' timer path '{path_name}' rate_hz ({rate_hz}) is \
+                            "node '{node_name}' timer path '{path_name}' rate ({rate_hz} Hz) is \
                              less than the sum of its 'buffer: queue' subscriptions' producer \
                              rates ({producer_rate_sum}, from {queue_subs:?}) — the queue will \
                              accumulate backlog every period"

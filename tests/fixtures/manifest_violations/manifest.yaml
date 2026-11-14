@@ -14,7 +14,7 @@ nodes:
   slow_driver:
     pub:
       sensor:
-        min_rate_hz: 5
+        min_rate: 5Hz
     paths:
       main:
         trigger: { input: [input] }
@@ -48,7 +48,7 @@ nodes:
   greedy_consumer:
     sub:
       data:
-        min_rate_hz: 15
+        min_rate: 15Hz
     paths:
       main:
         trigger: { input: [data] }
@@ -74,7 +74,7 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     pub: [slow_driver/sensor]
     sub: [node_a/input]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
       durability: persistent
@@ -97,7 +97,7 @@ topics:
     type: std_msgs/msg/Float64
     pub: [node_b/output]
     sub: [greedy_consumer/data]
-    rate_hz: 8
+    rate: 8Hz
 
 # Service violation: no type declared
 services:

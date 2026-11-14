@@ -10,12 +10,12 @@ nodes:
   lidar_driver:
     pub:
       data:
-        min_rate_hz: 10
+        min_rate: 10Hz
 
 topics:
   /sensor/data:
     type: sensor_msgs/msg/PointCloud2
     pub: [lidar_driver/data]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort

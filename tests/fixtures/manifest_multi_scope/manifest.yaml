@@ -6,7 +6,7 @@ nodes:
   driver:
     pub:
       raw_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       periodic:
         output: [raw_points]
@@ -17,7 +17,7 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     pub: [driver/raw_points]
     sub: [perception/cropbox/input]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
 
@@ -25,7 +25,7 @@ topics:
     type: autoware_msgs/msg/DetectedObjects
     pub: [perception/detector/objects]
     sub: [planning/planner/obstacles]
-    rate_hz: 10
+    rate: 10Hz
 
 includes:
   perception:
@@ -33,10 +33,10 @@ includes:
       cropbox:
         sub:
           input:
-            min_rate_hz: 10
+            min_rate: 10Hz
         pub:
           cropped:
-            min_rate_hz: 10
+            min_rate: 10Hz
         paths:
           main:
             trigger: { input: [input] }
@@ -46,10 +46,10 @@ includes:
       detector:
         sub:
           points:
-            min_rate_hz: 10
+            min_rate: 10Hz
         pub:
           objects:
-            min_rate_hz: 10
+            min_rate: 10Hz
         paths:
           main:
             trigger: { input: [points] }
@@ -61,7 +61,7 @@ includes:
         type: sensor_msgs/msg/PointCloud2
         pub: [cropbox/cropped]
         sub: [detector/points]
-        rate_hz: 10
+        rate: 10Hz
 
     event_chains:
       detect:
@@ -74,14 +74,14 @@ includes:
       planner:
         sub:
           obstacles:
-            min_rate_hz: 10
+            min_rate: 10Hz
             required: true
           route:
             state: true
             required: true
         pub:
           trajectory:
-            min_rate_hz: 10
+            min_rate: 10Hz
         paths:
           main:
             trigger: { input: [obstacles] }

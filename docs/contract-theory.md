@@ -93,8 +93,8 @@ Summary:
 
 | Level | What it describes | Assumption | Guarantee |
 |-------|-------------------|------------|-----------|
-| **Topic** | A communication channel | Publisher produces at `rate_hz` | Channel delivers at `rate_hz` with drops ≤ `drop.max_count` |
-| **Node** | A single computation | Inputs arrive per `min_rate_hz`, `state`, `required` | Output within `max_latency` |
+| **Topic** | A communication channel | Publisher produces at `rate` | Channel delivers at `rate` with drops ≤ `drop.max_count` |
+| **Node** | A single computation | Inputs arrive per `min_rate`, `state`, `required` | Output within `max_latency` |
 | **Scope** | An entire launch file | Topic declarations consistent across tree | E2E `max_latency`, `drop:` |
 
 These compose hierarchically: topic contracts constrain the channels,
@@ -111,7 +111,7 @@ nodes:
   ndt_scan_matcher:
     sub:
       input_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
       initial_pose:
         state: true
         required: true
@@ -120,7 +120,7 @@ nodes:
         required: true
     pub:
       ndt_pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger:
@@ -330,7 +330,7 @@ on **topics** (transport drops) and **event chains** (E2E drops). A node
 path's `drop:` is refused (v0.1.60, phase 90 G3): it played no role in
 composition and nothing read it. If a node internally drops messages,
 state the loss on the topic it outputs, or model the effect as a lower
-`pub.min_rate_hz` on its output.
+`pub.min_rate` on its output.
 
 **Static checking** (`drop-sanity`) validates local consistency only:
 
@@ -523,8 +523,8 @@ scope S path: drop: { max_count: 10 / 100 }   → d = 0.10
 T2 (3%) <= 10%. OK: no topic on the route permits more loss than the
 event chain.
 
-**Rate-drop check**: if T1 has `rate_hz: 10` and subscriber B has
-`min_rate_hz: 9`: effective delivery = $10 \times (1 - 0.03) = 9.7$ Hz ≥ 9. Passes.
+**Rate-drop check**: if T1 has `rate: 10` and subscriber B has
+`min_rate: 9`: effective delivery = $10 \times (1 - 0.03) = 9.7$ Hz ≥ 9. Passes.
 
 **Runtime monitoring** observes actual E2E drop rates and checks them
 against the scope's $d_s = 0.10$ and its `max_consecutive` (if
@@ -683,7 +683,7 @@ A topic's publication rate is derived by propagating from the timer paths
 that ultimately drive it (`derive_topic_rates`,
 `resolve/src/ros/manifest_graph.rs`):
 
-- **Timer path** → its own `trigger.timer.rate_hz`. This is the only
+- **Timer path** → its own `trigger.timer.rate`. This is the only
   source; nothing else creates messages.
 - **Input-triggered, no `sync:`** → the **sum** of its inputs' rates. A
   subscription callback fires once per message on *each* topic it is
@@ -715,11 +715,11 @@ Where the rate *is* derivable, the declaration is graded against it:
 
 | Verdict | Severity | Condition |
 |---------|----------|-----------|
-| `derivable-rate` | Info | declared `topics.<t>.rate_hz` equals the derived rate — a deletable copy |
+| `derivable-rate` | Info | declared `topics.<t>.rate` equals the derived rate — a deletable copy |
 | `rate-mismatch` | Warning | they disagree (relative tolerance $10^{-6}$, since a derived rate is a quotient and an authored one a round number) |
-| `derivable-min-rate` | Info | a publisher's `min_rate_hz` equals the derived rate, attributed only where the topic has exactly **one** publisher (with several the derived rate is their sum, and dividing it back out would present a bound as a rate) |
-| `min-rate-mismatch` | Warning | a publisher's `min_rate_hz` **exceeds** the derived rate — it guarantees more than the timers driving it can produce. A promise *below* the derived rate is a loose but true bound and gets nothing |
-| `derived-rate-hierarchy` | Warning | a subscriber's `min_rate_hz` exceeds the derived rate. The subscriber side is a requirement, not a copy, so it is never "derivable" — but deleting the declared topic rate would otherwise leave it unchecked |
+| `derivable-min-rate` | Info | a publisher's `min_rate` equals the derived rate, attributed only where the topic has exactly **one** publisher (with several the derived rate is their sum, and dividing it back out would present a bound as a rate) |
+| `min-rate-mismatch` | Warning | a publisher's `min_rate` **exceeds** the derived rate — it guarantees more than the timers driving it can produce. A promise *below* the derived rate is a loose but true bound and gets nothing |
+| `derived-rate-hierarchy` | Warning | a subscriber's `min_rate` exceeds the derived rate. The subscriber side is a requirement, not a copy, so it is never "derivable" — but deleting the declared topic rate would otherwise leave it unchecked |
 
 ### Rate Hierarchy
 
@@ -855,7 +855,7 @@ omitted, a class none covers is simply not claimed, and only an empty set
 is unguarded. `reported` is never implied: it says the guard IS a
 detector's output, which only the author can know.
 
-**A rate floor is not a detector.** `min_rate_hz` is a requirement;
+**A rate floor is not a detector.** `min_rate` is a requirement;
 nothing fires when a period passes unless a QoS deadline or an application
 watchdog is declared. Counting the period here made a 50 Hz floor "detect"
 a dead lidar in 20ms while the real lease was 100ms. A guard with no
@@ -1120,8 +1120,8 @@ neither tool can measure are printed with the reason (timer-triggered,
 unstamped, not exercised), because omitting them would read as "costs
 nothing".
 
-**What is not captured, deliberately.** Neither tool emits `rate_hz`,
-`min_rate_hz`, `max_latency`, `max_age`, `max_jitter`, `event_chains:` or
+**What is not captured, deliberately.** Neither tool emits `rate`,
+`min_rate`, `max_latency`, `max_age`, `max_jitter`, `event_chains:` or
 `criticality`. A run observes that a topic published at 9.97 Hz; it cannot
 observe whether 10 Hz was *required*. Every measured number is therefore
 emitted as a **comment** for a human to promote, and until someone does, the

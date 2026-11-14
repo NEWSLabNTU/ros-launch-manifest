@@ -10,7 +10,7 @@ nodes:
   perception:
     sub:
       data:
-        min_rate_hz: 10
+        min_rate: 10Hz
         qos:
           reliability: reliable
 
@@ -18,4 +18,4 @@ topics:
   /sensor/data:
     type: sensor_msgs/msg/PointCloud2
     sub: [perception/data]
-    rate_hz: 10
+    rate: 10Hz

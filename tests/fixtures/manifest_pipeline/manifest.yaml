@@ -11,10 +11,10 @@ nodes:
   cropbox:
     sub:
       raw_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
     pub:
       cropped_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [raw_points] }
@@ -24,12 +24,12 @@ nodes:
   ground_filter:
     sub:
       input_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
     pub:
       no_ground:
-        min_rate_hz: 10
+        min_rate: 10Hz
       ground:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       filter:
         trigger: { input: [input_points] }
@@ -39,13 +39,13 @@ nodes:
   fusion:
     sub:
       lidar_objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
       camera_objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
         state: true
     pub:
       fused_objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [lidar_objects] }
@@ -55,10 +55,10 @@ nodes:
   tracker:
     sub:
       detected_objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
     pub:
       tracked_objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [detected_objects] }
@@ -70,7 +70,7 @@ topics:
   /sensing/lidar/pointcloud:
     type: sensor_msgs/msg/PointCloud2
     sub: [cropbox/raw_points]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
 
@@ -79,7 +79,7 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     pub: [cropbox/cropped_points]
     sub: [ground_filter/input_points]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
 
@@ -87,7 +87,7 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     pub: [ground_filter/no_ground]
     sub: [fusion/lidar_objects]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
 
@@ -95,7 +95,7 @@ topics:
     type: autoware_msgs/msg/DetectedObjects
     pub: [fusion/camera_objects]
     sub: []
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
 
@@ -103,13 +103,13 @@ topics:
     type: autoware_msgs/msg/DetectedObjects
     pub: [fusion/fused_objects]
     sub: [tracker/detected_objects]
-    rate_hz: 10
+    rate: 10Hz
 
   tracked_objects:
     type: autoware_msgs/msg/TrackedObjects
     pub: [tracker/tracked_objects]
     sub: []
-    rate_hz: 10
+    rate: 10Hz
     drop: 2 / 100
 
 event_chains:

@@ -21,19 +21,19 @@ nodes:
   controller:
     sub:
       trajectory:
-        min_rate_hz: 10
+        min_rate: 10Hz
       kinematic_state:
-        min_rate_hz: 50
+        min_rate: 50Hz
       steering_status:
-        min_rate_hz: 30
+        min_rate: 30Hz
       operation_mode:
         state: true
         required: true
     pub:
       control_cmd:
-        min_rate_hz: 30
+        min_rate: 30Hz
       predicted_trajectory:
-        min_rate_hz: 30
+        min_rate: 30Hz
     paths:
       main:
         trigger: { input: [trajectory] }
@@ -88,7 +88,7 @@ topics:
     type: autoware_control_msgs/msg/Control
     pub: [controller/control_cmd]
     sub: [control_validator/control_cmd]
-    rate_hz: 30
+    rate: 30Hz
     qos:
       reliability: reliable
       durability: transient_local
@@ -101,7 +101,7 @@ topics:
       - control_validator/predicted_trajectory
       - aeb/predicted_trajectory
       - lane_checker/predicted_trajectory
-    rate_hz: 30
+    rate: 30Hz
     qos:
       reliability: reliable
       depth: 1

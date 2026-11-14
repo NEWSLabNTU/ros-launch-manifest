@@ -12,7 +12,7 @@ nodes:
   heartbeat:
     pub:
       beat:
-        min_rate_hz: 2
+        min_rate: 2Hz
         qos:
           liveliness: automatic
           lease_duration: 500ms
@@ -21,4 +21,4 @@ topics:
   /safety/heartbeat:
     type: std_msgs/msg/Empty
     pub: [heartbeat/beat]
-    rate_hz: 2
+    rate: 2Hz

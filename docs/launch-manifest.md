@@ -168,7 +168,7 @@ graph. Scopes contain nodes, topics, services, and child scopes.
   [Timestamps and Data Flow](#timestamps-and-data-flow).
 
   The same topic can appear in multiple manifests across the scope tree.
-  Contract fields — `type:`, `rate_hz:`, `max_transport:`, the topic-level
+  Contract fields — `type:`, `rate:`, `max_transport:`, the topic-level
   `qos:` block and `drop:` — must agree across all declarations; `pub:`
   and `sub:` endpoint lists are merged by the checker. Per-endpoint `qos:` overrides live on a node and are
   local to its declaring scope. Each scope only references its own nodes
@@ -240,7 +240,7 @@ cross-scope rule and runs only in the consumer's merge layer
   conflicts possible.
 - When checking a manifest tree (multiple scopes), the checker merges
   declarations for the same resolved topic name. Five fields must agree
-  where two scopes both declare them — `type:`, `rate_hz:`,
+  where two scopes both declare them — `type:`, `rate:`,
   `max_transport:`, the topic-level `qos:` block and `drop:` (same `N / W`
   and same `max_consecutive`) — and each is an error when they do not.
   Where only one scope declares a field, the merged topic takes it.
@@ -303,7 +303,7 @@ nodes:
   ndt_scan_matcher:
     sub:
       sensor_points:
-        min_rate_hz: 10          # causal — triggers alignment
+        min_rate: 10Hz          # causal — triggers alignment
       map:
         state: true              # polled — read latest, not every update
         required: true           # must receive at least one map
@@ -311,7 +311,7 @@ nodes:
         state: true              # polled — feedback from EKF
     pub:
       ndt_pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
 ```
 
 **The four combinations:**
@@ -346,7 +346,7 @@ nodes:
   lidar_driver:
     lifecycle: true
     pub:
-      pointcloud: { min_rate_hz: 10 }   # applies when driver is Active
+      pointcloud: { min_rate: 10Hz }   # applies when driver is Active
 ```
 
 Static checking is unaffected — the flag is purely a signal for runtime
@@ -430,7 +430,7 @@ composition rules (latency, rate, age, drop) for each topology.
 A topic's publication rate is a **consequence**, not a declaration. The
 facts are already in the manifest — a timer path publishes at its own
 rate, an input-triggered path publishes at the rate its inputs arrive — so
-`topics.<t>.rate_hz` written by hand is a second copy of something the
+`topics.<t>.rate` written by hand is a second copy of something the
 graph computes. The derivation is
 `resolve/src/ros/manifest_graph.rs::derive_topic_rates`, memoised over the
 merged topic index.
@@ -439,7 +439,7 @@ Per path:
 
 | Trigger | Derived rate |
 |---------|--------------|
-| `timer: { rate_hz: R }` | **R**. This is the only source; nothing else creates messages. |
+| `timer: { rate: R }` | **R**. This is the only source; nothing else creates messages. |
 | `input: [...]`, **no** `sync:` | the **SUM** of its inputs' rates |
 | `input: [...]`, **with** `sync:` | the **MIN** of its inputs' rates |
 | `once` | `Unknown` — it fires exactly once |
@@ -468,17 +468,17 @@ Reporting 0 Hz would be a claim; omitting the topic silently would read as
 **What reads the derivation:**
 
 - `derivable-rate` (info) / `rate-mismatch` (warning) — a declared
-  `topics.<t>.rate_hz` against the derived one. The info says the
+  `topics.<t>.rate` against the derived one. The info says the
   declaration is a deletable copy.
 - `derivable-min-rate` (info) / `min-rate-mismatch` (warning) — the same
-  for a publisher's `min_rate_hz`, which is the topic rate one hop
+  for a publisher's `min_rate`, which is the topic rate one hop
   earlier. Attributed **only where the topic has exactly one publisher**:
   with several the derived rate is their sum, and dividing it back out
   would present a bound as a rate. A promise *below* the derived rate gets
   nothing — it is a true but loose lower bound.
 - `derived-rate-hierarchy` (warning) — a subscriber asking for more than
   the graph delivers. This is the form that survives deleting the declared
-  `rate_hz`, which `rate-hierarchy` alone reads.
+  `rate`, which `rate-hierarchy` alone reads.
 - `sync-feasibility` runs a second time on derived rates
   (`manifest_loader.rs::check_sync_feasibility_on_derived_rates`), only
   where an input's rate is derived but not declared, so deleting the
@@ -487,19 +487,19 @@ Reporting 0 Hz would be a claim; omitting the topic silently would read as
 **An on-demand publisher** (`pub: { <ep>: { aperiodic: true } }`, v0.1.49)
 says the opposite of a rate: it publishes when asked -- a service call, an
 operator's command -- and promises none. That is not what an omitted
-`min_rate_hz` says (nothing at all), and the difference is acted on. A
+`min_rate` says (nothing at all), and the difference is acted on. A
 consumer derives no rate for the topic and generates no runtime rate
-monitor for the endpoint; `rate-hierarchy` refuses a topic `rate_hz`
+monitor for the endpoint; `rate-hierarchy` refuses a topic `rate`
 beside it and, when every publisher of the topic is on demand, a
-non-`state` subscriber's `min_rate_hz`. The key is refused beside
-`min_rate_hz` and under `sub:`/`cli:`. The Autoware Safety Island's
+non-`state` subscriber's `min_rate`. The key is refused beside
+`min_rate` and under `sub:`/`cli:`. The Autoware Safety Island's
 comfortable-stop operator is the case: `max_velocity_candidates` is
 published from the `operate` service callback, and the 10 Hz floor its
 contract once had to give it became two `rate-hierarchy-runtime`
 violations on the board at start-up.
 
-Measured on `rt_workspace`: deleting all three `rate_hz` **and** all five
-`min_rate_hz` left the derived schedule byte-identical — eight of that
+Measured on `rt_workspace`: deleting all three `rate` **and** all five
+`min_rate` left the derived schedule byte-identical — eight of that
 file's nine copies of `100` were consequences of its one timer.
 
 ### Latency and Data Freshness
@@ -568,7 +568,7 @@ nodes:
   planner:
     sub:
       objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
         max_age: 200ms          # data must be fresher than 200ms
       map:
         state: true
@@ -689,9 +689,9 @@ node needs (assumption) and what it promises (guarantee):
 nodes:
   ground_filter:
     sub:
-      input: { min_rate_hz: 10 }        # assumption: 10 Hz input
+      input: { min_rate: 10Hz }        # assumption: 10 Hz input
     pub:
-      output: { min_rate_hz: 10 }       # guarantee: 10 Hz output
+      output: { min_rate: 10Hz }       # guarantee: 10 Hz output
     paths:
       main:
         trigger: { input: [input] }
@@ -773,7 +773,7 @@ A bare scalar is shorthand for `max_count` alone: `drop: 2 / 100`.
 topics:
   /sensing/pointcloud:
     type: sensor_msgs/msg/PointCloud2
-    rate_hz: 10
+    rate: 10Hz
     drop:
       max_count: 5 / 100       # 5% transport loss
       max_consecutive: 3       # never 3+ in a row
@@ -789,9 +789,9 @@ event_chains:
 ```
 
 **Rate-drop interaction:** a topic's effective delivery rate accounts
-for drops. With `rate_hz: 10` and `drop: { max_count: 5 / 100 }`, the
+for drops. With `rate: 10` and `drop: { max_count: 5 / 100 }`, the
 subscriber effectively receives at least `10 * (1 - 0.05) = 9.5 Hz`. The
-checker verifies: `rate_hz * (1 - n/w) >= sub.min_rate_hz`.
+checker verifies: `rate * (1 - n/w) >= sub.min_rate`.
 
 **Static vs runtime:** the static checker validates local consistency
 (`n <= w`, a non-zero `max_consecutive`, effective delivery meets
@@ -945,7 +945,7 @@ through the graph.
 path `input → output`, the output message's `header.stamp` should equal
 the input's `header.stamp`. The manifest assumes this convention for age
 tracking. Nodes that reset the stamp (e.g., using current time) should
-be modeled as periodic paths (`trigger: { timer: { rate_hz: ... } }`)
+be modeled as periodic paths (`trigger: { timer: { rate: ... } }`)
 even if they are callback-driven. This is how data provenance is tracked
 through a pipeline:
 
@@ -989,10 +989,10 @@ cluster merger, image projection fusion). Inputs are matched by stamp via
 nodes:
   object_merger:
     sub:
-      lidar_objects: { min_rate_hz: 10 }
-      radar_objects: { min_rate_hz: 10 }
+      lidar_objects: { min_rate: 10Hz }
+      radar_objects: { min_rate: 10Hz }
     pub:
-      merged: { min_rate_hz: 10 }
+      merged: { min_rate: 10Hz }
     paths:
       main:
         trigger: { input: [lidar_objects, radar_objects] }
@@ -1009,11 +1009,11 @@ reads the latest value of `state: true` subscriptions; no `sync:` at all.
 nodes:
   map_based_prediction:
     sub:
-      tracked: { min_rate_hz: 10 }
+      tracked: { min_rate: 10Hz }
       vector_map: { state: true, required: true }
       traffic_signals: { state: true }
     pub:
-      predicted: { min_rate_hz: 10 }
+      predicted: { min_rate: 10Hz }
     paths:
       main:
         trigger: { input: [tracked] }   # only causal inputs are in the path
@@ -1067,9 +1067,9 @@ version: 1
 nodes:
   multi_object_tracker:
     sub:
-      detected: { min_rate_hz: 10 }
+      detected: { min_rate: 10Hz }
     pub:
-      tracked: { min_rate_hz: 10 }
+      tracked: { min_rate: 10Hz }
     paths:
       main: { trigger: { input: [detected] }, output: [tracked], max_latency: 20ms }
 
@@ -1078,7 +1078,7 @@ topics:
   objects:
     type: autoware_perception_msgs/msg/TrackedObjects
     pub: [multi_object_tracker/tracked]
-    rate_hz: 10
+    rate: 10Hz
 ```
 
 ```yaml
@@ -1090,11 +1090,11 @@ nodes:
   map_based_prediction:
     sub:
       tracked:
-        min_rate_hz: 10
+        min_rate: 10Hz
         max_age: 150ms            # tracked objects must be fresher than 150ms
       vector_map: { state: true, required: true }
     pub:
-      predicted: { min_rate_hz: 10 }
+      predicted: { min_rate: 10Hz }
     paths:
       main: { trigger: { input: [tracked] }, output: [predicted], max_latency: 15ms }
 
@@ -1161,13 +1161,13 @@ nodes:
   controller:
     sub:
       trajectory:
-        min_rate_hz: 10          # causal — triggers control loop
+        min_rate: 10Hz          # causal — triggers control loop
       operation_mode:
         state: true              # polled — read latest, not every update
         required: true           # must know mode before operating
     pub:
       control_cmd:
-        min_rate_hz: 30
+        min_rate: 30Hz
     paths:
       main:
         trigger: { input: [trajectory] }
@@ -1186,7 +1186,7 @@ topics:
     type: autoware_control_msgs/msg/Control
     pub: [controller/control_cmd]
     sub: [validator/control_cmd]  # auto-optional: validator is conditional
-    rate_hz: 30
+    rate: 30Hz
 
   # absolute — subscribes to topic from planning subsystem
   /planning/trajectory:
@@ -1364,10 +1364,10 @@ nodes:
   controller:
     pub:
       cmd:
-        min_rate_hz: 30
+        min_rate: 30Hz
     sub:
       trajectory:
-        min_rate_hz: 10
+        min_rate: 10Hz
       map:
         state: true
         required: true
@@ -1385,7 +1385,7 @@ nodes:
   lidar_driver:
     lifecycle: true              # managed node — contracts apply when Active
     pub:
-      pointcloud: { min_rate_hz: 10 }
+      pointcloud: { min_rate: 10Hz }
 ```
 
 Endpoints can be a list (`pub: [a, b]`) or a map with properties.
@@ -1412,8 +1412,8 @@ for `hazards:`, and the `integrity_levels:` scale they draw from.
 
 | Field              | Meaning                                       | If omitted |
 |--------------------|-----------------------------------------------|------------|
-| `min_rate_hz`      | Minimum expected receive rate                 | Not checked |
-| `max_rate_hz`      | Maximum expected receive rate                 | Not checked |
+| `min_rate`      | Minimum expected receive rate                 | Not checked |
+| `max_rate`      | Maximum expected receive rate                 | Not checked |
 | `max_age`       | Max data age at receive (`now - header.stamp`) | Not checked |
 | `state`            | Polled (read-latest), not causal              | `false` — causal |
 | `required`         | Must receive at least once before operational | `false` — optional |
@@ -1426,15 +1426,15 @@ for `hazards:`, and the `integrity_levels:` scale they draw from.
 
 | Field         | Meaning                                   | If omitted |
 |---------------|-------------------------------------------|------------|
-| `min_rate_hz` | Minimum publish rate — a **fact** on a publisher, and derivable (`derivable-min-rate`) | Not checked |
-| `max_rate_hz` | Maximum publish rate — checked by `rate-hierarchy` since phase 70 | Not checked |
+| `min_rate` | Minimum publish rate — a **fact** on a publisher, and derivable (`derivable-min-rate`) | Not checked |
+| `max_rate` | Maximum publish rate — checked by `rate-hierarchy` since phase 70 | Not checked |
 | `qos`         | Per-endpoint QoS override (see [QoS](#quality-of-service)) | Inherits topic-level `qos:` |
 
 `pub:`, `sub:` and `cli:` share **one** grammar
 (`pub/sub/cli.<endpoint>` in
 [format-reference.md](format-reference.md)), so the split above is by
 meaning, not by what parses. The same key is a *fact* on a publisher and a
-*requirement* on a subscriber: `min_rate_hz` on a `pub:` is what the node
+*requirement* on a subscriber: `min_rate` on a `pub:` is what the node
 promises to produce, on a `sub:` it is what the node needs to receive, and
 `rate-hierarchy` reads the two ends against the channel between them.
 
@@ -1497,7 +1497,7 @@ run at the same time:
 ```yaml
 nodes:
   detector:
-    sub: { image: { min_rate_hz: 30 } }
+    sub: { image: { min_rate: 30Hz } }
     pub: { boxes: {}, masks: {} }
     concurrency:
       exclusive:
@@ -1542,7 +1542,7 @@ keys are **ROS topic names** — relative or absolute. See
 and guidance on when to use each.
 
 The same topic can appear in multiple manifests across the scope tree.
-Contract fields (`type:`, `rate_hz:`, `max_transport:`, topic-level
+Contract fields (`type:`, `rate:`, `max_transport:`, topic-level
 `qos:`, `drop:`) must agree; endpoint lists (`pub:`, `sub:`) are merged by
 the checker. Per-endpoint
 `qos:` overrides on a node's `pub:`/`sub:` entries are local to the
@@ -1555,7 +1555,7 @@ topics:
     type: autoware_control_msgs/msg/Control
     pub: [controller/cmd]
     sub: [validator/input]
-    rate_hz: 30
+    rate: 30Hz
     drop:
       max_count: 1 / 100          # 1% transport loss
       max_consecutive: 3
@@ -1575,7 +1575,7 @@ topics:
 | `type`             | yes      | ROS message type (`pkg/msg/Name`) | Error |
 | `pub`              | no       | Publisher endpoint refs (`node/endpoint`) | Empty list |
 | `sub`              | no       | Subscriber endpoint refs | Empty list |
-| `rate_hz`          | no       | Negotiated channel rate. A **consequence** — derivable from the timers that drive it (see [Derived Rates](#derived-rates)) | Rate hierarchy not checked against a declared rate; `derived-rate-hierarchy` still checks the derived one |
+| `rate`          | no       | Negotiated channel rate. A **consequence** — derivable from the timers that drive it (see [Derived Rates](#derived-rates)) | Rate hierarchy not checked against a declared rate; `derived-rate-hierarchy` still checks the derived one |
 | `drop`             | no       | Permitted transport loss: `{ max_count: N / W, max_consecutive: K }`, or the bare `N / W` shorthand | Drop not checked |
 | `max_transport`    | no       | Deprecated (v0.1.60, phase 90 G3): state it on each `sub:` endpoint. Still read for one release as the default of every subscriber of this topic that states none; `play_launch migrate` copies it onto them | 0 — absorbed into scope residual |
 | `qos`              | no       | QoS profile | QoS not validated |
@@ -1589,7 +1589,7 @@ rule validates that all declarations of the same resolved topic agree.
 **Rate hierarchy with drops:**
 
 ```
-pub.min_rate_hz  >=  rate_hz  >=  rate_hz * (1 - n/w)  >=  sub.min_rate_hz
+pub.min_rate  >=  rate  >=  rate * (1 - n/w)  >=  sub.min_rate
      30                30          30 * (1 - 0.01) = 29.7      29
                                    drop: { max_count: 1 / 100 }
 ```
@@ -1599,16 +1599,16 @@ effective delivery rate (after transport drops) must meet every
 subscriber's minimum demand. Think of it as: supply ≥ channel ≥
 effective delivery ≥ demand.
 
-`max_rate_hz` bounds the same hierarchy from above, and since phase 70
-`rate-hierarchy` checks it: `pub.max_rate_hz >= rate_hz` and
-`rate_hz <= min(sub.max_rate_hz)`. This is the half that matters for
+`max_rate` bounds the same hierarchy from above, and since phase 70
+`rate-hierarchy` checks it: `pub.max_rate >= rate` and
+`rate <= min(sub.max_rate)`. This is the half that matters for
 queue overrun — the OVER-fast publisher is the one that overruns a
 subscriber, and a topic faster than a subscriber can drain backs up
 regardless of scheduling.
 
 When a topic is declared across multiple scopes, the checker merges
 all declarations before running rate and drop checks. The publisher's
-`rate_hz` in one scope is checked against the subscriber's `min_rate_hz`
+`rate` in one scope is checked against the subscriber's `min_rate`
 in another.
 
 ### Services and Actions
@@ -1737,7 +1737,7 @@ topic names on a scope. The fields below are the common ones:
 
 | Field          | Meaning | If omitted |
 |----------------|---------|------------|
-| `trigger`      | What causes the output: `{ timer: { rate_hz } }`, `{ input: [...] }`, `once`, `aperiodic` | Derived from `input:`; see below |
+| `trigger`      | What causes the output: `{ timer: { rate } }`, `{ input: [...] }`, `once`, `aperiodic` | Derived from `input:`; see below |
 | `input`        | Deprecated in v0.1.59 (phase 90 G3): the legacy spelling of `trigger: { input: [...] }`; the checker warns (`deprecated-spelling`) and `play_launch migrate` rewrites it | See `trigger` |
 | `output`       | Result endpoint(s) or topic(s) | Required |
 | `max_latency`  | Worst-case input-to-output time (see definition above) | Not checked; parent looks through (transparent) |
@@ -1752,7 +1752,7 @@ topic names on a scope. The fields below are the common ones:
 **An empty `input:` is not a timer.** With no `trigger:` and no
 non-empty `input:`, the path is **unclassified**: no trigger fact is
 derived, and it is never silently assumed to be periodic
-(`PathDecl::effective_trigger`). Say `trigger: { timer: { rate_hz: 10 } }`
+(`PathDecl::effective_trigger`). Say `trigger: { timer: { rate: 10 } }`
 when you mean periodic — that rate is a real scheduling input, and an
 unclassified path gives the mapper nothing.
 
@@ -1875,12 +1875,12 @@ nodes:
   lidar_driver:
     paths:
       sample:
-        trigger: { timer: { rate_hz: $(param rate_hz) Hz } }   # read
+        trigger: { timer: { rate: $(param rate_hz) Hz } }   # read
         output: [scan]
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: $(let lidar_rate)
+        min_rate: $(let lidar_rate)
         qos: { lease_duration: $(param watchdog_ms) ms }
         max_age: 3 / $(let lidar_rate)
 ```
@@ -1922,7 +1922,7 @@ event_chains:
     output: [control_cmd_out]
     max_latency: 5ms
   status_tick:                              # periodic, self-clocked
-    trigger: { timer: { rate_hz: 10 } }
+    trigger: { timer: { rate: 10Hz } }
     output: [gate_status]
   publish_map:                              # one-shot at startup
     trigger: once
@@ -1934,8 +1934,8 @@ event_chains:
 
 | Form | Meaning |
 |------|---------|
-| `{ timer: { rate_hz: <f64> } }` | Periodic self-clocked callback. `rate_hz` must be > 0. |
-| `{ timer: { rate_hz: <f64>, jitter: <dur> } }` | The same, with the timer's measured release jitter (v0.1.49): a tick may be released up to `jitter` late, less than one period. |
+| `{ timer: { rate: <f64> } }` | Periodic self-clocked callback. `rate` must be > 0. |
+| `{ timer: { rate: <f64>, jitter: <dur> } }` | The same, with the timer's measured release jitter (v0.1.49): a tick may be released up to `jitter` late, less than one period. |
 | `{ input: [ep, ...] }` | Message-driven; caused by these input endpoint/topic names. |
 | `once` | Published once (startup latch); scheduling-irrelevant. |
 | `aperiodic` (`spontaneous` before v0.3.7) | Caused outside the graph (operator, network, hardware); event-like. | <!-- terms: allow -->
@@ -2053,7 +2053,7 @@ The arithmetic, one rule per topology:
   `sub.max_transport ?? topic.max_transport ?? 0`, added on arrival.
 - **State edges** — a `state: true` subscription does not propagate
   latency, so it is not on any route.
-- **Timer hops** — a `timer`-triggered hop costs `1000 / rate_hz` of
+- **Timer hops** — a `timer`-triggered hop costs `1000 / rate` of
   **sampling cost** *plus* its own `max_latency`: a message arriving just
   after a tick waits a whole period. That is `traversal_latency_ms`; the
   period alone is `sampling_cost_ms`, and it is summed over the winning
@@ -2138,7 +2138,7 @@ happens when it is not, how fast that must be noticed, or how long until
 the system is safe. ISO 26262 calls that number the **fault-tolerant time
 interval** (FTTI), and splits it into detection (FDTI) and reaction (FRTI).
 Detection is something the contract already declares — a liveliness lease,
-a QoS deadline, `max_age`, `min_rate_hz` — so the vocabulary here is small:
+a QoS deadline, `max_age`, `min_rate` — so the vocabulary here is small:
 one requirement on a hazard, one reaction edge on the subscriber that
 detects, one fact on the reaction path. FDTI and FRTI are derived.
 
@@ -2222,10 +2222,10 @@ error.)
 guard topic **is** a detector node's output, so detection is that node's
 publish period plus its own path `max_latency`, minimised over the
 publishers. The period is the guard topic's rate — **derived first**, the
-declared `rate_hz` only as a fallback — so the same number is used here
+declared `rate` only as a fallback — so the same number is used here
 that [Derived Rates](#derived-rates) computes.
 
-> **A rate floor is not a detector.** `min_rate_hz` is a requirement;
+> **A rate floor is not a detector.** `min_rate` is a requirement;
 > nothing fires when a period merely passes unless a QoS deadline or an
 > application watchdog is declared. Counting the period as a detection
 > interval made a 50 Hz floor "detect" a dead lidar in 20ms while the real
@@ -2412,7 +2412,7 @@ modes:
         lidar_to_brake: { max_latency: 100ms }
       nodes:
         detector:
-          sub: { scan: { min_rate_hz: 10 } }
+          sub: { scan: { min_rate: 10Hz } }
   emergency_stop:
     requires: []
     reaction: system.emergency_stop
@@ -2528,7 +2528,7 @@ a sequence that does not list the exiting level, is `mode-exit-target`.
 `overrides:` is a nested mapping mirroring the contract's own shape,
 flattened at parse time to dotted `(target, value)` pairs —
 `event_chains.lidar_to_brake.max_latency`,
-`nodes.detector.sub.scan.min_rate_hz`. This is how a requirement takes a
+`nodes.detector.sub.scan.min_rate`. This is how a requirement takes a
 different value in a degraded mode **without any scalar becoming a map**,
 so no reader changes: every requirement keeps one value where it is
 declared, and a mode pins another by naming its contract path.
@@ -2604,7 +2604,7 @@ nodes:
       target_jerk: { type: double }
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [emergency_control_cmd]
         safe_state:
           emits: emergency_control_cmd
@@ -2729,19 +2729,19 @@ second table.
 | 2 | `wiring`            | Path endpoints not connected by any topic                      | Warning       |
 | 3 | `qos-compat`        | Invalid QoS values                                             | Error         |
 | 4 | `qos-match`         | Publisher and subscriber QoS incompatible per DDS offered ≥ requested, on `reliability`, `durability`, `liveliness` and `lease_duration` | Error |
-| 5 | `rate-hierarchy`    | Lower bounds `pub.min_rate_hz >= rate_hz >= sub.min_rate_hz`, and (phase 70) upper bounds `pub.max_rate_hz >= rate_hz <= sub.max_rate_hz` | Error |
+| 5 | `rate-hierarchy`    | Lower bounds `pub.min_rate >= rate >= sub.min_rate`, and (phase 70) upper bounds `pub.max_rate >= rate <= sub.max_rate` | Error |
 | 6 | `chain-latency`      | Conservative flat sum: scope budget < Σ node latencies + each topic hop's declared transport (its largest edge, by the one precedence; v0.3.4) (the consumer runs the topology-aware version) | Warning |
 | 7 | `causal-dag`        | Cycles in the dataflow graph (`state:` breaks cycles)          | Error         |
-| 8 | `drop-sanity`       | Effective delivery rate < sub.min_rate_hz; drop values out of range (`n > w`, `max_consecutive: 0`) — on topics and event chains | Error |
+| 8 | `drop-sanity`       | Effective delivery rate < sub.min_rate; drop values out of range (`n > w`, `max_consecutive: 0`) — on topics and event chains | Error |
 | 9 | `service-wiring`    | Service client with no matching server across tree             | Warning       |
 | 10 | `service-type`     | Service with no type; server/client not on node                | Error/Warning |
 | 11 | `dangling-entity`  | Topic with 0 publishers or 0 subscribers (warning); service/action with 0 servers (error) — **unless** the missing side is declared `external:`, which for a service is the normal case, a client and its server often being two images | Error/Warning |
 | 12 | `satisfiability`   | Arg combination produces dangling entities; unreachable nodes. Built without the `smt` feature it becomes a stub emitting one Info saying the analysis was not run | Error/Warning |
 | 13 | `state-consistency` | Node has ≥2 sibling subs tagged `state: true` and *exactly one* other sub is neither tagged `state:` nor referenced as a path `input` — likely a missed `state:` tag | Warning |
-| 14 | `explicit-trigger` (44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation. A timer whose `rate_hz` is a reference not evaluated here (`$(param rate) Hz` without a launch tree) is explicit: only its period is unknown | Info |
+| 14 | `explicit-trigger` (44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation. A timer whose `rate` is a reference not evaluated here (`$(param rate) Hz` without a launch tree) is explicit: only its period is unknown | Info |
 | 16 | `once-durability` (44.1/44.2) | A `once`-triggered path's output topic is not `durability: transient_local` — late joiners lose the startup-latch message | Warning |
 | 17 | `sync-feasibility` (44.1/44.2) | `sync:` `max_interval`/`timeout` too narrow for the slowest declared input's inter-arrival period | Warning |
-| 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate_hz` exceeds the consuming `timer` path's rate — backlog accumulates every period (warning); the timer's rate is a reference not evaluated here, so the comparison was not made (info) | Warning/Info |
+| 18 | `queue-drain-rate` (44.1/44.2) | Sum of `buffer: queue` producer `rate` exceeds the consuming `timer` path's rate — backlog accumulates every period (warning); the timer's rate is a reference not evaluated here, so the comparison was not made (info) | Warning/Info |
 | 19 | `jitter-range` (70 W2) | `min_latency` above `max_latency`; both bounds declared and `max_latency - min_latency > max_jitter` (errors); `max_jitter` with no `min_latency`, so the bound is unverifiable (info — an absent floor is unknown, not zero) | Error/Info |
 | 20 | `drop-tightness` (90 G3) | A topic on an event chain's route (in the same manifest) permits a larger drop rate (`max_count`) than the event chain's end-to-end budget: a part looser than its whole. The consumer checks the route across scopes | Warning |
 | 21 | `link-unsourced` (v0.3.4) | A link (`links:`) whose `max_transport` states no `source:`: a best-effort transport has no derivable worst case, so its number is evidence only with the measurement it came from | Warning |
@@ -2754,7 +2754,7 @@ across manifest files. The ones that bear on this document:
 | Rule | What it catches | Severity |
 |------|-----------------|----------|
 | `manifest-parse` | A contract file that could not be read at all. Counted and reported separately from the per-manifest tallies, because the file it names is absent from the index and would otherwise count as clean | Error |
-| `consistency` | Same resolved topic/service has conflicting `type:`, `rate_hz:`, `max_transport:`, topic-level `qos:` or `drop:` across scopes; or an `external_topics:` `type:` contradicting the internal `topics:` one | Error |
+| `consistency` | Same resolved topic/service has conflicting `type:`, `rate:`, `max_transport:`, topic-level `qos:` or `drop:` across scopes; or an `external_topics:` `type:` contradicting the internal `topics:` one | Error |
 | `latency-bound-overflow` | Descendant path budget exceeds a matched ancestor path budget (part > whole) | Error |
 | `chain-latency` | An event chain's DERIVED route total (critical path, `max` over fork-join branches) exceeds its declared `max_latency`; supersedes the per-manifest flat sum where a route was traced | Warning |
 | `chain-sampling-feasibility` | An event chain's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it. Emitted before `chain-latency` | Warning |
@@ -2763,8 +2763,8 @@ across manifest files. The ones that bear on this document:
 | `causal-dag-global` | Cycles in the merged graph, including edges derived from launch-file remaps | Error |
 | `lifespan-age` | A topic's `lifespan` is shorter than a subscriber's `max_age` — the age requirement cannot be met | Warning |
 | `response-blocking`, `concurrency-decl`, `path-exclusion` | A service `max_response` promised beside a callback that would block it, and `concurrency:` declarations that contradict each other across the merged tree | Warning |
-| `derivable-rate`, `rate-mismatch` | A declared `topics.<t>.rate_hz` agrees with (info) or contradicts (warning) the rate derived from the timers that drive it | Info/Warning |
-| `derivable-min-rate`, `min-rate-mismatch`, `derived-rate-hierarchy` | The same comparison for a publisher's `min_rate_hz`, and a subscriber asking for more than the derived rate delivers | Info/Warning |
+| `derivable-rate`, `rate-mismatch` | A declared `topics.<t>.rate` agrees with (info) or contradicts (warning) the rate derived from the timers that drive it | Info/Warning |
+| `derivable-min-rate`, `min-rate-mismatch`, `derived-rate-hierarchy` | The same comparison for a publisher's `min_rate`, and a subscriber asking for more than the derived rate delivers | Info/Warning |
 | `derivable-criticality`, `criticality-mismatch`, `integrity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale | Info/Warning/Error |
 | `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
 | `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path | Error |
@@ -2789,7 +2789,7 @@ that event chain is retracted from the tally.
 **Drop checking** is split between static and runtime:
 - **Static (`drop-sanity`)**: validates values are in range and that
   effective delivery rate meets subscriber demand
-  (`rate_hz × (1 - n/w) >= sub.min_rate_hz`). No composition along a
+  (`rate × (1 - n/w) >= sub.min_rate`). No composition along a
   route — drop rates depend on runtime conditions.
 - **Runtime monitoring**: checks the observed delivery ratio against
   `drop.max_count`. Burstiness detection (autocorrelation, dispersion
@@ -2803,7 +2803,7 @@ structurally broken manifest. A passing manifest is **variant-complete**.
 
 **Consistency**: when checking a manifest tree, the checker merges all
 declarations for the same resolved topic or service name. `type:` must
-match across all scopes, as must `rate_hz:`, `max_transport:`, the
+match across all scopes, as must `rate:`, `max_transport:`, the
 topic-level `qos:` block and `drop:` wherever two scopes both declare
 them. Endpoint lists (`pub:`/`sub:`, `server:`/`client:`) are merged.
 Endpoint-level `qos:` overrides live on a node and are local to the
@@ -2824,12 +2824,12 @@ warning[wiring]: path input 'trajectory' is not wired by any topic
   (expected 'controller/trajectory' in a topic's sub list)
   --> control.contract.yaml:12:9         nodes.controller.paths.main
 
-error[rate-hierarchy]: publisher 'controller/cmd' min_rate_hz (10) < topic
-  rate_hz (30)
+error[rate-hierarchy]: publisher 'controller/cmd' min_rate (10 Hz) < topic
+  rate (30 Hz)
   --> control.contract.yaml:20:5         topics.command/control_cmd
 
 error[drop-sanity]: effective delivery rate (9.50 Hz = 10 Hz * 0.9500
-  delivery) < subscriber 'tracker/input' min_rate_hz (10)
+  delivery) < subscriber 'tracker/input' min_rate (10 Hz)
   --> perception.contract.yaml:15:5      topics./perception/pointcloud
 
 error[qos-match]: incompatible QoS on topic '/sensor/pointcloud' field

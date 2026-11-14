@@ -7,7 +7,7 @@ nodes:
   consumer:
     sub:
       in:
-        min_rate_hz: 8     # Sub needs 8 Hz
+        min_rate: 8Hz     # Sub needs 8 Hz
 
 topics:
   /shared_stream:

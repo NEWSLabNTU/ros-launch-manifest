@@ -26,7 +26,7 @@ nodes:
         required: true
     pub:
       pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [pointcloud] }
@@ -40,7 +40,7 @@ nodes:
       imu: {}
     pub:
       pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
       twist: {}
     paths:
       main:
@@ -54,7 +54,7 @@ nodes:
       gnss_fix: {}
     pub:
       pose:
-        min_rate_hz: 5
+        min_rate: 5Hz
     paths:
       main:
         trigger: { input: [gnss_fix] }
@@ -75,7 +75,7 @@ nodes:
         state: true
     pub:
       ekf_pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [pose_input] }

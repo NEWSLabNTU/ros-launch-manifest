@@ -551,17 +551,19 @@ pub const FIELDS: &[Field] = &[
         "Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. `params: {}` means the node declares no parameters; a missing `params:` means not stated. The two stay distinct in the model: `{}` becomes an empty `contracts.node_params` entry, a missing key none.",
     ),
     // ── pub/sub/cli.<endpoint> ──
+    alias("min_rate_hz", Context::Endpoint, "min_rate"),
     live(
-        "min_rate_hz",
+        "min_rate",
         Context::Endpoint,
         Kind::ByEndpoint,
-        "Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate_hz` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out.",
+        "Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `min_rate_hz: <number of Hz>` before v0.3.21.",
     ),
+    alias("max_rate_hz", Context::Endpoint, "max_rate"),
     live(
-        "max_rate_hz",
+        "max_rate",
         Context::Endpoint,
         Kind::ByEndpoint,
-        "Upper bound on this endpoint's rate.",
+        "Upper bound on this endpoint's rate. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `max_rate_hz: <number of Hz>` before v0.3.21.",
     ),
     live(
         "max_age",
@@ -774,11 +776,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Topic-level QoS, overridable per endpoint.",
     ),
+    alias("rate_hz", Context::Topic, "rate"),
     live(
-        "rate_hz",
+        "rate",
         Context::Topic,
         Kind::Consequence,
-        "Publication rate. Derivable from the timers that drive it — see `derivable-rate`.",
+        "Publication rate. Derivable from the timers that drive it — see `derivable-rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz: <number of Hz>` before v0.3.21.",
     ),
     removed(
         "max_transport",
@@ -1008,11 +1011,12 @@ pub const FIELDS: &[Field] = &[
         "Output caused by these input endpoints or topics.",
     ),
     // ── trigger.timer ──
+    alias("rate_hz", Context::TriggerTimer, "rate"),
     live(
-        "rate_hz",
+        "rate",
         Context::TriggerTimer,
         Kind::Fact,
-        "Timer rate, Hz. Required, and must be greater than zero. A bare number, or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. A reference the checker cannot evaluate (`$(param rate) Hz` with no launch tree) still makes the path timer-triggered; only the period is unknown, and a rule that needs it says the comparison was not made.",
+        "Timer rate. Required, and must be greater than zero. A frequency with its unit (`10Hz`; a bare number is refused), or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. A reference the checker cannot evaluate (`$(param rate) Hz` with no launch tree) still makes the path timer-triggered; only the period is unknown, and a rule that needs it says the comparison was not made. `rate_hz: <number of Hz>` before v0.3.21.",
     ),
     live(
         "jitter",
@@ -1344,11 +1348,12 @@ pub const FIELDS: &[Field] = &[
         "Where the runtime observer reads the violation: qos (default) | diagnostics | application.",
     ),
     // ── ingress ──
+    alias("rate_hz", Context::ArrivalCurve, "rate"),
     live(
-        "rate_hz",
+        "rate",
         Context::ArrivalCurve,
         Kind::Requirement,
-        "Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate_hz`.",
+        "Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz: <number of Hz>` before v0.3.21.",
     ),
     live(
         "burst",
@@ -1999,6 +2004,11 @@ pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
     (Context::Manifest, "functions", "0.3.19"),
     (Context::Hazard, "enters", "0.3.19"),
     (Context::Manifest, "paths", "0.3.20"),
+    (Context::Endpoint, "min_rate_hz", "0.3.21"),
+    (Context::Endpoint, "max_rate_hz", "0.3.21"),
+    (Context::Topic, "rate_hz", "0.3.21"),
+    (Context::TriggerTimer, "rate_hz", "0.3.21"),
+    (Context::ArrivalCurve, "rate_hz", "0.3.21"),
 ];
 
 /// Deprecations no row can carry, because the key stays live in another use
@@ -2006,9 +2016,10 @@ pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
 /// the retirement debt hid). `(what, release)`; the same test holds them to
 /// the schedule. A subscriber's `max_transport` is deprecated while a
 /// client's is not, and both are the `Endpoint` row.
-pub const DEPRECATED_USES: &[(&str, &str)] = &[
-    ("a mode under a client's `on_timeout`/`then`/`on_rejected` `reaction:`", "0.3.19"),
-];
+pub const DEPRECATED_USES: &[(&str, &str)] = &[(
+    "a mode under a client's `on_timeout`/`then`/`on_rejected` `reaction:`",
+    "0.3.19",
+)];
 
 /// Keys added since v0.1.49, with the release that added each: what the
 /// format reference prints beside them. A column on
@@ -2099,6 +2110,11 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::OnTimeout, "enters", "0.3.19"),
     (Context::CallReaction, "enters", "0.3.19"),
     (Context::Manifest, "event_chains", "0.3.20"),
+    (Context::Endpoint, "min_rate", "0.3.21"),
+    (Context::Endpoint, "max_rate", "0.3.21"),
+    (Context::Topic, "rate", "0.3.21"),
+    (Context::TriggerTimer, "rate", "0.3.21"),
+    (Context::ArrivalCurve, "rate", "0.3.21"),
     (Context::Manifest, "independence", "0.3.13"),
     (Context::Hazard, "requirement", "0.3.13"),
     (Context::Mode, "commands", "0.3.13"),
@@ -2182,8 +2198,9 @@ fn unit_stem(k: &str) -> &str {
 /// keys at the least edit distance within a budget of a third of the key's
 /// length (at least 1).
 pub fn nearest_all(context: Context, key: &str) -> Vec<&'static str> {
+    // A suggestion names the current key, never a deprecated spelling.
     let candidates: Vec<&'static str> = allowed(context)
-        .filter(|f| f.status != Status::Removed)
+        .filter(|f| f.status != Status::Removed && f.status != Status::DeprecatedAlias)
         .map(|f| f.key)
         .collect();
     let mut structural: Vec<&'static str> = candidates
@@ -2297,7 +2314,7 @@ mod tests {
             .collect();
         assert_eq!(
             consequences,
-            vec![(Context::Node, "criticality"), (Context::Topic, "rate_hz")]
+            vec![(Context::Node, "criticality"), (Context::Topic, "rate")]
         );
     }
 
@@ -2344,7 +2361,7 @@ mod tests {
     #[test]
     fn a_one_character_typo_gets_a_suggestion() {
         assert_eq!(nearest(Context::Path, "max_latencyy"), Some("max_latency"));
-        assert_eq!(nearest(Context::Topic, "rate_hzz"), Some("rate_hz"));
+        assert_eq!(nearest(Context::Topic, "ratee"), Some("rate"));
         assert_eq!(nearest(Context::Path, "bogus_field"), None);
     }
 
@@ -2352,27 +2369,22 @@ mod tests {
     /// matched on the stem, ahead of a closer edit distance.
     #[test]
     fn a_missing_unit_suffix_suggests_the_suffixed_key() {
-        assert_eq!(
-            nearest_all(Context::Endpoint, "max_rate"),
-            vec!["max_rate_hz"]
-        );
-        assert_eq!(
-            nearest_all(Context::Endpoint, "min_rate"),
-            vec!["min_rate_hz"]
-        );
+        // Since v0.3.21 a rate key carries no unit; a unit suffix on it
+        // suggests the bare key, and never the deprecated `_hz` spelling.
         assert_eq!(
             nearest_all(Context::Endpoint, "max_rate_ms"),
-            vec!["max_rate_hz"]
+            vec!["max_rate"]
         );
+        assert_eq!(nearest_all(Context::Endpoint, "max_age_s"), vec!["max_age"]);
         // Too short to be a word prefix: falls back to edit distance.
-        assert!(!nearest_all(Context::Endpoint, "max").contains(&"max_rate_hz"));
+        assert!(!nearest_all(Context::Endpoint, "max").contains(&"max_rate"));
     }
 
     /// Ties are all listed, sorted.
     #[test]
     fn equally_near_keys_are_all_listed() {
-        let all = nearest_all(Context::Endpoint, "m_rate_hz");
-        assert_eq!(all, vec!["max_rate_hz", "min_rate_hz"]);
+        let all = nearest_all(Context::Endpoint, "mmm_rate");
+        assert_eq!(all, vec!["max_rate", "min_rate"]);
     }
 
     /// [`render_markdown`] emits one section per context by walking FIELDS in

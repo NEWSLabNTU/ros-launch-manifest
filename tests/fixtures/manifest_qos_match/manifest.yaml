@@ -14,10 +14,10 @@ version: 1
 nodes:
   publisher_ok:
     pub:
-      map: { min_rate_hz: 1 }
-      telemetry: { min_rate_hz: 10 }
-      data: { min_rate_hz: 10 }
-      history_test: { min_rate_hz: 10 }
+      map: { min_rate: 1Hz }
+      telemetry: { min_rate: 10Hz }
+      data: { min_rate: 10Hz }
+      history_test: { min_rate: 10Hz }
 
 topics:
   # Canonical "deliver to late joiners" — should produce NO diagnostics.

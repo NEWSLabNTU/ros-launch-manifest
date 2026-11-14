@@ -69,7 +69,7 @@ impl ValidationRule for DropSanityRule {
                         &format!("topics.{topic_name}"),
                         format!(
                             "effective delivery rate ({effective_rate:.2} Hz = {topic_rate} Hz * {:.4} delivery) \
-                             < subscriber '{sub_ref}' min_rate_hz ({min_rate})",
+                             < subscriber '{sub_ref}' min_rate ({min_rate} Hz)",
                             1.0 - drop_rate
                         ),
                     );

@@ -31,9 +31,9 @@ links:
 nodes:
   lidar_detector:
     sub:
-      input: { min_rate_hz: 10 }
+      input: { min_rate: 10Hz }
     pub:
-      out: { min_rate_hz: 10 }
+      out: { min_rate: 10Hz }
     paths:
       main:
         trigger: { input: [input] }
@@ -42,9 +42,9 @@ nodes:
 
   camera_detector:
     sub:
-      input: { min_rate_hz: 10 }
+      input: { min_rate: 10Hz }
     pub:
-      out: { min_rate_hz: 10 }
+      out: { min_rate: 10Hz }
     paths:
       main:
         trigger: { input: [input] }
@@ -54,13 +54,13 @@ nodes:
   fusion:
     sub:
       lidar:
-        min_rate_hz: 10
+        min_rate: 10Hz
         link: in_process       # intra-process from lidar_detector
       camera:
-        min_rate_hz: 10
+        min_rate: 10Hz
         link: bridge           # cross-network bridge
     pub:
-      out: { min_rate_hz: 10 }
+      out: { min_rate: 10Hz }
     paths:
       main:
         trigger: { input: [lidar, camera] }
@@ -71,24 +71,24 @@ topics:
   /sensor/raw:
     type: sensor_msgs/msg/PointCloud2
     sub: [lidar_detector/input, camera_detector/input]
-    rate_hz: 10
+    rate: 10Hz
 
   /perception/lidar_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [lidar_detector/out]
     sub: [fusion/lidar]
-    rate_hz: 10
+    rate: 10Hz
 
   /perception/camera_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [camera_detector/out]
     sub: [fusion/camera]
-    rate_hz: 10
+    rate: 10Hz
 
   /perception/fused_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
     pub: [fusion/out]
-    rate_hz: 10
+    rate: 10Hz
 
 event_chains:
   pipeline:

@@ -6,13 +6,13 @@ nodes:
   source:
     pub:
       out:
-        min_rate_hz: 10
+        min_rate: 10Hz
 
 topics:
   shared_data:
     type: std_msgs/msg/String
     pub: [source/out]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: reliable
       durability: volatile

@@ -10,7 +10,7 @@ nodes:
   watchdog:
     sub:
       beat:
-        min_rate_hz: 2
+        min_rate: 2Hz
         qos:
           liveliness: manual_by_topic
           lease_duration: 200ms
@@ -19,4 +19,4 @@ topics:
   /safety/heartbeat:
     type: std_msgs/msg/Empty
     sub: [watchdog/beat]
-    rate_hz: 2
+    rate: 2Hz

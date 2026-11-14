@@ -314,7 +314,7 @@ nodes:
 }
 
 #[test]
-fn trigger_timer_requires_rate_hz() {
+fn trigger_timer_requires_rate() {
     let yaml = r#"
 version: 1
 nodes:
@@ -326,7 +326,7 @@ nodes:
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
-    assert!(err.to_string().contains("rate_hz"), "got: {err}");
+    assert!(err.to_string().contains("requires `rate`"), "got: {err}");
 }
 
 #[test]
@@ -616,7 +616,10 @@ chains:
 "#;
     let err = parse_manifest_str(yaml).unwrap_err().to_string();
     assert!(err.contains("removed"), "{err}");
-    assert!(err.contains("event_chains:"), "must name the replacement: {err}");
+    assert!(
+        err.contains("event_chains:"),
+        "must name the replacement: {err}"
+    );
     assert!(err.contains("max_latency"), "{err}");
 }
 

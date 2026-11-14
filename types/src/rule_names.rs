@@ -148,6 +148,8 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
 /// when `section` is empty (`severity_levels`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenamedKey {
+    /// The section the key sits in (`""`: a manifest level; `"*"`: any
+    /// depth, for a key whose name means one thing wherever it appears).
     pub section: &'static str,
     pub old: &'static str,
     pub new: &'static str,
@@ -206,6 +208,26 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         new: "event_chains",
         stage: Stage::Accepted,
     },
+    // S3 (v0.3.21): the rate keys lose `_hz`. `*` matches the key at any
+    // depth: each name is a rate wherever it appears.
+    RenamedKey {
+        section: "*",
+        old: "min_rate_hz",
+        new: "min_rate",
+        stage: Stage::Accepted,
+    },
+    RenamedKey {
+        section: "*",
+        old: "max_rate_hz",
+        new: "max_rate",
+        stage: Stage::Accepted,
+    },
+    RenamedKey {
+        section: "*",
+        old: "rate_hz",
+        new: "rate",
+        stage: Stage::Accepted,
+    },
 ];
 
 /// `at` with every renamed key segment replaced by its new name. A
@@ -229,10 +251,11 @@ fn rewrite_path(at: &str, applies: impl Fn(Stage) -> bool) -> String {
             }
             let at_level = i == 0 || (i >= 2 && segs[i - 2] == "includes");
             let in_section = !k.section.is_empty()
+                && k.section != "*"
                 && i >= 2
                 && segs[i - 2] == k.section
                 && (i == 2 || segs[i - 3] == "includes" || i >= 4 && segs[i - 4] == "includes");
-            if (k.section.is_empty() && at_level) || in_section {
+            if k.section == "*" || (k.section.is_empty() && at_level) || in_section {
                 out[i] = format!("{}{index}", k.new);
             }
         }

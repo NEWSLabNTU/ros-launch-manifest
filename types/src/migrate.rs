@@ -228,6 +228,15 @@ pub const REWRITES: &[Rewrite] = &[
         find: paths_event_chains,
     },
     Rewrite {
+        id: "rate-units",
+        unit: "104 S3",
+        since: "0.3.21",
+        from: "min_rate_hz: 10, max_rate_hz: 20, rate_hz: 100 (a topic's, a timer's, an arrival curve's; a timer's `{ value: 10, source }`; a mode override's)",
+        to: "min_rate: 10Hz, max_rate: 20Hz, rate: 100Hz",
+        when: "always; a number gains `Hz`, a `$(param ...) Hz` reference keeps its text, and a value in another form is left for a hand edit",
+        find: rate_units,
+    },
+    Rewrite {
         id: "rule-id-renamed",
         unit: "98",
         since: "0.3.3",
@@ -793,6 +802,93 @@ fn endpoint_maps(doc: &Doc, side: &str) -> Vec<(Vec<String>, Yaml)> {
     out
 }
 
+/// S3 (v0.3.21): every old rate key, at any depth outside
+/// `acknowledged:`, is renamed and its number gains `Hz`.
+fn rate_units(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "rate-units";
+    fn walk(doc: &Doc, path: &mut Vec<String>, y: &Yaml, out: &mut Vec<Edit>) {
+        match y {
+            Yaml::Hash(h) => {
+                for (k, v) in h {
+                    let Some(key) = key_str(k) else { continue };
+                    if path.is_empty() && key == "acknowledged" {
+                        continue;
+                    }
+                    path.push(key.clone());
+                    let new = match key.as_str() {
+                        "min_rate_hz" => Some("min_rate"),
+                        "max_rate_hz" => Some("max_rate"),
+                        "rate_hz" => Some("rate"),
+                        _ => None,
+                    };
+                    match new {
+                        Some(new) if !h.contains_key(&Yaml::String(new.to_string())) => {
+                            rate_value(doc, path, v, out);
+                            let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+                            out.extend(doc.rename_key(ID, &refs, new));
+                        }
+                        Some(_) => doc.skip(
+                            ID,
+                            &path.join("."),
+                            "both spellings written: delete one by hand",
+                        ),
+                        None => walk(doc, path, v, out),
+                    }
+                    path.pop();
+                }
+            }
+            Yaml::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    path.push(i.to_string());
+                    walk(doc, path, item, out);
+                    path.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    /// The number at `path` (or at its `value:`, the timer's map form)
+    /// gains `Hz`.
+    fn rate_value(doc: &Doc, path: &[String], v: &Yaml, out: &mut Vec<Edit>) {
+        let (vpath, v) = match v {
+            Yaml::Hash(_) => (with(path, &["value"]), &v["value"]),
+            _ => (path.to_vec(), v),
+        };
+        let number = match v {
+            Yaml::Real(r) => r.clone(),
+            Yaml::Integer(i) => i.to_string(),
+            Yaml::String(t) if crate::values::is_reference(t) => return,
+            Yaml::BadValue | Yaml::Null => return,
+            _ => {
+                doc.skip(
+                    ID,
+                    &vpath.join("."),
+                    "the value is not a number: rewrite by hand",
+                );
+                return;
+            }
+        };
+        let dotted = vpath.join(".");
+        let Some(r) = doc.key(&vpath) else {
+            doc.skip(ID, &dotted, "key token not found");
+            return;
+        };
+        let vs = doc.value_start(&r);
+        let in_flow = doc.flow.contains(&vpath[..vpath.len() - 1])
+            || doc.src[..r.start].trim_end().ends_with(['{', ',']);
+        let ve = doc.inline_value_end(vs, in_flow);
+        if doc.src[vs..ve].trim() != number {
+            doc.skip(ID, &dotted, "the value is not written as a plain number");
+            return;
+        }
+        let end = vs + doc.src[vs..ve].trim_end().len();
+        out.push(doc.edit(ID, &dotted, vs..end, format!("{number}Hz")));
+    }
+    let mut out = Vec::new();
+    walk(doc, &mut Vec::new(), &doc.yaml, &mut out);
+    out
+}
+
 /// The key a manifest level writes its event chains under: `event_chains`,
 /// or `paths` before v0.3.20.
 fn chains_key(level: &Yaml) -> &'static str {
@@ -831,7 +927,13 @@ fn paths_event_chains(doc: &Doc) -> Vec<Edit> {
 /// level.
 fn functions_capabilities(doc: &Doc) -> Vec<Edit> {
     let maps = manifest_levels(doc);
-    rename_in(doc, "functions-capabilities", maps, "functions", "capabilities")
+    rename_in(
+        doc,
+        "functions-capabilities",
+        maps,
+        "functions",
+        "capabilities",
+    )
 }
 
 /// Every `hazards.<h>` mapping, at every manifest level.
@@ -851,7 +953,13 @@ fn hazard_maps(doc: &Doc) -> Vec<(Vec<String>, Yaml)> {
 
 /// S3 (v0.3.19): a hazard's `enters:` becomes `leaves:`.
 fn hazard_enters_leaves(doc: &Doc) -> Vec<Edit> {
-    rename_in(doc, "hazard-enters-leaves", hazard_maps(doc), "enters", "leaves")
+    rename_in(
+        doc,
+        "hazard-enters-leaves",
+        hazard_maps(doc),
+        "enters",
+        "leaves",
+    )
 }
 
 /// S3 (v0.3.19): a client's `reaction:` naming a mode of the same manifest
@@ -893,7 +1001,11 @@ fn call_reaction_enters(doc: &Doc) -> Vec<Edit> {
                     path.extend(tail.iter().map(|s| s.to_string()));
                     path.push("reaction".to_string());
                     if !m["enters"].is_badvalue() {
-                        doc.skip(ID, &path.join("."), "both spellings written: delete one by hand");
+                        doc.skip(
+                            ID,
+                            &path.join("."),
+                            "both spellings written: delete one by hand",
+                        );
                         continue;
                     }
                     let refs: Vec<&str> = path.iter().map(String::as_str).collect();
@@ -2589,25 +2701,41 @@ nodes:
         on_timeout: { retry: { attempts: 2, backoff: 1ms }, then: { reaction: stop } }
 ";
         let m = migrate_str(src).unwrap();
-        let ids: Vec<_> = m.edits.iter().map(|e| (e.rewrite, e.path.as_str())).collect();
+        let ids: Vec<_> = m
+            .edits
+            .iter()
+            .map(|e| (e.rewrite, e.path.as_str()))
+            .collect();
         assert_eq!(
             ids,
             vec![
                 ("functions-capabilities", "functions"),
                 ("hazard-enters-leaves", "hazards.blind.enters"),
                 ("call-reaction-enters", "nodes.n.cli.op.on_timeout.reaction"),
-                ("call-reaction-enters", "nodes.n.cli.op2.on_timeout.then.reaction"),
+                (
+                    "call-reaction-enters",
+                    "nodes.n.cli.op2.on_timeout.then.reaction"
+                ),
             ]
         );
         let want = src
             .replace("functions:\n", "capabilities:\n")
             .replace("    enters: driving", "    leaves: driving")
-            .replace("on_timeout: { reaction: stop }", "on_timeout: { enters: stop }")
+            .replace(
+                "on_timeout: { reaction: stop }",
+                "on_timeout: { enters: stop }",
+            )
             .replace("then: { reaction: stop }", "then: { enters: stop }");
         assert_eq!(m.output, want);
         let parsed = crate::parse::parse_manifest_str(&m.output).unwrap();
         assert!(parsed.deprecated_spellings.is_empty());
-        assert!(parsed.nodes["n"].cli["op"].on_timeout.as_ref().unwrap().enters);
+        assert!(
+            parsed.nodes["n"].cli["op"]
+                .on_timeout
+                .as_ref()
+                .unwrap()
+                .enters
+        );
         assert!(!parsed.nodes["n"].cli["op"].on_rejected_enters);
         assert!(!migrate_str(&m.output).unwrap().changed());
         // The old file reads, each old key noted for the consumer's warning.
@@ -2653,7 +2781,11 @@ includes:
 "
         .replace("event_chains_note: 0\n", "");
         let m = migrate_str(&src).unwrap();
-        let ids: Vec<_> = m.edits.iter().map(|e| (e.rewrite, e.path.as_str())).collect();
+        let ids: Vec<_> = m
+            .edits
+            .iter()
+            .map(|e| (e.rewrite, e.path.as_str()))
+            .collect();
         assert_eq!(
             ids,
             vec![
@@ -2665,22 +2797,103 @@ includes:
         );
         let want = src
             .replace("\npaths:\n  e2e", "\nevent_chains:\n  e2e")
-            .replace("      paths:\n        e2e", "      event_chains:\n        e2e")
+            .replace(
+                "      paths:\n        e2e",
+                "      event_chains:\n        e2e",
+            )
             .replace("    paths:\n      inner", "    event_chains:\n      inner")
-            .replace("at: paths.e2e.max_latency", "at: event_chains.e2e.max_latency");
+            .replace(
+                "at: paths.e2e.max_latency",
+                "at: event_chains.e2e.max_latency",
+            );
         assert_eq!(m.output, want);
         assert!(m.output.contains("    paths:\n      p:"));
         let parsed = crate::parse::parse_manifest_str(&m.output).unwrap();
-        assert!(parsed.deprecated_spellings.is_empty(), "{:?}", parsed.deprecated_spellings);
+        assert!(
+            parsed.deprecated_spellings.is_empty(),
+            "{:?}",
+            parsed.deprecated_spellings
+        );
         assert!(parsed.paths.contains_key("e2e"));
         assert_eq!(
             parsed.modes["m"].overrides[0].target,
             "event_chains.e2e.max_latency"
         );
         let old = crate::parse::parse_manifest_str(&src).unwrap();
-        let noted: Vec<_> = old.deprecated_spellings.iter().map(|d| d.at.as_str()).collect();
-        assert_eq!(noted, vec!["includes.sub.paths", "paths", "modes.m.overrides.paths"]);
-        assert_eq!(old.modes["m"].overrides[0].target, "event_chains.e2e.max_latency");
+        let noted: Vec<_> = old
+            .deprecated_spellings
+            .iter()
+            .map(|d| d.at.as_str())
+            .collect();
+        assert_eq!(
+            noted,
+            vec!["includes.sub.paths", "paths", "modes.m.overrides.paths"]
+        );
+        assert_eq!(
+            old.modes["m"].overrides[0].target,
+            "event_chains.e2e.max_latency"
+        );
+        assert!(!migrate_str(&m.output).unwrap().changed());
+    }
+
+    /// S3 (v0.3.21): every old rate key is renamed and its number gains
+    /// `Hz`; a reference keeps its text; `acknowledged:` paths follow.
+    #[test]
+    fn s3_rates_gain_their_unit() {
+        let src = "version: 1
+nodes:
+  n:
+    pub:
+      o: { min_rate_hz: 10, max_rate_hz: 2.5 }
+    sub:
+      i:
+        min_rate_hz: $(param rate) Hz
+        arrival_curve: { rate_hz: 200, burst: 4 }
+    paths:
+      t:
+        trigger: { timer: { rate_hz: { value: 50, source: allocated } } }
+        output: [o]
+      u:
+        trigger:
+          timer:
+            rate_hz: 20   # a comment
+        output: [o]
+topics:
+  /a: { type: T, rate_hz: 10 }
+modes:
+  m:
+    overrides:
+      topics: { /a: { rate_hz: 5 } }
+acknowledged:
+  - { rule: derivable-rate, at: topics./a.rate_hz, reason: kept }
+";
+        let m = migrate_str(src).unwrap();
+        assert!(m.skipped.is_empty(), "{:?}", m.skipped);
+        let want = src
+            .replace(
+                "{ min_rate_hz: 10, max_rate_hz: 2.5 }",
+                "{ min_rate: 10Hz, max_rate: 2.5Hz }",
+            )
+            .replace(
+                "min_rate_hz: $(param rate) Hz",
+                "min_rate: $(param rate) Hz",
+            )
+            .replace("{ rate_hz: 200, burst: 4 }", "{ rate: 200Hz, burst: 4 }")
+            .replace(
+                "rate_hz: { value: 50, source",
+                "rate: { value: 50Hz, source",
+            )
+            .replace("rate_hz: 20   # a comment", "rate: 20Hz   # a comment")
+            .replace("{ type: T, rate_hz: 10 }", "{ type: T, rate: 10Hz }")
+            .replace("{ /a: { rate_hz: 5 } }", "{ /a: { rate: 5Hz } }")
+            .replace("at: topics./a.rate_hz", "at: topics./a.rate");
+        assert_eq!(m.output, want);
+        let parsed = crate::parse::parse_manifest_str(&m.output).unwrap();
+        assert!(
+            parsed.deprecated_spellings.is_empty(),
+            "{:?}",
+            parsed.deprecated_spellings
+        );
         assert!(!migrate_str(&m.output).unwrap().changed());
     }
 
@@ -2961,14 +3174,14 @@ nodes:
       objects: { max_transport: 0ms }   # its own wins
   far:
     sub:
-      objects: { min_rate_hz: 10 }
+      objects: { min_rate: 10Hz }
   empty:
     sub:
       objects: {}
   block:
     sub:
       objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
         # a comment inside stays
 topics:
   /objects:
@@ -2990,14 +3203,14 @@ nodes:
       objects: { link: near_objects }   # its own wins
   far:
     sub:
-      objects: { min_rate_hz: 10, link: objects }
+      objects: { min_rate: 10Hz, link: objects }
   empty:
     sub:
       objects: { link: objects }
   block:
     sub:
       objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
         link: objects
         # a comment inside stays
 topics:
@@ -3426,9 +3639,9 @@ nodes:
         let m = run(src);
         assert_eq!(
             m.output,
-            "version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in:\n        arrival_curve: { rate_hz: 10, burst: 2 }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n      q:\n        trigger: \"aperiodic\"\nincludes:\n  sub:\n    hazards:\n      g:\n        guards: [b]\n        monitors: [c]\n"
+            "version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in:\n        arrival_curve: { rate: 10Hz, burst: 2 }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n      q:\n        trigger: \"aperiodic\"\nincludes:\n  sub:\n    hazards:\n      g:\n        guards: [b]\n        monitors: [c]\n"
         );
-        assert_eq!(m.edits.len(), 5, "{:?}", m.edits);
+        assert_eq!(m.edits.len(), 7, "{:?}", m.edits);
         assert_eq!(m.skipped.len(), 1, "{:?}", m.skipped);
         assert!(
             m.skipped[0].contains("includes.sub.hazards.g.guards"),

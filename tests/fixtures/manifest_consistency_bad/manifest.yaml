@@ -5,7 +5,7 @@ nodes:
   bad_consumer:
     sub:
       in:
-        min_rate_hz: 10
+        min_rate: 10Hz
 
 topics:
   shared_data:

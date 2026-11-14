@@ -127,6 +127,77 @@ fn yaml_rate_at(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<f64>, ParseEr
     yaml_f64(doc, key, ctx)
 }
 
+/// The rate key `new` (written with a unit, `min_rate: 100Hz`, since
+/// v0.3.21), or its old spelling `old` (`min_rate_hz: 100`, a number of Hz,
+/// read for one release). Returns the key written and whether it is the
+/// new one; both is an error naming the new key.
+fn rate_key(
+    doc: &Yaml,
+    ctx: &str,
+    old: &'static str,
+    new: &'static str,
+) -> Result<(&'static str, bool), ParseError> {
+    let key = spelled_key(doc, ctx, old, new)?;
+    Ok((key, key == new))
+}
+
+/// A rate, Hz, at `doc[key]`: under a new rate key a frequency with its
+/// unit (`100Hz`, `1.5 kHz`, `$(param rate) Hz`), under an old `_hz` key a
+/// number of Hz.
+fn yaml_hz(doc: &Yaml, key: &str, ctx: &str, unit: bool) -> Result<Option<f64>, ParseError> {
+    if !unit || ref_text(&doc[key]).is_some() {
+        return yaml_rate_at(doc, key, ctx);
+    }
+    match &doc[key] {
+        Yaml::BadValue | Yaml::Null => Ok(None),
+        Yaml::Integer(i) => Err(rate_no_unit(ctx, key, &i.to_string())),
+        Yaml::Real(r) => Err(rate_no_unit(ctx, key, r)),
+        Yaml::String(t) => parse_rate_literal(t)
+            .map(Some)
+            .map_err(|m| field_err(ctx, key, &m)),
+        other => Err(type_err(ctx, key, "a frequency such as `100Hz`", other)),
+    }
+}
+
+fn rate_no_unit(ctx: &str, key: &str, shown: &str) -> ParseError {
+    field_err(
+        ctx,
+        key,
+        &format!(
+            "`{key}: {shown}` has no unit -- write `{key}: {shown}Hz` (or kHz). The unit is \
+             required so a rate cannot be read as a period, or 1000x wrong, and still parse"
+        ),
+    )
+}
+
+/// A frequency literal (`100Hz`, `100 Hz`, `1.5kHz`) in Hz, through rlx's
+/// unit table: a bare number and a unit of another dimension are refused.
+pub(crate) fn parse_rate_literal(text: &str) -> Result<f64, String> {
+    let t = text.trim();
+    let split = t
+        .rfind(|c: char| !c.is_ascii_alphabetic())
+        .map_or(0, |i| i + 1);
+    let (num, unit) = (t[..split].trim(), &t[split..]);
+    let value: f64 = num.parse().map_err(|_| {
+        format!("`{t}` is not a frequency; write a number with a unit, such as `100Hz`")
+    })?;
+    if unit.is_empty() {
+        return Err(format!("`{t}` has no unit -- write `{t}Hz` (or kHz)"));
+    }
+    let Some(u) = rlx::units::lookup(unit) else {
+        return Err(format!(
+            "`{unit}` is not a unit; a rate is written in Hz or kHz (`100Hz`)"
+        ));
+    };
+    if rlx::dim::Dim(u.dim) != values::FREQUENCY {
+        return Err(format!(
+            "`{t}` is not a frequency; a rate is written in Hz or kHz (a period of 10 ms is \
+             `100Hz`)"
+        ));
+    }
+    Ok(value * u.scale)
+}
+
 /// A count at `doc[key]`, a reference-bearing one included.
 fn yaml_count_at(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<u32>, ParseError> {
     if let Some(text) = ref_text(&doc[key]) {
@@ -1151,14 +1222,18 @@ fn parse_speed(text: &str) -> Option<f64> {
     (v.is_finite() && v > 0.0).then_some(v * scale)
 }
 
-/// A rate bound (phase 90 G2): a number of Hz under `key` of `context`.
+/// A rate bound (phase 90 G2) under `old` or `new` of `context`: a number
+/// of Hz under the old `_hz` key, a frequency with its unit under the new
+/// one (v0.3.21). The bound is spelled with the new key.
 fn yaml_rate_bound(
     doc: &Yaml,
-    key: &str,
+    old: &'static str,
+    new: &'static str,
     ctx: &str,
     context: Context,
 ) -> Result<Option<Bound>, ParseError> {
-    Ok(yaml_rate_at(doc, key, ctx)?.map(|v| spelled(context, key, Quantity::Hz(v))))
+    let (key, unit) = rate_key(doc, ctx, old, new)?;
+    Ok(yaml_hz(doc, key, ctx, unit)?.map(|v| spelled(context, new, Quantity::Hz(v))))
 }
 
 /// `source:` (phase 10 B7): `requirement | measured | derived | analysed`,
@@ -2229,6 +2304,42 @@ fn parse_mode_overrides(doc: &Yaml, ctx: &str) -> Result<Vec<ModeOverride>, Pars
             o.target = format!("event_chains.{rest}");
         }
     }
+    // S3 (v0.3.21): a rate target names the key without `_hz`, and its
+    // value is written with a unit; it is carried in Hz, as the consumer
+    // reads every rate. An old `_hz` target keeps its number of Hz.
+    for o in &mut out {
+        let (head, last) = o.target.rsplit_once('.').unwrap_or(("", o.target.as_str()));
+        let new = match last {
+            "min_rate_hz" => Some("min_rate"),
+            "max_rate_hz" => Some("max_rate"),
+            "rate_hz" => Some("rate"),
+            _ => None,
+        };
+        if let Some(new) = new {
+            let at = format_path(ctx, &o.target);
+            note_spelling(
+                at,
+                if new == "rate" {
+                    "rate_hz"
+                } else if new == "min_rate" {
+                    "min_rate_hz"
+                } else {
+                    "max_rate_hz"
+                },
+                new,
+            );
+            o.target = if head.is_empty() {
+                new.to_string()
+            } else {
+                format!("{head}.{new}")
+            };
+        } else if matches!(last, "min_rate" | "max_rate" | "rate")
+            && !values::is_reference(&o.value)
+        {
+            let hz = parse_rate_literal(&o.value).map_err(|m| field_err(ctx, &o.target, &m))?;
+            o.value = format!("{hz}");
+        }
+    }
     Ok(out)
 }
 
@@ -2448,12 +2559,13 @@ fn parse_arrival_curve(doc: &Yaml, ctx: &str) -> Result<Option<ArrivalCurveDecl>
         return Err(field_err(
             ctx,
             key,
-            "expected a mapping `{ rate_hz: <n>, burst: <n> }`",
+            "expected a mapping `{ rate: <frequency>, burst: <n> }`",
         ));
     }
     reject_unknown_keys(section, ctx, Context::ArrivalCurve)?;
-    let read = ref_text(&section["rate_hz"]).is_some() || ref_text(&section["burst"]).is_some();
-    let rate = yaml_rate_at(section, "rate_hz", ctx)?;
+    let (rkey, unit) = rate_key(section, ctx, "rate_hz", "rate")?;
+    let read = ref_text(&section[rkey]).is_some() || ref_text(&section["burst"]).is_some();
+    let rate = yaml_hz(section, rkey, ctx, unit)?;
     let burst = yaml_count_at(section, "burst", ctx)?;
     if read && (rate.is_none() || burst.is_none()) {
         // Read from the launch tree, no value yet: unknown.
@@ -2462,15 +2574,15 @@ fn parse_arrival_curve(doc: &Yaml, ctx: &str) -> Result<Option<ArrivalCurveDecl>
     let rate_hz = rate.ok_or_else(|| {
         field_err(
             ctx,
-            "rate_hz",
+            "rate",
             "required: the sustained messages per second this subscriber absorbs",
         )
     })?;
     if !rate_hz.is_finite() || rate_hz <= 0.0 {
         return Err(field_err(
             ctx,
-            "rate_hz",
-            &format!("must be a finite number > 0, got {rate_hz}"),
+            rkey,
+            &format!("must be a finite rate > 0, got {rate_hz} Hz"),
         ));
     }
     let burst = burst.ok_or_else(|| {
@@ -2809,7 +2921,7 @@ fn parse_endpoints(
                         &path,
                         "arrival_curve",
                         "`arrival_curve` bounds what a SUBSCRIBER is made to absorb; a publisher's \
-                         output rate is `min_rate_hz` / `max_rate_hz`",
+                         output rate is `min_rate` / `max_rate`",
                     ));
                 }
                 if key != "sub" {
@@ -2825,7 +2937,7 @@ fn parse_endpoints(
                                 &format!(
                                     "`{k}` bounds the arrivals at an INPUT (a `sub:` endpoint or \
                                      a `srv:` server); a publisher's output rate is \
-                                     `min_rate_hz` / `max_rate_hz`, and a client's responses \
+                                     `min_rate` / `max_rate`, and a client's responses \
                                      follow its own requests"
                                 ),
                             ));
@@ -2944,8 +3056,8 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     let (min_interarrival, budget, budget_period) = parse_input_release(yaml, ctx)?;
     let on_rejected = parse_call_reaction(yaml, "on_rejected", ctx)?;
     let props = EndpointProps {
-        min_rate_hz: yaml_rate_bound(yaml, "min_rate_hz", ctx, Context::Endpoint)?,
-        max_rate_hz: yaml_rate_bound(yaml, "max_rate_hz", ctx, Context::Endpoint)?,
+        min_rate_hz: yaml_rate_bound(yaml, "min_rate_hz", "min_rate", ctx, Context::Endpoint)?,
+        max_rate_hz: yaml_rate_bound(yaml, "max_rate_hz", "max_rate", ctx, Context::Endpoint)?,
         max_age: yaml_bound(yaml, "max_age", ctx, Context::Endpoint)?,
         state: yaml_bool(yaml, "state", ctx)?,
         required: yaml_bool(yaml, "required", ctx)?,
@@ -2975,7 +3087,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
             ctx,
             "min_interarrival",
             &format!(
-                "`min_interarrival` {gap} is longer than this subscriber's own `min_rate_hz` \
+                "`min_interarrival` {gap} is longer than this subscriber's own `min_rate` \
                  {need} allows (one arrival every {:.3} ms at most): the input cannot arrive \
                  both that often and that seldom",
                 1000.0 / need
@@ -2991,7 +3103,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
             ctx,
             "arrival_curve",
             &format!(
-                "`arrival_curve.rate_hz` {} is below this subscriber's own `min_rate_hz` {need}: it \
+                "`arrival_curve.rate` {} Hz is below this subscriber's own `min_rate` {need} Hz: it \
                  would admit less than the endpoint requires",
                 ingress.rate_hz
             ),
@@ -3001,7 +3113,7 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
         return Err(field_err(
             ctx,
             "aperiodic",
-            "`aperiodic: true` says this publisher promises no rate, and `min_rate_hz` promises \
+            "`aperiodic: true` says this publisher promises no rate, and `min_rate` promises \
              one: state one or the other",
         ));
     }
@@ -3144,7 +3256,11 @@ fn parse_on_timeout(doc: &Yaml, ctx: &str) -> Result<Option<OnTimeout>, ParseErr
     let has_retry = !section["retry"].is_badvalue();
     let has_then = !section["then"].is_badvalue();
     if target.is_some() && (has_retry || has_then) {
-        let key = if target.as_ref().is_some_and(|t| t.1) { "enters" } else { "reaction" };
+        let key = if target.as_ref().is_some_and(|t| t.1) {
+            "enters"
+        } else {
+            "reaction"
+        };
         return Err(field_err(
             octx,
             key,
@@ -3395,7 +3511,10 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         publishers: yaml_string_list(yaml, "pub", ctx)?,
         subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        rate_hz: yaml_rate_at(yaml, "rate_hz", ctx)?,
+        rate_hz: {
+            let (key, unit) = rate_key(yaml, ctx, "rate_hz", "rate")?;
+            yaml_hz(yaml, key, ctx, unit)?
+        },
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external,
         on_silence,
@@ -3721,9 +3840,12 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
     // unevaluated reference; keep the reference so the path still reads as
     // timer-triggered (rlm#9).
     let timer_rate_unread = match (&trigger, &yaml["trigger"]["timer"]) {
-        (None, t @ Yaml::Hash(_)) => ref_text(&t["rate_hz"])
-            .or_else(|| ref_text(&t["rate_hz"]["value"]))
-            .map(str::to_string),
+        (None, t @ Yaml::Hash(_)) => {
+            let rk = timer_rate_key(t);
+            ref_text(&t[rk])
+                .or_else(|| ref_text(&t[rk]["value"]))
+                .map(str::to_string)
+        }
         _ => None,
     };
 
@@ -3742,7 +3864,8 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         timer_param: parse_timer_param(yaml, ctx)?,
         timer_rate_source: match &yaml["trigger"]["timer"] {
             t @ Yaml::Hash(_)
-                if t["rate_hz"].is_hash() && ref_text(&t["rate_hz"]["value"]).is_none() =>
+                if t[timer_rate_key(t)].is_hash()
+                    && ref_text(&t[timer_rate_key(t)]["value"]).is_none() =>
             {
                 timer_rate(t, ctx)?.and_then(|(_, src)| src)
             }
@@ -3825,8 +3948,8 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     match key.as_str() {
         "timer" => {
             reject_unknown_keys(v, ctx, Context::TriggerTimer)?;
-            let read =
-                ref_text(&v["rate_hz"]).is_some() || ref_text(&v["rate_hz"]["value"]).is_some();
+            let rk = timer_rate_key(v);
+            let read = ref_text(&v[rk]).is_some() || ref_text(&v[rk]["value"]).is_some();
             let rate = timer_rate(v, ctx)?;
             if read && rate.is_none() {
                 // The rate is read from the launch tree and has no value
@@ -3839,11 +3962,19 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
                 )?;
                 return Ok(None);
             }
-            let rate_hz = rate
-                .map(|(hz, _)| hz)
-                .ok_or_else(|| field_err(ctx, "trigger.timer", "requires 'rate_hz'"))?;
+            let rate_hz = rate.map(|(hz, _)| hz).ok_or_else(|| {
+                field_err(
+                    ctx,
+                    "trigger.timer",
+                    "requires `rate` (a frequency, `100Hz`)",
+                )
+            })?;
             if rate_hz <= 0.0 {
-                return Err(field_err(ctx, "trigger.timer.rate_hz", "must be > 0"));
+                return Err(field_err(
+                    ctx,
+                    &format!("trigger.timer.{rk}"),
+                    "must be > 0",
+                ));
             }
             let jitter = yaml_bound(
                 v,
@@ -3879,36 +4010,39 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     }
 }
 
-/// `trigger: { timer: { param | period_param } }` (phase 10 B1): the
-/// parameter of the path's node that sets the timer's period.
-/// A timer's `rate_hz` (phase 93): the bare number, or the map form `{
-/// value, source }` so the rate can say where it comes from (`source:
-/// allocated`: chosen inside the range the consumer derives). `timer` is the
+/// The key a timer writes its rate under: `rate`, or `rate_hz` before
+/// v0.3.21 (read for one release).
+fn timer_rate_key(timer: &Yaml) -> &'static str {
+    if timer["rate"].is_badvalue() && !timer["rate_hz"].is_badvalue() {
+        "rate_hz"
+    } else {
+        "rate"
+    }
+}
+
+/// A timer's rate (phase 93): the value, or the map form `{ value, source }`
+/// so the rate can say where it comes from (`source: allocated`: chosen
+/// inside the range the consumer derives). `rate: 100Hz` since v0.3.21;
+/// `rate_hz: 100` (a number of Hz) reads for one release. `timer` is the
 /// map under `trigger: { timer }`.
 fn timer_rate(timer: &Yaml, ctx: &str) -> Result<Option<(f64, Option<BudgetSource>)>, ParseError> {
-    let v = &timer["rate_hz"];
+    let tctx = &format_path(ctx, "trigger.timer");
+    let (key, unit) = rate_key(timer, tctx, "rate_hz", "rate")?;
+    let v = &timer[key];
     let Yaml::Hash(_) = v else {
-        if ref_text(v).is_some() {
-            return Ok(
-                yaml_rate_at(timer, "rate_hz", &format_path(ctx, "trigger.timer"))?
-                    .map(|hz| (hz, None)),
-            );
-        }
-        return Ok(
-            yaml_f64(timer, "rate_hz", &format_path(ctx, "trigger.timer"))?.map(|hz| (hz, None)),
-        );
+        return Ok(yaml_hz(timer, key, tctx, unit)?.map(|hz| (hz, None)));
     };
-    let rctx = &format_path(ctx, "trigger.timer.rate_hz");
+    let rctx = &format_path(tctx, key);
     reject_unknown_keys(v, rctx, Context::TimerRate)?;
     source_on_reference(v, "value", rctx)?;
     if ref_text(&v["value"]).is_some() {
         return Ok(yaml_rate_at(v, "value", rctx)?.map(|hz| (hz, None)));
     }
-    let hz = yaml_f64(v, "value", rctx)?.ok_or_else(|| {
+    let hz = yaml_hz(v, "value", rctx, unit)?.ok_or_else(|| {
         field_err(
             rctx,
             "value",
-            "required: the rate itself, Hz (`rate_hz: { value: 10 }`)",
+            "required: the rate itself (`rate: { value: 10Hz }`)",
         )
     })?;
     let source = if v["source"].is_badvalue() {
@@ -3919,6 +4053,8 @@ fn timer_rate(timer: &Yaml, ctx: &str) -> Result<Option<(f64, Option<BudgetSourc
     Ok(Some((hz, source)))
 }
 
+/// `trigger: { timer: { param | period_param } }` (phase 10 B1): the
+/// parameter of the path's node that sets the timer's period.
 fn parse_timer_param(doc: &Yaml, ctx: &str) -> Result<Option<TimerParam>, ParseError> {
     let timer = &doc["trigger"]["timer"];
     if !timer.is_hash() {
@@ -4654,7 +4790,10 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(err.contains("event_chains.clean.drop.max_count"), "got: {err}");
+        assert!(
+            err.contains("event_chains.clean.drop.max_count"),
+            "got: {err}"
+        );
     }
 
     /// v0.3.15: the legacy `input:` is refused, naming `trigger:`.
@@ -4720,7 +4859,7 @@ hazards:
             "{targets:?}"
         );
         assert!(
-            targets.contains(&"nodes.detector.sub.scan.min_rate_hz"),
+            targets.contains(&"nodes.detector.sub.scan.min_rate"),
             "{targets:?}"
         );
         assert_eq!(
@@ -4898,7 +5037,7 @@ hazards:
             ),
             (
                 "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 0, burst: 4 } }\n",
-                "finite number > 0",
+                "finite rate > 0",
             ),
             (
                 "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 200, burst: 4, cap: 9 } }\n",
@@ -4910,7 +5049,7 @@ hazards:
             ),
             (
                 "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 50, arrival_curve: { rate_hz: 20, burst: 4 } }\n",
-                "below this subscriber's own `min_rate_hz`",
+                "below this subscriber's own `min_rate`",
             ),
         ] {
             let err = super::parse_manifest_str(bad).unwrap_err().to_string();
@@ -5157,6 +5296,85 @@ hazards:
     /// `on_demand: true` is a publisher's
     /// statement that it promises no rate; beside a `min_rate_hz`, or on a
     /// subscriber, it is refused.
+    /// S3 (v0.3.21): a rate is a frequency with its unit under the new key,
+    /// a number of Hz under the old `_hz` key (noted), and never both.
+    #[test]
+    fn s3_rates_take_a_unit() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  n:\n    pub:\n      o: { min_rate: 10Hz, max_rate: 1.5 kHz }\n    sub:\n      i: { arrival_curve: { rate: 200Hz, burst: 4 } }\n    paths:\n      t: { trigger: { timer: { rate: { value: 50Hz, source: allocated } } }, output: [o] }\ntopics:\n  /a: { type: T, rate: 10 Hz }\nmodes:\n  m:\n    overrides:\n      nodes: { n: { pub: { o: { min_rate: 2kHz } } } }\n      topics: { /a: { rate_hz: 5 } }\n",
+        )
+        .unwrap();
+        let o = &m.nodes["n"].publishers["o"];
+        assert_eq!(o.min_rate_hz.as_ref().and_then(|b| b.hz()), Some(10.0));
+        assert_eq!(o.max_rate_hz.as_ref().and_then(|b| b.hz()), Some(1500.0));
+        assert_eq!(
+            m.nodes["n"].subscribers["i"].arrival_curve.unwrap().rate_hz,
+            200.0
+        );
+        assert!(matches!(
+            m.nodes["n"].paths["t"].trigger,
+            Some(Trigger::Timer { rate_hz, .. }) if rate_hz == 50.0
+        ));
+        assert_eq!(m.topics["/a"].rate_hz, Some(10.0));
+        let ov: Vec<_> = m.modes["m"]
+            .overrides
+            .iter()
+            .map(|o| (o.target.as_str(), o.value.as_str()))
+            .collect();
+        assert_eq!(
+            ov,
+            vec![("nodes.n.pub.o.min_rate", "2000"), ("topics./a.rate", "5"),]
+        );
+        let bounds: Vec<String> = m.bounds().into_iter().map(|(k, _)| k).collect();
+        assert!(
+            bounds.contains(&"nodes.n.pub.o.min_rate".to_string()),
+            "{bounds:?}"
+        );
+        let noted: Vec<_> = m.deprecated_spellings.iter().map(|d| d.old).collect();
+        assert_eq!(noted, vec!["rate_hz"]);
+        let old =
+            super::parse_manifest_str("nodes:\n  n:\n    pub:\n      o: { min_rate_hz: 10 }\n")
+                .unwrap();
+        assert_eq!(
+            old.nodes["n"].publishers["o"]
+                .min_rate_hz
+                .as_ref()
+                .and_then(|b| b.hz()),
+            Some(10.0)
+        );
+        assert_eq!(old.deprecated_spellings[0].at, "nodes.n.pub.o.min_rate_hz");
+        for (yaml, needle) in [
+            (
+                "nodes:\n  n:\n    pub:\n      o: { min_rate: 10 }\n",
+                "has no unit -- write `min_rate: 10Hz`",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      o: { min_rate: 10ms }\n",
+                "is not a frequency",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      o: { min_rate: 10furlongs }\n",
+                "is not a unit",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      o: { min_rate: 10Hz, min_rate_hz: 10 }\n",
+                "old spelling of `min_rate:`",
+            ),
+            ("topics:\n  /a: { type: T, rate: 100 }\n", "has no unit"),
+            (
+                "nodes:\n  n:\n    paths:\n      t: { trigger: { timer: { rate: 10 } }, output: [o] }\n",
+                "has no unit",
+            ),
+            (
+                "modes:\n  m:\n    overrides: { topics: { /a: { rate: 5 } } }\n",
+                "has no unit",
+            ),
+        ] {
+            let err = super::parse_manifest_str(yaml).expect_err(yaml).to_string();
+            assert!(err.contains(needle), "{yaml}: {err}");
+        }
+    }
+
     /// S3 (v0.3.19): both spellings of one key are an error naming the new
     /// one; a client names a mode with `enters:` and an event chain with
     /// `reaction:`, never both.
@@ -5184,9 +5402,7 @@ hazards:
                 "required: the mode the call falls to",
             ),
         ] {
-            let err = super::parse_manifest_str(yaml)
-                .expect_err(yaml)
-                .to_string();
+            let err = super::parse_manifest_str(yaml).expect_err(yaml).to_string();
             assert!(err.contains(needle), "{yaml}: {err}");
         }
         let m = super::parse_manifest_str(
@@ -6840,22 +7056,22 @@ nodes:
     }
 
     /// Every unknown key of a file in one
-    /// refusal, and `max_rate` suggests `max_rate_hz`.
+    /// refusal, and `max_rates` suggests `max_rate`.
     #[test]
     fn every_unknown_key_is_named_at_once() {
-        let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      a: { max_rate: 10 }\n    \
-                    paths:\n      p: { max_latencyy: 5ms }\ntopics:\n  /t: { type: std_msgs/msg/String, rate_hzz: 1 }\n";
+        let yaml = "version: 1\nnodes:\n  n:\n    pub:\n      a: { max_rates: 10Hz }\n    \
+                    paths:\n      p: { max_latencyy: 5ms }\ntopics:\n  /t: { type: std_msgs/msg/String, ratee: 1Hz }\n";
         let e = err_of(yaml);
-        assert!(e.contains("at 'nodes.n.pub.a.max_rate'"), "{e}");
-        assert!(e.contains("did you mean `max_rate_hz`?"), "{e}");
+        assert!(e.contains("at 'nodes.n.pub.a.max_rates'"), "{e}");
+        assert!(e.contains("did you mean `max_rate`?"), "{e}");
         assert!(e.contains("Also refused in this file (2 more)"), "{e}");
         assert!(
             e.contains("max_latencyy") && e.contains("`max_latency`"),
             "{e}"
         );
-        assert!(e.contains("rate_hzz") && e.contains("`rate_hz`"), "{e}");
+        assert!(e.contains("ratee") && e.contains("`rate`"), "{e}");
         // One unknown key reads as it always did.
-        let one = err_of("version: 1\ntopics:\n  /t: { type: std_msgs/msg/String, rate_hzz: 1 }\n");
+        let one = err_of("version: 1\ntopics:\n  /t: { type: std_msgs/msg/String, ratee: 1Hz }\n");
         assert!(!one.contains("Also refused"), "{one}");
         // The collection does not leak into the next parse.
         assert!(parse_manifest_str("version: 1\n").is_ok());
@@ -7242,7 +7458,7 @@ nodes:
         ));
         let srcs = m.budget_sources();
         assert_eq!(
-            srcs["nodes.n.paths.t.trigger.timer.rate_hz"].kind,
+            srcs["nodes.n.paths.t.trigger.timer.rate"].kind,
             SourceKind::Allocated
         );
         assert_eq!(m.supervised().len(), 2);

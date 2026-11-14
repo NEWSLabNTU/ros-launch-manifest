@@ -10,7 +10,7 @@ nodes:
         output: [out]
         max_latency: 40ms
       make_slow:
-        trigger: { timer: { rate_hz: 1 } }
+        trigger: { timer: { rate: 1Hz } }
         output: [out2]
         max_latency: 5ms
 topics:

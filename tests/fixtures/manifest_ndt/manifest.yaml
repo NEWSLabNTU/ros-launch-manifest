@@ -6,11 +6,11 @@ nodes:
   voxel_grid:
     sub:
       raw_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
         required: true
     pub:
       downsampled:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [raw_points] }
@@ -20,7 +20,7 @@ nodes:
   ndt_scan_matcher:
     sub:
       input_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
       initial_pose:
         state: true
         required: true
@@ -29,7 +29,7 @@ nodes:
         required: true
     pub:
       ndt_pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [input_points] }
@@ -44,13 +44,13 @@ nodes:
   ekf_localizer:
     sub:
       ndt_pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
       imu:
-        min_rate_hz: 50
+        min_rate: 50Hz
         state: true
     pub:
       ekf_pose:
-        min_rate_hz: 50
+        min_rate: 50Hz
     paths:
       main:
         trigger: { input: [ndt_pose] }
@@ -66,14 +66,14 @@ topics:
   /sensing/lidar/pointcloud:
     type: sensor_msgs/msg/PointCloud2
     sub: [voxel_grid/raw_points]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
 
   /sensing/imu/imu_raw:
     type: sensor_msgs/msg/Imu
     sub: [ekf_localizer/imu]
-    rate_hz: 50
+    rate: 50Hz
     qos:
       reliability: best_effort
 
@@ -89,7 +89,7 @@ topics:
     type: sensor_msgs/msg/PointCloud2
     pub: [voxel_grid/downsampled]
     sub: [ndt_scan_matcher/input_points]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: best_effort
 
@@ -97,7 +97,7 @@ topics:
     type: geometry_msgs/msg/PoseWithCovarianceStamped
     pub: [ndt_scan_matcher/ndt_pose]
     sub: [ekf_localizer/ndt_pose]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: reliable
 
@@ -106,7 +106,7 @@ topics:
     type: geometry_msgs/msg/PoseWithCovarianceStamped
     pub: [ekf_localizer/ekf_pose]
     sub: [ndt_scan_matcher/initial_pose]
-    rate_hz: 50
+    rate: 50Hz
     qos:
       reliability: reliable
       durability: transient_local
