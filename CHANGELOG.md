@@ -6,9 +6,10 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.3.18 - 2026-11-14
 
-GRAMMAR_VERSION 0.3.18 under "Unreleased".
+The fallback-sequence grammar of milestone M1g, and the fixes of #9 and
+#10. GRAMMAR_VERSION 0.3.18; the model stays schema 5.
 
 ### Added
 
