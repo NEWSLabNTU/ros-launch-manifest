@@ -198,6 +198,14 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         new: "leaves",
         stage: Stage::Accepted,
     },
+    // S3 (v0.3.20): a manifest level's `paths:` is `event_chains:` (a
+    // node's `paths` is not at a manifest level, so it does not match).
+    RenamedKey {
+        section: "",
+        old: "paths",
+        new: "event_chains",
+        stage: Stage::Accepted,
+    },
 ];
 
 /// `at` with every renamed key segment replaced by its new name. A

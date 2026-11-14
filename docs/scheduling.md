@@ -271,7 +271,7 @@ pub trait SchedMapper {
   ascending (shorter deadline → higher priority); equal deadlines collapse
   the same way.
 - **`chain_aware`** — chain-first shaping; the primary mapper for
-  systems declaring end-to-end scope `paths:`. Detailed below.
+  systems declaring end-to-end `event_chains:`. Detailed below.
 
 ### An exact tie is a fact, and every mapper treats it the same way
 

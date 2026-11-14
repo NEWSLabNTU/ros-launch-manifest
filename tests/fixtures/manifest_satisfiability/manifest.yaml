@@ -98,7 +98,7 @@ topics:
       - twist_estimator/twist
     sub: []
 
-paths:
+event_chains:
   localization:
     trigger: { input: [pointcloud] }
     output: [pose_output]

@@ -1020,7 +1020,7 @@ fn fixture_drop_tightness_names_the_one_looser_hop() {
     assert_eq!(hits.len(), 1, "{hits:?}");
     let d = hits[0];
     assert_eq!(d.severity, Severity::Warning);
-    assert_eq!(d.path, "paths.e2e.drop");
+    assert_eq!(d.path, "event_chains.e2e.drop");
     assert!(
         d.message.contains("topic 'tracks'") && d.message.contains("8 / 100"),
         "{}",

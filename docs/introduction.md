@@ -153,7 +153,7 @@ topics:
     pub: [fusion/out]
     rate_hz: 10
 
-paths:
+event_chains:
   pipeline:
     trigger: { input: [/sensor/raw] }
     output: [/perception/fused_objects]

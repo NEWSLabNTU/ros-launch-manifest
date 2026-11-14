@@ -63,7 +63,7 @@ includes:
         sub: [detector/points]
         rate_hz: 10
 
-    paths:
+    event_chains:
       detect:
         trigger: { input: [input] }
         output: [objects]
@@ -97,13 +97,13 @@ includes:
           reliability: reliable
           durability: transient_local
 
-    paths:
+    event_chains:
       plan:
         trigger: { input: [obstacles] }
         output: [trajectory]
         max_latency: 25ms
 
-paths:
+event_chains:
   end_to_end:
     trigger: { input: [sensor_data] }
     output: [trajectory]

@@ -112,7 +112,7 @@ topics:
     rate_hz: 10
     drop: 2 / 100
 
-paths:
+event_chains:
   perception:
     trigger: { input: [/sensing/lidar/pointcloud] }
     output: [tracked_objects]

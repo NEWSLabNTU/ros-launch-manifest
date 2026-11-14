@@ -45,7 +45,7 @@ impl ValidationRule for ExplicitTriggerRule {
                 ctx.emit(
                     self.id(),
                     Severity::Info,
-                    &format!("paths.{path_name}"),
+                    &format!("event_chains.{path_name}"),
                     format!(
                         "event chain '{path_name}' has no explicit 'trigger:' — add one of \
                          timer/input/once/aperiodic (Vocabulary v2)"
@@ -135,7 +135,7 @@ paths:
 "#;
         let diags = run(yaml);
         assert_eq!(diags.len(), 1);
-        assert!(diags[0].path.starts_with("paths."));
+        assert!(diags[0].path.starts_with("event_chains."));
     }
 
     #[test]

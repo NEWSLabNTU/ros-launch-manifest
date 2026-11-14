@@ -6,6 +6,31 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.20 - 2026-11-15
+
+The second S3 rename: an end-to-end requirement is an event chain.
+GRAMMAR_VERSION 0.3.20; the model is unchanged (it still says
+`scope_paths`, renamed at the next schema bump, read backward-compatibly).
+
+### Changed
+
+- **A manifest level's `paths:` is `event_chains:`** (decision 4; reopens
+  `standard-names.md` S5). `paths` meant two things: a node's internal
+  path, which keeps the word, and an end-to-end requirement, which the
+  docs, the rule ids (`chain-latency`) and AUTOSAR TIMEX
+  (`TimingDescriptionEventChain`) call an event chain. A mode's
+  `overrides:` names one under `event_chains.` too; `paths.` there is read
+  and its targets carried as `event_chains.<c>.<key>`.
+- Every dotted path of a root event chain, in `Manifest::bounds`,
+  `budget_sources`, the check rules' diagnostics and override targets, is
+  `event_chains.<c>...`. An `acknowledged:` path through `paths.` still
+  matches this release (`rule_names::RENAMED_KEYS`).
+
+### Added
+
+- `migrate`: `paths-event-chains` (every manifest level, and the top of a
+  mode's `overrides:`). The older rewrites read either key.
+
 ## v0.3.19 - 2026-11-15
 
 The first S3 rename (play_launch phase 104, `docs/design/grammar-revision/`

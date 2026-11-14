@@ -48,7 +48,7 @@ impl ValidationRule for JitterRangeRule {
         for (path_name, path) in &manifest.paths {
             check_path(
                 self.id(),
-                &format!("paths.{path_name}"),
+                &format!("event_chains.{path_name}"),
                 &format!("event chain '{path_name}'"),
                 path,
                 ctx,

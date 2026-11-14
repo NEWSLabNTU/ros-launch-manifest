@@ -38,7 +38,7 @@ impl ValidationRule for DropSanityRule {
         // (a) + (b) Check scope path drop specs
         for (path_name, path) in &manifest.paths {
             if let Some(drop) = &path.drop {
-                let loc = format!("paths.{path_name}.drop");
+                let loc = format!("event_chains.{path_name}.drop");
                 check_drop_values(drop, &loc, ctx, self.id());
             }
         }

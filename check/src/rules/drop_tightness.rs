@@ -45,7 +45,7 @@ impl ValidationRule for DropTightnessRule {
                 if part.drop_rate() > whole.drop_rate() {
                     ctx.warning(
                         self.id(),
-                        &format!("paths.{path_name}.drop"),
+                        &format!("event_chains.{path_name}.drop"),
                         format!(
                             "event chain '{path_name}' permits a loss of {whole} ({:.2}%) end to \
                              end, but topic '{topic}' on its route permits {part} ({:.2}%) on \

@@ -616,7 +616,7 @@ chains:
 "#;
     let err = parse_manifest_str(yaml).unwrap_err().to_string();
     assert!(err.contains("removed"), "{err}");
-    assert!(err.contains("paths:"), "must name the replacement: {err}");
+    assert!(err.contains("event_chains:"), "must name the replacement: {err}");
     assert!(err.contains("max_latency"), "{err}");
 }
 

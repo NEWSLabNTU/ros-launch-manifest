@@ -729,7 +729,7 @@ impl crate::types::Manifest {
             );
         }
         for (p, pd) in &self.paths {
-            path(&mut out, &format!("paths.{p}"), pd);
+            path(&mut out, &format!("event_chains.{p}"), pd);
         }
         out
     }
@@ -759,7 +759,7 @@ impl crate::types::Manifest {
         }
         for (p, pd) in &self.paths {
             if let Some(s) = &pd.timer_rate_source {
-                out.insert(format!("paths.{p}.trigger.timer.rate_hz"), s);
+                out.insert(format!("event_chains.{p}.trigger.timer.rate_hz"), s);
             }
         }
         out
@@ -796,7 +796,7 @@ impl crate::types::Manifest {
             if let Some(ss) = &pd.safe_state
                 && let Some(sv) = &ss.settle_supervise
             {
-                out.push((format!("paths.{p}.safe_state.settle"), ss, sv));
+                out.push((format!("event_chains.{p}.safe_state.settle"), ss, sv));
             }
         }
         out

@@ -219,6 +219,15 @@ pub const REWRITES: &[Rewrite] = &[
         find: call_reaction_enters,
     },
     Rewrite {
+        id: "paths-event-chains",
+        unit: "104 S3",
+        since: "0.3.20",
+        from: "paths.<c>: {...} at a manifest level; modes.<m>.overrides.paths",
+        to: "event_chains.<c>: {...}; modes.<m>.overrides.event_chains",
+        when: "always (an end-to-end requirement is AUTOSAR TIMEX's event chain; a node's internal `paths:` keep the word)",
+        find: paths_event_chains,
+    },
+    Rewrite {
         id: "rule-id-renamed",
         unit: "98",
         since: "0.3.3",
@@ -784,6 +793,40 @@ fn endpoint_maps(doc: &Doc, side: &str) -> Vec<(Vec<String>, Yaml)> {
     out
 }
 
+/// The key a manifest level writes its event chains under: `event_chains`,
+/// or `paths` before v0.3.20.
+fn chains_key(level: &Yaml) -> &'static str {
+    if level["event_chains"].is_badvalue() && !level["paths"].is_badvalue() {
+        "paths"
+    } else {
+        "event_chains"
+    }
+}
+
+/// S3 (v0.3.20): a manifest level's `paths:` becomes `event_chains:`, and
+/// so does `paths:` at the top of a mode's `overrides:`. A node's `paths:`
+/// stays.
+fn paths_event_chains(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "paths-event-chains";
+    let mut maps = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        if let Some(modes) = y["modes"].as_hash() {
+            for (k, m) in modes {
+                if let Some(name) = key_str(k)
+                    && m["overrides"].as_hash().is_some()
+                {
+                    maps.push((
+                        with(&level, &["modes", &name, "overrides"]),
+                        m["overrides"].clone(),
+                    ));
+                }
+            }
+        }
+        maps.push((level, y));
+    }
+    rename_in(doc, ID, maps, "paths", "event_chains")
+}
+
 /// S3 (v0.3.19): `functions:` becomes `capabilities:` at every manifest
 /// level.
 fn functions_capabilities(doc: &Doc) -> Vec<Edit> {
@@ -894,8 +937,8 @@ fn aperiodic(doc: &Doc) -> Vec<Edit> {
     const ID: &str = "aperiodic";
     let mut out = rename_in(doc, ID, endpoint_maps(doc, "pub"), "on_demand", "aperiodic");
     for (level, y) in manifest_levels(doc) {
-        let mut maps: Vec<(Vec<String>, Yaml)> =
-            vec![(with(&level, &["paths"]), y["paths"].clone())];
+        let ck = chains_key(&y);
+        let mut maps: Vec<(Vec<String>, Yaml)> = vec![(with(&level, &[ck]), y[ck].clone())];
         if let Some(nodes) = y["nodes"].as_hash() {
             for (k, v) in nodes {
                 if let Some(n) = key_str(k) {
@@ -1002,8 +1045,8 @@ fn path_input_trigger(doc: &Doc) -> Vec<Edit> {
     const ID: &str = "path-input-trigger";
     let mut out = Vec::new();
     for (level, y) in manifest_levels(doc) {
-        let mut maps: Vec<(Vec<String>, Yaml)> =
-            vec![(with(&level, &["paths"]), y["paths"].clone())];
+        let ck = chains_key(&y);
+        let mut maps: Vec<(Vec<String>, Yaml)> = vec![(with(&level, &[ck]), y[ck].clone())];
         if let Some(nodes) = y["nodes"].as_hash() {
             for (k, v) in nodes {
                 if let Some(n) = key_str(k) {
@@ -2205,9 +2248,10 @@ fn ext_param_read(doc: &Doc) -> Vec<Edit> {
                 }
             }
         }
-        if let Some(ps) = y["paths"].as_hash() {
+        let ck = chains_key(&y);
+        if let Some(ps) = y[ck].as_hash() {
             for pk in ps.keys().filter_map(key_str) {
-                paths.push(with(&level, &["paths", &pk]));
+                paths.push(with(&level, &[ck, &pk]));
             }
         }
         for p in paths {
@@ -2582,6 +2626,64 @@ nodes:
         );
     }
 
+    /// S3 (v0.3.20): a manifest level's `paths:` and a mode override's
+    /// `paths:` become `event_chains:`; a node's `paths:` stays; an
+    /// acknowledged path through the old key follows.
+    #[test]
+    fn s3_root_paths_become_event_chains() {
+        let src = "version: 1
+event_chains_note: 0
+nodes:
+  n:
+    paths:
+      p: { trigger: { input: [a] }, output: [b], max_latency: 1ms }
+paths:
+  e2e: { trigger: { input: [a] }, output: [b], max_latency: 5ms }
+modes:
+  m:
+    overrides:
+      paths:
+        e2e: { max_latency: 9ms }
+acknowledged:
+  - { rule: chain-latency, at: paths.e2e.max_latency, reason: r }
+includes:
+  sub:
+    paths:
+      inner: { trigger: { input: [a] }, output: [b], max_latency: 2ms }
+"
+        .replace("event_chains_note: 0\n", "");
+        let m = migrate_str(&src).unwrap();
+        let ids: Vec<_> = m.edits.iter().map(|e| (e.rewrite, e.path.as_str())).collect();
+        assert_eq!(
+            ids,
+            vec![
+                ("paths-event-chains", "paths"),
+                ("paths-event-chains", "modes.m.overrides.paths"),
+                ("rule-id-renamed", "acknowledged.0.at"),
+                ("paths-event-chains", "includes.sub.paths"),
+            ]
+        );
+        let want = src
+            .replace("\npaths:\n  e2e", "\nevent_chains:\n  e2e")
+            .replace("      paths:\n        e2e", "      event_chains:\n        e2e")
+            .replace("    paths:\n      inner", "    event_chains:\n      inner")
+            .replace("at: paths.e2e.max_latency", "at: event_chains.e2e.max_latency");
+        assert_eq!(m.output, want);
+        assert!(m.output.contains("    paths:\n      p:"));
+        let parsed = crate::parse::parse_manifest_str(&m.output).unwrap();
+        assert!(parsed.deprecated_spellings.is_empty(), "{:?}", parsed.deprecated_spellings);
+        assert!(parsed.paths.contains_key("e2e"));
+        assert_eq!(
+            parsed.modes["m"].overrides[0].target,
+            "event_chains.e2e.max_latency"
+        );
+        let old = crate::parse::parse_manifest_str(&src).unwrap();
+        let noted: Vec<_> = old.deprecated_spellings.iter().map(|d| d.at.as_str()).collect();
+        assert_eq!(noted, vec!["includes.sub.paths", "paths", "modes.m.overrides.paths"]);
+        assert_eq!(old.modes["m"].overrides[0].target, "event_chains.e2e.max_latency");
+        assert!(!migrate_str(&m.output).unwrap().changed());
+    }
+
     #[test]
     fn non_ascii_before_a_key_keeps_byte_offsets_right() {
         let src = "version: 1\n# déjà vu — em dash\nmodes:\n  a:\n    min_dwell: 1s\n    exit:\n      on: f\n      to: b\n  b: {}\n";
@@ -2631,11 +2733,11 @@ nodes:
         input: [x]
         trigger: { input: [x] }
         output: [o]
-paths:
+event_chains:
   e2e: { output: [/o], input: [/i] }
 includes:
   inner:
-    paths:
+    event_chains:
       p:
         input: /i
         output: [/o]
@@ -3075,7 +3177,7 @@ topics:
     type: T
     pub: [a/out]
   c_z: { type: T, pub: [c/z] }
-paths:
+event_chains:
   e2e:
     output: [a_out]
     drop: 1 / 10
@@ -3113,7 +3215,7 @@ topics:
     pub: [a/out]
     drop: { max_count: 5 / 100, max_consecutive: 3 }
   c_z: { type: T, pub: [c/z], drop: 2 / 100 }
-paths:
+event_chains:
   e2e:
     output: [a_out]
     drop: 1 / 10

@@ -96,7 +96,7 @@ topics:
     pub: [remote/out]
     rate_hz: 10
 
-paths:
+event_chains:
   collocated_route:
     trigger: { input: [/sensor/raw] }
     output: [/perception/fast]

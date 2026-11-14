@@ -50,7 +50,7 @@ topics:
     pub: [tracker/tracks]
     drop: 8 / 100
 
-paths:
+event_chains:
   e2e:
     trigger: { input: [/sensor/raw] }
     output: [tracks]

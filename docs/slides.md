@@ -232,7 +232,7 @@ hazards:
     on: omission                 # omission | late | loss | reported
     ftti: 300ms                  # REQUIREMENT: fault -> hazardous event
     reaction: stop_now           # the event chain reaching the safe state
-paths:                           # an event chain: two ends and a budget
+event_chains:                           # an event chain: two ends and a budget
   stop_now:
     trigger: { input: [/scan] }  # `input:` alone is the v1 spelling
     output: [/brake]

@@ -809,7 +809,7 @@ fact, and derives the rest:
 - **`sub.<e>.on_violation`** — `{ on, reaction, within, mechanism }` on the
   subscriber that detects. This is the `cmd_vel` timeout of every mobile
   base, written down.
-- **`paths.<p>.safe_state`** — `{ emits, settle }`: what the reaction
+- **`event_chains.<c>.safe_state`** (and a node path's) — `{ emits, settle }`: what the reaction
   commands, and how long the plant takes to get there. Measured, not
   authored.
 
@@ -1121,7 +1121,7 @@ unstamped, not exercised), because omitting them would read as "costs
 nothing".
 
 **What is not captured, deliberately.** Neither tool emits `rate_hz`,
-`min_rate_hz`, `max_latency`, `max_age`, `max_jitter`, `paths:` or
+`min_rate_hz`, `max_latency`, `max_age`, `max_jitter`, `event_chains:` or
 `criticality`. A run observes that a topic published at 9.97 Hz; it cannot
 observe whether 10 Hz was *required*. Every measured number is therefore
 emitted as a **comment** for a human to promote, and until someone does, the

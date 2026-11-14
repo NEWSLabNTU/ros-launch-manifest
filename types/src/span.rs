@@ -78,6 +78,21 @@ impl SpanIndex {
         let _ = parser.load(&mut receiver, true);
 
         index.spans = receiver.spans;
+        // A key written under a renamed spelling is also found under the
+        // current one (`paths.e2e` as `event_chains.e2e`): diagnostics name
+        // the current spelling, and a file migrated or not reports the same
+        // line.
+        let aliases: Vec<(String, Range<usize>)> = index
+            .spans
+            .iter()
+            .filter_map(|(p, r)| {
+                let now = crate::rule_names::current_path(p);
+                (now != *p).then(|| (now, r.clone()))
+            })
+            .collect();
+        for (p, r) in aliases {
+            index.spans.entry(p).or_insert(r);
+        }
         index
     }
 

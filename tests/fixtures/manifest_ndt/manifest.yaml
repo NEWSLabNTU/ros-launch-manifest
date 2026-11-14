@@ -116,7 +116,7 @@ services:
     type: std_srvs/srv/Trigger
     server: [ndt_scan_matcher/trigger_node]
 
-paths:
+event_chains:
   localization:
     trigger: { input: [/sensing/lidar/pointcloud] }
     output: [ekf_initial_pose]

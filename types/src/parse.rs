@@ -2217,6 +2217,18 @@ fn parse_mode_overrides(doc: &Yaml, ctx: &str) -> Result<Vec<ModeOverride>, Pars
         Ok(())
     }
     walk(section, "", ctx, &mut out)?;
+    // S3 (v0.3.20): an override of an event chain names it under
+    // `event_chains.`; `paths.` reads for one release.
+    let mut noted = false;
+    for o in &mut out {
+        if let Some(rest) = o.target.strip_prefix("paths.") {
+            if !noted {
+                note_spelling(format_path(ctx, "paths"), "paths", "event_chains");
+                noted = true;
+            }
+            o.target = format!("event_chains.{rest}");
+        }
+    }
     Ok(out)
 }
 
@@ -3659,16 +3671,23 @@ fn parse_paths(
     node: bool,
 ) -> Result<BTreeMap<String, PathDecl>, ParseError> {
     let mut out = BTreeMap::new();
-    let section = &doc["paths"];
+    // S3 (v0.3.20): a manifest level's `paths:` is `event_chains:`; a
+    // node's internal paths keep `paths:`.
+    let key = if node {
+        "paths"
+    } else {
+        spelled_key(doc, ctx, "paths", "event_chains")?
+    };
+    let section = &doc[key];
     if section.is_badvalue() {
         return Ok(out);
     }
     let hash = section
         .as_hash()
-        .ok_or_else(|| field_err(ctx, "paths", "expected mapping"))?;
+        .ok_or_else(|| field_err(ctx, key, "expected mapping"))?;
     for (k, v) in hash {
         let name = yaml_str_owned(k);
-        let path_ctx = format_path(ctx, &format!("paths.{name}"));
+        let path_ctx = format_path(ctx, &format!("{key}.{name}"));
         if node && !v["drop"].is_badvalue() {
             return Err(field_err(&path_ctx, "drop", NODE_PATH_DROP_REMOVED));
         }
@@ -4155,7 +4174,7 @@ fn reject_chains(doc: &Yaml, ctx: &str) -> Result<(), ParseError> {
          of the graph. State the same requirement as an event chain, which names \
          only its two ends and lets the route be derived from the `trigger:` \
          and `output:` facts the nodes already declare:\n\
-         \x20 paths:\n\
+         \x20 event_chains:\n\
          \x20   <chain name>:\n\
          \x20     trigger: { input: [<first topic>] }\n\
          \x20     output: [<last topic>]\n\
@@ -4631,11 +4650,11 @@ mod tests {
     #[test]
     fn a_type_error_carries_its_path() {
         let err = super::parse_manifest_str(
-            "paths:\n  clean:\n    output: [o]\n    drop: { max_count: 5 }\n",
+            "event_chains:\n  clean:\n    output: [o]\n    drop: { max_count: 5 }\n",
         )
         .unwrap_err()
         .to_string();
-        assert!(err.contains("paths.clean.drop.max_count"), "got: {err}");
+        assert!(err.contains("event_chains.clean.drop.max_count"), "got: {err}");
     }
 
     /// v0.3.15: the legacy `input:` is refused, naming `trigger:`.
@@ -4697,7 +4716,7 @@ hazards:
         assert_eq!(cs.reaction.as_deref(), Some("system.comfortable_stop"));
         let targets: Vec<&str> = cs.overrides.iter().map(|o| o.target.as_str()).collect();
         assert!(
-            targets.contains(&"paths.lidar_to_brake.max_latency"),
+            targets.contains(&"event_chains.lidar_to_brake.max_latency"),
             "{targets:?}"
         );
         assert!(

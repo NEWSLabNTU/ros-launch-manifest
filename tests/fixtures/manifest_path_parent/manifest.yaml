@@ -1,7 +1,7 @@
 # Parent scope with E2E path budget.
 version: 1
 
-paths:
+event_chains:
   pipeline:
     trigger: { input: [/sensor/raw] }
     output: [/perception/objects]

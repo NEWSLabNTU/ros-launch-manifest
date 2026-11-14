@@ -28,7 +28,7 @@ model says "manifest". They are one artifact, not two.
 - **[Background](#background)** — design principles, dataflow patterns, contracts, timing, and timestamps.
 - **[Worked Example](#worked-example)** — a complete multi-scope perception pipeline.
 - **[Format Reference](#format-reference)** — field-level syntax lookup for writing manifests.
-- **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, scope `paths:` and the derived route.
+- **[Vocabulary v2](#vocabulary-v2)** — `trigger:`, `sync:`, `buffer:`, `event_chains:` and the derived route.
 - **[Fault detection and reaction](#fault-detection-and-reaction)** — `hazards:`, `on_violation:`, `safe_state:`, and the FTTI arithmetic.
 - **[Operational modes](#operational-modes)** — `capabilities:`, `modes:`, the fallback sequence and per-mode `overrides:`.
 - **[Static Validation](#static-validation)** — checker rules and example diagnostics.
@@ -47,7 +47,7 @@ maps to a manifest element. Matching colors show the correspondence:
 | `<remap>` | `topics:` | First-class wiring: type + QoS + rate |
 | `if="$(var ...)"` | `if:` / `unless:` | Conditions on any entity |
 | `<include>` | `includes:` | Child scope with its own manifest |
-| *(in source code)* | `paths:` | Timing contracts: latency, age, drops |
+| *(in source code)* | `paths:`, `event_chains:` | Timing contracts: latency, age, drops |
 
 The key difference: in launch files, topics are implicit in source code
 and connected via `<remap>`. In manifests, topics are **first-class** —
@@ -714,7 +714,7 @@ assumption/guarantee separation helps diagnosis at runtime:
 budget across a subtree of nodes:
 
 ```yaml
-paths:
+event_chains:
   perception:
     trigger: { input: [/sensing/pointcloud] }
     output: [/perception/objects]
@@ -778,7 +778,7 @@ topics:
       max_count: 5 / 100       # 5% transport loss
       max_consecutive: 3       # never 3+ in a row
 
-paths:
+event_chains:
   perception:
     trigger: { input: [/sensing/pointcloud] }
     output: [/perception/objects]
@@ -1122,7 +1122,7 @@ version: 1
 # The child scopes (tracking, prediction) come from the launch tree's
 # <include>s; each has its own contract file beside its launch file.
 
-paths:
+event_chains:
   main:
     trigger: { input: [/perception/obstacle_segmentation/pointcloud] }
     output: [prediction/objects]       # relative → /perception/object_recognition/prediction/objects
@@ -1198,7 +1198,7 @@ topics:
     type: autoware_system_msgs/msg/OperationModeState
     sub: [controller/operation_mode]
 
-paths:
+event_chains:
   control:
     trigger: { input: [/planning/trajectory] }
     output: [command/control_cmd]   # relative → /control/command/control_cmd
@@ -1719,7 +1719,7 @@ nodes:
 # input/output are topic names (relative or absolute)
 # The checker traces dataflow between these topics, considering
 # only nodes within this scope's subtree (from includes: tree)
-paths:
+event_chains:
   perception:
     trigger: { input: [/perception/obstacle_segmentation/pointcloud] }
     output: [/perception/object_recognition/prediction/objects]
@@ -1729,7 +1729,8 @@ paths:
       max_consecutive: 5
 ```
 
-Node paths and event chains share **one** grammar (`paths.<name>` in
+Node paths (`nodes.<n>.paths.<name>`) and event chains
+(`event_chains.<name>`, `paths:` before v0.3.20) share **one** grammar (in
 [format-reference.md](format-reference.md)); what differs is what the
 names in `input:`/`output:` refer to — endpoint names on a node,
 topic names on a scope. The fields below are the common ones:
@@ -1911,11 +1912,11 @@ for the full design rationale; this section is the field reference.*
 
 ### Path triggers (`trigger:`)
 
-Every `paths:` entry (node-level or scope-level) may declare an explicit,
+Every node path and event chain may declare an explicit,
 closed-taxonomy `trigger:` — what causes the path's output:
 
 ```yaml
-paths:
+event_chains:
   forward:                                  # message-driven
     trigger: { input: [control_cmd_in] }
     output: [control_cmd_out]
@@ -1970,7 +1971,7 @@ redundant/reordered restatement is fine.
 with 2 or more endpoints:
 
 ```yaml
-paths:
+event_chains:
   fuse:
     trigger: { input: [cloud_top, cloud_left, cloud_right] }
     sync:
@@ -2014,13 +2015,13 @@ nodes:
 
 ### Cross-scope event chains
 
-An end-to-end requirement is stated as a top-level `paths:` entry naming
+An end-to-end requirement is stated as a top-level `event_chains:` entry naming
 its two ends and a budget. The route between them is **derived** from
 the `trigger:`/`output:` facts the nodes already declare, joined through
 the topic graph:
 
 ```yaml
-paths:
+event_chains:
   sensing_to_actuation:
     trigger: { input: [/perception/points] }   # where the requirement starts
     output: [/control/cmd]                     # where it ends
@@ -2097,7 +2098,7 @@ dropped with it — nothing ever branched on `reaction` vs `age`, and a
 subscriber's `max_age:` is what states staleness today.
 
 What that looks like — this **does not parse**, and the error names
-`paths:`:
+`event_chains:`:
 
 <!-- yaml-check: expect-error — `chains:` was removed in phase 68; the error is the point -->
 
@@ -2407,7 +2408,7 @@ modes:
     requires: [pose_estimation]
     reaction: system.comfortable_stop
     overrides:
-      paths:
+      event_chains:
         lidar_to_brake: { max_latency: 100ms }
       nodes:
         detector:
@@ -2526,7 +2527,7 @@ a sequence that does not list the exiting level, is `mode-exit-target`.
 
 `overrides:` is a nested mapping mirroring the contract's own shape,
 flattened at parse time to dotted `(target, value)` pairs —
-`paths.lidar_to_brake.max_latency`,
+`event_chains.lidar_to_brake.max_latency`,
 `nodes.detector.sub.scan.min_rate_hz`. This is how a requirement takes a
 different value in a degraded mode **without any scalar becoming a map**,
 so no reader changes: every requirement keeps one value where it is

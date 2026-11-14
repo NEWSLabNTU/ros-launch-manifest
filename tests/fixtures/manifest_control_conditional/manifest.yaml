@@ -106,7 +106,7 @@ topics:
       reliability: reliable
       depth: 1
 
-paths:
+event_chains:
   control:
     trigger: { input: [trajectory] }
     output: [control_cmd]

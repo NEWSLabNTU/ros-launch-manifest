@@ -164,7 +164,7 @@ impl Context {
             Context::Action => "actions.<name>",
             Context::IncludeExternal => "includes.<name>",
             Context::Arg => "args.<name>",
-            Context::Path => "paths.<name>",
+            Context::Path => "paths.<name> / event_chains.<name>",
             Context::Trigger => "trigger",
             Context::TriggerTimer => "trigger.timer",
             Context::Sync => "sync",
@@ -388,11 +388,12 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Child scopes, each an inline manifest (the file-reference form was removed in v0.1.59).",
     ),
+    alias("paths", Context::Manifest, "event_chains"),
     live(
-        "paths",
+        "event_chains",
         Context::Manifest,
         Kind::Meta,
-        "Event chains: end-to-end requirements naming two topics and a budget.",
+        "Event chains: end-to-end requirements naming two topics and a budget (AUTOSAR TIMEX's `TimingDescriptionEventChain`: a latency from stimulus to response). The route between the ends is derived from the nodes' paths, never written. `paths:` before v0.3.20, the word a node's internal paths keep.",
     ),
     live(
         "hazards",
@@ -1997,6 +1998,7 @@ fn render_bounds() -> String {
 pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
     (Context::Manifest, "functions", "0.3.19"),
     (Context::Hazard, "enters", "0.3.19"),
+    (Context::Manifest, "paths", "0.3.20"),
 ];
 
 /// Deprecations no row can carry, because the key stays live in another use
@@ -2096,6 +2098,7 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Hazard, "leaves", "0.3.19"),
     (Context::OnTimeout, "enters", "0.3.19"),
     (Context::CallReaction, "enters", "0.3.19"),
+    (Context::Manifest, "event_chains", "0.3.20"),
     (Context::Manifest, "independence", "0.3.13"),
     (Context::Hazard, "requirement", "0.3.13"),
     (Context::Mode, "commands", "0.3.13"),

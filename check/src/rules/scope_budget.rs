@@ -92,7 +92,7 @@ impl ValidationRule for ScopeBudgetRule {
                     };
                     ctx.warning(
                         self.id(),
-                        &format!("paths.{path_name}"),
+                        &format!("event_chains.{path_name}"),
                         format!(
                             "scope max_latency_ms ({declared}) may be less than sum of node \
                              latencies ({nodes_total}) + declared topic transport ({topic_transport}) = {total}.{suffix}"

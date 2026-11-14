@@ -22,7 +22,8 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `services` | meta |  | Service declarations, keyed by service name. |
 | `actions` | meta |  | Action declarations, keyed by action name. |
 | `includes` | meta |  | Child scopes, each an inline manifest (the file-reference form was removed in v0.1.59). |
-| `paths` | meta |  | Event chains: end-to-end requirements naming two topics and a budget. |
+| `paths` |  | deprecated — use `event_chains` | Deprecated spelling. |
+| `event_chains` | meta | since v0.3.20 | Event chains: end-to-end requirements naming two topics and a budget (AUTOSAR TIMEX's `TimingDescriptionEventChain`: a latency from stimulus to response). The route between the ends is derived from the nodes' paths, never written. `paths:` before v0.3.20, the word a node's internal paths keep. |
 | `hazards` | meta |  | Hazards: what is watched, how long the system has, and which path reaches the safe state. |
 | `functions` |  | deprecated — use `capabilities` | Deprecated spelling. |
 | `capabilities` | meta | since v0.3.19 | Named capabilities: what a set of topics together provides, available while its topics are and lost when a fault removes them (capability monitoring in the automated-driving literature; `functions:` before v0.3.19). A mode `requires` capabilities; a hazard may monitor one by name. |
@@ -151,7 +152,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `type` | meta |  | Argument type: bool, or omitted for a free string. |
 | `choices` | meta |  | Permitted values. Consulted only when `type` is absent. |
 
-## `paths.<name>`
+## `paths.<name> / event_chains.<name>`
 
 | key | kind | status | meaning |
 |---|---|---|---|
@@ -512,9 +513,9 @@ Every key below is a spelling of one bound: a value with a unit, what it limits 
 
 | key | where | kind | limit | unit | map form |
 |---|---|---|---|---|---|
-| `max_latency` | `paths.<name>` | latency | at most | duration | `{ duration, source }` |
-| `min_latency` | `paths.<name>` | latency | at least | duration |  |
-| `max_jitter` | `paths.<name>` | jitter | at most | duration | `{ duration, source }` |
+| `max_latency` | `paths.<name> / event_chains.<name>` | latency | at most | duration | `{ duration, source }` |
+| `min_latency` | `paths.<name> / event_chains.<name>` | latency | at least | duration |  |
+| `max_jitter` | `paths.<name> / event_chains.<name>` | jitter | at most | duration | `{ duration, source }` |
 | `jitter` | `trigger.timer` | jitter | at most | duration | `{ duration, source }` |
 | `min_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at least | Hz |  |
 | `max_rate_hz` | `pub/sub/cli.<endpoint>` | rate | at most | Hz |  |

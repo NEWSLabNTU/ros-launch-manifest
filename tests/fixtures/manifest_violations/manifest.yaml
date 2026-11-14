@@ -104,7 +104,7 @@ services:
   typeless_service:
     server: [node_a/to_b]
 
-paths:
+event_chains:
   main:
     trigger: { input: [raw] }
     output: [results]
