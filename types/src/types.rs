@@ -550,6 +550,34 @@ pub struct ModeDecl {
     /// budget's (phase 90 G2); its `param` is a [`crate::ParamBinding::Node`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_dwell: Option<crate::bound::Bound>,
+    /// The longest the level lasts while it stays available (v0.3.18, the
+    /// range form `min_dwell: { duration: { min, max } }`): the next level
+    /// starts no later than this after the level went on, so it is what
+    /// every level below is charged. `min_dwell`'s value is then the range's
+    /// `min`, the least time promised. `None` for a single duration, which
+    /// is both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dwell_max: Option<crate::duration::Duration>,
+    /// The way down out of a dwelling level before its least time (v0.3.18):
+    /// while the level is active, the named function holding takes the next
+    /// level of the fallback sequence at once. Only on a level with a
+    /// `min_dwell` (a parse error otherwise). It shortens the level, never
+    /// lengthens it, so what the levels below are charged is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advance: Option<ModeAdvance>,
+    /// Functions (or bare topics) of which at least one must be LOST for
+    /// this level to be available (v0.3.18): a level entered on a loss, such
+    /// as one that exists only while another computer is gone. The walk
+    /// skips it for a hazard whose fault removes none of them. Disjoint
+    /// from `requires` (a parse error otherwise).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires_lost: Vec<String>,
+    /// This level's own deadline (v0.3.18): the longest from the fault to
+    /// the level being entered (detection, the dwelling levels waited out
+    /// above it, its route and its settle), judged for every hazard whose
+    /// walk reaches it (`level-within`), beside the hazard's `ftti`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub within: Option<crate::bound::Bound>,
     /// The one way out of a dwelling level that is not the next level
     /// (v0.1.46): while this mode is active, the named function holding ends
     /// the fallback sequence successfully in `to`. Only a level with a
@@ -629,9 +657,35 @@ pub struct ModeExit {
     /// The function whose holding ends the ladder -- typically a value
     /// function (`of:` + `when:`), such as "the control mode is MANUAL".
     pub holds: String,
-    /// The mode the ladder ends in. Outside every `fallback:` list: an exit
-    /// is not a rung (`mode-exit-target` in the consumer).
+    /// The mode the exit ends in: outside every `fallback:` list, or
+    /// (v0.3.18) a level above this one in a fallback sequence that lists
+    /// both, which the exit re-enters (`mode-exit-target` in the consumer).
     pub to: String,
+}
+
+impl ModeDecl {
+    /// The dwell's least time, ms: `min_dwell`'s value (a range's `min`).
+    pub fn dwell_min_ms(&self) -> Option<f64> {
+        self.min_dwell.as_ref().and_then(crate::bound::Bound::ms)
+    }
+
+    /// What every level below a dwelling level is charged for it, ms: the
+    /// range's `max`, else the single duration (v0.3.18).
+    pub fn dwell_charged_ms(&self) -> Option<f64> {
+        match self.dwell_max {
+            Some(d) if self.min_dwell.is_some() => Some(d.as_millis_f64()),
+            _ => self.dwell_min_ms(),
+        }
+    }
+}
+
+/// `modes.<m>.advance` (v0.3.18): `{ holds: <function> }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModeAdvance {
+    /// The function whose holding leaves the dwelling level early, downward:
+    /// a value function (`of:` + `when:`) such as "the domain margin is
+    /// exhausted".
+    pub holds: String,
 }
 
 /// A named function (phase 75): a guard group, lost when its topics are,
@@ -745,6 +799,12 @@ pub enum PredicateValue {
     Float(f64),
     Constant(String),
     Str(String),
+    /// A value read from the launch tree or a `let:` entry (v0.3.18), as
+    /// written, whose number is not known: a contract read with no launch
+    /// tree. A consumer that holds the launch tree evaluates it to a
+    /// [`PredicateValue::Float`] (SI units). Never judged while unknown,
+    /// and never read as held.
+    Read(String),
 }
 
 impl PredicateValue {
@@ -778,6 +838,7 @@ impl std::fmt::Display for PredicateValue {
             PredicateValue::Float(x) => write!(f, "{x}"),
             PredicateValue::Constant(c) => write!(f, "{c}"),
             PredicateValue::Str(s) => write!(f, "{s:?}"),
+            PredicateValue::Read(r) => write!(f, "{r}"),
         }
     }
 }
@@ -788,7 +849,9 @@ impl Serialize for PredicateValue {
             PredicateValue::Bool(b) => s.serialize_bool(*b),
             PredicateValue::Int(i) => s.serialize_i64(*i),
             PredicateValue::Float(x) => s.serialize_f64(*x),
-            PredicateValue::Constant(c) | PredicateValue::Str(c) => s.serialize_str(c),
+            PredicateValue::Constant(c) | PredicateValue::Str(c) | PredicateValue::Read(c) => {
+                s.serialize_str(c)
+            }
         }
     }
 }

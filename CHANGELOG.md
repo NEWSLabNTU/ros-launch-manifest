@@ -10,6 +10,52 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 
 GRAMMAR_VERSION 0.3.18 under "Unreleased".
 
+### Added
+
+The fallback-sequence grammar of milestone M1g (#3 to #7), driven by the
+L4 safety island's behaviour ladder. Every key is additive: the model stays
+schema 5, and a model written before reads with the new fields absent. The
+normative statement of which levels a hazard runs and which of their rows
+are judged is `launch-manifest.md`, "Which levels a hazard runs, and which
+rows are judged"; its arithmetic is the new
+`ros_launch_manifest_derive::levels` (`skip`, `judgements`, `binding`), so
+the two realizers agree on the verdict and on the binding row.
+
+- **A dwell as a range** (#3): `modes.<m>.min_dwell: { duration: { min,
+  max }, param, source }`. `min` is the least time promised (the bound's
+  value, `ModeDecl::dwell_min_ms`); `max` is the longest the level lasts
+  while available and what every level below is charged
+  (`ModeDecl::dwell_max`, `ModeDecl::dwell_charged_ms`; the model's
+  `DwellContract.max_ms`, `DwellContract::charged_ms`). The parameter's
+  value must lie in the range (`dwell-param`). A reader that charges a
+  dwell from the model must read `max_ms`: one built before this release
+  charges `duration_ms`, the least time.
+- **Leaving a dwell early, downward** (#3): `modes.<m>.advance: { holds:
+  <function> }`, only on a dwelling level. It shortens the level and changes
+  no charge. Rule text: `mode-advance-unwired`.
+- **A level entered on a loss** (#4): `modes.<m>.requires_lost: [<function>,
+  ...]`. The level is available only while at least one of them is lost;
+  the walk skips it for a hazard whose fault removes none of them
+  (`levels::skip`). Disjoint from `requires` (a parse error); not on the
+  minimal risk condition (`requires-lost-at-mrc`).
+- **`exit.to` a level above** (#5): an exit may re-enter a level above it
+  in a fallback sequence that lists both; the level's dwell restarts, and a
+  consumer adds no row for the re-entry. `mode-exit-target` is narrowed
+  accordingly.
+- **A level's own deadline** (#6): `modes.<m>.within: <duration> | {
+  duration, source }`, a deadline bound. Every level a hazard runs has one
+  row; a level without a dwell is judged against the hazard's `ftti` and
+  its `within`, a dwelling level against its `within` only (`level-within`);
+  the binding row is the judged pair with the largest share of its
+  deadline. The model's `ModeContract.within_ms`.
+- **Predicate values read from the launch tree** (#7): the constant of a
+  `when:` (hazard or function) or of a mode's `commands` predicate may be
+  `$(let <name>)`, `$(param ...)`, `$(var ...)` or an expression of them.
+  Any dimension, evaluated to SI (`values::ANY`); a `$(param)`/`$(var)` may
+  omit its unit there. Unknown without a launch tree, it parses to the new
+  `PredicateValue::Read` and is never judged. A value relative to the
+  field's past (its value at entry) stays out of the grammar.
+
 ### Fixed
 
 - **`explicit-trigger` on a timer whose rate is an unevaluated reference**

@@ -518,6 +518,14 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         )
     },
     bk(
+        "within",
+        Context::Mode,
+        BoundKind::Deadline,
+        Limit::Max,
+        "duration",
+        Form::Map,
+    ),
+    bk(
         "settle",
         Context::SafeState,
         BoundKind::Response,
@@ -681,6 +689,7 @@ impl crate::types::Manifest {
         }
         for (m, d) in &self.modes {
             put(&mut out, &format!("modes.{m}"), "min_dwell", &d.min_dwell);
+            put(&mut out, &format!("modes.{m}"), "within", &d.within);
         }
         for (n, nd) in &self.nodes {
             for (p, pd) in &nd.paths {
@@ -821,7 +830,7 @@ mod tests {
     fn every_bound_key_parses_to_its_row() {
         let m = crate::parse_manifest_str(
             "hazards:\n  h: { monitors: [/a], ftti: { duration: 1s, source: requirement }, detection: 1s }\n\
-             modes:\n  m: { requires: [/a], min_dwell: { duration: 10s, param: n.t } }\n\
+             modes:\n  m: { requires: [/a], min_dwell: { duration: 10s, param: n.t }, within: 20s }\n\
              topics:\n  /a: { type: std_msgs/msg/Empty, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\
              services:\n  /s: { type: x/srv/S, max_transport: 1ms }\n\
@@ -867,7 +876,7 @@ mod tests {
                 row.key
             );
         }
-        assert_eq!(bounds.len(), 21, "{spelled:?}");
+        assert_eq!(bounds.len(), 22, "{spelled:?}");
         assert!(bounds.iter().any(|(p, _)| p == "services./s.max_transport"));
         let get = |k: &str| bounds.iter().find(|(p, _)| p == k).unwrap().1;
         assert_eq!(

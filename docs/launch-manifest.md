@@ -2434,6 +2434,84 @@ declares an `on_violation`: nothing would notice it was lost, so the mode
 can never be declared unavailable and the fallback sequence below it can never be
 taken.
 
+### Which levels a hazard runs, and which rows are judged (v0.3.18)
+
+This is the normative statement every consumer implements (play_launch's
+checker, its run-time observer and `measure`, and nano-ros's build-time
+budget), so that all of them report the same verdict and the same binding
+row. The arithmetic of the last two steps is
+`ros_launch_manifest_derive::levels`.
+
+1. **The sequence.** A hazard that `enters: <mode>` runs that mode's
+   `fallback:` levels in order, each by its own `reaction:`. A hazard with
+   `reaction: <event chain>` runs one level, which is its minimal risk
+   condition.
+2. **Skipped levels.** The hazard skips a level when the level `requires` a
+   function the fault removes, or when the level has `requires_lost:` and
+   the fault removes none of those functions. A skipped level is neither
+   judged nor charged, and it is not in the model's `degradation_levels`
+   for that hazard.
+3. **One row per level run**: detection + every dwelling level run above
+   it (its route plus its charged dwell) + the level's route + its settle.
+   A dwelling level's charged dwell is its range's `max`, or its single
+   duration. A dwelling level's own row has a settle when its route ends at
+   a `safe_state` (a constraint the vehicle must be seen to comply with),
+   else none.
+4. **Judged pairs.** Every level without a dwell, the minimal risk
+   condition included, is judged against the hazard's `ftti`
+   (`degradation-level-time`; `fault-reaction-time` for the minimal risk
+   condition) and against its own `within` when stated (`level-within`).
+   A dwelling level is judged against its `within` only: it is
+   transitional, and its time is charged to the levels below, which carry
+   the `ftti`. A row with no deadline is not judged.
+5. **The binding row** is the judged pair whose total takes the largest
+   share of its deadline (total / deadline; above 1 is a miss), ties to
+   the earlier level and, on one level, to `ftti` before `within`. A share
+   rather than slack in milliseconds, because one hazard's deadlines run
+   from tens of milliseconds (taking authority) to minutes (reaching the
+   minimal risk condition). `--explain` and a build-time budget print this
+   row with each level's deadline.
+
+So one fault carries every time the safety concept states: the island's
+`within: 70ms` on the level that takes authority, the `ftti` of the
+minimal risk condition on the floor, without a second hazard on the same
+monitor.
+
+**A level entered on a loss (`requires_lost:`).** `requires_lost: [f, ...]`
+makes a level available only while at least one of the named functions is
+lost (and every `requires` holds). A level that holds the lane while the
+main computer is gone lists that computer's function: a hazard that leaves
+the computer running (an operating-domain condition) skips the level and
+is charged nothing for it, and the run time selects the level only while
+the function is lost. A name may not be in both lists (a parse error), and
+the minimal risk condition may not have one: it must always be available
+(`requires-lost-at-mrc`).
+
+**A dwell as a range, and leaving it early.** `min_dwell: { duration: {
+min: 8s, max: 15s }, param: <node>.<parameter> }` states a dwell whose
+length is chosen per configuration (per operating-domain class, from a
+parameter file the launch selects). `min` is the promise to whoever the
+level waits for (the level below starts no sooner); `max` is the longest
+the level lasts while available, and every level below is charged `max`.
+The parameter's launch value must lie in `[min, max]` (`dwell-param`).
+`advance: { holds: <function> }` lets the level go DOWN early: while the
+level is active, the function holding takes the next level at once, before
+`min` (a deadline the situation shortens). It only shortens the level, so
+no charge changes; some node implementing the level must take the
+function's topic on a path trigger (`mode-advance-unwired`).
+
+**An exit back to a level above (`exit.to` a level).** An exit's `to` may
+name a level above the exiting one in a fallback sequence that lists both:
+the one reversible step, handing authority back to a constrained mode
+rather than to the top. Taking the exit re-enters that level: its dwell
+restarts, and what it commands applies again. A consumer adds no row and
+no term for a re-entry. The exit is taken only when its function holds,
+which ends the episode the fault opened; a fault after the re-entry is
+walked from the top like any other, and its rows already bound it (the
+re-entered level's remaining dwell is at most its `max`, which the rows
+charge in full). `to` naming a level below the exiting one, or a level of
+a sequence that does not list the exiting level, is `mode-exit-target`.
+
 ### Per-mode requirement values (`overrides:`)
 
 `overrides:` is a nested mapping mirroring the contract's own shape,
@@ -2568,7 +2646,9 @@ every degradation level below it. Written out: the degradation level below start
 **`exit: { holds: <function>, to: <mode> }`** is allowed only on a windowed
 degradation level (a parse error otherwise), so the grammar still has no general
 transitions. While the degradation level is active, the function holding ends the fallback sequence
-in `to`, which is outside every `fallback:` list. Before v0.1.59 the
+in `to`, which is outside every `fallback:` list or (since v0.3.18) a level
+above this one in a sequence that lists both, re-entered (see "Which levels
+a hazard runs" above). Before v0.1.59 the
 function was written `on:`; that spelling still parses for one release, with
 a `deprecated-spelling` warning (`on` names fault classes everywhere else:
 `hazards.<h>.on`, `on_violation.on`), and `play_launch migrate` rewrites it.
@@ -2609,12 +2689,15 @@ The consumer's rules for these keys:
 | `when-requires-reported` | Error | A hazard's `when:` without `reported` among its `on:` classes |
 | `when-field-unknown` | Error / Warning | The field is not in the topic's `.msg`, is not a scalar, or the constant is not declared there (error); the `.msg` is not on the ament index, so nothing was checked (warning) |
 | `dwell-at-mrc` | Error | The last degradation level of a fallback sequence has a `min_dwell` |
-| `dwell-param` | Error | The named parameter's resolved launch value, in seconds, is not the dwell, or it has none |
+| `dwell-param` | Error | The named parameter's resolved launch value, in seconds, is not the dwell (outside `[min, max]` for a range), or it has none |
 | `dwell-unbound` | Warning | A `min_dwell` with no `param:` |
 | `dwell-expiry` | Error / Warning | The route of a degradation level below a dwelling level does not start at the node the dwell's `param:` names and no timer path of that node reaches the level's output, or it starts there with an input path that charges the node less than the period of its timer that publishes the dwelling level's output, so the late notice of the deadline is charged nowhere (error); no timer of that node publishes the dwelling level's output and none reaches the level below, so when the deadline is noticed is undeclared (warning). A timer path of the owner that reaches the level below is its route from the deadline, the tick charged on its first hop, whichever node detected the fault |
-| `mode-exit-target` | Error | `to:` is not a mode, or is a degradation level of some `fallback:` fallback sequence |
+| `mode-exit-target` | Error | `to:` is not a mode, or is a degradation level of a fallback sequence that does not list the exiting level above it (v0.3.18: a level above the exiting one in the same sequence is a re-entry) |
+| `mode-advance-unwired` | Error | No node publishing the dwelling level's reaction output takes the `advance` function's topic on a path trigger (v0.3.18) |
+| `requires-lost-at-mrc` | Error | The last degradation level of a fallback sequence has a `requires_lost:` (v0.3.18) |
+| `level-within` | Error | A level's row (detection + the dwelling levels above + route + settle) exceeds its own `within` (v0.3.18) |
 | `mode-exit-unwired` | Error | No node publishing the degradation level's reaction output takes the exit function's topic on a path trigger, so there is no take to trace |
-| `degradation-level-time` | Error | Now cumulative: detection + every degradation level with a `min_dwell` passed (route + dwell) + the degradation level's route + settle, against the interval |
+| `degradation-level-time` | Error | Now cumulative: detection + every degradation level with a `min_dwell` passed (route + dwell, a range's `max`) + the degradation level's route + settle, against the interval. Not on a dwelling level, which is judged against its own `within` only |
 | `settle-derived` | Info | The derivation's trace, printed (any extension's settle) |
 | `settle-entry-missing` | Warning | A derived settle reached by a hazard that writes no value for a key the derivation needs (a braking profile and no `entry_speed`) |
 | `settle-param-unresolved` | Error | A parameter the derivation reads with no numeric launch value on the node |

@@ -1621,6 +1621,16 @@ fn parse_predicate_map(section: &Yaml, pctx: &str) -> Result<ValuePredicate, Par
         }
     };
     let raw = &section[op.key()];
+    // v0.3.18: a number read from the launch tree or a `let:` entry, of any
+    // dimension (the grammar does not know the field's), in SI units.
+    if let Some(text) = ref_text(raw) {
+        let at = format_path(pctx, op.key());
+        let value = match read_reference(text, &at, values::ANY)? {
+            Some(si) => PredicateValue::Float(si),
+            None => PredicateValue::Read(text.to_string()),
+        };
+        return Ok(ValuePredicate { field, op, value });
+    }
     let value = match raw {
         Yaml::Boolean(b) => PredicateValue::Bool(*b),
         Yaml::Integer(i) => PredicateValue::Int(*i),
@@ -1789,8 +1799,122 @@ fn parse_independence(doc: &Yaml, ctx: &str) -> Result<Vec<IndependenceDecl>, Pa
 /// `{ duration, param: <node>.<parameter>, source }` (phase 90 G2: a
 /// least-time bound, no context of its own). The old key is a `removed`
 /// row since v0.3.6: `reject_unknown_keys` refuses it naming this one.
-fn parse_min_dwell(doc: &Yaml, ctx: &str) -> Result<Option<Bound>, ParseError> {
-    parse_dwell_at(doc, ctx, "min_dwell")
+/// Since v0.3.18 the map form's `duration` may be the range `{ min, max }`:
+/// the bound holds `min` and the second value is `max`.
+fn parse_min_dwell(doc: &Yaml, ctx: &str) -> Result<(Option<Bound>, Option<Duration>), ParseError> {
+    let section = &doc["min_dwell"];
+    if let Yaml::Hash(_) = section
+        && let Yaml::Hash(_) = &section["duration"]
+    {
+        return parse_dwell_range(section, &format_path(ctx, "min_dwell"));
+    }
+    Ok((parse_dwell_at(doc, ctx, "min_dwell")?, None))
+}
+
+/// `min_dwell: { duration: { min, max }, param, source }` (v0.3.18).
+fn parse_dwell_range(
+    section: &Yaml,
+    wctx: &str,
+) -> Result<(Option<Bound>, Option<Duration>), ParseError> {
+    reject_unknown_keys(section, wctx, Context::Budget)?;
+    if !section["supervise"].is_badvalue() {
+        return Err(field_err(
+            wctx,
+            "supervise",
+            "a dwell is a least time the level lasts, not a budget something can overrun: \
+             there is nothing to supervise",
+        ));
+    }
+    let range = &section["duration"];
+    let rctx = &format_path(wctx, "duration");
+    reject_unknown_keys(range, rctx, Context::DwellRange)?;
+    let mut read = false;
+    let mut get = |key: &str| -> Result<Option<Duration>, ParseError> {
+        read |= ref_text(&range[key]).is_some();
+        let d = yaml_duration_at(range, key, rctx, true)?;
+        if d.is_none() && ref_text(&range[key]).is_none() {
+            return Err(field_err(
+                rctx,
+                key,
+                if key == "min" {
+                    "required: the least time the level lasts while available, with a unit (`8s`)"
+                } else {
+                    "required: the longest the level lasts while available, with a unit (`15s`)"
+                },
+            ));
+        }
+        Ok(d)
+    };
+    let (min, max) = (get("min")?, get("max")?);
+    if read && !section["source"].is_badvalue() {
+        return Err(field_err(
+            wctx,
+            "source",
+            "source-on-reference: a value read from the launch tree has its provenance \
+             recorded automatically, so `source:` beside a reference states a second, \
+             competing origin. Delete `source:`",
+        ));
+    }
+    let (Some(min), Some(max)) = (min, max) else {
+        // A value read from the launch tree with no value yet: unknown.
+        return Ok((None, None));
+    };
+    if min.as_millis_f64() <= 0.0 {
+        return Err(field_err(
+            rctx,
+            "min",
+            "a dwell of zero is no dwell -- the level would be left the moment it was entered",
+        ));
+    }
+    if max < min {
+        return Err(field_err(
+            rctx,
+            "max",
+            &format!(
+                "`max` ({}) is below `min` ({}): the longest the level lasts cannot be shorter \
+                 than the least time it promises",
+                max, min
+            ),
+        ));
+    }
+    let param = yaml_string(section, "param", wctx)?
+        .map(|raw| parse_param_ref(&raw, wctx, "param"))
+        .transpose()?;
+    let source = if section["source"].is_badvalue() {
+        None
+    } else {
+        Some(parse_source(&section["source"], wctx)?)
+    };
+    let mut b = spelled(Context::Mode, "min_dwell", Quantity::Duration(min));
+    b.param = param.map(ParamBinding::Node);
+    b.source = source;
+    Ok((Some(b), Some(max)))
+}
+
+/// `modes.<m>.advance` (v0.3.18): `{ holds: <function> }`.
+fn parse_advance(doc: &Yaml, ctx: &str) -> Result<Option<ModeAdvance>, ParseError> {
+    let section = &doc["advance"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    let actx = &format_path(ctx, "advance");
+    let Yaml::Hash(_) = section else {
+        return Err(type_err(
+            ctx,
+            "advance",
+            "a mapping `{ holds: <function> }`",
+            section,
+        ));
+    };
+    reject_unknown_keys(section, actx, Context::Advance)?;
+    let holds = yaml_string(section, "holds", actx)?.ok_or_else(|| {
+        field_err(
+            actx,
+            "holds",
+            "required: the function whose holding leaves the level early, to the next level",
+        )
+    })?;
+    Ok(Some(ModeAdvance { holds }))
 }
 
 fn parse_dwell_at(doc: &Yaml, ctx: &str, key: &str) -> Result<Option<Bound>, ParseError> {
@@ -1943,13 +2067,34 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
         let mctx = format_path(ctx, &format!("modes.{name}"));
         reject_unknown_keys(v, &mctx, Context::Mode)?;
         let overrides = parse_mode_overrides(v, &mctx)?;
-        let min_dwell = parse_min_dwell(v, &mctx)?;
+        let (min_dwell, dwell_max) = parse_min_dwell(v, &mctx)?;
         let exit = parse_exit(v, &mctx)?;
+        let advance = parse_advance(v, &mctx)?;
+        if advance.is_some() && min_dwell.is_none() && v["min_dwell"].is_badvalue() {
+            return Err(field_err(
+                &mctx,
+                "advance",
+                "an advance leaves a dwell early -- it is only for a level with a \
+                 `min_dwell:`. A level without one is left at once anyway",
+            ));
+        }
+        let requires = parse_string_or_list(v, "requires", &mctx)?;
+        let requires_lost = parse_string_or_list(v, "requires_lost", &mctx)?;
+        if let Some(both) = requires_lost.iter().find(|f| requires.contains(f)) {
+            return Err(field_err(
+                &mctx,
+                "requires_lost",
+                &format!(
+                    "`{both}` is in both `requires` and `requires_lost`: the level would need it \
+                     held and lost at once, so it could never be available"
+                ),
+            ));
+        }
         // An exit is the one way out of a TIMED level. On a level with no
         // dwell it would be a general mode transition, which the grammar
         // deliberately does not have (`operational-modes.md`: transitions
         // are not folded in).
-        if exit.is_some() && min_dwell.is_none() {
+        if exit.is_some() && min_dwell.is_none() && v["min_dwell"].is_badvalue() {
             return Err(field_err(
                 &mctx,
                 "exit",
@@ -1961,12 +2106,16 @@ fn parse_modes(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ModeDecl>, Pars
             name,
             ModeDecl {
                 description: yaml_string(v, "description", &mctx)?,
-                requires: parse_string_or_list(v, "requires", &mctx)?,
+                requires,
                 fallback: parse_string_or_list(v, "fallback", &mctx)?,
                 reaction: yaml_string(v, "reaction", &mctx)?,
                 overrides,
                 min_dwell,
+                dwell_max,
                 exit,
+                advance,
+                requires_lost,
+                within: yaml_bound(v, "within", &mctx, Context::Mode)?,
                 commands: parse_commands(v, &mctx)?,
             },
         );
@@ -6300,6 +6449,58 @@ nodes:
         assert_eq!(new.modes["m"].exit.clone().unwrap().holds, "driver");
         let e = err_of(&m("    exit: { on: driver, to: manual }\n"));
         assert!(e.contains("`holds:`") && e.contains("v0.3.15"), "{e}");
+    }
+
+    /// v0.3.18 (rlm#3): a dwell may be a range. `min` is the promise and
+    /// sits in the bound; `max` is what the levels below are charged.
+    #[test]
+    fn a_dwell_may_be_a_range() {
+        let m = |d: &str| format!("version: 1\nmodes:\n  m:\n    min_dwell: {d}\n");
+        let ok = parse_manifest_str(&m(
+            "{ duration: { min: 8s, max: 15s }, param: n.t_hold, source: requirement }",
+        ))
+        .unwrap();
+        let md = &ok.modes["m"];
+        assert_eq!(md.dwell_min_ms(), Some(8000.0));
+        assert_eq!(md.dwell_charged_ms(), Some(15000.0));
+        assert!(md.min_dwell.as_ref().unwrap().param.is_some());
+        let single = parse_manifest_str(&m("10s")).unwrap();
+        assert_eq!(single.modes["m"].dwell_charged_ms(), Some(10000.0));
+        let e = err_of(&m("{ duration: { min: 15s, max: 8s } }"));
+        assert!(e.contains("below `min`"), "{e}");
+        let e = err_of(&m("{ duration: { min: 8s } }"));
+        assert!(
+            e.contains("min_dwell.duration.max") && e.contains("required"),
+            "{e}"
+        );
+        let e = err_of(&m("{ duration: { min: 0s, max: 8s } }"));
+        assert!(e.contains("no dwell"), "{e}");
+        let e = err_of(&m("{ duration: { min: 8s, max: 15s, mid: 10s } }"));
+        assert!(e.contains("mid"), "{e}");
+    }
+
+    /// v0.3.18 (rlm#3, #4, #6): `advance`, `requires_lost` and `within`.
+    #[test]
+    fn a_level_may_advance_require_a_loss_and_state_a_deadline() {
+        let m = |body: &str| format!("version: 1\nmodes:\n  m:\n{body}");
+        let ok = parse_manifest_str(&m("    min_dwell: 10s\n    advance: { holds: exhausted }\n\
+             \x20   requires: [cam]\n    requires_lost: [hpc]\n    within: { duration: 70ms, source: requirement }\n"))
+        .unwrap();
+        let md = &ok.modes["m"];
+        assert_eq!(md.advance.as_ref().unwrap().holds, "exhausted");
+        assert_eq!(md.requires_lost, ["hpc"]);
+        assert_eq!(md.within.as_ref().and_then(Bound::ms), Some(70.0));
+        let bare = parse_manifest_str(&m("    within: 2s\n")).unwrap();
+        assert_eq!(
+            bare.modes["m"].within.as_ref().and_then(Bound::ms),
+            Some(2000.0)
+        );
+        let e = err_of(&m("    advance: { holds: exhausted }\n"));
+        assert!(e.contains("only for a level with a `min_dwell:`"), "{e}");
+        let e = err_of(&m("    requires: [hpc]\n    requires_lost: hpc\n"));
+        assert!(e.contains("both `requires` and `requires_lost`"), "{e}");
+        let e = err_of(&m("    min_dwell: 10s\n    advance: { on: exhausted }\n"));
+        assert!(e.contains("modes.m.advance"), "{e}");
     }
 
     /// v0.1.59 (phase 90 G4): a hazard enters a mode or reacts by one scope

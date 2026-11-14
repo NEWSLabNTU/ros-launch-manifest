@@ -49,6 +49,7 @@
 //! stale model must be visible as such, not scheduled from a guess.
 
 pub mod graph;
+pub mod levels;
 pub mod view;
 
 use std::collections::{BTreeMap, BTreeSet};

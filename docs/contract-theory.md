@@ -920,6 +920,17 @@ functions it needs), `fallback` (the ordered fallback sequence), `reaction` and
   requires. A redundant group of $n$ members held while $m$ hold, losing
   $k$ of them, is removed only when $n - k < m$; so a hazard on one sensor
   of a 2-of-2 group removes it, and of a 1-of-2 group does not.
+- **`level-within`** (error, v0.3.18) -- a level may state its own deadline,
+  `modes.<m>.within`, from the fault to the level entered. Every level a
+  hazard runs has one row,
+  $T_{\text{FDTI}} + \sum_{\text{dwelling levels above}} (\text{route} +
+  \text{dwell}_{\max}) + \text{route} + \text{settle}$; a level without a
+  dwell is judged against the FTTI and its `within`, a dwelling level only
+  against its `within`. The binding row is the judged pair with the largest
+  share of its deadline. A level with `requires_lost:` is run only by a
+  hazard that removes one of the named functions; any other skips it
+  (`launch-manifest.md`, "Which levels a hazard runs, and which rows are
+  judged").
 
 `modes.<m>.overrides` pins a requirement value for one mode by naming its
 contract path, so every requirement keeps one value where it is declared

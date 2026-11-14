@@ -98,6 +98,10 @@ pub enum Context {
     Predicate,
     /// `modes.<name>.exit` (v0.1.46).
     Exit,
+    /// `modes.<name>.advance` (v0.3.18).
+    Advance,
+    /// The range form of a dwell's `duration`, `{ min, max }` (v0.3.18).
+    DwellRange,
     /// The map form of `safe_state.settle` (phase 90 G6): `{ duration |
     /// decel, jerk ; response ; source }`, a written duration or a braking
     /// profile (v0.1.46).
@@ -178,6 +182,8 @@ impl Context {
             Context::Function => "functions.<name>",
             Context::Predicate => "when",
             Context::Exit => "modes.<name>.exit",
+            Context::Advance => "modes.<name>.advance",
+            Context::DwellRange => "modes.<name>.min_dwell.duration (range form)",
             Context::Settle => "safe_state.settle",
             Context::Budget => "<budget> (map form)",
             Context::Measured => "source.measured",
@@ -1206,7 +1212,7 @@ pub const FIELDS: &[Field] = &[
         "when",
         Context::Hazard,
         Kind::Fact,
-        "The value that is the fault, `{ field: <name>, <op>: <constant> }`, on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`).",
+        "The value that is the fault, `{ field: <name>, <op>: <constant> }` (the constant may be read from the launch tree, since v0.3.18), on a hazard whose guard is a detector's output. Requires `reported` among the `on:` classes (`when-requires-reported`).",
     ),
     live(
         "detection",
@@ -1266,7 +1272,7 @@ pub const FIELDS: &[Field] = &[
         "min_dwell",
         Context::Mode,
         Kind::Requirement,
-        "A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. When a timer path of the owner reaches the level below, the route starts there, its tick charged on the first hop, whichever node detected the fault. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`.",
+        "A transitional degradation level's dwell time (`window:` before v0.3.3): while the level stays available the system stays AT LEAST this long (the time the level promises whoever it waits for, a driver's takeover time), then takes the next level. The level below starts no sooner than the deadline and within its own reaction route after it, and that route is where the deadline's notice is charged (`dwell-expiry`); its first hop crosses no link (the owner reads its own clock), so a guard edge's `max_transport` is not charged there. When a timer path of the owner reaches the level below, the route starts there, its tick charged on the first hop, whichever node detected the fault. A duration, or `{ duration, param }` binding it to the parameter that enforces it. Since v0.3.18 the duration may be a range, `{ duration: { min: 8s, max: 15s }, param }`: `min` is the least time promised, `max` the longest the level lasts while available, and every level below is charged `max` (a single duration is both); the parameter's value must lie in the range (`dwell-param`). Never on the minimal risk condition (`dwell-at-mrc`); unbound is `dwell-unbound`.",
     ),
     removed(
         "window",
@@ -1277,13 +1283,31 @@ pub const FIELDS: &[Field] = &[
         "exit",
         Context::Mode,
         Kind::Requirement,
-        "`{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`; `to` is outside every `fallback:` list.",
+        "`{ holds: <function>, to: <mode> }`: while this level is active, the function holding ends the fallback sequence in `to`. Only on a level with a `min_dwell`. `to` is outside every `fallback:` list, or (since v0.3.18) a level ABOVE this one in a fallback sequence that lists both, which the exit re-enters: its dwell restarts, and a fault from then on is walked as any other (`mode-exit-target`).",
     ),
     live(
         "commands",
         Context::Mode,
         Kind::Requirement,
-        "What this level commands: `{ <topic>: [<predicate>, ...] }`, each predicate in the `when:` shape (`{ field, <op>: <constant> }`). While the level is active, every message on the topic satisfies every predicate (`safe-state-violated`). A topic named here is a final element: it has one publisher, its arbiter (`arbiter-bypass`); the level's reaction reaches it (`commands-unreached`); silence on it is judged by its consumer (`final-element-silent`).",
+        "What this level commands: `{ <topic>: [<predicate>, ...] }`, each predicate in the `when:` shape (`{ field, <op>: <constant> }`; since v0.3.18 the value may read the launch tree, as in `when:`). While the level is active, every message on the topic satisfies every predicate (`safe-state-violated`). A topic named here is a final element: it has one publisher, its arbiter (`arbiter-bypass`); the level's reaction reaches it (`commands-unreached`); silence on it is judged by its consumer (`final-element-silent`).",
+    ),
+    live(
+        "requires_lost",
+        Context::Mode,
+        Kind::Fact,
+        "Functions (or bare topics) of which at least one must be LOST for this level to be available, beside every `requires` holding: a level that exists only after a loss (holding the lane while the main computer is gone). A hazard whose fault removes none of them skips the level: the walk neither checks nor charges it, as it skips a level whose `requires` the fault removes. A name may not be in both lists (a parse error). Never on the minimal risk condition, which must always be available (`requires-lost-at-mrc`).",
+    ),
+    live(
+        "advance",
+        Context::Mode,
+        Kind::Requirement,
+        "`{ holds: <function> }`: while this level is active, the function holding takes the next level of the fallback sequence at once, before the dwell's least time: the way DOWN out of a dwell early (a deadline shortened by the situation). Only on a level with a `min_dwell` (a parse error otherwise). It only shortens the level, so what the levels below are charged is unchanged. Some node implementing the level must take the function's topic on a path trigger (`mode-advance-unwired`).",
+    ),
+    live(
+        "within",
+        Context::Mode,
+        Kind::Requirement,
+        "This level's own deadline: the longest from the fault to the level being entered, a duration or `{ duration, source }`. For every hazard whose walk reaches the level, the level's row (detection + every dwelling level waited out above it, its route and its charged dwell + the level's route + its settle) must fit it (`level-within`). Judged beside the hazard's `ftti`, not instead of it: a level without a dwell is judged against both, a dwelling level against its `within` only. A level a hazard skips is not judged for that hazard.",
     ),
     // ── hazards.<name>.monitors[] ──
     removed(
@@ -1378,7 +1402,7 @@ pub const FIELDS: &[Field] = &[
         "equals",
         Context::Predicate,
         Kind::Fact,
-        "The field equals the constant: a bool, a number, a message constant name (upper snake case) or a string.",
+        "The field equals the constant: a bool, a number, a message constant name (upper snake case) or a string. Since v0.3.18 a number may be read: `$(let <name>)`, `$(param ...)` or `$(var ...)`, or an expression of them (see Values read from the launch tree), the same for every operator. It is evaluated per launch to a number in SI units (a `$(let)` of `60 km/h` is 16.67); a `$(param)` or `$(var)` may be written without a unit, as a plain number in the field's own unit. Unknown without a launch tree, and then not judged.",
     ),
     live(
         "not_equals",
@@ -1426,7 +1450,27 @@ pub const FIELDS: &[Field] = &[
         "to",
         Context::Exit,
         Kind::Meta,
-        "The mode the fallback sequence ends in. Not a member of any `fallback:` list (`mode-exit-target`).",
+        "The mode the exit ends in: one outside every `fallback:` list, or (since v0.3.18) a level above this one in a fallback sequence that lists both, re-entered with its dwell restarted (`mode-exit-target`).",
+    ),
+    // -- modes.<name>.advance --
+    live(
+        "holds",
+        Context::Advance,
+        Kind::Fact,
+        "The function whose holding leaves the dwelling level early, to the next level of the fallback sequence. Some node implementing the level must take its topic on a path trigger (`mode-advance-unwired`).",
+    ),
+    // -- modes.<name>.min_dwell.duration, range form --
+    live(
+        "min",
+        Context::DwellRange,
+        Kind::Requirement,
+        "The least time the level lasts while available (positive): the promise to whoever it waits for. The level below starts no sooner, unless `advance` holds.",
+    ),
+    live(
+        "max",
+        Context::DwellRange,
+        Kind::Requirement,
+        "The longest the level lasts while available, at least `min`: the level below starts no later than this plus its own route, and every level below is charged it.",
     ),
     // -- safe_state.settle (map form) --
     live(
@@ -1458,13 +1502,13 @@ pub const FIELDS: &[Field] = &[
         "duration",
         Context::Budget,
         Kind::Requirement,
-        "The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within`, `ftti`, a timer's `jitter`, a settle's `response` and a mode's `min_dwell` (where it is the least time the level lasts while it stays available: the level below starts no sooner; positive). See Bounds below.",
+        "The budget itself, with a unit. Required. `max_latency: { duration: 149ms, source: ... }` states the same budget as `max_latency: 149ms`, plus where it comes from. Accepted by `max_latency`, `max_jitter`, `max_transport`, `max_age`, `max_response`, `within` (a subscriber's reaction, and a mode's own deadline since v0.3.18), `ftti`, a timer's `jitter`, a settle's `response` and a mode's `min_dwell` (where it is the least time the level lasts while it stays available: the level below starts no sooner; positive; since v0.3.18 also the range `{ min, max }`). See Bounds below.",
     ),
     live(
         "param",
         Context::Budget,
         Kind::Fact,
-        "The parameter whose resolved launch value, in seconds, must equal `duration`. On `max_age`: a parameter of this subscriber's node (`max-age-param`). On a mode's `min_dwell`: `<node>.<parameter>` (`dwell-param`). No other bound takes one.",
+        "The parameter whose resolved launch value, in seconds, must equal `duration`. On `max_age`: a parameter of this subscriber's node (`max-age-param`). On a mode's `min_dwell`: `<node>.<parameter>` (`dwell-param`), whose value must lie in the range when the dwell is one. No other bound takes one.",
     ),
     live(
         "source",
@@ -1873,7 +1917,18 @@ fn render_values() -> String {
      literal it always was.\n\n\
      The consumer that holds the launch tree evaluates every reference per \
      scope instance and hands each rule a plain number; a contract read alone \
-     leaves the value unknown (the key absent), never zero.\n\n"
+     leaves the value unknown (the key absent), never zero.\n\n\
+     **A predicate's value** (since v0.3.18): the constant of `equals`, \
+     `not_equals`, `lt`, `le`, `gt` or `ge`, in a `when:` (on a hazard or a \
+     function) or in a mode's `commands`, may be such a value, for example \
+     `{ field: longitudinal.velocity, le: $(let v_odd) }`. The grammar does not \
+     know the field's dimension, so any is accepted and the value is the number \
+     in SI units: a `$(let)` of `60 km/h` compares as 16.67. There, and only \
+     there, a `$(param)` or `$(var)` may be written without a unit: it is then a \
+     plain number in the field's own unit. Unknown without a launch tree, the \
+     predicate stays in the contract and is not judged; it is never read as \
+     held. A value relative to the field's own past (the value it had when the \
+     level was entered) is not in the grammar.\n\n"
         .to_string()
 }
 
@@ -2029,6 +2084,12 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Requirement, "source", "0.3.13"),
     (Context::Independence, "of", "0.3.13"),
     (Context::Independence, "not_sharing", "0.3.13"),
+    (Context::Mode, "requires_lost", "0.3.18"),
+    (Context::Mode, "advance", "0.3.18"),
+    (Context::Mode, "within", "0.3.18"),
+    (Context::Advance, "holds", "0.3.18"),
+    (Context::DwellRange, "min", "0.3.18"),
+    (Context::DwellRange, "max", "0.3.18"),
 ];
 
 /// The release that added `key` in `context`, when it is dated in [`SINCE`].

@@ -1096,9 +1096,25 @@ pub struct ModeContract {
     /// route, charged from the deadline, bounds how late it may start).
     #[serde(default, alias = "window", skip_serializing_if = "Option::is_none")]
     pub min_dwell: Option<DwellContract>,
-    /// The success exit of a level with a dwell (v0.1.46).
+    /// The success exit of a level with a dwell (v0.1.46). Since v0.3.18
+    /// `to` may be a level above this one in a fallback sequence listing
+    /// both: the exit re-enters it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<ExitContract>,
+    /// The early way down out of a dwelling level (v0.3.18): the function
+    /// holding takes the next level at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advance: Option<AdvanceContract>,
+    /// Keys into `functions` (or bare topic FQNs) of which at least one must
+    /// be lost for this level to be available (v0.3.18). A hazard whose
+    /// fault removes none of them does not run the level, so the level is
+    /// absent from its `degradation_levels`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_lost: Vec<String>,
+    /// This level's own deadline, ms (v0.3.18): fault to the level entered
+    /// (its row's total), judged for every hazard that runs the level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_ms: Option<f64>,
     /// What this level commands (v0.3.13): topic FQN to the predicates every
     /// message on it satisfies while the level is active. A topic named in
     /// any mode's `commands` is a final element.
@@ -1115,11 +1131,33 @@ pub struct ModeContract {
 /// `modes.<m>.min_dwell` after merge (v0.1.46 as `window`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DwellContract {
+    /// The least time the level lasts while available (a range's `min`).
     pub duration_ms: f64,
+    /// The longest it lasts while available (v0.3.18, a range's `max`):
+    /// what every level below is charged. Absent: `duration_ms`, which is
+    /// then both. A reader that charges a dwell reads this first
+    /// ([`DwellContract::charged_ms`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ms: Option<f64>,
     /// `<node FQN>.<parameter>`: the parameter that enforces the dwell,
     /// read in seconds. Absent means the dwell is unbound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub param: Option<String>,
+}
+
+impl DwellContract {
+    /// What every level below the dwelling level is charged: `max_ms`, else
+    /// `duration_ms`.
+    pub fn charged_ms(&self) -> f64 {
+        self.max_ms.unwrap_or(self.duration_ms)
+    }
+}
+
+/// `modes.<m>.advance` after merge (v0.3.18).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AdvanceContract {
+    /// Key into `functions`: the function whose holding leaves the level.
+    pub holds: String,
 }
 
 /// `modes.<m>.exit` after merge (v0.1.46).
@@ -2655,6 +2693,7 @@ mod tests {
         let m = ModeContract {
             min_dwell: Some(DwellContract {
                 duration_ms: 10_000.0,
+                max_ms: None,
                 param: Some("/mrm_handler.takeover_request_timeout".into()),
             }),
             exit: Some(ExitContract {
@@ -2664,7 +2703,28 @@ mod tests {
             ..Default::default()
         };
         let y = serde_yaml_ng::to_string(&m).unwrap();
+        assert!(!y.contains("max_ms") && !y.contains("within_ms"), "{y}");
         assert_eq!(serde_yaml_ng::from_str::<ModeContract>(&y).unwrap(), m);
+        assert_eq!(m.min_dwell.as_ref().unwrap().charged_ms(), 10_000.0);
+
+        // v0.3.18: a dwell range, `advance`, `requires_lost` and `within`
+        // round-trip; a model written before reads with them absent.
+        let ladder = ModeContract {
+            min_dwell: Some(DwellContract {
+                duration_ms: 8_000.0,
+                max_ms: Some(15_000.0),
+                param: Some("/si.t_hold".into()),
+            }),
+            advance: Some(AdvanceContract {
+                holds: "0/exhausted".into(),
+            }),
+            requires_lost: vec!["0/hpc_alive".into()],
+            within_ms: Some(70.0),
+            ..Default::default()
+        };
+        let y = serde_yaml_ng::to_string(&ladder).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<ModeContract>(&y).unwrap(), ladder);
+        assert_eq!(ladder.min_dwell.as_ref().unwrap().charged_ms(), 15_000.0);
 
         let ss = SafeStateContract {
             emits: "/op/cmd".into(),

@@ -174,6 +174,7 @@ invokes. Cross-scope rule ids, emitted from
 | `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for deriving them |
 | `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level judged against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path |
 | `enters-not-removed` | A hazard enters a mode it does not take away: none of the functions its fault removes, a redundant group's `m` counted, is one the mode requires (warning) |
+| `level-within`, `requires-lost-at-mrc`, `mode-advance-unwired` | v0.3.18: a level's row past its own `within` (error); a minimal risk condition that is available only after a loss (error); an `advance` function no node of the level takes on a path trigger (error) |
 | `lifespan-age`, `response-blocking`, `concurrency-decl`, `path-exclusion` | Declarations that contradict each other across the merged tree |
 
 Two properties of that layer are worth stating, because neither follows

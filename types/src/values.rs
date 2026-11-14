@@ -50,6 +50,11 @@ pub const TIME: Dim = Dim([0, 0, 1, 0, 0, 0, 0]);
 pub const FREQUENCY: Dim = Dim([0, 0, -1, 0, 0, 0, 0]);
 /// A plain number (a count).
 pub const SCALAR: Dim = Dim::SCALAR;
+/// Any dimension (v0.3.18): a predicate's value, compared with a message
+/// field whose dimension the grammar does not know. A reference needs no
+/// unit there; with one, it is converted to SI. Not a real dimension: no
+/// expression has it, and the evaluator never compares against it.
+pub const ANY: Dim = Dim([i32::MIN; 7]);
 
 /// The name messages use for a dimension: the first built-in name of the
 /// vector (`Frequency`, not `AngularVelocity`), else its base spelling.
@@ -559,6 +564,7 @@ pub fn check_static(
     written: &str,
 ) -> Result<(), String> {
     if !want.is_scalar()
+        && want != ANY
         && let Some(r) = expr.unitless_refs().first()
     {
         return Err(format!(
@@ -958,7 +964,7 @@ fn evaluate_one(
 ) -> Result<Option<Resolved>, (&'static str, String)> {
     let got =
         dim_of(expr, &ev.let_dims).map_err(|m| ("param-dimension", format!("`{written}`: {m}")))?;
-    if got != want {
+    if got != want && want != ANY {
         let inverse = got.powi(-1) == want;
         let suggestion = if inverse {
             let inner = match expr {
@@ -990,9 +996,12 @@ fn evaluate_one(
 }
 
 /// The range a core key's value must lie in.
-fn range_check(r: &Resolved, key: &str, written: &str) -> Result<(), String> {
+fn range_check(r: &Resolved, want: Dim, key: &str, written: &str) -> Result<(), String> {
     let why = if !r.si.is_finite() {
         Some("is not finite")
+    } else if want == ANY {
+        // A predicate's value: any finite number.
+        None
     } else if r.dim == TIME && r.si < 0.0 {
         Some("is negative")
     } else if r.dim == FREQUENCY && r.si <= 0.0 {
@@ -1080,7 +1089,7 @@ impl Manifest {
             }
             *ev.path.borrow_mut() = r.path.clone();
             match evaluate_one(&ev, &r.expr, &r.written, r.key(), r.want, &r.node) {
-                Ok(Some(v)) => match range_check(&v, r.key(), &r.written) {
+                Ok(Some(v)) => match range_check(&v, r.want, r.key(), &r.written) {
                     Ok(()) => {
                         out.values.insert(r.path.clone(), v);
                     }
@@ -1307,6 +1316,47 @@ mod tests {
 
     fn manifest(src: &str) -> Manifest {
         crate::parse_manifest_str(src).unwrap()
+    }
+
+    /// v0.3.18 (rlm#7): a predicate's value may read a `let:` entry or the
+    /// launch tree. It takes any dimension, in SI units; a parameter may be
+    /// read without a unit; unknown, it stays a `Read` and is never a
+    /// number a rule could mistake for the real one.
+    #[test]
+    fn a_predicate_value_reads_a_let_or_a_parameter() {
+        use crate::types::PredicateValue as V;
+        let src = "let:\n  v_odd: 60 km/h\n\
+                   functions:\n  f: { of: [/a], when: { field: x, gt: $(param h update_rate) } }\n\
+                   modes:\n  m:\n    commands:\n      /cmd:\n\
+                   \x20       - { field: longitudinal.velocity, le: $(let v_odd) }\n\
+                   \x20       - { field: y, lt: $(var lidar_hz) Hz }\n";
+        // Read alone: the `let:` evaluates, the launch tree does not.
+        let m = manifest(src);
+        let cmds = &m.modes["m"].commands["/cmd"];
+        match &cmds[0].value {
+            V::Float(v) => assert!((v - 16.6667).abs() < 1e-3, "{v}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(cmds[1].value, V::Read("$(var lidar_hz) Hz".into()));
+        let f = m.functions.get("f").unwrap();
+        let w = f.when.as_ref().unwrap();
+        assert_eq!(w.value, V::Read("$(param h update_rate)".into()));
+        // With the launch tree every one is a number.
+        let src = src.replace("$(param h update_rate)", "$(param update_rate)");
+        let src = src.replace(
+            "functions:\n  f:",
+            "nodes:\n  h:\n    paths: {}\nfunctions:\n  f:",
+        );
+        let (pr, res) = resolve_manifest_str(&src, &Tree).unwrap();
+        let cmds = &pr.manifest.modes["m"].commands["/cmd"];
+        assert_eq!(cmds[1].value, V::Float(100.0));
+        assert!(
+            res.errors
+                .iter()
+                .any(|e| e.path.starts_with("functions.f.when")),
+            "a one-argument $(param) outside a node has no node: {:?}",
+            res.errors
+        );
     }
 
     /// A client's `timeout:` reads its node's parameter (v0.2.5); with no
