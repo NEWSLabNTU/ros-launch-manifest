@@ -1,6 +1,6 @@
 # Grammar revision: open issues by topic
 
-Status: **exploration** (2026-11-13); the S1 decisions (T1, and T2's `tolerance`) were taken in v0.3.15 and v0.3.16. Otherwise nothing here is decided. This file is
+Status: **exploration** (2026-11-13); the S1 decisions (T1, and T2's `tolerance`) were taken in v0.3.15 and v0.3.16, and the S3 naming decisions on 2026-11-15 (below). Otherwise nothing here is decided. This file is
 the overview; each topic has its own file (`T1.md` ... `T10.md`) with the
 verified issues, the counts behind them, every revision method compared
 (change, cost, breakage, migration, risks), a recommendation, and the
@@ -50,6 +50,27 @@ Three questions were asked of every key: is the grammar **complete** (can a
 real safety argument be stated), is each key **primitive** (not derivable,
 not domain content that belongs in an extension), and is each **name** clear
 and used for one thing only.
+
+## S3 decisions (2026-11-15)
+
+The rename release (sequencing step 4) answers T4, T5 and T6's open naming
+questions as follows. The rule applied to each: one key, one meaning; the
+word a standard or the field's related work already uses for that meaning;
+and, between two clean options, the one that rewrites fewer contracts.
+
+| # | Question | Decision | Why |
+|---|---|---|---|
+| 1 | The key for a reaction that is not a mode (`runs:`, `then:`, `starts:`) | **Keep `reaction:`** for a node path or an event chain, everywhere; a mode is named only by `enters:`. Clients follow hazards: `on_timeout`/`on_rejected` take `enters: <mode>` or `reaction: <chain>`. | "Fault reaction" is ISO 26262's word for the behaviour from detection to the safe state (FRTI, ISO 26262-1 3.43), and the rule ids already say it (`fault-reaction-time`, `reaction-*`). The ambiguity T5 found is the mode target alone; removing it rewrites 23 values (the 22 `on_timeout` modes and one `then`), where a new verb rewrites 312. `then:` is taken (`on_timeout.then`), `runs:` misreads for an event chain (a requirement, not code), and UML's word for transition behaviour, `effect`, is FMEA's word for a failure's consequence. |
+| 1b | Found while deciding 1: `enters` has two meanings | **A hazard's `enters:` becomes `leaves:`.** `supervise.enters` and the clients' `enters` keep the word. | Since v0.3.15 a hazard's `enters: M` means the mode the fault takes away, whose fallback sequence runs; `supervise.enters: L` means the level a miss enters. One word, opposite directions. `leaves` states what happens (the system leaves M through M's `fallback:`) and pairs with `enters`; `exits` is not used because `exit:` is a mode key. 70 writes, mechanical. |
+| 2 | `functions` renamed to `capabilities`, `signals` or `provisions` | **`capabilities`** | IEC 61508-4 3.5.1 reserves "safety function" for detect-and-react, which this key is not. The thing a mode `requires` and a fault removes is what the automated-driving self-representation literature calls a capability (capability monitoring and capability graphs, Nolte et al. 2020; ability and skill graphs, Reschka et al. 2015), and Autoware's diagnostic graph calls a functional unit. `signals` loses "together provide"; `provisions` has no use in the field. 99 entries in 50 sections. |
+| 3 | Where `supervision: { tick, switch }` goes | **The platform file, per target**: a `supervision:` section in `<stem>.system.<target>.yaml` for Linux, and nano-ros's own per-board facts (`system.toml`, which reaches rlm through `--system`) for an RTOS image. No target-independent copy. | The tick and switch time are properties of the processor and its scheduler, not of the software: AADL puts them on the processor (AS5506 Timing_Properties), and AUTOSAR's `WdgMSupervisionCycle` is ECU configuration, not component description. A target-independent section has the defect the contract has today: a system with a Linux and a Zephyr image can state one tick. Without the facts, `detection()` already reads unknown, so a supervised budget is incomplete, never wrong; CI passes `--sched`. |
+| 4 | Root `paths:` renamed to `event_chains:` | **Rename** (reopens `standard-names.md` S5). Node `paths` keep their name. Model `scope_paths` becomes `event_chains` at the next model schema bump, read backward-compatibly in `SystemModel::from_yaml_str`. | `paths` is used for two things, a node's internal path and an end-to-end requirement; the field table, the docs and the rule ids already call the second an event chain, and so does AUTOSAR TIMEX (`TimingDescriptionEventChain`: latency from stimulus to response). `scope_paths` is the only retired word left in a model field. 115 sections, mechanical; nano-ros writes none (4 model files). |
+| 5 | `trigger.timer.rate` or `.period` | **`rate`**, a frequency value (`rate: 100Hz`), like every other rate key | AADL, AUTOSAR timing events and `rclcpp` configure a timer by period, so `period` was the standards' answer for the timer alone. It loses on consistency: every other key is a rate (`min_rate`, `max_rate`, `rate`, `arrival_curve.rate`), the propagation the checker does sums rates, and the launch parameters contracts read (`$(param update_rate) Hz`) are mostly rates. Two keys for one fact (`rate` or `period`) is the condition `standard-names.md` exists to remove. |
+| 6 | Do `on_timeout`/`on_rejected` accept a mode under `reaction:` during release R | **Yes**, with `deprecated-spelling`, refused at R+1, `migrate` rewrites it | The schedule of `standard-names.md` §6. It is the majority use (22 of 23), so a hard cut would break most clients for no gain. The same applies to a hazard's `enters` (1b) and every rename above. |
+
+Unchanged by these: `within` and `response` (one sense each, T5), the model's
+other field names (`*_rate_hz`, `reaction`), and `criticality` (kept as a
+consequence; T5 method 5 stays open).
 
 ## The topics
 
