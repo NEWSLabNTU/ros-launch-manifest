@@ -315,26 +315,46 @@ pub fn renamed(id: &str) -> Option<&'static RenamedRule> {
 /// Releases a deprecation may stay at one stage before its next step is
 /// overdue (play_launch phase 104 S1). The schedule (`standard-names.md`
 /// section 6) moves one stage per release; one more is allowed for the wait
-/// on a published play_launch and nano-ros's matching pull request.
+/// on nano-ros's matching pull request.
 pub const STAGE_SLACK: u32 = 2;
 
-/// Grammar releases from `from` to `to` (`0.3.8` to `0.3.15` is 7). A move
-/// to another minor or major release is `None`, which a schedule check
-/// reads as overdue: every stage must be finished before such a release.
+/// The grammar tags a published play_launch release shipped (its PyPI
+/// release pinned the tag), oldest first. A schedule counts these, not
+/// tags: an author meets a grammar through the release they install, and
+/// one release may ship several tags (S3's release R is v0.3.19 to
+/// v0.3.22). This answers phase 104 S1's open question. Add a tag here
+/// when a play_launch release that pins it is published.
+pub const PUBLISHED: &[&str] = &[
+    "0.3.1", "0.3.2", "0.3.4", "0.3.5", "0.3.8", "0.3.9", "0.3.10", "0.3.11", "0.3.12",
+    "0.3.14", "0.3.15", "0.3.16", "0.3.18",
+];
+
+fn split_version(v: &str) -> Option<(u32, u32, u32)> {
+    let mut it = v.trim_start_matches('v').split('.');
+    Some((
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+    ))
+}
+
+/// Published releases ([`PUBLISHED`]) that carried a deprecation made in
+/// `from` by the time of `to`: those at or after `from` and before `to`.
+/// A move to another minor or major release is `None`, which a schedule
+/// check reads as overdue: every stage must be finished before such a
+/// release.
 pub fn releases_between(from: &str, to: &str) -> Option<u32> {
-    let split = |v: &str| -> Option<(u32, u32, u32)> {
-        let mut it = v.trim_start_matches('v').split('.');
-        Some((
-            it.next()?.parse().ok()?,
-            it.next()?.parse().ok()?,
-            it.next()?.parse().ok()?,
-        ))
-    };
-    let (a, b) = (split(from)?, split(to)?);
+    let (a, b) = (split_version(from)?, split_version(to)?);
     if (a.0, a.1) != (b.0, b.1) || b.2 < a.2 {
         return None;
     }
-    Some(b.2 - a.2)
+    Some(
+        PUBLISHED
+            .iter()
+            .filter_map(|p| split_version(p))
+            .filter(|p| *p >= a && *p < b)
+            .count() as u32,
+    )
 }
 
 /// A rename still at a stage the schedule says it should have left:
@@ -381,7 +401,14 @@ mod tests {
             overdue("0.2.9", Stage::Accepted, "0.3.0"),
             "another minor is overdue"
         );
-        assert_eq!(releases_between("0.3.8", "0.3.15"), Some(7));
+        // Published releases, not tags: 0.3.8, 0.3.9, 0.3.10, 0.3.11,
+        // 0.3.12 and 0.3.14 shipped before 0.3.15 (0.3.13 was never
+        // published).
+        assert_eq!(releases_between("0.3.8", "0.3.15"), Some(6));
+        // S3's release R spans four tags none of which is published yet:
+        // a rename at its first tag is in its first release still.
+        assert_eq!(releases_between("0.3.19", "0.3.22"), Some(0));
+        assert!(!overdue("0.3.19", Stage::Accepted, "0.3.22"));
     }
 
     use super::*;

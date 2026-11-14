@@ -37,7 +37,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `unless` | meta |  | Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest. |
 | `policy` | meta | since v0.1.61 | Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults. |
 | `links` | fact | since v0.3.4 | Named links (play_launch phase 97): `<name>: { max_transport, clock }`, one transport stated once, with its source. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes. |
-| `supervision` | fact | since v0.1.61 | The platform terms of a supervised budget's detection delay, stated once: `{ tick, switch }`. Read by the consumer's overrun case (`supervised-fit`); required once any budget states `supervise:`. |
+| `supervision` |  | deprecated — use `the platform file's `supervision:`` | Deprecated since v0.3.22: the platform terms of a supervised budget's detection delay, `{ tick, switch }`, are facts of the processor and its scheduler (AADL's processor timing properties, AUTOSAR's `WdgMSupervisionCycle`), so they move to the per-target platform file (`<stem>.system.<target>.yaml`, `supervision: { tick, switch }`). A contract's copy still reads for one release when no platform file states them. |
 | `acknowledged` | meta | since v0.2.3 | Findings the author has read and keeps: a list of `{ rule, at, reason }`, at the contract's root only. The consumer reports a warning or info whose rule id and path match an entry as acknowledged, with the reason, and counts it apart from the warnings; an entry matching an error is itself an error (errors cannot be acknowledged), and one matching nothing is a warning, so an acknowledgement cannot outlive its finding. |
 | `let` | meta | since v0.2.4 | Names for values, stated once and read as `$(let <name>)`: a mapping of name to value, in order, at the contract's root. An entry may read earlier entries (and `$(param)`, `$(var)`); a forward reference or a cycle is an error. Separate from launch configurations: `$(var)` never reads it. |
 
@@ -505,7 +505,7 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 | `tick` | fact | since v0.1.61 | The period the monitor's clock is read at: the executor's tick, the supervision timer's resolution (a duration, positive). Part of every supervised budget's detection delay. |
 | `switch` | fact | since v0.1.61 | The interrupt plus the thread switch before a `timer` mechanism's reaction runs (a duration). Required by a `mechanism: timer` supervision. |
 
-## `trigger.timer.rate_hz (map form)`
+## `trigger.timer.rate (map form)`
 
 | key | kind | status | meaning |
 |---|---|---|---|

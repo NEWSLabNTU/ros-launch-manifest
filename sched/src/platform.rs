@@ -259,6 +259,20 @@ pub struct PlatformFile {
     /// Explicit per-node pins, keyed by node selector (same selector
     /// vocabulary as `[[assign]]`'s `nodes`: full FQN or bare name).
     pub overrides: BTreeMap<String, PlatformOverrideEntry>,
+    /// `supervision: { tick, switch }` (since v0.3.22): the platform terms
+    /// of a supervised budget's detection delay on this target, for any
+    /// target. A contract stated them before v0.3.22.
+    pub supervision: Option<ros_launch_manifest_types::SupervisionPlatform>,
+}
+
+/// `supervision:` as written in a platform file.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSupervision {
+    #[serde(default)]
+    tick: Option<ros_launch_manifest_types::duration::Duration>,
+    #[serde(default)]
+    switch: Option<ros_launch_manifest_types::duration::Duration>,
 }
 
 /// Raw top-level shape, deserialized before per-target validation of
@@ -279,6 +293,8 @@ struct RawPlatformFile {
     resources: serde_yaml_ng::Value,
     #[serde(default)]
     overrides: serde_yaml_ng::Value,
+    #[serde(default)]
+    supervision: Option<RawSupervision>,
 }
 
 fn is_posix(target: &str) -> bool {
@@ -446,12 +462,36 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
         });
     }
 
+    let supervision = match raw.supervision {
+        None => None,
+        Some(sv) => {
+            for (key, d) in [("tick", sv.tick), ("switch", sv.switch)] {
+                if let Some(d) = d
+                    && (d.as_nanos() < 0 || (key == "tick" && d.as_nanos() == 0))
+                {
+                    return Err(PlatformError::TargetShape {
+                        target: raw.target.clone(),
+                        reason: format!(
+                            "supervision.{key}: must be a {} duration, got {d}",
+                            if key == "tick" { "positive" } else { "non-negative" }
+                        ),
+                    });
+                }
+            }
+            Some(ros_launch_manifest_types::SupervisionPlatform {
+                tick: sv.tick,
+                switch: sv.switch,
+            })
+        }
+    };
+
     Ok(PlatformFile {
         target: raw.target,
         priority_assignment,
         reservations: raw.reservations,
         resources,
         overrides,
+        supervision,
     })
 }
 
@@ -504,6 +544,32 @@ overrides:
         };
         assert_eq!(ov.priority, Some(20));
         assert_eq!(ov.core, Some(0));
+    }
+
+    /// v0.3.22 (S3): the supervision terms are a platform fact, for any
+    /// target; a tick must be positive and an unknown key is refused.
+    #[test]
+    fn supervision_is_a_platform_fact_of_any_target() {
+        for target in ["posix", "zephyr"] {
+            let src = format!(
+                "target: {target}\npriority_assignment: manual\nsupervision: {{ tick: 1ms, switch: 50us }}\n"
+            );
+            let file = parse_platform_file_yaml(&src).expect("must parse");
+            let sv = file.supervision.expect("supervision");
+            assert_eq!(sv.tick.unwrap().as_millis_f64(), 1.0);
+            assert_eq!(sv.switch.unwrap().as_millis_f64(), 0.05);
+        }
+        let none = parse_platform_file_yaml("target: posix\npriority_assignment: manual\n").unwrap();
+        assert!(none.supervision.is_none());
+        for (body, needle) in [
+            ("{ tick: 0ms }", "must be a positive duration"),
+            ("{ tick: 1 }", "unit"),
+            ("{ tick: 1ms, tock: 2ms }", "tock"),
+        ] {
+            let src = format!("target: posix\npriority_assignment: manual\nsupervision: {body}\n");
+            let e = parse_platform_file_yaml(&src).unwrap_err().to_string();
+            assert!(e.contains(needle), "{body}: {e}");
+        }
     }
 
     /// The RR slice parses with a unit; the legacy spelling is refused.

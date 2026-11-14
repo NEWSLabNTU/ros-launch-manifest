@@ -123,6 +123,21 @@ overrides:                   # explicit per-node pins; beat derived values, alwa
   planner: { cpus: [4, 5] }
 ```
 
+A platform file of any target may also state the terms of a supervised
+budget's detection delay (since v0.3.22), which belong to the processor and
+its scheduler rather than to the software:
+
+```yaml
+supervision:
+  tick: 1ms       # the period the monitor's clock is read at (positive)
+  switch: 50us    # the interrupt plus thread switch a `timer` mechanism adds
+```
+
+A contract stated them as a root `supervision:` before v0.3.22; that copy
+still reads for one release, deprecated, when the platform file states
+none. One contract checked for two targets takes each target's terms from
+that target's file.
+
 - **`posix` `resources`** (`PosixResources`, `deny_unknown_fields`):
   `rt_priority_band: Option<PriorityBand>` (`{ min: i64, max: i64 }`,
   inclusive), `isolated_cpus: Vec<u32>` (advisory; not enforced by this

@@ -195,7 +195,7 @@ impl Context {
             Context::Link => "links.<name>",
             Context::Policy => "policy",
             Context::Supervision => "supervision",
-            Context::TimerRate => "trigger.timer.rate_hz (map form)",
+            Context::TimerRate => "trigger.timer.rate (map form)",
             Context::Acknowledged => "acknowledged[]",
             Context::OnTimeout => "cli.<endpoint>.on_timeout",
             Context::Retry => "cli.<endpoint>.on_timeout.retry",
@@ -465,11 +465,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Named links (play_launch phase 97): `<name>: { max_transport, clock }`, one transport stated once, with its source. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes.",
     ),
-    live(
+    deprecated(
         "supervision",
         Context::Manifest,
-        Kind::Fact,
-        "The platform terms of a supervised budget's detection delay, stated once: `{ tick, switch }`. Read by the consumer's overrun case (`supervised-fit`); required once any budget states `supervise:`.",
+        "the platform file's `supervision:`",
+        "Deprecated since v0.3.22: the platform terms of a supervised budget's detection delay, `{ tick, switch }`, are facts of the processor and its scheduler (AADL's processor timing properties, AUTOSAR's `WdgMSupervisionCycle`), so they move to the per-target platform file (`<stem>.system.<target>.yaml`, `supervision: { tick, switch }`). A contract's copy still reads for one release when no platform file states them.",
     ),
     live(
         "acknowledged",
@@ -2009,6 +2009,7 @@ pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
     (Context::Topic, "rate_hz", "0.3.21"),
     (Context::TriggerTimer, "rate_hz", "0.3.21"),
     (Context::ArrivalCurve, "rate_hz", "0.3.21"),
+    (Context::Manifest, "supervision", "0.3.22"),
 ];
 
 /// Deprecations no row can carry, because the key stays live in another use

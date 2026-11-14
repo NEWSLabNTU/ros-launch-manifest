@@ -6,6 +6,29 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.22 - 2026-11-15
+
+The S3 relocation of `supervision` (decision 3). GRAMMAR_VERSION 0.3.22;
+the model is unchanged.
+
+### Changed
+
+- **`supervision: { tick, switch }` is a platform fact**: a platform file
+  of any target states it (`PlatformFile::supervision`), so one contract
+  checked for a Linux and a Zephyr image takes each target's terms from
+  that target's file. AADL puts these terms on the processor and AUTOSAR's
+  `WdgMSupervisionCycle` is ECU configuration, not component description.
+  A contract's root `supervision:` is deprecated: it still reads for one
+  release where no platform file states the terms, and the consumer says
+  so. A platform file's tick must be positive, its switch non-negative.
+- **A deprecation's schedule counts published releases**
+  (`rule_names::PUBLISHED`, `releases_between`), the grammar tags a
+  published play_launch release shipped, not tags: an author meets a grammar
+  through the release they install, and one release may ship several tags
+  (S3's release R is v0.3.19 to v0.3.22). This answers play_launch phase 104
+  S1's open question. A tag joins the list when a play_launch release that
+  pins it is published.
+
 ## v0.3.21 - 2026-11-15
 
 The third S3 rename: a rate is a value with its unit. GRAMMAR_VERSION
