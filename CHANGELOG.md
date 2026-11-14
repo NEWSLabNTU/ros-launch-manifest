@@ -6,6 +6,15 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.23 - 2026-11-15
+
+No grammar change. play_launch 0.35.0 shipped v0.3.22, so it joins
+`rule_names::PUBLISHED`. The workspace's Cargo version moves to 0.8.0 for
+the API break of v0.3.19 to v0.3.22, which added public fields to structs a
+consumer may build by literal (`EndpointProps::on_rejected_enters`,
+`OnTimeout::enters`, `PlatformFile::supervision`) and should have moved it
+then.
+
 ## v0.3.22 - 2026-11-15
 
 The S3 relocation of `supervision` (decision 3). GRAMMAR_VERSION 0.3.22;
