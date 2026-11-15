@@ -6,6 +6,31 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.25 - 2026-11-15
+
+S3, T4's last relocation: a supervised settle's observation and response
+check say what is measured, so a realizer that does not run rlx can
+enforce them without knowing the domain. GRAMMAR_VERSION 0.3.25.
+
+- **`observes:` is a map**, `{ input, reached }`. `input` is the subscriber
+  the safe state is seen on (what the string said); `reached` is a
+  predicate in `when:`'s grammar that holds once the safe state is reached
+  (`{ field: twist.twist.linear.x, le: 0.01 }`). Before it, "standstill" and
+  the speed field were known only by convention, and the island transcribed
+  them into its board configuration by hand. The string form reads for one
+  release as `{ input }`; `migrate` writes the map (`observes-map`).
+- **`early.decrease`** replaces `early.drop`: the least the observed field
+  (`reached.field`) decreases by `within`, a quantity with its unit in any
+  dimension (`0.25 m/s`, `5 kPa`), through rlx's unit table (the private
+  speed parser, which knew only `m/s` and `km/h`, is gone). `drop` reads for
+  one release; `migrate` renames it (`early-decrease`). `EarlyCheck` carries
+  `decrease_si`, `decrease_dim` and `decrease_text`, and `speed_mps()` for
+  the speed case, which the static check compares with the extension's
+  `derive settle.speed_lost`.
+- **API:** `Supervision::observes` is `Option<Observes>`; `EarlyCheck`'s
+  fields changed as above; `rlx::value::quantity_literal`. Workspace
+  version 0.9.0.
+
 ## v0.3.24 - 2026-11-15
 
 S3: T4's two free changes and T3's two relocations. GRAMMAR_VERSION 0.3.24.

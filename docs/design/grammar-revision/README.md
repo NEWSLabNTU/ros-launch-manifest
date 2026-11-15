@@ -68,6 +68,19 @@ and, between two clean options, the one that rewrites fewer contracts.
 | 5 | `trigger.timer.rate` or `.period` | **`rate`**, a frequency value (`rate: 100Hz`), like every other rate key | AADL, AUTOSAR timing events and `rclcpp` configure a timer by period, so `period` was the standards' answer for the timer alone. It loses on consistency: every other key is a rate (`min_rate`, `max_rate`, `rate`, `arrival_curve.rate`), the propagation the checker does sums rates, and the launch parameters contracts read (`$(param update_rate) Hz`) are mostly rates. Two keys for one fact (`rate` or `period`) is the condition `standard-names.md` exists to remove. |
 | 6 | Do `on_timeout`/`on_rejected` accept a mode under `reaction:` during release R | **Yes**, with `deprecated-spelling`, refused at R+1, `migrate` rewrites it | The schedule of `standard-names.md` §6. It is the majority use (22 of 23), so a hard cut would break most clients for no gain. The same applies to a hazard's `enters` (1b) and every rename above. |
 
+The rest of the rename release (2026-11-15) settles T4's and T3's open
+questions the same way:
+
+| Question | Decision | Release |
+|---|---|---|
+| `policy:` (T4 Q5) | **Deprecated**; a rule's severity is the checker's `--deny <rule>` (repeatable; a denied finding cannot be acknowledged). A separate mechanism from `--strict`, which keeps its special cases. | v0.3.24 |
+| `settle.response` (T4 1a) | **Reworded** as the generic actuation delay (IEC 62061 / ISO 13849's final element). Text only. | v0.3.24 |
+| Services take links (T3 4) | **`cli.<e>.link`** names the request leg's link; a client's and a service's `max_transport` are deprecated. The response leg stays unmodelled. | v0.3.24 |
+| `integrity_levels:` (T3 Q5) | **Deprecated**: a scale is a profile named by `use:`; a scale no bundled profile has is a local profile file, not an inline list. `migrate` writes `use:` on an exact match. | v0.3.24 |
+| `observes` (T4 Q4) | **One form, a map**: `{ input, reached }`, `reached` a predicate in `when:`'s grammar. The string reads for one release as `{ input }`. | v0.3.25 |
+| `early.drop` (T4 1b, Q3) | **`early.decrease`**, a quantity of the field `reached` names, any dimension through rlx's unit table. The static check stays in the consumer, against the extension's `derive settle.speed_lost` when the decrease is a speed; with the observable and the change stated in core terms, the core no longer names a speed, so method 1 (a `supervise.` extension context) is not needed. The model gains `reached` and `decrease`, and keeps `drop_mps` until the next schema. | v0.3.25 |
+| Severity of a check in the `supervise` context (T4 Q2) | Moot: no extension check runs there (method 1 not taken). `supervised-early` stays an error. | - |
+
 Unchanged by these: `within` and `response` (one sense each, T5), the model's
 other field names (`*_rate_hz`, `reaction`), and `criticality` (kept as a
 consequence; T5 method 5 stays open).

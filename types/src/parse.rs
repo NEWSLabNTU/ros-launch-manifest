@@ -1031,31 +1031,7 @@ fn parse_supervise(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Supervisi
             ));
         }
     };
-    let observes = yaml_string(section, "observes", sctx)?;
-    if let Some(o) = &observes {
-        if !settle {
-            return Err(field_err(
-                sctx,
-                "observes",
-                "names the input a supervised settle's standstill is seen on; only a \
-                 settle's `supervise:` observes (`safe_state.settle: { ..., supervise: { \
-                 enters, mechanism, observes } }`)",
-            ));
-        }
-        let ok = o
-            .split_once('/')
-            .is_some_and(|(n, e)| !n.is_empty() && !e.is_empty() && !e.contains('/'));
-        if !ok {
-            return Err(field_err(
-                sctx,
-                "observes",
-                &format!(
-                    "`{o}` is not `<node>/<subscriber>`: name a subscriber of a node of this \
-                     manifest, the input standstill is seen on"
-                ),
-            ));
-        }
-    }
+    let observes = parse_observes(section, sctx, settle)?;
     let early = parse_early(section, sctx, settle)?;
     let resume = parse_resume(section, sctx)?;
     Ok(Some(Supervision {
@@ -1065,6 +1041,76 @@ fn parse_supervise(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Supervisi
         early,
         resume,
     }))
+}
+
+/// `observes: { input, reached }` under a settle's `supervise:` (v0.3.25).
+/// The bare string (v0.1.62) reads for one release as `{ input }`.
+fn parse_observes(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Observes>, ParseError> {
+    let section = &v["observes"];
+    if section.is_badvalue() {
+        return Ok(None);
+    }
+    if !settle {
+        return Err(field_err(
+            ctx,
+            "observes",
+            "names what a supervised settle's safe state is seen on; only a settle's \
+             `supervise:` observes (`safe_state.settle: { ..., supervise: { enters, \
+             mechanism, observes: { input, reached } } }`)",
+        ));
+    }
+    let octx = &format_path(ctx, "observes");
+    let (input, reached) = match section {
+        Yaml::String(t) => {
+            note_spelling(octx.clone(), "observes", "observes.input");
+            (t.clone(), None)
+        }
+        Yaml::Hash(_) => {
+            reject_unknown_keys(section, octx, Context::SuperviseObserves)?;
+            let input = yaml_string(section, "input", octx)?.ok_or_else(|| {
+                field_err(
+                    octx,
+                    "input",
+                    "required: the subscriber the safe state is seen on, `<node>/<subscriber>`",
+                )
+            })?;
+            let reached = match &section["reached"] {
+                Yaml::BadValue => None,
+                r @ Yaml::Hash(_) => Some(parse_predicate_map(r, &format_path(octx, "reached"))?),
+                other => {
+                    return Err(type_err(
+                        octx,
+                        "reached",
+                        "a predicate `{ field: <name>, <op>: <constant> }`",
+                        other,
+                    ));
+                }
+            };
+            (input, reached)
+        }
+        other => {
+            return Err(type_err(
+                ctx,
+                "observes",
+                "`{ input: <node>/<subscriber>, reached: { field, <op>: <constant> } }`",
+                other,
+            ));
+        }
+    };
+    let ok = input
+        .split_once('/')
+        .is_some_and(|(n, e)| !n.is_empty() && !e.is_empty() && !e.contains('/'));
+    if !ok {
+        return Err(field_err(
+            octx,
+            "input",
+            &format!(
+                "`{input}` is not `<node>/<subscriber>`: name a subscriber of a node of this \
+                 manifest, the input the safe state is seen on"
+            ),
+        ));
+    }
+    Ok(Some(Observes { input, reached }))
 }
 
 /// `resume: { after: <n> periods | <duration> }` under a `supervise:`
@@ -1145,9 +1191,9 @@ fn parse_early(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<EarlyCheck>, 
         return Err(field_err(
             ctx,
             "early",
-            "is a settle's response check (the vehicle has started to slow by `within`); \
+            "is a settle's response check (the observed field has started to decrease by `within`); \
              only a settle's `supervise:` takes it (`safe_state.settle: { ..., supervise: { \
-             reaction, mechanism, observes, early: { within, drop } } }`)",
+             reaction, mechanism, observes, early: { within, decrease } } }`)",
         ));
     }
     let ectx = &format_path(ctx, "early");
@@ -1172,54 +1218,50 @@ fn parse_early(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<EarlyCheck>, 
     if within.as_millis_f64() <= 0.0 {
         return Err(field_err(ectx, "within", "must be positive"));
     }
-    let drop_text = match &section["drop"] {
+    // v0.3.25: `decrease`, a quantity of any dimension; `drop` (a speed by
+    // its name) reads for one release.
+    let key = spelled_key(section, ectx, "drop", "decrease")?;
+    let decrease_text = match &section[key] {
         Yaml::String(t) => t.clone(),
         Yaml::BadValue | Yaml::Null => {
             return Err(field_err(
                 ectx,
-                "drop",
-                "required: the least speed shed by `within` (`drop: 0.15 m/s`)",
+                "decrease",
+                "required: the least the observed field decreases by `within`, with its unit \
+                 (`decrease: 0.15 m/s`)",
             ));
         }
         Yaml::Integer(i) => {
             return Err(field_err(
                 ectx,
-                "drop",
-                &format!("`drop: {i}` has no unit -- write `drop: {i} m/s` (or km/h)"),
+                key,
+                &format!("`{key}: {i}` has no unit -- write it with one (`{key}: {i} m/s`)"),
             ));
         }
         Yaml::Real(r) => {
             return Err(field_err(
                 ectx,
-                "drop",
-                &format!("`drop: {r}` has no unit -- write `drop: {r} m/s` (or km/h)"),
+                key,
+                &format!("`{key}: {r}` has no unit -- write it with one (`{key}: {r} m/s`)"),
             ));
         }
-        other => return Err(type_err(ectx, "drop", "a speed (`0.15 m/s`)", other)),
+        other => return Err(type_err(ectx, key, "a quantity (`0.15 m/s`)", other)),
     };
-    let drop_mps = parse_speed(&drop_text).ok_or_else(|| {
-        field_err(
+    let q = rlx::value::quantity_literal(&decrease_text)
+        .map_err(|d| field_err(ectx, key, &d.message))?;
+    if !(q.si.is_finite() && q.si > 0.0) {
+        return Err(field_err(
             ectx,
-            "drop",
-            &format!("`{drop_text}` is not a speed: a positive number and `m/s` or `km/h`"),
-        )
-    })?;
+            key,
+            &format!("`{decrease_text}` must be positive"),
+        ));
+    }
     Ok(Some(EarlyCheck {
         within,
-        drop_mps,
-        drop_text,
+        decrease_si: q.si,
+        decrease_dim: q.dim.0,
+        decrease_text,
     }))
-}
-
-/// A positive, finite speed written with `m/s` or `km/h`, in m/s.
-fn parse_speed(text: &str) -> Option<f64> {
-    let t = text.trim();
-    let (num, scale) = match t.strip_suffix("km/h") {
-        Some(n) => (n, 1.0 / 3.6),
-        None => (t.strip_suffix("m/s")?, 1.0),
-    };
-    let v: f64 = num.trim().parse().ok()?;
-    (v.is_finite() && v > 0.0).then_some(v * scale)
 }
 
 /// A rate bound (phase 90 G2) under `old` or `new` of `context`: a number
@@ -7566,7 +7608,10 @@ nodes:
             SuperviseReaction::Enters("emergency_stop".into())
         );
         assert_eq!(sv.mechanism, SuperviseMechanism::Timer);
-        assert_eq!(sv.observes.as_deref(), Some("h/kinematic_state"));
+        assert_eq!(
+            sv.observes.as_ref().map(|o| o.input.as_str()),
+            Some("h/kinematic_state")
+        );
         // The response stays a measured budget of its own; the supervision is
         // the settle's.
         assert!(ss.settle_response.as_ref().unwrap().supervise.is_none());
@@ -7661,26 +7706,39 @@ nodes:
     }
 
     /// v0.3.1: a settle's `supervise:` takes a response check, `early: {
-    /// within, drop }`; both are required and carry units, and no other
-    /// budget takes it.
+    /// within, decrease }` (v0.3.25; `drop` before it, which still reads);
+    /// both are required and carry units, and no other budget takes it.
     #[test]
     fn a_supervised_settle_takes_an_early_check() {
         use crate::types::EarlyCheck;
         let m = super::parse_manifest_str(
-            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            decel: d\n            jerk: j\n            response: 319ms\n            supervise:\n              reaction: r\n              mechanism: timer\n              observes: h/kinematic_state\n              early: { within: 1019ms, drop: 0.15 m/s }\n",
+            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            decel: d\n            jerk: j\n            response: 319ms\n            supervise:\n              reaction: r\n              mechanism: timer\n              observes: { input: h/kinematic_state, reached: { field: twist.twist.linear.x, le: 0.01 } }\n              early: { within: 1019ms, decrease: 0.54 km/h }\n",
         )
         .unwrap();
         let ss = m.nodes["op"].paths["operate"].safe_state.as_ref().unwrap();
-        let early: &EarlyCheck = ss
-            .settle_supervise
-            .as_ref()
-            .and_then(|s| s.early.as_ref())
-            .unwrap();
+        let sv = ss.settle_supervise.as_ref().unwrap();
+        let early: &EarlyCheck = sv.early.as_ref().unwrap();
         assert!((early.within.as_millis_f64() - 1019.0).abs() < 1e-9);
-        assert!((early.drop_mps - 0.15).abs() < 1e-12);
-        assert_eq!(early.drop_text, "0.15 m/s");
-        let kmh = super::parse_speed("3.6 km/h").unwrap();
-        assert!((kmh - 1.0).abs() < 1e-12);
+        assert!((early.speed_mps().unwrap() - 0.15).abs() < 1e-12);
+        assert_eq!(early.decrease_text, "0.54 km/h");
+        let o = sv.observes.as_ref().unwrap();
+        assert_eq!(o.input, "h/kinematic_state");
+        assert_eq!(o.reached.as_ref().unwrap().field, "twist.twist.linear.x");
+        assert!(
+            m.deprecated_spellings.is_empty(),
+            "{:?}",
+            m.deprecated_spellings
+        );
+        // A quantity of another dimension is a decrease too; it is just not a
+        // speed.
+        let p = super::parse_manifest_str(
+            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state: { emits: o, settle: { duration: 2s, supervise: { reaction: r, mechanism: timer, observes: { input: h/p }, early: { within: 1s, decrease: 5 kPa } } } }\n",
+        )
+        .unwrap();
+        let e = p.nodes["op"].paths["operate"].safe_state.as_ref().unwrap();
+        let e = e.settle_supervise.as_ref().unwrap().early.as_ref().unwrap();
+        assert!(e.speed_mps().is_none());
+        assert!((e.decrease_si - 5000.0).abs() < 1e-9);
         let node = |extra: &str| {
             super::parse_manifest_str(&format!(
                 "nodes:\n  n:\n    paths:\n      p:\n        trigger: {{ input: [a] }}\n        output: [o]\n{extra}"
@@ -7690,24 +7748,41 @@ nodes:
         };
         let settle = |early: &str| {
             format!(
-                "        safe_state: {{ emits: o, settle: {{ decel: d, jerk: j, supervise: {{ reaction: r, mechanism: timer, observes: h/k, early: {early} }} }} }}\n"
+                "        safe_state: {{ emits: o, settle: {{ decel: d, jerk: j, supervise: {{ reaction: r, mechanism: timer, observes: {{ input: h/k }}, early: {early} }} }} }}\n"
             )
         };
         for (extra, needle) in [
             (
-                "        max_latency: { duration: 5ms, supervise: { reaction: r, mechanism: timer, early: { within: 1s, drop: 1 m/s } } }\n".to_string(),
+                "        max_latency: { duration: 5ms, supervise: { reaction: r, mechanism: timer, early: { within: 1s, decrease: 1 m/s } } }\n".to_string(),
                 "only a settle's",
             ),
-            (settle("{ drop: 0.1 m/s }"), "required"),
+            (settle("{ decrease: 0.1 m/s }"), "required"),
             (settle("{ within: 1s }"), "required"),
-            (settle("{ within: 1000, drop: 0.1 m/s }"), "no unit"),
-            (settle("{ within: 1s, drop: 0.1 }"), "no unit"),
-            (settle("{ within: 1s, drop: 0.1 m/s^2 }"), "not a speed"),
-            (settle("{ within: 1s, drop: -1 m/s }"), "not a speed"),
-            (settle("{ within: 1s, drop: 1 m/s, at: x }"), "at"),
+            (settle("{ within: 1000, decrease: 0.1 m/s }"), "no unit"),
+            (settle("{ within: 1s, decrease: 0.1 }"), "no unit"),
+            (settle("{ within: 1s, decrease: -1 m/s }"), "positive"),
+            (settle("{ within: 1s, decrease: 1 m/s, drop: 1 m/s }"), "old spelling"),
+            (settle("{ within: 1s, decrease: 1 m/s, at: x }"), "at"),
         ] {
             let e = node(&extra).unwrap_err();
             assert!(e.contains(needle), "{extra}: {e}");
         }
+    }
+
+    /// v0.3.25: the old spellings, `observes: <node>/<sub>` and
+    /// `early.drop`, read for one release, noted for the consumer.
+    #[test]
+    fn a_string_observes_and_drop_read_as_the_map_and_decrease() {
+        let m = super::parse_manifest_str(
+            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state: { emits: o, settle: { decel: d, jerk: j, supervise: { reaction: r, mechanism: timer, observes: h/kinematic_state, early: { within: 1s, drop: 0.15 m/s } } } }\n",
+        )
+        .unwrap();
+        let sv = m.nodes["op"].paths["operate"].safe_state.as_ref().unwrap();
+        let sv = sv.settle_supervise.as_ref().unwrap();
+        assert_eq!(sv.observes.as_ref().unwrap().input, "h/kinematic_state");
+        assert!(sv.observes.as_ref().unwrap().reached.is_none());
+        assert!((sv.early.as_ref().unwrap().speed_mps().unwrap() - 0.15).abs() < 1e-12);
+        let olds: Vec<&str> = m.deprecated_spellings.iter().map(|d| d.old).collect();
+        assert_eq!(olds, ["observes", "drop"], "{:?}", m.deprecated_spellings);
     }
 }

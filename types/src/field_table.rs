@@ -122,6 +122,8 @@ pub enum Context {
     SuperviseEarly,
     /// `resume:` under a `supervise:` (v0.3.2).
     SuperviseResume,
+    /// `observes:` under a settle's `supervise:`, its map form (v0.3.25).
+    SuperviseObserves,
     /// `links.<name>` (play_launch phase 97).
     Link,
     /// `policy:` at a manifest's top (phase 93).
@@ -192,6 +194,7 @@ impl Context {
             Context::Supervise => "<budget>.supervise",
             Context::SuperviseEarly => "safe_state.settle.supervise.early",
             Context::SuperviseResume => "<budget>.supervise.resume",
+            Context::SuperviseObserves => "safe_state.settle.supervise.observes",
             Context::Link => "links.<name>",
             Context::Policy => "policy",
             Context::Supervision => "supervision",
@@ -1638,13 +1641,13 @@ pub const FIELDS: &[Field] = &[
         "observes",
         Context::Supervise,
         Kind::Fact,
-        "A settle's supervision only: the input the platform sees standstill on, `<node>/<subscriber>` of this manifest. The consumer derives how late standstill is seen: the input's period (the slowest of the topic's `rate_hz` and the subscriber's `min_rate_hz`) + the subscriber's `max_transport`, and adds it to the supervised deadline. Refused on any other budget.",
+        "A settle's supervision only: what the platform watches to see the safe state reached, `{ input, reached }`. `input` is the subscriber it is seen on; `reached` is the predicate on that input's message that holds once the safe state is reached (`{ field: twist.twist.linear.x, le: 0.01 }`), and names the field an `early` check measures. The consumer derives how late the safe state is seen: the input's period (the slowest of the topic's `rate` and the subscriber's `min_rate`) + the subscriber's transport, and adds it to the supervised deadline. A run time needs `reached` to judge the settle without knowing the domain. Since v0.3.25 the bare string form (`observes: <node>/<subscriber>`) is deprecated: it reads for one release as `{ input }`, and `migrate` writes the map. Refused on any other budget.",
     ),
     live(
         "early",
         Context::Supervise,
         Kind::Requirement,
-        "A settle's supervision only: the response check, `{ within, drop }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the speed against the one it saw when it armed: met when the vehicle has shed at least `drop` or is at standstill; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the level up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `drop` against the speed the nominal profile sheds by `within` (`supervised-early`). Refused on any other budget.",
+        "A settle's supervision only: the response check, `{ within, decrease }`. The platform arms a second, earlier due, command + `within` + the observation (`observes`), and judges the observed field (`observes.reached.field`) against the value it saw when it armed: met when it has decreased by at least `decrease`, or `reached` holds; a miss starts the same reaction as the settle's. The consumer charges its own overrun row (the level up to the command + `within` + the observation + the detection + the reaction's route and settle) and checks `decrease` against how much the nominal profile changes the field by `within` (`supervised-early`). Refused on any other budget.",
     ),
     live(
         "resume",
@@ -1685,10 +1688,24 @@ pub const FIELDS: &[Field] = &[
         "When the check runs, from the safe state's command (a duration, positive). Past the settle's `response` and before the settle's end; the observation is added, as on the settle's own due. Required.",
     ),
     live(
-        "drop",
+        "decrease",
         Context::SuperviseEarly,
         Kind::Requirement,
-        "The least speed the vehicle must have shed by `within`, against the speed the platform saw when it armed (a speed with `m/s` or `km/h`, positive). The consumer refuses a `drop` above what the nominal profile sheds by `within` (an extension's `derive settle.speed_lost`, as `vehicle.braking` 1.1 states), which would call a nominal stop a fault. Required.",
+        "The least the observed field must have decreased by `within`, against the value the platform saw when it armed: a quantity with its unit, in the field's dimension (`0.25 m/s` for a speed), positive. The consumer refuses a `decrease` above what the nominal profile changes the field by `within` (an extension's `derive settle.speed_lost`, as `vehicle.braking` 1.1 states, for a speed), which would call a nominal stop a fault. Required.",
+    ),
+    alias("drop", Context::SuperviseEarly, "decrease"),
+    // -- safe_state.settle.supervise.observes (v0.3.25) --
+    live(
+        "input",
+        Context::SuperviseObserves,
+        Kind::Fact,
+        "The subscriber the safe state is seen on, `<node>/<subscriber>` of this manifest. Required.",
+    ),
+    live(
+        "reached",
+        Context::SuperviseObserves,
+        Kind::Fact,
+        "The predicate on the input's message that holds once the safe state is reached, in the grammar of `when:` (`{ field, <op>: <constant> }`). Its `field` is also the field an `early` check measures. Optional for the static checks; a run time judges the settle by it.",
     ),
     // -- acknowledged (play_launch phase 85 D8) --
     live(
@@ -2013,6 +2030,7 @@ pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
     (Context::Manifest, "policy", "0.3.24"),
     (Context::Service, "max_transport", "0.3.24"),
     (Context::Manifest, "integrity_levels", "0.3.24"),
+    (Context::SuperviseEarly, "drop", "0.3.25"),
 ];
 
 /// Deprecations no row can carry, because the key stays live in another use
@@ -2029,6 +2047,7 @@ pub const DEPRECATED_USES: &[(&str, &str)] = &[
         "a client's own `max_transport:` (`cli.<e>.max_transport`)",
         "0.3.24",
     ),
+    ("a settle's `observes:` written as a string", "0.3.25"),
 ];
 
 /// Keys added since v0.1.49, with the release that added each: what the
@@ -2079,6 +2098,9 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::SuperviseEarly, "drop", "0.3.1"),
     (Context::Supervise, "resume", "0.3.2"),
     (Context::SuperviseResume, "after", "0.3.2"),
+    (Context::SuperviseEarly, "decrease", "0.3.25"),
+    (Context::SuperviseObserves, "input", "0.3.25"),
+    (Context::SuperviseObserves, "reached", "0.3.25"),
     (Context::Hazard, "integrity", "0.3.3"),
     (Context::Hazard, "monitors", "0.3.7"),
     (Context::Endpoint, "arrival_curve", "0.3.7"),

@@ -96,6 +96,22 @@ fn literal(text: &str) -> Result<(Quantity, bool), Diagnostic> {
     }
 }
 
+/// A quantity written with a unit (`0.25 m/s`, `5 kPa`), of any dimension,
+/// in SI. A bare number is refused: a value whose dimension the grammar
+/// does not fix must say what it is.
+pub fn quantity_literal(text: &str) -> Result<Quantity, Diagnostic> {
+    let text = text.trim();
+    let (q, bare) = literal(text)?;
+    if bare {
+        return Err(Diagnostic::new(
+            code::VALUE,
+            Span::new(0, text.len()),
+            format!("`{text}` has no unit; write the quantity with one, such as `{text} m/s`"),
+        ));
+    }
+    Ok(q)
+}
+
 /// A ROS parameter name: a letter or `_`, then letters, digits, `_`, `.`.
 fn is_param_name(text: &str) -> bool {
     let mut chars = text.chars();

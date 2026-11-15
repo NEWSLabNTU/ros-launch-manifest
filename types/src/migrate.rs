@@ -246,6 +246,24 @@ pub const REWRITES: &[Rewrite] = &[
         find: integrity_levels_use,
     },
     Rewrite {
+        id: "observes-map",
+        unit: "104 S3",
+        since: "0.3.25",
+        from: "safe_state.settle.supervise.observes: <node>/<subscriber>",
+        to: "observes: { input: <node>/<subscriber> } (add `reached: { field, <op>: <constant> }` by hand: the file does not say which field shows the safe state)",
+        when: "always, in plain or quoted scalar form",
+        find: observes_map,
+    },
+    Rewrite {
+        id: "early-decrease",
+        unit: "104 S3",
+        since: "0.3.25",
+        from: "safe_state.settle.supervise.early.drop",
+        to: "early.decrease",
+        when: "always",
+        find: early_decrease,
+    },
+    Rewrite {
         id: "rule-id-renamed",
         unit: "98",
         since: "0.3.3",
@@ -958,6 +976,81 @@ fn hazard_maps(doc: &Doc) -> Vec<(Vec<String>, Yaml)> {
         }
     }
     maps
+}
+
+/// Every `nodes.<n>.paths.<p>.safe_state.settle.supervise` mapping, at
+/// every manifest level.
+fn settle_supervise_maps(doc: &Doc) -> Vec<(Vec<String>, Yaml)> {
+    let mut maps = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let Some(nodes) = y["nodes"].as_hash() else {
+            continue;
+        };
+        for (nk, node) in nodes {
+            let Some(n) = key_str(nk) else { continue };
+            let Some(paths) = node["paths"].as_hash() else {
+                continue;
+            };
+            for (pk, path) in paths {
+                let Some(pn) = key_str(pk) else { continue };
+                let sv = &path["safe_state"]["settle"]["supervise"];
+                if sv.as_hash().is_some() {
+                    maps.push((
+                        with(
+                            &level,
+                            &[
+                                "nodes",
+                                &n,
+                                "paths",
+                                &pn,
+                                "safe_state",
+                                "settle",
+                                "supervise",
+                            ],
+                        ),
+                        sv.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    maps
+}
+
+/// S3 (v0.3.25): a settle's `observes: <node>/<subscriber>` becomes the
+/// map's `input`.
+fn observes_map(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "observes-map";
+    let mut out = Vec::new();
+    for (path, sv) in settle_supervise_maps(doc) {
+        let Some(input) = sv["observes"].as_str() else {
+            continue;
+        };
+        let kpath = with(&path, &["observes"]);
+        let dotted = kpath.join(".");
+        let Some(kr) = doc.key(&kpath) else {
+            doc.skip(ID, &dotted, "cannot find the key");
+            continue;
+        };
+        let vs = doc.value_start(&kr);
+        let ve = doc.inline_value_end(vs, doc.flow.contains(&kpath));
+        if ve <= vs {
+            doc.skip(ID, &dotted, "a block-form value: rewrite it by hand");
+            continue;
+        }
+        out.push(doc.edit(ID, &dotted, vs..ve, format!("{{ input: {input} }}")));
+    }
+    out
+}
+
+/// S3 (v0.3.25): a response check's `drop:` becomes `decrease:`.
+fn early_decrease(doc: &Doc) -> Vec<Edit> {
+    let maps = settle_supervise_maps(doc)
+        .into_iter()
+        .filter(|(_, sv)| sv["early"].as_hash().is_some())
+        .map(|(p, sv)| (with(&p, &["early"]), sv["early"].clone()))
+        .collect();
+    rename_in(doc, "early-decrease", maps, "drop", "decrease")
 }
 
 /// S3 (v0.3.19): a hazard's `enters:` becomes `leaves:`.
@@ -3278,6 +3371,50 @@ topics:
     max_transport: { duration: 10ms, source: requirement }
   /flow: { type: T, max_transport: 3ms }
 ";
+
+    /// rlm v0.3.25: a settle's string `observes:` becomes the map, and
+    /// `early.drop` becomes `decrease`, in flow and block form.
+    #[test]
+    fn observes_becomes_a_map_and_drop_decrease() {
+        let src = "\
+version: 1
+nodes:
+  op:
+    paths:
+      stop:
+        trigger: { input: [a] }
+        output: [o]
+        safe_state:
+          emits: o
+          settle:
+            duration: 2s
+            supervise:
+              reaction: r
+              mechanism: timer
+              observes: h/kinematic_state   # kept
+              early: { within: 1s, drop: 0.15 m/s }
+";
+        let m = migrate_str(src).unwrap();
+        assert!(
+            m.output
+                .contains("observes: { input: h/kinematic_state }   # kept\n"),
+            "{}",
+            m.output
+        );
+        assert!(
+            m.output
+                .contains("early: { within: 1s, decrease: 0.15 m/s }"),
+            "{}",
+            m.output
+        );
+        let back = crate::parse_manifest_str(&m.output).unwrap();
+        assert!(
+            back.deprecated_spellings.is_empty(),
+            "{:?}",
+            back.deprecated_spellings
+        );
+        assert!(!migrate_str(&m.output).unwrap().changed());
+    }
 
     /// rlm v0.3.24: an inline scale that is a reference profile's becomes
     /// `use:` of it; another scale is reported.

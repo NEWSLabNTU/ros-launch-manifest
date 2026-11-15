@@ -78,7 +78,7 @@ pub const ELAPSED_READERS: &[&str] = &["settle.speed_lost"];
 /// The core bounds an extension may derive (design section 4). Each is a
 /// Time but `settle.speed_lost` (rlm v0.3.1), the speed the nominal settle
 /// sheds by `elapsed`, a Velocity: the consumer checks a settle's response
-/// check (`supervise: { early: { within, drop } }`) against it.
+/// check (`supervise: { early: { within, decrease } }`) against it.
 pub const DERIVE_TARGETS: &[&str] = &[
     "settle.duration",
     "hazard.detection",

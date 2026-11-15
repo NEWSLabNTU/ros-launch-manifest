@@ -226,13 +226,12 @@ pub struct Supervision {
     pub reaction: SuperviseReaction,
     /// What checks the budget.
     pub mechanism: SuperviseMechanism,
-    /// A settle's supervision only (v0.1.62): the input the platform sees
-    /// standstill on, as `<node>/<subscriber>` of this manifest. The
-    /// consumer derives how late standstill is seen from it (the input's
-    /// period + its `max_transport`) and adds that to the supervised
-    /// deadline. Refused on any other budget.
+    /// A settle's supervision only (v0.1.62; a map since v0.3.25): what the
+    /// platform watches to see the safe state reached. The consumer derives
+    /// how late it is seen from the input (its period + its transport) and
+    /// adds that to the supervised deadline. Refused on any other budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observes: Option<String>,
+    pub observes: Option<Observes>,
     /// A settle's supervision only (v0.3.1): an earlier, weaker check of
     /// the same settle. At `within` after the command (+ the observation)
     /// the vehicle must have shed at least `drop` of its speed, or be at
@@ -251,6 +250,21 @@ pub struct Supervision {
     pub resume: Option<Resume>,
 }
 
+/// `supervise: { ..., observes: { input, reached } }` on a settle (v0.3.25;
+/// the bare string before it is `input` alone).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Observes {
+    /// The subscriber the safe state is seen on, `<node>/<subscriber>`.
+    pub input: String,
+    /// The predicate on the input's message that holds once the safe state
+    /// is reached. Its field is the one an `early` check measures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reached: Option<ValuePredicate>,
+}
+
+// A predicate's numbers are parsed finite, never NaN.
+impl Eq for Observes {}
+
 /// `supervise: { ..., resume: { after } }` (v0.3.2): how long the output
 /// the reaction handed back may stay silent before the reaction resumes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -268,28 +282,40 @@ pub enum ResumeAfter {
     Duration(crate::duration::Duration),
 }
 
-/// `supervise: { ..., early: { within, drop } }` on a settle (v0.3.1): the
-/// response check. The platform arms a second due, command + `within` +
-/// the observation, and at it judges the speed against the one it saw when
-/// it armed: met when the vehicle has shed at least `drop`, or is at
-/// standstill. A miss starts the supervision's reaction, as the settle's
-/// miss does, so a command that never took effect is caught at `within`
-/// rather than at the end of the whole settle. The consumer charges an
-/// overrun row for it and checks `drop` against the speed the nominal
-/// profile sheds by `within` (an extension's `derive settle.speed_lost`).
+/// `supervise: { ..., early: { within, decrease } }` on a settle (v0.3.1;
+/// `decrease` since v0.3.25, `drop` before it): the response check. The
+/// platform arms a second due, command + `within` + the observation, and
+/// at it judges the observed field (`observes.reached.field`) against the
+/// value it saw when it armed: met when it has decreased by at least
+/// `decrease`, or `reached` holds. A miss starts the supervision's
+/// reaction, as the settle's miss does, so a command that never took effect
+/// is caught at `within` rather than at the end of the whole settle. The
+/// consumer charges an overrun row for it and checks `decrease` against
+/// what the nominal profile changes the field by `within` (for a speed, an
+/// extension's `derive settle.speed_lost`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EarlyCheck {
     /// From the safe state's command to the check (the observation is
     /// added by the consumer, as on the settle's own due).
     pub within: crate::duration::Duration,
-    /// The least speed shed by then, m/s, positive.
-    pub drop_mps: f64,
-    /// `drop` as written (`0.15 m/s`), for messages.
-    pub drop_text: String,
+    /// The least decrease by then, in SI units of `decrease_dim`, positive.
+    pub decrease_si: f64,
+    /// The dimension `decrease` was written in (SI base exponents: m, kg,
+    /// s, A, K, mol, cd).
+    pub decrease_dim: [i32; 7],
+    /// `decrease` as written (`0.15 m/s`), for messages.
+    pub decrease_text: String,
 }
 
-// `drop_mps` is parsed from a finite, positive literal, never NaN.
+// `decrease_si` is parsed from a finite, positive literal, never NaN.
 impl Eq for EarlyCheck {}
+
+impl EarlyCheck {
+    /// The decrease as a speed, m/s, when it was written as one.
+    pub fn speed_mps(&self) -> Option<f64> {
+        (self.decrease_dim == [1, 0, -1, 0, 0, 0, 0]).then_some(self.decrease_si)
+    }
+}
 
 /// What a supervised budget's miss starts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

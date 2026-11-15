@@ -1671,9 +1671,16 @@ pub struct SettleSuperviseContract {
     /// How late standstill is seen, ms: the observed input's period + its
     /// `max_transport`.
     pub observe_ms: f64,
-    /// The input standstill is seen on, by its key in
+    /// The input the safe state is seen on, by its key in
     /// `contracts.sub_endpoints`.
     pub observes: String,
+    /// v0.3.25: the predicate on the observed input's message that holds
+    /// once the safe state is reached (`twist.twist.linear.x le 0.01`). A
+    /// realizer judges the settle by it, and the early check measures its
+    /// field. Absent: the contract did not state it, and a realizer must
+    /// not guess the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reached: Option<PredicateContract>,
     /// The path a miss starts, by its key in this model (as
     /// [`SuperviseContract::reaction`]).
     pub reaction: String,
@@ -1687,14 +1694,23 @@ pub struct SettleSuperviseContract {
 
 /// A supervised settle's response check (v0.3.1). The realizer arms a
 /// second due = the safe state's command + `within_ms` + `observe_ms` (the
-/// settle's), and judges it against the speed it saw when it armed: met
-/// when the vehicle has shed at least `drop_mps` or is at standstill; a miss
-/// starts the settle's `reaction`.
+/// settle's), and judges the observed field (the settle's `reached.field`)
+/// against the value it saw when it armed: met when it has decreased by at
+/// least `decrease` or `reached` holds; a miss starts the settle's
+/// `reaction`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EarlyCheckContract {
     /// From the command to the check, ms (the observation not included).
     pub within_ms: f64,
-    /// The least speed shed by then, m/s.
+    /// v0.3.25: the least decrease of the observed field by then, in SI
+    /// units (REP 103: a ROS field is SI already). 0 in a model written
+    /// before v0.3.25, which carries only `drop_mps`.
+    #[serde(default)]
+    pub decrease: f64,
+    /// The least speed shed by then, m/s: `decrease` when it is a speed,
+    /// else 0. Kept until the next model schema, for readers before
+    /// v0.3.25; read `decrease`.
+    #[serde(default)]
     pub drop_mps: f64,
 }
 
@@ -2908,6 +2924,7 @@ mod tests {
                 observes: "/h/kinematic_state".into(),
                 reaction: "island.emergency_stop".into(),
                 mechanism: SuperviseMechanism::Timer,
+                reached: None,
                 early: None,
             }),
             ..ss.clone()
@@ -2923,9 +2940,14 @@ mod tests {
         if let Some(s) = sv2.supervise.as_mut() {
             s.early = Some(EarlyCheckContract {
                 within_ms: 1019.0,
+                decrease: 0.15,
                 drop_mps: 0.15,
             });
         }
+        // v0.3.25: a model before `decrease` still reads, as 0.
+        let old: EarlyCheckContract =
+            serde_yaml_ng::from_str("within_ms: 1019.0\ndrop_mps: 0.15\n").unwrap();
+        assert_eq!(old.decrease, 0.0);
         let y = serde_yaml_ng::to_string(&sv2).unwrap();
         assert_eq!(
             serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),

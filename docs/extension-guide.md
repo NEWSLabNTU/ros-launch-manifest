@@ -123,7 +123,7 @@ safe state's command, bound only while the consumer evaluates
   detectors'), `hazard.ftti` (the interval itself, from the process) and,
   since rlm v0.3.1, `settle.speed_lost` (a Velocity: the speed the same
   settle has shed by `elapsed` after the command; the consumer checks a
-  settle's response check, `supervise: { early: { within, drop } }`,
+  settle's response check, `supervise: { early: { within, decrease } }` when the decrease is a speed,
   against it at `elapsed = within`, as `vehicle.braking` 1.1.0 does).
   A contract may not also write a bound an extension derives
   (`derive-conflict`); a measured settle beside a derived one is compared

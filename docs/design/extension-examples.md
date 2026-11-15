@@ -83,7 +83,7 @@ fn shed(t: Time, a: Acceleration, j: Jerk) -> Velocity =
 
 (`settle.speed_lost`, since 1.1.0 and rlm v0.3.1, is the speed the same
 profile has shed by `elapsed` after the command; a settle's response check,
-`supervise: { early: { within, drop } }`, is checked against it.)
+`supervise: { early: { within, decrease } }`, a speed, is checked against it.)
 
 ```yaml
 use: { vehicle.braking: "^1", iso26262: "^1" }
