@@ -6,6 +6,41 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.24 - 2026-11-15
+
+S3: T4's two free changes and T3's two relocations. GRAMMAR_VERSION 0.3.24.
+
+- **A client names a link.** `nodes.<n>.cli.<e>.link: <name>` states the
+  request leg's transport on a `links:` entry, as a subscriber's hop has
+  since phase 97; writing `link` and `max_transport` both is refused. A
+  client's own `max_transport:` and a service's `max_transport:` are
+  deprecated: a transport is the hop of one endpoint (a service can be
+  called in-process and across a network), stated once on a link with its
+  source. Both still read for one release. `migrate`'s `max-transport-link`
+  rewrite now also moves a client's value onto a link of its own
+  (`<node>_<ep>`), and reports a service's value, whose clients may be in
+  another contract. The response leg is still not modelled.
+- **Deprecated: `integrity_levels:`.** A scale is a profile, named by
+  `use:`, so one form remains: `use: { iso26262: "^1" }` for `[QM,
+  ASIL_A..ASIL_D]`, `iec61508` for `[none, SIL_1..SIL_4]`, or a local
+  profile file for another scale. The two forms derive the same criticality
+  (both bundled profiles' maps are the thirds map an inline scale uses).
+  New rewrite `integrity-levels-use`: an exact match becomes the profile's
+  `use:` entry; another scale is reported.
+
+- **Deprecated: `policy:`.** A rule's severity is project policy for the
+  tool, not a fact or a requirement of the system, so it moves to the
+  checker's command line: `check --deny <rule>` raises every finding of that
+  rule to an error (play_launch), as clippy's `-D <lint>` keeps lint levels
+  out of the source. No contract in the corpus writes `policy:`. It still
+  reads for one release; a consumer reads `{ unsupervised_measured: error }`
+  as `--deny` of `measured-unsupervised` and
+  `supervised-executor-long-callback`, and warns.
+- **Reworded: `settle.response`.** It was described as the vehicle's
+  braking response, but it is a generic actuation delay (the final
+  element's part of the safety function response time, IEC 62061 and ISO
+  13849), added to a written settle as well as a derived one. Text only.
+
 ## v0.3.23 - 2026-11-15
 
 No grammar change. play_launch 0.35.0 shipped v0.3.22, so it joins

@@ -2944,12 +2944,12 @@ fn parse_endpoints(
                         }
                     }
                 }
-                if key != "sub" && props.link.is_some() {
+                if key != "sub" && key != "cli" && props.link.is_some() {
                     return Err(field_err(
                         &path,
                         "link",
-                        "`link` names the link a SUBSCRIBER's hop crosses: a transport is \
-                         charged on the edge that ends at a subscriber",
+                        "`link` names the link a hop crosses: a SUBSCRIBER's (the edge \
+                         that ends at it) or a CLIENT's (its request leg)",
                     ));
                 }
                 if key != "cli" && props.call.is_some() {

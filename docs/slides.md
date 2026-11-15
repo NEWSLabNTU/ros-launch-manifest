@@ -208,7 +208,7 @@ do not.
 - or one that **reacts** (on the walk to the safe state)
 
 takes that hazard's severity — **max** over the hazards that reach it.
-`integrity_levels:` declares the scale (default: ISO 26262's
+`use:` of a profile names the scale (`iso26262`:
 `QM, ASIL_A..ASIL_D`).
 
 The mapper reads the derivation **before** any written label.

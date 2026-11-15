@@ -425,11 +425,11 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         "Renamed `integrity_levels:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it.",
     ),
-    live(
+    deprecated(
         "integrity_levels",
         Context::Manifest,
-        Kind::Meta,
-        "The integrity scale hazards draw from, ascending; the first entry derives no criticality. Default: QM, ASIL_A..ASIL_D (ISO 26262), so writing that scale out changes nothing and is only for the reader. A contract that uses a profile takes the profile's scale and may not also write this.",
+        "`use:` of the profile whose scale it is",
+        "Deprecated since v0.3.24: the integrity scale hazards draw from, ascending. A scale is a profile (its levels and the criticality each derives), and a profile is named by `use:`, so one form remains: `use: { iso26262: \"^1\" }` for `[QM, ASIL_A..ASIL_D]`, `iec61508` for `[none, SIL_1..SIL_4]`, or a local `<name>.profile.yaml` for another scale. Still reads for one release; `migrate` writes the `use:` entry when the list is a reference profile's scale.",
     ),
     removed(
         "external_topics",
@@ -453,11 +453,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest.",
     ),
-    live(
+    deprecated(
         "policy",
         Context::Manifest,
-        Kind::Meta,
-        "Project policy for the consumer's rules: `{ unsupervised_measured: warn | error }`. Absent: the defaults.",
+        "the checker's `--deny <rule>`",
+        "Deprecated since v0.3.24: a rule's severity is project policy for the tool, not a fact or a requirement of the system, so it moves to the checker's command line (`check --deny measured-unsupervised`, as clippy's `-D <lint>` keeps lint levels out of the source). `{ unsupervised_measured: error }` still reads for one release, as `--deny` of `measured-unsupervised` and `supervised-executor-long-callback`.",
     ),
     live(
         "links",
@@ -598,13 +598,13 @@ pub const FIELDS: &[Field] = &[
         "max_transport",
         Context::Endpoint,
         Kind::Requirement,
-        "Client (since v0.2.5): the request leg's worst-case transport, overriding the service's `max_transport`; charged on a reaction route's success branch through the call. Subscriber: the worst-case transport into THIS subscriber (one topic does not have one cost: in-process, another process, another machine). Not written on the subscriber since v0.3.17 (deprecated in v0.3.16): the subscriber names a link (`link:`), which states the number once with its source, and the link's value is the subscriber's; `migrate` writes the link. Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
+        "Client (since v0.2.5): the request leg's worst-case transport; charged on a reaction route's success branch through the call. Deprecated on a client since v0.3.24: the client names a link (`link:`), as a subscriber does; it still reads for one release and `migrate` writes the link. Subscriber: the worst-case transport into THIS subscriber (one topic does not have one cost: in-process, another process, another machine). Not written on the subscriber since v0.3.17 (deprecated in v0.3.16): the subscriber names a link (`link:`), which states the number once with its source, and the link's value is the subscriber's; `migrate` writes the link. Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
     ),
     live(
         "link",
         Context::Endpoint,
         Kind::Fact,
-        "Subscriber only (play_launch phase 97): the link this subscriber's hop crosses, a name under `links:`. The link's `max_transport` is this subscriber's, charged wherever a written one is; writing both is refused. A `max_transport` written on the subscriber instead is refused since v0.3.17.",
+        "The link this endpoint's hop crosses, a name under `links:`: a subscriber's (play_launch phase 97), the edge that ends at it, or since v0.3.24 a client's, its request leg (charged on a reaction route's success branch through the call; the response leg is not modelled). The link's `max_transport` is the endpoint's, charged wherever a written one is; writing both is refused. A `max_transport` written on the subscriber instead is refused since v0.3.17.",
     ),
     removed(
         "max_transport_ms",
@@ -837,11 +837,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Mark one side of this service as provided by an external system: server | client | both.",
     ),
-    live(
+    deprecated(
         "max_transport",
         Context::Service,
-        Kind::Requirement,
-        "The request leg's worst-case transport for every client of this service that states none of its own (`cli.<e>.max_transport`). Charged on a reaction route's success branch through the call.",
+        "a link on each client (`cli.<e>.link`)",
+        "Deprecated since v0.3.24: the request leg's worst-case transport for every client of this service that states none of its own. A transport is the hop of ONE endpoint (one service can be called in-process and across a network), stated on a link the client names, as for topics since v0.3.15. Still reads for one release.",
     ),
     // ── actions.<name> ──
     live(
@@ -1491,7 +1491,7 @@ pub const FIELDS: &[Field] = &[
         "response",
         Context::Settle,
         Kind::Fact,
-        "The vehicle's response: from the braking command to the deceleration the plant then holds (a duration). Added to the settle, a written duration or a derived one alike (an extension that reads `settle.response`, as `vehicle.braking` does, adds it in its own formula; `settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies.",
+        "The actuation delay: from the safe state's command to the plant's first response, the final element's part of the safety function response time (IEC 62061, ISO 13849); for a vehicle, from the braking command to the deceleration it then holds (a duration). Added to the settle, a written duration or a derived one alike (an extension that reads `settle.response`, as `vehicle.braking` does, adds it in its own formula; `settle-derived` and `--explain` print both parts). Omitted: 0, so a written duration that already includes the response omits it. The map form `{ duration, source }` applies.",
     ),
     live(
         "source",
@@ -2010,6 +2010,9 @@ pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
     (Context::TriggerTimer, "rate_hz", "0.3.21"),
     (Context::ArrivalCurve, "rate_hz", "0.3.21"),
     (Context::Manifest, "supervision", "0.3.22"),
+    (Context::Manifest, "policy", "0.3.24"),
+    (Context::Service, "max_transport", "0.3.24"),
+    (Context::Manifest, "integrity_levels", "0.3.24"),
 ];
 
 /// Deprecations no row can carry, because the key stays live in another use
@@ -2017,10 +2020,16 @@ pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
 /// the retirement debt hid). `(what, release)`; the same test holds them to
 /// the schedule. A subscriber's `max_transport` is deprecated while a
 /// client's is not, and both are the `Endpoint` row.
-pub const DEPRECATED_USES: &[(&str, &str)] = &[(
-    "a mode under a client's `on_timeout`/`then`/`on_rejected` `reaction:`",
-    "0.3.19",
-)];
+pub const DEPRECATED_USES: &[(&str, &str)] = &[
+    (
+        "a mode under a client's `on_timeout`/`then`/`on_rejected` `reaction:`",
+        "0.3.19",
+    ),
+    (
+        "a client's own `max_transport:` (`cli.<e>.max_transport`)",
+        "0.3.24",
+    ),
+];
 
 /// Keys added since v0.1.49, with the release that added each: what the
 /// format reference prints beside them. A column on

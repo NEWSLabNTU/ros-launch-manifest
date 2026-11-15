@@ -473,7 +473,11 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
                         target: raw.target.clone(),
                         reason: format!(
                             "supervision.{key}: must be a {} duration, got {d}",
-                            if key == "tick" { "positive" } else { "non-negative" }
+                            if key == "tick" {
+                                "positive"
+                            } else {
+                                "non-negative"
+                            }
                         ),
                     });
                 }
@@ -559,7 +563,8 @@ overrides:
             assert_eq!(sv.tick.unwrap().as_millis_f64(), 1.0);
             assert_eq!(sv.switch.unwrap().as_millis_f64(), 0.05);
         }
-        let none = parse_platform_file_yaml("target: posix\npriority_assignment: manual\n").unwrap();
+        let none =
+            parse_platform_file_yaml("target: posix\npriority_assignment: manual\n").unwrap();
         assert!(none.supervision.is_none());
         for (body, needle) in [
             ("{ tick: 0ms }", "must be a positive duration"),

@@ -778,8 +778,8 @@ it
 
 Over several hazards the node takes the **max**, never a sum.
 
-`integrity_levels:` declares the scale, ascending, defaulting to ISO 26262's
-`[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; its first entry derives no
+The scale, ascending, is a profile named by `use:` (ISO 26262's
+`[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]` is `iso26262`); its first entry derives no
 criticality. A `hazards.<h>.severity` outside the scale is
 `integrity-unknown`, not a silent `None`. The scale folds into the mapper's
 three buckets by rank: entry 0 is no requirement, and the rest split evenly

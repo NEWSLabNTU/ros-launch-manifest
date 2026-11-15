@@ -115,6 +115,18 @@ pub(crate) fn apply_links(
             }
         }
     }
+    // rlm v0.3.24 (S3, T3): a client names the link its request leg
+    // crosses. A client's own `max_transport` (deprecated) still reads.
+    for (n, node) in &mut m.nodes {
+        for (ep, props) in &mut node.cli {
+            if let Some(name) = &props.link {
+                if props.max_transport.is_some() {
+                    return Err(both(format!("nodes.{n}.cli.{ep}.max_transport")));
+                }
+                props.max_transport = Some(find(format!("nodes.{n}.cli.{ep}.link"), name)?);
+            }
+        }
+    }
     for inc in m.includes.values_mut() {
         match &mut inc.kind {
             IncludeKind::Inline(inner) => apply_links(inner, &visible)?,

@@ -1266,7 +1266,7 @@ complete top-level vocabulary, and nothing else, is:
 | `paths` | [Paths](#paths) — event chains |
 | `external_topics` | [External Topics](#external-topics) |
 | `hazards` | [Fault detection and reaction](#fault-detection-and-reaction) |
-| `integrity_levels` | [Integrity scale](#integrity-scale) |
+| `integrity_levels` (deprecated) | [Integrity scale](#integrity-scale) |
 | `capabilities`, `modes` | [Operational modes](#operational-modes) |
 | `acknowledged` | [Acknowledged findings](#acknowledged-findings) |
 
@@ -2281,19 +2281,25 @@ play_launch repository).
 
 ### Integrity scale
 
-`integrity_levels:` declares the scale `hazards.<h>.integrity` draws from,
-ascending. Absent, it is ISO 26262's
-`[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`; a team working to IEC 61508 or
-DO-178C names its own. The **first entry is "no safety requirement"** and
-derives no criticality. A `severity:` outside the declared scale is
-`integrity-unknown` — an explicit diagnostic rather than the silent `None`
-the parser used to produce.
+The scale `hazards.<h>.integrity` draws from, ascending, is a **profile**,
+named by `use:`: `iso26262` (`[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`),
+`iec61508` (`[none, SIL_1, SIL_2, SIL_3, SIL_4]`), another bundled one, or
+a local `<name>.profile.yaml` beside the contract for a scale none of them
+has. The **first entry is "no safety requirement"** and derives no
+criticality. An `integrity:` outside the scale is `integrity-unknown`, an
+explicit diagnostic rather than the silent `None` the parser used to
+produce.
 
 <!-- yaml-check: skip — a fragment showing one manifest-level key -->
 
 ```yaml
-integrity_levels: [QM, SIL_1, SIL_2, SIL_3, SIL_4]
+use: { iec61508: "^1" }
 ```
+
+`integrity_levels:` (an inline list) is deprecated since v0.3.24: a scale
+is a profile, and a profile is named by `use:`, so one form remains. It
+still reads for one release; `migrate` writes the `use:` entry when the
+list is a reference profile's scale.
 
 ### Criticality is derived
 
@@ -2321,7 +2327,7 @@ A hazard reaches a node four ways:
   on the path and inherits nothing.
 
 A node takes the **max** over the hazards that reach it, ranked by
-position in `integrity_levels:` — never a sum. `sched_derive` reads the
+position in the scale — never a sum. `sched_derive` reads the
 derivation before any label.
 
 The map from a severity to a criticality is grammar, stated in
@@ -2713,7 +2719,7 @@ The consumer's rules for these keys:
 | `settle-entry-missing` | Warning | A derived settle reached by a hazard that writes no value for a key the derivation needs (a braking profile and no `entry_speed`) |
 | `settle-param-unresolved` | Error | A parameter the derivation reads with no numeric launch value on the node |
 | `settle-conflict` | Warning | A measured settle and the derivation differ by more than 1 % |
-| `deprecated-implicit-extension` | Error | `vehicle.braking`'s keys without `use:`, or hazard integrity levels with no profile and no `integrity_levels:` (a warning in play_launch 0.19) |
+| `deprecated-implicit-extension` | Error | `vehicle.braking`'s keys without `use:`, or hazard integrity levels with no profile (a warning in play_launch 0.19) |
 
 ## Static Validation
 
@@ -2765,7 +2771,7 @@ across manifest files. The ones that bear on this document:
 | `response-blocking`, `concurrency-decl`, `path-exclusion` | A service `max_response` promised beside a callback that would block it, and `concurrency:` declarations that contradict each other across the merged tree | Warning |
 | `derivable-rate`, `rate-mismatch` | A declared `topics.<t>.rate` agrees with (info) or contradicts (warning) the rate derived from the timers that drive it | Info/Warning |
 | `derivable-min-rate`, `min-rate-mismatch`, `derived-rate-hierarchy` | The same comparison for a publisher's `min_rate`, and a subscriber asking for more than the derived rate delivers | Info/Warning |
-| `derivable-criticality`, `criticality-mismatch`, `integrity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; an `integrity:` outside the declared `integrity_levels:` scale | Info/Warning/Error |
+| `derivable-criticality`, `criticality-mismatch`, `integrity-unknown` | A declared `criticality` agrees with (info) or contradicts (warning) the one derived from the hazards reaching the node; an `integrity:` outside the scale its profile declares | Info/Warning/Error |
 | `fault-reaction-time`, `reaction-unreachable`, `reaction-within`, `reaction-unbudgeted`, `reaction-unguarded`, `hazard-unguarded` | FDTI + FRTI against a hazard's `ftti`, and the structural preconditions for computing them | Error/Warning/Info |
 | `degradation-level-time`, `fallback-without-mrc`, `mode-requires-unguarded`, `override-target-missing` | Operational modes: each fallback degradation level against the ftti in its own right, a minimal risk condition that requires nothing losable, and override targets that name a real contract path | Error |
 | `leaves-not-removed` | A hazard `leaves:` a mode none of whose `requires:` its fault removes, a redundant group's `m` counted (`n - k < m`) | Warning |

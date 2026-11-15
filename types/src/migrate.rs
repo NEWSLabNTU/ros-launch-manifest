@@ -237,6 +237,15 @@ pub const REWRITES: &[Rewrite] = &[
         find: rate_units,
     },
     Rewrite {
+        id: "integrity-levels-use",
+        unit: "104 S3",
+        since: "0.3.24",
+        from: "integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]",
+        to: "use: { iso26262: \"^1\" } (the reference profile whose scale it is)",
+        when: "the list is exactly a reference profile's scale; another scale is left for a hand edit (write it as a profile file beside the contract and `use:` it)",
+        find: integrity_levels_use,
+    },
+    Rewrite {
         id: "rule-id-renamed",
         unit: "98",
         since: "0.3.3",
@@ -1687,7 +1696,9 @@ fn fresh_link_name(base: &str, taken: &mut HashSet<String>) -> String {
 /// meant. Every listed subscriber must be declared in the same file, or the
 /// topic is left for a hand edit. A subscriber's own `max_transport:`
 /// (deprecated since v0.3.16) becomes a link of its own, `<node>_<ep>`, and
-/// the key becomes `link:`. Both go in one rewrite because both add to the
+/// the key becomes `link:`; so does a client's (deprecated since v0.3.24),
+/// whose link is its request leg's. A service's value is reported, not
+/// rewritten. Both go in one rewrite because both add to the
 /// level's one `links:` mapping, and two insertions at one place overlap.
 fn max_transport_links(doc: &Doc) -> Vec<Edit> {
     const ID: &str = "max-transport-link";
@@ -1781,35 +1792,57 @@ fn max_transport_links(doc: &Doc) -> Vec<Edit> {
             }
         }
 
-        // A subscriber's own value: a link of its own.
+        // A service's value (deprecated since v0.3.24): its clients may be
+        // declared anywhere in the launch, so it is left for a hand edit.
+        if let Some(services) = y["services"].as_hash() {
+            for (k, sv) in services {
+                let Some(sname) = key_str(k) else { continue };
+                if sv["max_transport"].is_badvalue() {
+                    continue;
+                }
+                let dotted = with(&level, &["services", &sname, "max_transport"]).join(".");
+                doc.skip(
+                    ID,
+                    &dotted,
+                    "a service's transport is its clients': write `links.<name>: { \
+                     max_transport: <d> }`, name it with `link: <name>` on each client of the \
+                     service, then delete this key",
+                );
+            }
+        }
+
+        // A subscriber's or (since v0.3.24) a client's own value: a link of
+        // its own.
         if let Some(nodes) = y["nodes"].as_hash() {
             for (nk, node) in nodes {
                 let Some(nname) = key_str(nk) else { continue };
-                let Some(subs) = node["sub"].as_hash() else {
-                    continue;
-                };
-                for (ek, props) in subs {
-                    let Some(ep) = key_str(ek) else { continue };
-                    if props["max_transport"].is_badvalue() || !props["link"].is_badvalue() {
-                        continue; // none, or both (refused by the parser)
-                    }
-                    let kpath = with(&level, &["nodes", &nname, "sub", &ep, "max_transport"]);
-                    let dotted = kpath.join(".");
-                    let (Some(kr), Some(value)) = (doc.key(&kpath), doc.inline_value(&kpath))
-                    else {
-                        doc.skip(
-                            ID,
-                            &dotted,
-                            "a block-form value: move it into a link by hand",
-                        );
+                for side in ["sub", "cli"] {
+                    let Some(subs) = node[side].as_hash() else {
                         continue;
                     };
-                    let vs = doc.value_start(&kr);
-                    let ve = doc.inline_value_end(vs, doc.flow.contains(&kpath));
-                    let lname = fresh_link_name(&format!("{nname}_{ep}"), &mut taken);
-                    edits.push(doc.edit(ID, &dotted, kr, "link".to_string()));
-                    edits.push(doc.edit(ID, &dotted, vs..ve, lname.clone()));
-                    links.push((lname, value, dotted));
+                    for (ek, props) in subs {
+                        let Some(ep) = key_str(ek) else { continue };
+                        if props["max_transport"].is_badvalue() || !props["link"].is_badvalue() {
+                            continue; // none, or both (refused by the parser)
+                        }
+                        let kpath = with(&level, &["nodes", &nname, side, &ep, "max_transport"]);
+                        let dotted = kpath.join(".");
+                        let (Some(kr), Some(value)) = (doc.key(&kpath), doc.inline_value(&kpath))
+                        else {
+                            doc.skip(
+                                ID,
+                                &dotted,
+                                "a block-form value: move it into a link by hand",
+                            );
+                            continue;
+                        };
+                        let vs = doc.value_start(&kr);
+                        let ve = doc.inline_value_end(vs, doc.flow.contains(&kpath));
+                        let lname = fresh_link_name(&format!("{nname}_{ep}"), &mut taken);
+                        edits.push(doc.edit(ID, &dotted, kr, "link".to_string()));
+                        edits.push(doc.edit(ID, &dotted, vs..ve, lname.clone()));
+                        links.push((lname, value, dotted));
+                    }
                 }
             }
         }
@@ -2218,89 +2251,144 @@ fn use_implicit(doc: &Doc) -> Vec<Edit> {
         if add.is_empty() {
             continue;
         }
-        let upath = with(&level, &["use"]);
-        let entry = |n: &str| format!("{n}: \"^1\"");
-        let edit = if let Some(ur) = doc.key(&upath) {
-            if doc.src.as_bytes().get(doc.value_start(&ur)) == Some(&b'{') {
-                // `use: { a: "^1" }`: before the closing brace.
-                let vs = doc.value_start(&ur);
-                let ve = doc.inline_value_end(vs, false);
-                let b = doc.src.as_bytes();
-                if b.get(vs) != Some(&b'{') || ve < 2 || b[ve - 1] != b'}' {
-                    doc.skip(ID, &dotted_level, "a `use:` that is not a map");
-                    continue;
-                }
-                let mut at = ve - 1;
-                while at > vs + 1 && b[at - 1] == b' ' {
-                    at -= 1;
-                }
-                let empty = doc.src[vs + 1..at].trim().is_empty();
-                let text: Vec<String> = add.iter().map(|n| entry(n)).collect();
-                let text = if empty {
-                    format!(" {} ", text.join(", "))
-                } else {
-                    format!(", {}", text.join(", "))
-                };
-                doc.edit(ID, &dotted_level, at..at, text)
+        let dotted = dotted_level.clone();
+        if let Some(edit) = add_use_entries(doc, ID, &level, &dotted, &add) {
+            out.push(edit);
+        }
+    }
+    out
+}
+
+/// S3 (T3): `integrity_levels:` is the scale of a reference profile, named
+/// by `use:`. The list must equal the profile's scale exactly; the profile
+/// then derives the same criticality (both bundled profiles' maps are the
+/// thirds map an inline scale used).
+fn integrity_levels_use(doc: &Doc) -> Vec<Edit> {
+    const ID: &str = "integrity-levels-use";
+    let reference = crate::profile::reference();
+    let mut out = Vec::new();
+    for (level, y) in manifest_levels(doc) {
+        let Some(scale) = yaml_strings(&y["integrity_levels"]) else {
+            continue;
+        };
+        let kpath = with(&level, &["integrity_levels"]);
+        let dotted = kpath.join(".");
+        let Some(p) = reference.iter().find(|p| p.scale == scale) else {
+            doc.skip(
+                ID,
+                &dotted,
+                "no reference profile has this scale: write it as a profile file \
+                 (`<name>.profile.yaml`, `scale:` and `criticality:`) beside the contract, \
+                 `use:` it, and delete this key",
+            );
+            continue;
+        };
+        let used: Vec<String> = y["use"]
+            .as_hash()
+            .map(|h| h.keys().filter_map(key_str).collect())
+            .unwrap_or_default();
+        let Some(del) = doc.entry_range(&kpath) else {
+            doc.skip(ID, &dotted, "cannot delete the key");
+            continue;
+        };
+        if !used.iter().any(|u| *u == p.name) {
+            let Some(add) = add_use_entries(doc, ID, &level, &dotted, &[p.name.as_str()]) else {
+                continue;
+            };
+            out.push(add);
+        }
+        out.push(doc.edit(ID, &dotted, del, String::new()));
+    }
+    out
+}
+
+/// Add `<name>: "^1"` to a level's `use:` for each of `add`, creating the
+/// section after the header when the level has none. `None` (with a skip
+/// recorded) when the file's shape is not one this can edit.
+fn add_use_entries(
+    doc: &Doc,
+    id: &'static str,
+    level: &[String],
+    dotted: &str,
+    add: &[&str],
+) -> Option<Edit> {
+    let upath = with(level, &["use"]);
+    let entry = |n: &str| format!("{n}: \"^1\"");
+    let edit = if let Some(ur) = doc.key(&upath) {
+        if doc.src.as_bytes().get(doc.value_start(&ur)) == Some(&b'{') {
+            // `use: { a: "^1" }`: before the closing brace.
+            let vs = doc.value_start(&ur);
+            let ve = doc.inline_value_end(vs, false);
+            let b = doc.src.as_bytes();
+            if b.get(vs) != Some(&b'{') || ve < 2 || b[ve - 1] != b'}' {
+                doc.skip(id, &dotted, "a `use:` that is not a map");
+                return None;
+            }
+            let mut at = ve - 1;
+            while at > vs + 1 && b[at - 1] == b' ' {
+                at -= 1;
+            }
+            let empty = doc.src[vs + 1..at].trim().is_empty();
+            let text: Vec<String> = add.iter().map(|n| entry(n)).collect();
+            let text = if empty {
+                format!(" {} ", text.join(", "))
             } else {
-                let Some(ci) = doc.child_indent(&ur) else {
-                    doc.skip(ID, &dotted_level, "an empty `use:`");
-                    continue;
-                };
-                let at = doc.block_end(&ur);
-                let mut text: String = add
-                    .iter()
-                    .map(|n| format!("{}{}\n", " ".repeat(ci), entry(n)))
-                    .collect();
-                if at > 0 && doc.src.as_bytes()[at - 1] != b'\n' {
-                    text.insert(0, '\n');
-                }
-                doc.edit(ID, &dotted_level, at..at, text)
-            }
+                format!(", {}", text.join(", "))
+            };
+            doc.edit(id, &dotted, at..at, text)
         } else {
-            // A new `use:` beside the level's first key: after the header
-            // (`version:`, `rlm:`) at the root, else before the level's
-            // first key.
-            let first = doc
-                .keys
-                .iter()
-                .filter(|(p, _)| p.len() == level.len() + 1 && p.starts_with(&level))
-                .map(|(p, r)| (r.clone(), p.clone()))
-                .min_by_key(|(r, _)| r.start);
-            let Some((fr, _)) = first else {
-                doc.skip(
-                    ID,
-                    &dotted_level,
-                    "the level has no key to place `use:` beside",
-                );
-                continue;
+            let Some(ci) = doc.child_indent(&ur) else {
+                doc.skip(id, &dotted, "an empty `use:`");
+                return None;
             };
-            if !doc.starts_line(&fr) {
-                doc.skip(ID, &dotted_level, "a flow-mapping level");
-                continue;
-            }
-            let col = fr.start - doc.line_start(fr.start);
-            let header = ["version", "rlm"]
+            let at = doc.block_end(&ur);
+            let mut text: String = add
                 .iter()
-                .filter_map(|k| doc.key(&with(&level, &[k])))
-                .filter(|r| doc.starts_line(r))
-                .max_by_key(|r| r.start);
-            let at = match header {
-                Some(hr) => doc.block_end(&hr),
-                None => doc.line_start(fr.start),
-            };
-            let mut text = format!("{}use:\n", " ".repeat(col));
-            for n in &add {
-                text.push_str(&format!("{}{}\n", " ".repeat(col + 2), entry(n)));
-            }
+                .map(|n| format!("{}{}\n", " ".repeat(ci), entry(n)))
+                .collect();
             if at > 0 && doc.src.as_bytes()[at - 1] != b'\n' {
                 text.insert(0, '\n');
             }
-            doc.edit(ID, &dotted_level, at..at, text)
+            doc.edit(id, &dotted, at..at, text)
+        }
+    } else {
+        // A new `use:` beside the level's first key: after the header
+        // (`version:`, `rlm:`) at the root, else before the level's
+        // first key.
+        let first = doc
+            .keys
+            .iter()
+            .filter(|(p, _)| p.len() == level.len() + 1 && p.starts_with(level))
+            .map(|(p, r)| (r.clone(), p.clone()))
+            .min_by_key(|(r, _)| r.start);
+        let Some((fr, _)) = first else {
+            doc.skip(id, &dotted, "the level has no key to place `use:` beside");
+            return None;
         };
-        out.push(edit);
-    }
-    out
+        if !doc.starts_line(&fr) {
+            doc.skip(id, &dotted, "a flow-mapping level");
+            return None;
+        }
+        let col = fr.start - doc.line_start(fr.start);
+        let header = ["version", "rlm"]
+            .iter()
+            .filter_map(|k| doc.key(&with(level, &[k])))
+            .filter(|r| doc.starts_line(r))
+            .max_by_key(|r| r.start);
+        let at = match header {
+            Some(hr) => doc.block_end(&hr),
+            None => doc.line_start(fr.start),
+        };
+        let mut text = format!("{}use:\n", " ".repeat(col));
+        for n in add {
+            text.push_str(&format!("{}{}\n", " ".repeat(col + 2), entry(n)));
+        }
+        if at > 0 && doc.src.as_bytes()[at - 1] != b'\n' {
+            text.insert(0, '\n');
+        }
+        doc.edit(id, &dotted, at..at, text)
+    };
+    Some(edit)
 }
 
 /// The `param` keys of the bundled extensions: (extension, context
@@ -3191,6 +3279,73 @@ topics:
   /flow: { type: T, max_transport: 3ms }
 ";
 
+    /// rlm v0.3.24: an inline scale that is a reference profile's becomes
+    /// `use:` of it; another scale is reported.
+    #[test]
+    fn integrity_levels_become_use_of_the_profile() {
+        let src = "\
+version: 1
+use:
+  vehicle.braking: \"^1\"
+
+integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+hazards:
+  h: { integrity: ASIL_B, ftti: 1s }
+";
+        let m = migrate_str(src).unwrap();
+        assert!(m.output.contains("  iso26262: \"^1\"\n"), "{}", m.output);
+        assert!(!m.output.contains("integrity_levels"), "{}", m.output);
+        let src = "version: 1\nintegrity_levels: [low, high]\nhazards: {}\n";
+        let m = migrate_str(src).unwrap();
+        assert!(m.output.contains("integrity_levels"), "{}", m.output);
+        assert!(
+            m.skipped.iter().any(|s| s.contains("no reference profile")),
+            "{:?}",
+            m.skipped
+        );
+    }
+
+    /// rlm v0.3.24: a client's own transport becomes the link of its
+    /// request leg; a service's is reported, since its clients may be in
+    /// another contract.
+    #[test]
+    fn a_clients_transport_becomes_a_link_and_a_services_is_reported() {
+        let src = "\
+version: 1
+nodes:
+  caller:
+    cli:
+      trigger: { max_transport: 2ms, timeout: 50ms }
+services:
+  /trigger: { type: T, max_transport: 3ms }
+";
+        let m = migrate_str(src).unwrap();
+        let want = "\
+version: 1
+nodes:
+  caller:
+    cli:
+      trigger: { link: caller_trigger, timeout: 50ms }
+services:
+  /trigger: { type: T, max_transport: 3ms }
+
+links:
+  caller_trigger: { max_transport: 2ms }
+";
+        assert_eq!(m.output, want);
+        assert!(
+            m.skipped
+                .iter()
+                .any(|s| s.contains("services./trigger.max_transport")),
+            "{:?}",
+            m.skipped
+        );
+        let back = crate::parse_manifest_str(&m.output).unwrap();
+        let cli = &back.nodes["caller"].cli["trigger"];
+        assert_eq!(cli.link.as_deref(), Some("caller_trigger"));
+        assert_eq!(crate::OptBound::ms(&cli.max_transport), Some(2.0));
+    }
+
     #[test]
     fn s1_a_topic_transport_becomes_one_link_and_an_inline_one_its_own() {
         let m = migrate_str(TRANSPORT).unwrap();
@@ -3679,7 +3834,22 @@ nodes:
             "{:?}",
             m.edits
         );
-        assert!(!run(&m.output).changed());
+        // A second run takes the next step (v0.3.24): the scale is the
+        // profile's, already used.
+        let again = run(&m.output);
+        assert!(
+            again
+                .edits
+                .iter()
+                .all(|e| e.rewrite == "integrity-levels-use"),
+            "{:?}",
+            again.edits
+        );
+        assert!(
+            !again.output.contains("integrity_levels"),
+            "{}",
+            again.output
+        );
         // Both spellings: the parser refuses it, migrate leaves it.
         let both = "version: 1\nhazards:\n  h:\n    severity: QM\n    integrity: QM\n";
         let m = run(both);
