@@ -516,6 +516,28 @@ pub struct NodeInstance {
     /// is part of the launch author's intent. Nodes/containers only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvVar>,
+    /// Variables the process starts WITHOUT (`<unset_env name=/>`,
+    /// `UnsetEnvironmentVariable`), in effect where the node was declared:
+    /// launch deletes them from its environment, which every process it
+    /// starts inherits, so an inherited variable (one the launcher's own
+    /// shell set) is removed too. A later `<env>`/`<set_env>` of the same
+    /// name in the same scope sets it again, and the name leaves this list.
+    /// Nodes/containers only (v0.3.28; play_launch issue #0085).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_unset: Vec<String>,
+    /// `launch-prefix` / `prefix=`: a command line the process is started
+    /// UNDER (`gdb -ex run --args`, `env -u DISPLAY`, `valgrind`), as
+    /// written after substitution. The realizer splits it as a shell would
+    /// (launch's `shlex.split`) and prepends it to the process's argv. It
+    /// stays with the process when a realizer replaces its executable
+    /// (play_launch's own container binary). Nodes/containers only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_prefix: Option<String>,
+    /// `cwd`: the working directory the process starts in, after
+    /// substitution. `None` is the launcher's own. Nodes/containers and raw
+    /// executables only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 
     // -- Phase 46.3a — close the spawn-completeness gaps found while
     // auditing whether the model can drive a process runtime (Wave B)
@@ -3373,6 +3395,32 @@ exec: detector_node
         assert!(yaml.contains("carla-server"), "{yaml}");
         let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(raw_exec, reparsed);
+    }
+
+    /// v0.3.28: what the process starts in and under -- the variables it
+    /// starts without, the command line it runs under, its working
+    /// directory -- round-trip, and an old model has none of them.
+    #[test]
+    fn node_instance_start_fields_roundtrip() {
+        let node = NodeInstance {
+            scope: "/".into(),
+            pkg: Some("rclcpp_components".into()),
+            exec: Some("component_container".into()),
+            env_unset: vec!["DISPLAY".into(), "LD_PRELOAD".into()],
+            launch_prefix: Some("env -u DISPLAY".into()),
+            cwd: Some("/home/u/bags".into()),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&node).unwrap();
+        for key in ["env_unset:", "launch_prefix:", "cwd:"] {
+            assert!(yaml.contains(key), "{key}: {yaml}");
+        }
+        let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(node, reparsed);
+        let plain = serde_yaml_ng::to_string(&NodeInstance::default()).unwrap();
+        for key in ["env_unset", "launch_prefix", "cwd"] {
+            assert!(!plain.contains(key), "{key}: {plain}");
+        }
     }
 
     /// Backward-compat: the Phase 46.3a fields default to empty and are

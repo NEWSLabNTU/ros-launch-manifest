@@ -6,6 +6,25 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.28 - 2026-11-17
+
+What a process starts in and under reaches the model (play_launch issues
+#0085 and #27). GRAMMAR_VERSION 0.3.28; workspace version 0.12.0 (API:
+fields added to `NodeInstance`). The contract grammar is unchanged.
+
+- **`NodeInstance::env_unset`**: the variables the process starts without
+  (`<unset_env>`, `UnsetEnvironmentVariable`), inherited ones included,
+  in effect where the node was declared.
+- **`NodeInstance::launch_prefix`**: `launch-prefix` / `prefix=`, the
+  command line the process runs under, as written after substitution; the
+  realizer splits it as a shell would and prepends it, also when it
+  replaces the process's executable.
+- **`NodeInstance::cwd`**: the working directory the process starts in.
+- All three are additive (`serde(default)`), so an older model reads
+  unchanged; a reader before v0.3.28 drops them, which is the behaviour it
+  had.
+- `rule_names::PUBLISHED` gains v0.3.27 (play_launch 0.36.0).
+
 ## v0.3.27 - 2026-11-16
 
 The S3 old spellings are refused (play_launch phase 104 S3, R+1 and R+2 in
