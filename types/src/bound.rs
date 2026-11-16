@@ -467,14 +467,6 @@ pub const BOUND_KEYS: &[BoundKey] = &[
         Form::Map,
     ),
     bk(
-        "max_transport",
-        Context::Service,
-        BoundKind::Transport,
-        Limit::Max,
-        "duration",
-        Form::Map,
-    ),
-    bk(
         "max_response",
         Context::SrvEndpoint,
         BoundKind::Response,
@@ -720,14 +712,6 @@ impl crate::types::Manifest {
                 put(&mut out, &at, "drop.max_consecutive", &dr.max_consecutive);
             }
         }
-        for (sv, d) in &self.services {
-            put(
-                &mut out,
-                &format!("services.{sv}"),
-                "max_transport",
-                &d.max_transport,
-            );
-        }
         for (p, pd) in &self.paths {
             path(&mut out, &format!("event_chains.{p}"), pd);
         }
@@ -833,9 +817,9 @@ mod tests {
              modes:\n  m: { requires: [/a], min_dwell: { duration: 10s, param: n.t }, within: 20s }\n\
              topics:\n  /a: { type: std_msgs/msg/Empty, \
              drop: { max_count: 1 / 10, max_consecutive: 2 } }\n\
-             services:\n  /s: { type: x/srv/S, max_transport: 1ms }\n\
+             services:\n  /s: { type: x/srv/S }\n\
              links:\n  l: { max_transport: 3ms }\n\
-             nodes:\n  n:\n    pub:\n      o: { min_rate_hz: 10, max_rate_hz: 20 }\n\
+             nodes:\n  n:\n    pub:\n      o: { min_rate: 10Hz, max_rate: 20Hz }\n\
              \x20   sub:\n      a: { max_age: { duration: 500ms, param: t }, link: l, \
              on_violation: { reaction: r, within: 20ms } }\n\
              \x20   srv:\n      s: { max_response: 5ms }\n\
@@ -844,7 +828,7 @@ mod tests {
              \x20       miss: { tolerate: 2 / 100, consecutive: 1 }\n\
              \x20       safe_state: { emits: o, settle: { decel: d, jerk: j, duration: 2s, \
              response: 300ms } }\n\
-             \x20     t:\n        trigger: { timer: { rate_hz: 10, jitter: 5ms } }\n\
+             \x20     t:\n        trigger: { timer: { rate: 10Hz, jitter: 5ms } }\n\
              \x20       output: [o]\n        safe_state: { emits: o, settle: 1s }\n",
         )
         .unwrap();
@@ -876,9 +860,11 @@ mod tests {
                 row.key
             );
         }
-        assert_eq!(bounds.len(), 22, "{spelled:?}");
-        assert!(bounds.iter().any(|(p, _)| p == "services./s.max_transport"));
+        assert_eq!(bounds.len(), 21, "{spelled:?}");
         let get = |k: &str| bounds.iter().find(|(p, _)| p == k).unwrap().1;
+        // An endpoint's transport is refused as a key (v0.3.27) and comes
+        // from the link it names; the bound is still the endpoint's.
+        assert_eq!(get("nodes.n.sub.a.max_transport").ms(), Some(3.0));
         assert_eq!(
             get("modes.m.min_dwell").param,
             Some(ParamBinding::Node(ParamRef {

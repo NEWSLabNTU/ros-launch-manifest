@@ -98,7 +98,7 @@ topics:
     type: DetectedObjects
     pub: [centerpoint/objects]
     sub: []
-paths:
+event_chains:
   main:
     trigger: { input: [raw_data] }
     output: [detections]
@@ -303,12 +303,12 @@ nodes:
   driver:
     pub:
       pointcloud:
-        min_rate_hz: 5
+        min_rate: 5Hz
 topics:
   pointcloud:
     type: PointCloud2
     pub: [driver/pointcloud]
-    rate_hz: 10
+    rate: 10Hz
 "#;
     let errs = errors(yaml);
     assert!(
@@ -326,12 +326,12 @@ nodes:
   consumer:
     sub:
       input:
-        min_rate_hz: 15
+        min_rate: 15Hz
 topics:
   data:
     type: String
     sub: [consumer/input]
-    rate_hz: 10
+    rate: 10Hz
 "#;
     let errs = errors(yaml);
     assert!(
@@ -349,17 +349,17 @@ nodes:
   driver:
     pub:
       pointcloud:
-        min_rate_hz: 15
+        min_rate: 15Hz
   consumer:
     sub:
       input:
-        min_rate_hz: 5
+        min_rate: 5Hz
 topics:
   pointcloud:
     type: PointCloud2
     pub: [driver/pointcloud]
     sub: [consumer/input]
-    rate_hz: 10
+    rate: 10Hz
 "#;
     let errs = errors(yaml);
     assert!(errs.is_empty(), "unexpected errors: {errs:?}");
@@ -387,7 +387,7 @@ topics:
     type: String
     pub: [a/output]
     sub: [b/input]
-paths:
+event_chains:
   main:
     trigger: { input: [raw] }
     output: [out]
@@ -496,7 +496,7 @@ topics:
     drop:
       max_count: 2 / 100
       max_consecutive: 3
-paths:
+event_chains:
   main:
     trigger: { input: [raw] }
     output: [out]
@@ -522,13 +522,13 @@ nodes:
   consumer:
     sub:
       data:
-        min_rate_hz: 10
+        min_rate: 10Hz
 topics:
   sensor:
     type: PointCloud2
     pub: []
     sub: [consumer/data]
-    rate_hz: 10
+    rate: 10Hz
     drop:
       max_count: 50 / 100
 "#;
@@ -572,7 +572,7 @@ nodes:
   cropbox:
     sub:
       input:
-        min_rate_hz: 10
+        min_rate: 10Hz
     pub: [output]
     paths:
       main: { trigger: { input: [input] }, output: [output], max_latency: 5ms }
@@ -585,7 +585,7 @@ nodes:
     sub: [pointcloud]
     pub:
       objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [pointcloud] }
@@ -600,13 +600,13 @@ topics:
     type: PointCloud2
     pub: [cropbox/output]
     sub: [ground/input]
-    rate_hz: 10
+    rate: 10Hz
   no_ground:
     type: PointCloud2
     pub: [ground/output]
     sub: [centerpoint/pointcloud]
-    rate_hz: 10
-paths:
+    rate: 10Hz
+event_chains:
   main:
     trigger: { input: [raw_data] }
     output: [detections]
@@ -671,12 +671,12 @@ nodes:
   driver:
     pub:
       pointcloud:
-        min_rate_hz: 5
+        min_rate: 5Hz
 topics:
   pointcloud:
     type: PointCloud2
     pub: [driver/pointcloud]
-    rate_hz: 10
+    rate: 10Hz
 "#;
     let parsed = parse_manifest_str_with_spans(yaml).unwrap();
     let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
@@ -704,7 +704,7 @@ nodes:
       main:
         output: [out]
         max_latency: 200ms
-paths:
+event_chains:
   main:
     trigger: { input: [raw] }
     output: [out]
@@ -1144,7 +1144,7 @@ nodes:
   a:
     sub: [input]
     pub: [output]
-paths:
+event_chains:
   debug_path:
     if: "false"
     trigger: { input: [raw] }
@@ -2053,13 +2053,13 @@ topics:
       - ndt_node/pose
       - eagleye_node/pose
     sub: [ekf/pose_in]
-    rate_hz: 10
+    rate: 10Hz
   twist:
     type: geometry_msgs/msg/TwistStamped
     pub: [twist_node/twist]
     sub: []
 
-paths:
+event_chains:
   main:
     trigger: { input: [pointcloud] }
     output: [localization]
@@ -2137,7 +2137,7 @@ nodes:
     if: $(var use_sensor)
     pub:
       pointcloud:
-        min_rate_hz: 10
+        min_rate: 10Hz
   processor:
     sub: [input]
     pub: [output]
@@ -2147,7 +2147,7 @@ topics:
     type: $(var sensor_topic)
     pub: [sensor_driver/pointcloud]
     sub: [processor/input]
-    rate_hz: 10
+    rate: 10Hz
 "#;
     let m = parse_manifest_str(yaml).unwrap();
 

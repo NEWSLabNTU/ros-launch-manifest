@@ -2384,7 +2384,7 @@ fn integrity_levels_use(doc: &Doc) -> Vec<Edit> {
             doc.skip(ID, &dotted, "cannot delete the key");
             continue;
         };
-        if !used.iter().any(|u| *u == p.name) {
+        if !used.contains(&p.name) {
             let Some(add) = add_use_entries(doc, ID, &level, &dotted, &[p.name.as_str()]) else {
                 continue;
             };
@@ -2414,7 +2414,7 @@ fn add_use_entries(
             let ve = doc.inline_value_end(vs, false);
             let b = doc.src.as_bytes();
             if b.get(vs) != Some(&b'{') || ve < 2 || b[ve - 1] != b'}' {
-                doc.skip(id, &dotted, "a `use:` that is not a map");
+                doc.skip(id, dotted, "a `use:` that is not a map");
                 return None;
             }
             let mut at = ve - 1;
@@ -2428,10 +2428,10 @@ fn add_use_entries(
             } else {
                 format!(", {}", text.join(", "))
             };
-            doc.edit(id, &dotted, at..at, text)
+            doc.edit(id, dotted, at..at, text)
         } else {
             let Some(ci) = doc.child_indent(&ur) else {
-                doc.skip(id, &dotted, "an empty `use:`");
+                doc.skip(id, dotted, "an empty `use:`");
                 return None;
             };
             let at = doc.block_end(&ur);
@@ -2442,7 +2442,7 @@ fn add_use_entries(
             if at > 0 && doc.src.as_bytes()[at - 1] != b'\n' {
                 text.insert(0, '\n');
             }
-            doc.edit(id, &dotted, at..at, text)
+            doc.edit(id, dotted, at..at, text)
         }
     } else {
         // A new `use:` beside the level's first key: after the header
@@ -2455,11 +2455,11 @@ fn add_use_entries(
             .map(|(p, r)| (r.clone(), p.clone()))
             .min_by_key(|(r, _)| r.start);
         let Some((fr, _)) = first else {
-            doc.skip(id, &dotted, "the level has no key to place `use:` beside");
+            doc.skip(id, dotted, "the level has no key to place `use:` beside");
             return None;
         };
         if !doc.starts_line(&fr) {
-            doc.skip(id, &dotted, "a flow-mapping level");
+            doc.skip(id, dotted, "a flow-mapping level");
             return None;
         }
         let col = fr.start - doc.line_start(fr.start);
@@ -2479,7 +2479,7 @@ fn add_use_entries(
         if at > 0 && doc.src.as_bytes()[at - 1] != b'\n' {
             text.insert(0, '\n');
         }
-        doc.edit(id, &dotted, at..at, text)
+        doc.edit(id, dotted, at..at, text)
     };
     Some(edit)
 }
@@ -2919,20 +2919,11 @@ nodes:
         );
         assert!(!parsed.nodes["n"].cli["op"].on_rejected_enters);
         assert!(!migrate_str(&m.output).unwrap().changed());
-        // The old file reads, each old key noted for the consumer's warning.
-        let old = crate::parse::parse_manifest_str(src).unwrap();
-        let noted: Vec<_> = old
-            .deprecated_spellings
-            .iter()
-            .map(|d| (d.at.as_str(), d.old, d.new))
-            .collect();
-        assert_eq!(
-            noted,
-            vec![
-                ("hazards.blind.enters", "enters", "leaves"),
-                ("functions", "functions", "capabilities"),
-            ]
-        );
+        // The old file is refused (v0.3.27), naming the new spelling.
+        let e = crate::parse::parse_manifest_str(src)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("refused since v0.3.27"), "{e}");
     }
 
     /// S3 (v0.3.20): a manifest level's `paths:` and a mode override's
@@ -3000,19 +2991,12 @@ includes:
             parsed.modes["m"].overrides[0].target,
             "event_chains.e2e.max_latency"
         );
-        let old = crate::parse::parse_manifest_str(&src).unwrap();
-        let noted: Vec<_> = old
-            .deprecated_spellings
-            .iter()
-            .map(|d| d.at.as_str())
-            .collect();
-        assert_eq!(
-            noted,
-            vec!["includes.sub.paths", "paths", "modes.m.overrides.paths"]
-        );
-        assert_eq!(
-            old.modes["m"].overrides[0].target,
-            "event_chains.e2e.max_latency"
+        let e = crate::parse::parse_manifest_str(&src)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("refused since v0.3.27") && e.contains("event_chains"),
+            "{e}"
         );
         assert!(!migrate_str(&m.output).unwrap().changed());
     }
@@ -3477,7 +3461,20 @@ links:
             "{:?}",
             m.skipped
         );
-        let back = crate::parse_manifest_str(&m.output).unwrap();
+        // The service's value is left for the author, and refused (v0.3.27)
+        // until it is moved onto a link its clients name.
+        let e = crate::parse_manifest_str(&m.output)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("services./trigger.max_transport") && e.contains("link"),
+            "{e}"
+        );
+        let back = crate::parse_manifest_str(
+            &m.output
+                .replace("{ type: T, max_transport: 3ms }", "{ type: T }"),
+        )
+        .unwrap();
         let cli = &back.nodes["caller"].cli["trigger"];
         assert_eq!(cli.link.as_deref(), Some("caller_trigger"));
         assert_eq!(crate::OptBound::ms(&cli.max_transport), Some(2.0));

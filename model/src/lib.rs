@@ -55,7 +55,14 @@ use serde::{Deserialize, Serialize};
 ///   `execution.tiers` is `execution.tasks` (the entries are unchanged).
 ///   [`SystemModel::from_yaml_str`] rewrites the old key of a schema-4 (or
 ///   older) model on read, for good.
-pub const SCHEMA_VERSION: u32 = 5;
+/// - **6** (v0.3.27, play_launch phase 104 S3): `contracts.scope_paths` is
+///   `contracts.event_chains` (the contract's word since v0.3.20; the last
+///   retired word in a model field), and a mode override's table
+///   `scope_paths` is `event_chains`. The old names are read for good
+///   (serde aliases). A response check's `drop_mps`, the copy of
+///   `decrease` kept for readers before v0.3.25, is gone: a model carrying
+///   it is read with its value as `decrease` when it states none.
+pub const SCHEMA_VERSION: u32 = 6;
 
 /// Errors loading or saving a model.
 #[derive(Debug, thiserror::Error)]
@@ -98,6 +105,7 @@ impl SystemModel {
         let mut value: serde_yaml_ng::Value = serde_yaml_ng::from_str(s)?;
         upgrade_tiers_to_tasks(&mut value)?;
         upgrade_legacy_duration_keys(&mut value);
+        upgrade_early_drop(&mut value);
         let mut model: SystemModel = serde_yaml_ng::from_value(value)?;
         if model.meta.version > SCHEMA_VERSION {
             return Err(ModelError::UnsupportedVersion {
@@ -166,6 +174,28 @@ fn upgrade_tiers_to_tasks(doc: &mut serde_yaml_ng::Value) -> Result<(), ModelErr
     }
     exec.insert(serde_yaml_ng::Value::String("tasks".to_string()), tiers);
     Ok(())
+}
+
+/// Schema 6: a response check (`early`, the map holding `within_ms`) no
+/// longer carries `drop_mps`. A model before v0.3.25 carries it alone, and
+/// its value is the decrease; one from v0.3.25 or v0.3.26 carries both.
+fn upgrade_early_drop(doc: &mut serde_yaml_ng::Value) {
+    use serde_yaml_ng::Value;
+    match doc {
+        Value::Mapping(m) => {
+            if m.contains_key("within_ms")
+                && let Some(v) = m.remove("drop_mps")
+                && !m.contains_key("decrease")
+            {
+                m.insert(Value::String("decrease".to_string()), v);
+            }
+            for (_, v) in m.iter_mut() {
+                upgrade_early_drop(v);
+            }
+        }
+        Value::Sequence(s) => s.iter_mut().for_each(upgrade_early_drop),
+        _ => {}
+    }
 }
 
 /// A model written before the Duration migration spelled the task table's
@@ -957,9 +987,14 @@ pub struct Contracts {
     /// Node processing paths (take → publish).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_paths: BTreeMap<String, PathContract>,
-    /// Scope end-to-end paths (entry topic → exit topic within the subtree).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub scope_paths: BTreeMap<String, PathContract>,
+    /// Event chains (entry topic → exit topic within the subtree): the
+    /// contract's `event_chains:`. `scope_paths` before schema 6.
+    #[serde(
+        default,
+        alias = "scope_paths",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub event_chains: BTreeMap<String, PathContract>,
     /// Which of a node's paths may not run concurrently (phase 67), keyed by
     /// node FQN.
     ///
@@ -1081,7 +1116,7 @@ pub struct ModeContract {
     /// Keys into `modes`, in fallback order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallback: Vec<String>,
-    /// Key into `scope_paths`.
+    /// Key into `event_chains`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
     /// `(target, value)` pairs: a requirement named by its contract path and
@@ -1289,8 +1324,9 @@ pub struct ResolvedOverride {
 pub enum OverrideTable {
     /// `contracts.node_paths`.
     NodePaths,
-    /// `contracts.scope_paths`.
-    ScopePaths,
+    /// `contracts.event_chains` (`scope_paths` before schema 6).
+    #[serde(alias = "scope_paths")]
+    EventChains,
     /// `contracts.pub_endpoints`.
     PubEndpoints,
     /// `contracts.sub_endpoints`.
@@ -1326,7 +1362,7 @@ pub struct HazardContract {
     pub ftti_ms: Option<f64>,
     /// Where the hazard's reaction starts: a key into `modes` when the
     /// hazard enters a mode (the contract's `enters:`, or the deprecated
-    /// `reaction: <mode>`), else a key into `scope_paths` (the contract's
+    /// `reaction: <mode>`), else a key into `event_chains` (the contract's
     /// `reaction: <path>`, one rung). The model keeps one field for both, so
     /// a reader resolves it the way the checker does: a mode first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1564,7 +1600,7 @@ pub struct SuperviseContract {
     pub route_deadline_ms: f64,
     /// The path a miss starts, by its key in this model: a node path's key
     /// in `contracts.node_paths`, or a scope path's in
-    /// `contracts.scope_paths` (an `enters:` mode lowers to its reaction
+    /// `contracts.event_chains` (an `enters:` mode lowers to its reaction
     /// scope path).
     pub reaction: String,
     /// What checks the budget.
@@ -1703,15 +1739,11 @@ pub struct EarlyCheckContract {
     /// From the command to the check, ms (the observation not included).
     pub within_ms: f64,
     /// v0.3.25: the least decrease of the observed field by then, in SI
-    /// units (REP 103: a ROS field is SI already). 0 in a model written
-    /// before v0.3.25, which carries only `drop_mps`.
+    /// units (REP 103: a ROS field is SI already). A model before v0.3.25
+    /// carries it as `drop_mps` (m/s), read here by
+    /// [`SystemModel::from_yaml_str`].
     #[serde(default)]
     pub decrease: f64,
-    /// The least speed shed by then, m/s: `decrease` when it is a speed,
-    /// else 0. Kept until the next model schema, for readers before
-    /// v0.3.25; read `decrease`.
-    #[serde(default)]
-    pub drop_mps: f64,
 }
 
 impl Contracts {
@@ -1722,7 +1754,7 @@ impl Contracts {
             && self.cli_endpoints.is_empty()
             && self.action_cli_endpoints.is_empty()
             && self.node_paths.is_empty()
-            && self.scope_paths.is_empty()
+            && self.event_chains.is_empty()
             && self.topics.is_empty()
             && self.externals.is_empty()
             && self.hazards.is_empty()
@@ -2941,13 +2973,22 @@ mod tests {
             s.early = Some(EarlyCheckContract {
                 within_ms: 1019.0,
                 decrease: 0.15,
-                drop_mps: 0.15,
             });
         }
-        // v0.3.25: a model before `decrease` still reads, as 0.
-        let old: EarlyCheckContract =
-            serde_yaml_ng::from_str("within_ms: 1019.0\ndrop_mps: 0.15\n").unwrap();
-        assert_eq!(old.decrease, 0.0);
+        // Schema 6: `drop_mps` is read as the decrease when the model
+        // states none, and dropped when it states both.
+        for (early, want) in [
+            ("{ within_ms: 1019.0, drop_mps: 0.15 }", 0.15),
+            ("{ within_ms: 1019.0, decrease: 0.2, drop_mps: 0.2 }", 0.2),
+        ] {
+            let mut v: serde_yaml_ng::Value =
+                serde_yaml_ng::from_str(&format!("a: [{{ early: {early} }}]")).unwrap();
+            upgrade_early_drop(&mut v);
+            let e: EarlyCheckContract =
+                serde_yaml_ng::from_value(v["a"][0]["early"].clone()).unwrap();
+            assert_eq!(e.decrease, want);
+            assert!(v["a"][0]["early"].get("drop_mps").is_none());
+        }
         let y = serde_yaml_ng::to_string(&sv2).unwrap();
         assert_eq!(
             serde_yaml_ng::from_str::<SafeStateContract>(&y).unwrap(),

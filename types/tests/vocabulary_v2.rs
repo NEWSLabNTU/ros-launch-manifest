@@ -26,7 +26,7 @@ fn trigger_timer_serializes_as_spec_shape() {
 #[test]
 fn trigger_timer_carries_its_release_jitter() {
     let m = parse_manifest_str(
-        "nodes:\n  h:\n    pub:\n      out: {}\n    paths:\n      tick:\n        trigger: { timer: { rate_hz: 10, jitter: 18ms } }\n        output: [out]\n",
+        "nodes:\n  h:\n    pub:\n      out: {}\n    paths:\n      tick:\n        trigger: { timer: { rate: 10Hz, jitter: 18ms } }\n        output: [out]\n",
     )
     .unwrap();
     let tick = &m.nodes["h"].paths["tick"];
@@ -44,7 +44,7 @@ fn trigger_timer_carries_its_release_jitter() {
         ("18", "jitter"),
     ] {
         let yaml = format!(
-            "nodes:\n  h:\n    paths:\n      tick:\n        trigger: {{ timer: {{ rate_hz: 10, jitter: {jitter} }} }}\n"
+            "nodes:\n  h:\n    paths:\n      tick:\n        trigger: {{ timer: {{ rate: 10Hz, jitter: {jitter} }} }}\n"
         );
         let err = parse_manifest_str(&yaml).expect_err(&yaml).to_string();
         assert!(err.contains(needle), "`{needle}` not in: {err}");
@@ -88,7 +88,7 @@ nodes:
         output: [control_cmd_out]
         max_latency: 5ms
       status_tick:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [gate_status]
   map_loader:
     pub: [map]
@@ -338,7 +338,7 @@ nodes:
     pub: [out]
     paths:
       p:
-        trigger: { timer: { rate_hz: 0 } }
+        trigger: { timer: { rate: 0Hz } }
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
@@ -351,7 +351,7 @@ nodes:
     pub: [out]
     paths:
       p:
-        trigger: { timer: { rate_hz: -5 } }
+        trigger: { timer: { rate: -5Hz } }
         output: [out]
 "#;
     assert!(parse_manifest_str(yaml_neg).is_err());
@@ -401,7 +401,7 @@ nodes:
     pub: [out]
     paths:
       p:
-        trigger: { timer: { rate_hz: 10 }, input: [a] }
+        trigger: { timer: { rate: 10Hz }, input: [a] }
         output: [out]
 "#;
     let err = parse_manifest_str(yaml).unwrap_err();
@@ -520,7 +520,7 @@ nodes:
     pub: [out]
     paths:
       p:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         sync: { policy: exact, max_interval: 10ms }
         output: [out]
 "#;
@@ -663,7 +663,7 @@ nodes:
   n:
     pub:
       out:
-        min_rate_hz: 10
+        min_rate: 10Hz
         jitter: 5ms
 "#;
     let err = parse_manifest_str(yaml).unwrap_err().to_string();

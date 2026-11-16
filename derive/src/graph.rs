@@ -5,7 +5,7 @@
 //! `ManifestIndex` onto the model: `structure.topics` endpoint refs are the
 //! edges, `node_paths` triggers and outputs attribute each hop to a path,
 //! `sub_endpoints.state` breaks cycles, `structure.scopes` gives the subtree
-//! and `scope_paths` the two ends. The arithmetic is unchanged -- series hops
+//! and `event_chains` the two ends. The arithmetic is unchanged -- series hops
 //! sum, a fork-join takes the slowest branch, a timer path costs one period
 //! plus its exec -- so the scope-path form and the chain form of one system
 //! keep agreeing. The WEIGHTS are per edge rather than per topic: a subscriber

@@ -589,7 +589,7 @@ nodes:
   lidar_driver:
     lifecycle: true
     pub:
-      pointcloud: { min_rate_hz: 10 }   # applies when driver is Active
+      pointcloud: { min_rate: 10Hz }   # applies when driver is Active
 ```
 
 Updated:

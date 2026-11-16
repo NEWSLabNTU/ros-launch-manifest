@@ -2,8 +2,8 @@
 #
 # Expected violations:
 #   [error]   qos-compat        — invalid durability "persistent"
-#   [error]   rate-hierarchy     — pub min_rate_hz (5) < topic rate_hz (10)
-#   [error]   rate-hierarchy     — topic rate_hz (8) < subscriber min_rate_hz (15)
+#   [error]   rate-hierarchy     — pub min_rate (5) < topic rate (10)
+#   [error]   rate-hierarchy     — topic rate (8) < subscriber min_rate (15)
 #   [error]   causal-dag         — cycle between node_a and node_b
 #   [error]   drop-sanity        — drop count N > window W (or other sanity issues)
 #   [warning] scope-budget       — scope latency may be less than sum of node latencies

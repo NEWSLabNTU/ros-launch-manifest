@@ -32,6 +32,7 @@ thread_local! {
 
 /// An old spelling read for one release (the S3 rename, v0.3.19); the
 /// consumer warns.
+#[allow(dead_code)] // the next rename's
 fn note_spelling(at: String, old: &'static str, new: &'static str) {
     VALUE_PASS.with(|p| {
         p.borrow_mut()
@@ -43,6 +44,7 @@ fn note_spelling(at: String, old: &'static str, new: &'static str) {
 /// The key `new`, or its old spelling `old` read for one release (noted
 /// for the consumer's `deprecated-spelling`). Returns the key the document
 /// wrote, `new` when it wrote neither; both is an error naming the new key.
+#[allow(dead_code)] // the next rename's
 fn spelled_key(
     doc: &Yaml,
     ctx: &str,
@@ -127,25 +129,11 @@ fn yaml_rate_at(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<f64>, ParseEr
     yaml_f64(doc, key, ctx)
 }
 
-/// The rate key `new` (written with a unit, `min_rate: 100Hz`, since
-/// v0.3.21), or its old spelling `old` (`min_rate_hz: 100`, a number of Hz,
-/// read for one release). Returns the key written and whether it is the
-/// new one; both is an error naming the new key.
-fn rate_key(
-    doc: &Yaml,
-    ctx: &str,
-    old: &'static str,
-    new: &'static str,
-) -> Result<(&'static str, bool), ParseError> {
-    let key = spelled_key(doc, ctx, old, new)?;
-    Ok((key, key == new))
-}
-
-/// A rate, Hz, at `doc[key]`: under a new rate key a frequency with its
-/// unit (`100Hz`, `1.5 kHz`, `$(param rate) Hz`), under an old `_hz` key a
-/// number of Hz.
-fn yaml_hz(doc: &Yaml, key: &str, ctx: &str, unit: bool) -> Result<Option<f64>, ParseError> {
-    if !unit || ref_text(&doc[key]).is_some() {
+/// A rate, Hz, at `doc[key]`: a frequency with its unit (`100Hz`,
+/// `1.5 kHz`, `$(param rate) Hz`; v0.3.21). A bare number is refused, so a
+/// rate cannot be read as a period.
+fn yaml_hz(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<f64>, ParseError> {
+    if ref_text(&doc[key]).is_some() {
         return yaml_rate_at(doc, key, ctx);
     }
     match &doc[key] {
@@ -600,12 +588,9 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         includes: parse_includes(doc, ctx)?,
         paths: parse_paths(doc, ctx, false)?,
         hazards: parse_hazards(doc, ctx)?,
-        integrity_levels: yaml_string_list(doc, "integrity_levels", ctx)?,
         functions: parse_functions(doc, ctx)?,
         modes: parse_modes(doc, ctx)?,
         independence: parse_independence(doc, ctx)?,
-        policy: parse_policy(doc, ctx)?,
-        supervision: parse_supervision_platform(doc, ctx)?,
         acknowledged: parse_acknowledged(doc, ctx)?,
     };
     check_qos_args(&manifest, ctx)?;
@@ -855,63 +840,6 @@ fn parse_links(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, LinkDecl>, Pars
     Ok(out)
 }
 
-/// `policy:` (phase 93): `{ unsupervised_measured: warn | error }`.
-fn parse_policy(doc: &Yaml, ctx: &str) -> Result<Option<Policy>, ParseError> {
-    let section = &doc["policy"];
-    if section.is_badvalue() {
-        return Ok(None);
-    }
-    let pctx = &format_path(ctx, "policy");
-    if !section.is_hash() {
-        return Err(type_err(
-            ctx,
-            "policy",
-            "`{ unsupervised_measured: warn | error }`",
-            section,
-        ));
-    }
-    reject_unknown_keys(section, pctx, Context::Policy)?;
-    let unsupervised_measured =
-        match yaml_string(section, "unsupervised_measured", pctx)?.as_deref() {
-            None => None,
-            Some("warn") => Some(PolicySeverity::Warn),
-            Some("error") => Some(PolicySeverity::Error),
-            Some(other) => {
-                return Err(field_err(
-                    pctx,
-                    "unsupervised_measured",
-                    &format!("`{other}` is not a severity -- accepted: warn, error"),
-                ));
-            }
-        };
-    Ok(Some(Policy {
-        unsupervised_measured,
-    }))
-}
-
-/// `supervision:` (phase 93): `{ tick, switch }`, the platform terms of a
-/// supervision's detection delay.
-fn parse_supervision_platform(
-    doc: &Yaml,
-    ctx: &str,
-) -> Result<Option<SupervisionPlatform>, ParseError> {
-    let section = &doc["supervision"];
-    if section.is_badvalue() {
-        return Ok(None);
-    }
-    let sctx = &format_path(ctx, "supervision");
-    if !section.is_hash() {
-        return Err(type_err(ctx, "supervision", "`{ tick, switch }`", section));
-    }
-    reject_unknown_keys(section, sctx, Context::Supervision)?;
-    let tick = yaml_duration(section, "tick").map_err(|e| reframe(e, sctx))?;
-    let switch = yaml_duration(section, "switch").map_err(|e| reframe(e, sctx))?;
-    if tick.is_some_and(|t| t.as_millis_f64() <= 0.0) {
-        return Err(field_err(sctx, "tick", "must be positive"));
-    }
-    Ok(Some(SupervisionPlatform { tick, switch }))
-}
-
 /// A duration bound (phase 90 G2): the key `key` of `context`, read into
 /// the [`Bound`] its row of [`crate::BOUND_KEYS`] gives. A bare duration
 /// (`max_latency: 149ms`), or -- for a key whose form allows it -- the map
@@ -1063,8 +991,15 @@ fn parse_observes(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<Observes>,
     let octx = &format_path(ctx, "observes");
     let (input, reached) = match section {
         Yaml::String(t) => {
-            note_spelling(octx.clone(), "observes", "observes.input");
-            (t.clone(), None)
+            return Err(field_err(
+                ctx,
+                "observes",
+                &format!(
+                    "`observes: {t}` is refused since v0.3.27 (a map since v0.3.25): write \
+                     `observes: {{ input: {t} }}`, and `reached:` beside it for what shows the \
+                     safe state reached. `play_launch migrate <contract> --write` rewrites it"
+                ),
+            ));
         }
         Yaml::Hash(_) => {
             reject_unknown_keys(section, octx, Context::SuperviseObserves)?;
@@ -1219,9 +1154,8 @@ fn parse_early(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<EarlyCheck>, 
     if within.as_millis_f64() <= 0.0 {
         return Err(field_err(ectx, "within", "must be positive"));
     }
-    // v0.3.25: `decrease`, a quantity of any dimension; `drop` (a speed by
-    // its name) reads for one release.
-    let key = spelled_key(section, ectx, "drop", "decrease")?;
+    // v0.3.25: `decrease`, a quantity of any dimension.
+    let key = "decrease";
     let decrease_text = match &section[key] {
         Yaml::String(t) => t.clone(),
         Yaml::BadValue | Yaml::Null => {
@@ -1265,18 +1199,15 @@ fn parse_early(v: &Yaml, ctx: &str, settle: bool) -> Result<Option<EarlyCheck>, 
     }))
 }
 
-/// A rate bound (phase 90 G2) under `old` or `new` of `context`: a number
-/// of Hz under the old `_hz` key, a frequency with its unit under the new
-/// one (v0.3.21). The bound is spelled with the new key.
+/// A rate bound (phase 90 G2) at `key` of `context`, a frequency with its
+/// unit (v0.3.21).
 fn yaml_rate_bound(
     doc: &Yaml,
-    old: &'static str,
-    new: &'static str,
+    key: &'static str,
     ctx: &str,
     context: Context,
 ) -> Result<Option<Bound>, ParseError> {
-    let (key, unit) = rate_key(doc, ctx, old, new)?;
-    Ok(yaml_hz(doc, key, ctx, unit)?.map(|v| spelled(context, new, Quantity::Hz(v))))
+    Ok(yaml_hz(doc, key, ctx)?.map(|v| spelled(context, key, Quantity::Hz(v))))
 }
 
 /// `source:` (phase 10 B7): `requirement | measured | derived | analysed`,
@@ -1604,8 +1535,7 @@ fn parse_hazard_guard(v: &Yaml, ctx: &str, key: &str) -> Result<MonitorGroup, Pa
 
 fn parse_functions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, FunctionDecl>, ParseError> {
     let mut out = BTreeMap::new();
-    // S3 (v0.3.19): `functions:` is the old spelling of `capabilities:`.
-    let key = spelled_key(doc, ctx, "functions", "capabilities")?;
+    let key = "capabilities";
     let section = &doc[key];
     if section.is_badvalue() {
         return Ok(out);
@@ -2335,22 +2265,23 @@ fn parse_mode_overrides(doc: &Yaml, ctx: &str) -> Result<Vec<ModeOverride>, Pars
         Ok(())
     }
     walk(section, "", ctx, &mut out)?;
-    // S3 (v0.3.20): an override of an event chain names it under
-    // `event_chains.`; `paths.` reads for one release.
-    let mut noted = false;
+    // S3 (refused since v0.3.27): an override of an event chain names it
+    // under `event_chains.` (v0.3.20), and a rate target names the key
+    // without `_hz`, its value written with a unit (v0.3.21); it is carried
+    // in Hz, as the consumer reads every rate.
     for o in &mut out {
-        if let Some(rest) = o.target.strip_prefix("paths.") {
-            if !noted {
-                note_spelling(format_path(ctx, "paths"), "paths", "event_chains");
-                noted = true;
-            }
-            o.target = format!("event_chains.{rest}");
+        if o.target.starts_with("paths.") {
+            return Err(field_err(
+                ctx,
+                &o.target,
+                &format!(
+                    "an override of an event chain names it under `event_chains.` since \
+                     v0.3.20 (`paths.` is refused since v0.3.27): write `event_chains.{}`. \
+                     `play_launch migrate <contract> --write` rewrites it",
+                    &o.target["paths.".len()..]
+                ),
+            ));
         }
-    }
-    // S3 (v0.3.21): a rate target names the key without `_hz`, and its
-    // value is written with a unit; it is carried in Hz, as the consumer
-    // reads every rate. An old `_hz` target keeps its number of Hz.
-    for o in &mut out {
         let (head, last) = o.target.rsplit_once('.').unwrap_or(("", o.target.as_str()));
         let new = match last {
             "min_rate_hz" => Some("min_rate"),
@@ -2359,26 +2290,22 @@ fn parse_mode_overrides(doc: &Yaml, ctx: &str) -> Result<Vec<ModeOverride>, Pars
             _ => None,
         };
         if let Some(new) = new {
-            let at = format_path(ctx, &o.target);
-            note_spelling(
-                at,
-                if new == "rate" {
-                    "rate_hz"
-                } else if new == "min_rate" {
-                    "min_rate_hz"
-                } else {
-                    "max_rate_hz"
-                },
-                new,
-            );
-            o.target = if head.is_empty() {
+            let at = if head.is_empty() {
                 new.to_string()
             } else {
                 format!("{head}.{new}")
             };
-        } else if matches!(last, "min_rate" | "max_rate" | "rate")
-            && !values::is_reference(&o.value)
-        {
+            return Err(field_err(
+                ctx,
+                &o.target,
+                &format!(
+                    "`{last}` is refused since v0.3.27 (renamed in v0.3.21): write `{at}` with \
+                     a unit (`{at}: {}Hz`). `play_launch migrate <contract> --write` rewrites it",
+                    o.value
+                ),
+            ));
+        }
+        if matches!(last, "min_rate" | "max_rate" | "rate") && !values::is_reference(&o.value) {
             let hz = parse_rate_literal(&o.value).map_err(|m| field_err(ctx, &o.target, &m))?;
             o.value = format!("{hz}");
         }
@@ -2486,10 +2413,8 @@ fn parse_hazards(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, HazardDecl>, 
             }
         };
         // v0.1.59: a hazard either leaves a mode (its fallback sequence) or
-        // reacts by one event chain, never both. S3 (v0.3.19): `enters:` is
-        // the old spelling of `leaves:` (it named the mode the fault takes
-        // away, while `supervise.enters` names the level a miss enters).
-        let leaves_key = spelled_key(v, &hctx, "enters", "leaves")?;
+        // reacts by one event chain, never both.
+        let leaves_key = "leaves";
         let enters = yaml_string(v, leaves_key, &hctx)?;
         let reaction = yaml_string(v, "reaction", &hctx)?;
         if enters.is_some() && reaction.is_some() {
@@ -2606,9 +2531,8 @@ fn parse_arrival_curve(doc: &Yaml, ctx: &str) -> Result<Option<ArrivalCurveDecl>
         ));
     }
     reject_unknown_keys(section, ctx, Context::ArrivalCurve)?;
-    let (rkey, unit) = rate_key(section, ctx, "rate_hz", "rate")?;
-    let read = ref_text(&section[rkey]).is_some() || ref_text(&section["burst"]).is_some();
-    let rate = yaml_hz(section, rkey, ctx, unit)?;
+    let read = ref_text(&section["rate"]).is_some() || ref_text(&section["burst"]).is_some();
+    let rate = yaml_hz(section, "rate", ctx)?;
     let burst = yaml_count_at(section, "burst", ctx)?;
     if read && (rate.is_none() || burst.is_none()) {
         // Read from the launch tree, no value yet: unknown.
@@ -2624,7 +2548,7 @@ fn parse_arrival_curve(doc: &Yaml, ctx: &str) -> Result<Option<ArrivalCurveDecl>
     if !rate_hz.is_finite() || rate_hz <= 0.0 {
         return Err(field_err(
             ctx,
-            rkey,
+            "rate",
             &format!("must be a finite rate > 0, got {rate_hz} Hz"),
         ));
     }
@@ -3099,13 +3023,14 @@ fn parse_endpoint_props(yaml: &Yaml, ctx: &str) -> Result<EndpointProps, ParseEr
     let (min_interarrival, budget, budget_period) = parse_input_release(yaml, ctx)?;
     let on_rejected = parse_call_reaction(yaml, "on_rejected", ctx)?;
     let props = EndpointProps {
-        min_rate_hz: yaml_rate_bound(yaml, "min_rate_hz", "min_rate", ctx, Context::Endpoint)?,
-        max_rate_hz: yaml_rate_bound(yaml, "max_rate_hz", "max_rate", ctx, Context::Endpoint)?,
+        min_rate_hz: yaml_rate_bound(yaml, "min_rate", ctx, Context::Endpoint)?,
+        max_rate_hz: yaml_rate_bound(yaml, "max_rate", ctx, Context::Endpoint)?,
         max_age: yaml_bound(yaml, "max_age", ctx, Context::Endpoint)?,
         state: yaml_bool(yaml, "state", ctx)?,
         required: yaml_bool(yaml, "required", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        max_transport: yaml_bound(yaml, "max_transport", ctx, Context::Endpoint)?,
+        // Filled from the link the endpoint names (`transport::apply_links`).
+        max_transport: None,
         link: yaml_string(yaml, "link", ctx)?,
         buffer: parse_buffer(yaml, ctx)?,
         on_violation: parse_on_violation(yaml, ctx)?,
@@ -3554,10 +3479,7 @@ fn parse_topic_decl(yaml: &Yaml, ctx: &str) -> Result<TopicDecl, ParseError> {
         publishers: yaml_string_list(yaml, "pub", ctx)?,
         subscribers: yaml_string_list(yaml, "sub", ctx)?,
         qos: parse_qos(yaml, ctx)?,
-        rate_hz: {
-            let (key, unit) = rate_key(yaml, ctx, "rate_hz", "rate")?;
-            yaml_hz(yaml, key, ctx, unit)?
-        },
+        rate_hz: yaml_hz(yaml, "rate", ctx)?,
         drop: parse_drop_spec(yaml, "drop", ctx)?,
         external,
         on_silence,
@@ -3676,10 +3598,8 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
         .ok_or_else(|| field_err(ctx, "services", "expected mapping"))?;
     for (k, v) in hash {
         let name = yaml_str_owned(k);
-        reject_unknown_keys(v, ctx, Context::Service)?;
-        let max_transport = yaml_bound(
+        reject_unknown_keys(
             v,
-            "max_transport",
             &format_path(ctx, &format!("services.{name}")),
             Context::Service,
         )?;
@@ -3692,7 +3612,6 @@ fn parse_services(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ServiceDecl>
                 server: yaml_string_list(v, "server", ctx)?,
                 client: yaml_string_list(v, "client", ctx)?,
                 external: parse_external_endpoint_side(v, "external", ctx)?,
-                max_transport,
             },
         );
     }
@@ -3710,7 +3629,11 @@ fn parse_actions(doc: &Yaml, ctx: &str) -> Result<BTreeMap<String, ActionDecl>, 
         .ok_or_else(|| field_err(ctx, "actions", "expected mapping"))?;
     for (k, v) in hash {
         let name = yaml_str_owned(k);
-        reject_unknown_keys(v, ctx, Context::Action)?;
+        reject_unknown_keys(
+            v,
+            &format_path(ctx, &format!("actions.{name}")),
+            Context::Action,
+        )?;
         let call_mode = parse_call_mode(v, &format_path(ctx, &format!("actions.{name}")))?;
         out.insert(
             name,
@@ -3833,13 +3756,9 @@ fn parse_paths(
     node: bool,
 ) -> Result<BTreeMap<String, PathDecl>, ParseError> {
     let mut out = BTreeMap::new();
-    // S3 (v0.3.20): a manifest level's `paths:` is `event_chains:`; a
-    // node's internal paths keep `paths:`.
-    let key = if node {
-        "paths"
-    } else {
-        spelled_key(doc, ctx, "paths", "event_chains")?
-    };
+    // A manifest level's requirements are `event_chains:` (v0.3.20); a
+    // node's internal paths are `paths:`.
+    let key = if node { "paths" } else { "event_chains" };
     let section = &doc[key];
     if section.is_badvalue() {
         return Ok(out);
@@ -3884,7 +3803,7 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
     // timer-triggered (rlm#9).
     let timer_rate_unread = match (&trigger, &yaml["trigger"]["timer"]) {
         (None, t @ Yaml::Hash(_)) => {
-            let rk = timer_rate_key(t);
+            let rk = "rate";
             ref_text(&t[rk])
                 .or_else(|| ref_text(&t[rk]["value"]))
                 .map(str::to_string)
@@ -3906,10 +3825,7 @@ fn parse_path_decl(yaml: &Yaml, ctx: &str) -> Result<PathDecl, ParseError> {
         safe_state: parse_safe_state(yaml, ctx)?,
         timer_param: parse_timer_param(yaml, ctx)?,
         timer_rate_source: match &yaml["trigger"]["timer"] {
-            t @ Yaml::Hash(_)
-                if t[timer_rate_key(t)].is_hash()
-                    && ref_text(&t[timer_rate_key(t)]["value"]).is_none() =>
-            {
+            t @ Yaml::Hash(_) if t["rate"].is_hash() && ref_text(&t["rate"]["value"]).is_none() => {
                 timer_rate(t, ctx)?.and_then(|(_, src)| src)
             }
             _ => None,
@@ -3990,8 +3906,8 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     let key = yaml_str_owned(k);
     match key.as_str() {
         "timer" => {
-            reject_unknown_keys(v, ctx, Context::TriggerTimer)?;
-            let rk = timer_rate_key(v);
+            reject_unknown_keys(v, &format_path(ctx, "trigger.timer"), Context::TriggerTimer)?;
+            let rk = "rate";
             let read = ref_text(&v[rk]).is_some() || ref_text(&v[rk]["value"]).is_some();
             let rate = timer_rate(v, ctx)?;
             if read && rate.is_none() {
@@ -4053,35 +3969,23 @@ fn parse_trigger(doc: &Yaml, ctx: &str) -> Result<Option<Trigger>, ParseError> {
     }
 }
 
-/// The key a timer writes its rate under: `rate`, or `rate_hz` before
-/// v0.3.21 (read for one release).
-fn timer_rate_key(timer: &Yaml) -> &'static str {
-    if timer["rate"].is_badvalue() && !timer["rate_hz"].is_badvalue() {
-        "rate_hz"
-    } else {
-        "rate"
-    }
-}
-
 /// A timer's rate (phase 93): the value, or the map form `{ value, source }`
 /// so the rate can say where it comes from (`source: allocated`: chosen
-/// inside the range the consumer derives). `rate: 100Hz` since v0.3.21;
-/// `rate_hz: 100` (a number of Hz) reads for one release. `timer` is the
-/// map under `trigger: { timer }`.
+/// inside the range the consumer derives). `rate: 100Hz` since v0.3.21.
+/// `timer` is the map under `trigger: { timer }`.
 fn timer_rate(timer: &Yaml, ctx: &str) -> Result<Option<(f64, Option<BudgetSource>)>, ParseError> {
     let tctx = &format_path(ctx, "trigger.timer");
-    let (key, unit) = rate_key(timer, tctx, "rate_hz", "rate")?;
-    let v = &timer[key];
+    let v = &timer["rate"];
     let Yaml::Hash(_) = v else {
-        return Ok(yaml_hz(timer, key, tctx, unit)?.map(|hz| (hz, None)));
+        return Ok(yaml_hz(timer, "rate", tctx)?.map(|hz| (hz, None)));
     };
-    let rctx = &format_path(tctx, key);
+    let rctx = &format_path(tctx, "rate");
     reject_unknown_keys(v, rctx, Context::TimerRate)?;
     source_on_reference(v, "value", rctx)?;
     if ref_text(&v["value"]).is_some() {
         return Ok(yaml_rate_at(v, "value", rctx)?.map(|hz| (hz, None)));
     }
-    let hz = yaml_hz(v, "value", rctx, unit)?.ok_or_else(|| {
+    let hz = yaml_hz(v, "value", rctx)?.ok_or_else(|| {
         field_err(
             rctx,
             "value",
@@ -4712,14 +4616,7 @@ fn yaml_f64(doc: &Yaml, key: &str, ctx: &str) -> Result<Option<f64>, ParseError>
         Yaml::String(s) => Err(field_err(
             ctx,
             key,
-            &if key.ends_with("_hz") {
-                format!(
-                    "expected a number, got `{s}`. The key's name carries the unit (Hz), so \
-                     write the number alone (`{key}: 100`)"
-                )
-            } else {
-                format!("expected a number, got `{s}`")
-            },
+            &format!("expected a number, got `{s}`"),
         )),
         other => Err(type_err(ctx, key, "a number", other)),
     }
@@ -4847,10 +4744,11 @@ mod tests {
     /// it. The table is that backstop.
     #[test]
     fn a_removed_key_with_no_dedicated_check_is_still_rejected() {
-        let err =
-            super::parse_manifest_str("paths:\n  p:\n    output: [/b]\n    segments: [a, b]\n")
-                .expect_err("`segments:` must not parse")
-                .to_string();
+        let err = super::parse_manifest_str(
+            "event_chains:\n  p:\n    output: [/b]\n    segments: [a, b]\n",
+        )
+        .expect_err("`segments:` must not parse")
+        .to_string();
         assert!(err.contains("Removed in phase 68"), "got: {err}");
     }
 
@@ -4877,10 +4775,14 @@ mod tests {
     /// D9: it named `paths.<p>.rate_hz`, a key that does not exist).
     #[test]
     fn a_timer_rate_error_names_the_timer() {
-        let yaml = "nodes:\n  n:\n    paths:\n      p:\n        trigger: { timer: { rate_hz: 10Hz } }\n        output: [o]\n";
+        let yaml = "nodes:\n  n:\n    paths:\n      p:\n        trigger: { timer: { rate: 10 } }\n        output: [o]\n";
         let err = parse_manifest_str(yaml).unwrap_err().to_string();
-        assert!(err.contains("trigger.timer"), "got: {err}");
-        assert!(err.contains("`10Hz`"), "got: {err}");
+        assert!(err.contains("trigger.timer.rate"), "got: {err}");
+        assert!(err.contains("`rate: 10Hz`"), "got: {err}");
+        // The refusal of the old key names the timer too (v0.3.27).
+        let yaml = "nodes:\n  n:\n    paths:\n      p:\n        trigger: { timer: { rate_hz: 10 } }\n        output: [o]\n";
+        let err = parse_manifest_str(yaml).unwrap_err().to_string();
+        assert!(err.contains("trigger.timer.rate_hz"), "got: {err}");
     }
 
     /// A value of the wrong TYPE is an error (phase 70), not an absent field.
@@ -4895,14 +4797,13 @@ mod tests {
             ),
             // a quoted number
             (
-                "topics:\n  t:\n    type: T\n    rate_hz: \"100\"\n",
+                "nodes:\n  n:\n    sub:\n      a: {}\n    pub:\n      o: {}\n    paths:\n      p:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency: { duration: 5ms, source: { measured: { margin: \"0.2\" } } }\n",
                 "remove the quotes",
             ),
-            // a rate with a unit, under a key whose name carries the unit
-            // (play_launch phase 103 D9: it said "remove the quotes")
+            // a rate without its unit (v0.3.21)
             (
-                "topics:\n  t:\n    type: T\n    rate_hz: 100Hz\n",
-                "expected a number, got `100Hz`. The key's name carries the unit",
+                "topics:\n  t:\n    type: T\n    rate: 100\n",
+                "has no unit -- write `rate: 100Hz`",
             ),
             // a quoted boolean
             ("nodes:\n  n:\n    lifecycle: \"true\"\n", "without quotes"),
@@ -4964,7 +4865,7 @@ mod tests {
     fn functions_modes_and_overrides_parse() {
         let yaml = r#"
 version: 1
-functions:
+capabilities:
   pose_estimation: { all_of: [/loc/ndt, /loc/gnss] }
   trajectory: [/planning/trajectory]
   scan: /sensing/scan
@@ -4977,11 +4878,11 @@ modes:
     requires: [pose_estimation]
     reaction: system.comfortable_stop
     overrides:
-      paths:
+      event_chains:
         lidar_to_brake: { max_latency: 100ms }
       nodes:
         detector:
-          sub: { scan: { min_rate_hz: 10 } }
+          sub: { scan: { min_rate: 10Hz } }
   emergency_stop:
     requires: []
     reaction: system.emergency_stop
@@ -5162,7 +5063,7 @@ hazards:
     #[test]
     fn ingress_is_a_subscribers_token_bucket() {
         let m = super::parse_manifest_str(
-            "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 10, arrival_curve: { rate_hz: 200, burst: 4 } }\n",
+            "nodes:\n  n:\n    sub:\n      cmd: { min_rate: 10Hz, arrival_curve: { rate: 200Hz, burst: 4 } }\n",
         )
         .unwrap();
         let ing = m.nodes["n"].subscribers["cmd"]
@@ -5172,7 +5073,7 @@ hazards:
         assert_eq!(ing.burst, 4);
         for (bad, needle) in [
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 200 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate: 200Hz } }\n",
                 "required: the messages that may arrive back to back",
             ),
             (
@@ -5180,23 +5081,23 @@ hazards:
                 "required: the sustained messages per second",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 200, burst: 0 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate: 200Hz, burst: 0 } }\n",
                 "must be >= 1",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 0, burst: 4 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate: 0Hz, burst: 4 } }\n",
                 "finite rate > 0",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate_hz: 200, burst: 4, cap: 9 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { arrival_curve: { rate: 200Hz, burst: 4, cap: 9 } }\n",
                 "cap",
             ),
             (
-                "nodes:\n  n:\n    pub:\n      cmd: { arrival_curve: { rate_hz: 200, burst: 4 } }\n",
+                "nodes:\n  n:\n    pub:\n      cmd: { arrival_curve: { rate: 200Hz, burst: 4 } }\n",
                 "bounds what a SUBSCRIBER",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      cmd: { min_rate_hz: 50, arrival_curve: { rate_hz: 20, burst: 4 } }\n",
+                "nodes:\n  n:\n    sub:\n      cmd: { min_rate: 50Hz, arrival_curve: { rate: 20Hz, burst: 4 } }\n",
                 "below this subscriber's own `min_rate`",
             ),
         ] {
@@ -5212,9 +5113,9 @@ hazards:
     #[test]
     fn an_inputs_release_bound_is_a_minimum_interarrival_or_a_budget() {
         let m = super::parse_manifest_str(
-            "nodes:\n  n:\n    sub:\n      a: { min_rate_hz: 10, min_interarrival: 50ms }\n\
+            "nodes:\n  n:\n    sub:\n      a: { min_rate: 10Hz, min_interarrival: 50ms }\n\
              \x20     b: { budget: 2ms, budget_period: 100ms }\n\
-             \x20     c: { min_rate_hz: 10 }\n\
+             \x20     c: { min_rate: 10Hz }\n\
              \x20   srv:\n      s: { min_interarrival: 100ms }\n\
              \x20     t: { max_response: 5ms, budget: 1ms, budget_period: 20ms }\n",
         )
@@ -5264,7 +5165,7 @@ hazards:
                 "bounds the arrivals at an INPUT",
             ),
             (
-                "nodes:\n  n:\n    sub:\n      a: { min_rate_hz: 10, min_interarrival: 150ms }\n",
+                "nodes:\n  n:\n    sub:\n      a: { min_rate: 10Hz, min_interarrival: 150ms }\n",
                 "cannot arrive both that often and that seldom",
             ),
         ] {
@@ -5322,7 +5223,7 @@ hazards:
 
     /// A client's facts about the wait (v0.2.5, play_launch phase 95):
     /// `timeout`, `on_timeout` in both shapes, `on_rejected`; a server's
-    /// `idempotent` and `stale_after`; a service's `max_transport`. Every
+    /// `idempotent` and `stale_after`; a client's `link`. Every
     /// malformed shape is refused, and a retry missing its bound parses (the
     /// consumer judges it, on a reaction route only).
     #[test]
@@ -5330,7 +5231,7 @@ hazards:
         let m = super::parse_manifest_str(
             "nodes:\n  n:\n    cli:\n\
              \x20     a: { call: blocking, timeout: 10ms, on_timeout: { reaction: stop }, \
-             on_rejected: { reaction: stop }, max_transport: 1.5ms }\n\
+             on_rejected: { reaction: stop }, link: leg }\n\
              \x20     b: { timeout: 2s, on_timeout: { retry: { attempts: 3, backoff: 5ms }, \
              then: { reaction: estop } } }\n\
              \x20     c: { on_timeout: { retry: {} } }\n\
@@ -5338,7 +5239,7 @@ hazards:
              \x20 s:\n    srv:\n      op: { idempotent: true, stale_after: 50ms }\n\
              \x20     plain: {}\n\
              services:\n  op:\n    type: x/srv/Op\n    server: [s/op]\n    client: [n/a]\n\
-             \x20   max_transport: 2ms\n",
+             links:\n  leg: { max_transport: 1.5ms }\n",
         )
         .unwrap();
         let n = &m.nodes["n"];
@@ -5363,7 +5264,6 @@ hazards:
         assert_eq!(op.idempotent, Some(true));
         assert_eq!(op.stale_after.map(|d| d.as_secs_f64() * 1000.0), Some(50.0));
         assert_eq!(m.nodes["s"].srv["plain"].idempotent, None);
-        assert_eq!(m.services["op"].max_transport.ms(), Some(2.0));
         for (bad, needle) in [
             (
                 "nodes:\n  n:\n    pub:\n      o: { timeout: 1s }\n",
@@ -5442,14 +5342,14 @@ hazards:
     }
 
     /// `on_demand: true` is a publisher's
-    /// statement that it promises no rate; beside a `min_rate_hz`, or on a
+    /// statement that it promises no rate; beside a `min_rate`, or on a
     /// subscriber, it is refused.
-    /// S3 (v0.3.21): a rate is a frequency with its unit under the new key,
-    /// a number of Hz under the old `_hz` key (noted), and never both.
+    /// S3 (v0.3.21): a rate is a frequency with its unit; the old `_hz`
+    /// keys are refused since v0.3.27 (`s3_every_old_spelling_is_refused`).
     #[test]
     fn s3_rates_take_a_unit() {
         let m = super::parse_manifest_str(
-            "nodes:\n  n:\n    pub:\n      o: { min_rate: 10Hz, max_rate: 1.5 kHz }\n    sub:\n      i: { arrival_curve: { rate: 200Hz, burst: 4 } }\n    paths:\n      t: { trigger: { timer: { rate: { value: 50Hz, source: allocated } } }, output: [o] }\ntopics:\n  /a: { type: T, rate: 10 Hz }\nmodes:\n  m:\n    overrides:\n      nodes: { n: { pub: { o: { min_rate: 2kHz } } } }\n      topics: { /a: { rate_hz: 5 } }\n",
+            "nodes:\n  n:\n    pub:\n      o: { min_rate: 10Hz, max_rate: 1.5 kHz }\n    sub:\n      i: { arrival_curve: { rate: 200Hz, burst: 4 } }\n    paths:\n      t: { trigger: { timer: { rate: { value: 50Hz, source: allocated } } }, output: [o] }\ntopics:\n  /a: { type: T, rate: 10 Hz }\nmodes:\n  m:\n    overrides:\n      nodes: { n: { pub: { o: { min_rate: 2kHz } } } }\n      topics: { /a: { rate: 5Hz } }\n",
         )
         .unwrap();
         let o = &m.nodes["n"].publishers["o"];
@@ -5478,19 +5378,7 @@ hazards:
             bounds.contains(&"nodes.n.pub.o.min_rate".to_string()),
             "{bounds:?}"
         );
-        let noted: Vec<_> = m.deprecated_spellings.iter().map(|d| d.old).collect();
-        assert_eq!(noted, vec!["rate_hz"]);
-        let old =
-            super::parse_manifest_str("nodes:\n  n:\n    pub:\n      o: { min_rate_hz: 10 }\n")
-                .unwrap();
-        assert_eq!(
-            old.nodes["n"].publishers["o"]
-                .min_rate_hz
-                .as_ref()
-                .and_then(|b| b.hz()),
-            Some(10.0)
-        );
-        assert_eq!(old.deprecated_spellings[0].at, "nodes.n.pub.o.min_rate_hz");
+        assert!(m.deprecated_spellings.is_empty());
         for (yaml, needle) in [
             (
                 "nodes:\n  n:\n    pub:\n      o: { min_rate: 10 }\n",
@@ -5503,10 +5391,6 @@ hazards:
             (
                 "nodes:\n  n:\n    pub:\n      o: { min_rate: 10furlongs }\n",
                 "is not a unit",
-            ),
-            (
-                "nodes:\n  n:\n    pub:\n      o: { min_rate: 10Hz, min_rate_hz: 10 }\n",
-                "old spelling of `min_rate:`",
             ),
             ("topics:\n  /a: { type: T, rate: 100 }\n", "has no unit"),
             (
@@ -5523,20 +5407,101 @@ hazards:
         }
     }
 
-    /// S3 (v0.3.19): both spellings of one key are an error naming the new
-    /// one; a client names a mode with `enters:` and an event chain with
+    /// S3 at R+1 and R+2 (v0.3.27): every old spelling is refused, one
+    /// case per key, each naming its replacement.
+    #[test]
+    fn s3_every_old_spelling_is_refused_naming_its_replacement() {
+        let sv = "        safe_state: { emits: o, settle: { decel: d, jerk: j, supervise: { reaction: r, mechanism: timer, observes: h/k } } }\n";
+        let early = "        safe_state: { emits: o, settle: { decel: d, jerk: j, supervise: { reaction: r, mechanism: timer, observes: { input: h/k }, early: { within: 1s, drop: 1 m/s } } } }\n";
+        let path = |body: &str| {
+            format!(
+                "nodes:\n  n:\n    sub:\n      a: {{}}\n    pub:\n      o: {{}}\n    paths:\n      p:\n        trigger: {{ input: [a] }}\n        output: [o]\n{body}"
+            )
+        };
+        let cases: Vec<(String, &str)> = vec![
+            ("functions: { a: [/t] }\n".into(), "capabilities:"),
+            (
+                "hazards:\n  h: { monitors: [/t], ftti: 1s, enters: m }\n".into(),
+                "leaves:",
+            ),
+            (
+                "paths:\n  e:\n    output: [/b]\n".into(),
+                "event_chains:",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      o: { min_rate_hz: 10 }\n".into(),
+                "min_rate: 100Hz",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      i: { max_rate_hz: 10 }\n".into(),
+                "max_rate: 100Hz",
+            ),
+            (
+                "topics:\n  /a: { type: T, rate_hz: 10 }\n".into(),
+                "rate: 100Hz",
+            ),
+            (
+                "nodes:\n  n:\n    paths:\n      t: { trigger: { timer: { rate_hz: 10 } }, output: [o] }\n".into(),
+                "trigger: { timer: { rate: 100Hz } }",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      i: { arrival_curve: { rate_hz: 10, burst: 2 } }\n".into(),
+                "rate: 100Hz",
+            ),
+            (
+                "modes:\n  m:\n    overrides: { topics: { /a: { rate_hz: 5 } } }\n".into(),
+                "topics./a.rate: 5Hz",
+            ),
+            (
+                "modes:\n  m:\n    overrides: { paths: { c: { max_latency: 5ms } } }\n".into(),
+                "event_chains.c",
+            ),
+            (
+                "policy: { unsupervised_measured: error }\n".into(),
+                "--deny",
+            ),
+            (
+                "supervision: { tick: 1ms, switch: 0.05ms }\n".into(),
+                "platform file",
+            ),
+            (
+                "integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]\n".into(),
+                "use: { iso26262",
+            ),
+            (
+                "nodes:\n  n:\n    pub:\n      o: { max_transport: 5ms }\n".into(),
+                "link",
+            ),
+            (
+                "nodes:\n  n:\n    sub:\n      i: { max_transport: 5ms }\n".into(),
+                "link",
+            ),
+            (
+                "nodes:\n  n:\n    cli:\n      c: { max_transport: 5ms }\n".into(),
+                "link",
+            ),
+            (
+                "services:\n  /s: { type: T, max_transport: 5ms }\n".into(),
+                "link",
+            ),
+            (path(sv), "observes: { input: h/k }"),
+            (path(early), "decrease:"),
+        ];
+        for (yaml, needle) in &cases {
+            let err = super::parse_manifest_str(yaml).expect_err(yaml).to_string();
+            assert!(
+                err.contains("since v0.3.27") && err.contains(needle),
+                "{yaml}: {err}"
+            );
+        }
+    }
+
+    /// S3 (v0.3.19): a hazard either leaves a mode or reacts by a chain; a
+    /// client names a mode with `enters:` and an event chain with
     /// `reaction:`, never both.
     #[test]
-    fn s3_old_and_new_spelling_together_are_refused() {
+    fn s3_a_hazard_and_a_call_take_one_reaction() {
         for (yaml, needle) in [
-            (
-                "functions: { a: [/t] }\ncapabilities: { b: [/u] }\n",
-                "`functions:` is the old spelling of `capabilities:`",
-            ),
-            (
-                "hazards:\n  h: { monitors: [/t], enters: m, leaves: m }\n",
-                "`enters:` is the old spelling of `leaves:`",
-            ),
             (
                 "hazards:\n  h: { monitors: [/t], leaves: m, reaction: c }\n",
                 "either leaves a mode",
@@ -5575,7 +5540,7 @@ hazards:
         assert_eq!(m.nodes["op"].publishers["limit"].aperiodic, Some(true));
         for (yaml, needle) in [
             (
-                "nodes:\n  op:\n    pub:\n      limit: { aperiodic: true, min_rate_hz: 10 }\n",
+                "nodes:\n  op:\n    pub:\n      limit: { aperiodic: true, min_rate: 10Hz }\n",
                 "state one or the other",
             ),
             (
@@ -5605,7 +5570,7 @@ hazards:
                 "modes:\n  m:\n    overrides: { paths: [a] }\n",
                 "a scalar value or a nested mapping",
             ),
-            ("functions:\n  f: { all_of: [/only] }\n", "at least two"),
+            ("capabilities:\n  f: { all_of: [/only] }\n", "at least two"),
             ("modes: [a, b]\n", "expected a mapping"),
         ] {
             let err = super::parse_manifest_str(yaml)
@@ -5869,14 +5834,14 @@ nodes:
   ndt:
     sub:
       sensor_points:
-        min_rate_hz: 10
+        min_rate: 10Hz
       initial_pose:
         required: true
       regularization_pose:
         state: true
     pub:
       ndt_pose:
-        min_rate_hz: 10
+        min_rate: 10Hz
       exe_time_ms:
     srv:
       trigger_node:
@@ -5905,7 +5870,7 @@ nodes:
     lifecycle: true
     pub:
       pointcloud:
-        min_rate_hz: 10
+        min_rate: 10Hz
   regular_node:
     pub:
       data: {}
@@ -5947,7 +5912,7 @@ nodes:
       debug:
         trigger: { input: [sensor_points] }
         output: [exe_time_ms]
-paths:
+event_chains:
   localization:
     trigger: { input: [sensor_points] }
     output: [ndt_pose]
@@ -5991,7 +5956,7 @@ topics:
     qos:
       reliability: best_effort
       depth: 1
-    rate_hz: 10
+    rate: 10Hz
     drop: 1 / 100
   debug_output: sensor_msgs/msg/PointCloud2
 "#;
@@ -6108,7 +6073,7 @@ includes:
     fn test_scope_paths() {
         let yaml = r#"
 version: 1
-paths:
+event_chains:
   main:
     trigger: { input: [raw_data] }
     output: [detections]
@@ -6336,7 +6301,7 @@ topics:
 version: 1
 nodes:
   detector:
-    sub: { image: { min_rate_hz: 30 } }
+    sub: { image: { min_rate: 30Hz } }
     pub: { boxes: {}, masks: {} }
     concurrency:
       exclusive:
@@ -6483,7 +6448,7 @@ topics:
     fn the_four_takeover_keys_parse() {
         let yaml = r#"
 version: 1
-functions:
+capabilities:
   hpc_alive: [/system/operation_mode/availability]
   hpc_in_odd:
     of: [/system/operation_mode/availability]
@@ -6515,7 +6480,7 @@ nodes:
   op:
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [cmd]
         safe_state:
           emits: cmd
@@ -6698,7 +6663,7 @@ nodes:
                 "`aperiodic:`",
             ),
             (
-                "version: 1\nnodes:\n  n:\n    sub:\n      in: { ingress: { rate_hz: 10, burst: 2 } }\n",
+                "version: 1\nnodes:\n  n:\n    sub:\n      in: { ingress: { rate: 10Hz, burst: 2 } }\n",
                 "nodes.n.sub.in",
                 "`arrival_curve:`",
             ),
@@ -6714,7 +6679,7 @@ nodes:
                 "{e}"
             );
         }
-        let n = parse_manifest_str("version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in: { arrival_curve: { rate_hz: 10, burst: 2 } }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n").unwrap();
+        let n = parse_manifest_str("version: 1\nhazards:\n  h: { monitors: [a], ftti: 1s }\nnodes:\n  n:\n    pub:\n      cmd: { aperiodic: true }\n    sub:\n      in: { arrival_curve: { rate: 10Hz, burst: 2 } }\n    paths:\n      p: { trigger: aperiodic, output: [cmd] }\n").unwrap();
         assert_eq!(n.hazards["h"].monitors.len(), 1);
         assert_eq!(n.nodes["n"].publishers["cmd"].aperiodic, Some(true));
         assert_eq!(
@@ -6810,18 +6775,18 @@ nodes:
     #[test]
     fn a_redundant_group_states_its_count() {
         let ok = parse_manifest_str(
-            "version: 1\nfunctions:\n  att:\n    all_of: [/a, /b, /c]\n    m: 2\n",
+            "version: 1\ncapabilities:\n  att:\n    all_of: [/a, /b, /c]\n    m: 2\n",
         )
         .unwrap();
         assert_eq!(ok.functions["att"].m, Some(2));
         for (m, needle) in [("0", "1 to 3"), ("4", "1 to 3")] {
             let e = err_of(&format!(
-                "version: 1\nfunctions:\n  att:\n    all_of: [/a, /b, /c]\n    m: {m}\n"
+                "version: 1\ncapabilities:\n  att:\n    all_of: [/a, /b, /c]\n    m: {m}\n"
             ));
             assert!(e.contains(needle), "{e}");
         }
         let e = err_of(
-            "version: 1\nfunctions:\n  v:\n    of: [/a]\n    when: { field: x, equals: 1 }\n    m: 1\n",
+            "version: 1\ncapabilities:\n  v:\n    of: [/a]\n    when: { field: x, equals: 1 }\n    m: 1\n",
         );
         assert!(e.contains("only beside `all_of:`"), "{e}");
     }
@@ -7015,8 +6980,8 @@ nodes:
     #[test]
     fn a_hazard_leaves_a_mode_or_reacts_by_a_path_not_both() {
         let h = |body: &str| format!("version: 1\nhazards:\n  h:\n{body}");
-        for key in ["leaves", "enters"] {
-            let m = parse_manifest_str(&h(&format!("    {key}: driving\n"))).unwrap();
+        {
+            let m = parse_manifest_str(&h("    leaves: driving\n")).unwrap();
             let d = &m.hazards["h"];
             assert_eq!(
                 (d.enters.as_deref(), d.reaction.as_deref(), d.entry_key()),
@@ -7139,9 +7104,10 @@ nodes:
                 && e.contains("play_launch migrate"),
             "{e}"
         );
-        let m =
-            parse_manifest_str("version: 1\npaths:\n  e2e:\n    output: [o]\n    drop: 1 / 10\n")
-                .unwrap();
+        let m = parse_manifest_str(
+            "version: 1\nevent_chains:\n  e2e:\n    output: [o]\n    drop: 1 / 10\n",
+        )
+        .unwrap();
         assert!(m.paths["e2e"].drop.is_some());
     }
 
@@ -7182,7 +7148,7 @@ nodes:
     fn an_endpoint_key_with_a_slash_is_refused() {
         for (section, body) in [
             ("pub", "{ /abs/topic: {} }"),
-            ("sub", "{ /abs/topic: { min_rate_hz: 10 } }"),
+            ("sub", "{ /abs/topic: { min_rate: 10Hz } }"),
             ("sub", "[/abs/topic]"),
             ("cli", "{ ns/call: {} }"),
             ("srv", "{ /abs/serve: {} }"),
@@ -7262,10 +7228,10 @@ nodes:
           within: { duration: 149ms, source: derived }
     paths:
       tick:
-        trigger: { timer: { rate_hz: 10, param: update_rate, jitter: { duration: 18ms, source: measured } } }
+        trigger: { timer: { rate: 10Hz, param: update_rate, jitter: { duration: 18ms, source: measured } } }
         output: [b]
       slow:
-        trigger: { timer: { rate_hz: 2, period_param: period_s } }
+        trigger: { timer: { rate: 2Hz, period_param: period_s } }
         output: [b]
       react:
         trigger: { input: [a] }
@@ -7359,7 +7325,7 @@ nodes:
             ))
         };
         let err = |body: &str| base(body).unwrap_err().to_string();
-        let e = err("        trigger: { timer: { rate_hz: 10, param: r, period_param: p } }\n");
+        let e = err("        trigger: { timer: { rate: 10Hz, param: r, period_param: p } }\n");
         assert!(e.contains("not both"), "{e}");
         let e = err(
             "        trigger: { input: [a] }\n        max_latency: { duration: 5ms, param: x }\n",
@@ -7393,7 +7359,7 @@ nodes:
         assert!(e.contains("unknown key"), "{e}");
         // The bare forms are unchanged, and record no source.
         let m = base(
-            "        trigger: { timer: { rate_hz: 10, jitter: 2ms } }\n        max_latency: 5ms\n",
+            "        trigger: { timer: { rate: 10Hz, jitter: 2ms } }\n        max_latency: 5ms\n",
         )
         .unwrap();
         assert!(m.budget_sources().is_empty());
@@ -7560,23 +7526,25 @@ nodes:
     }
 
     /// Phase 93: `supervise:` beside `source:` in a budget's map form, the
-    /// derived level, `policy:`, `supervision:`, `allocated` and the map
-    /// form of a timer's `rate_hz`.
+    /// derived level, `allocated` and the map form of a timer's `rate`
+    /// (`policy:` and a contract's `supervision:` are refused since
+    /// v0.3.27).
     #[test]
     fn supervision_keys_parse_and_round_trip() {
-        let yaml = "policy: { unsupervised_measured: error }\n\
-                    supervision: { tick: 1ms, switch: 0.05ms }\n\
-                    nodes:\n  n:\n    paths:\n      p:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency:\n          duration: 149ms\n          source: { measured: { margin: 0.2, terms: { tick: { period: 100ms, max: 14.84ms }, work: { max: 25.04ms } } } }\n          supervise: { reaction: brake, mechanism: timer }\n      brake:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency: { duration: 5ms, source: analysed, supervise: { enters: safe, mechanism: executor } }\n      q:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency: { duration: 9ms, source: { measured: { max: 7ms, margin: 0.2 } } }\n      t:\n        trigger: { timer: { rate_hz: { value: 10, source: allocated } } }\n        output: [o]\n";
+        let yaml = "nodes:\n  n:\n    paths:\n      p:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency:\n          duration: 149ms\n          source: { measured: { margin: 0.2, terms: { tick: { period: 100ms, max: 14.84ms }, work: { max: 25.04ms } } } }\n          supervise: { reaction: brake, mechanism: timer }\n      brake:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency: { duration: 5ms, source: analysed, supervise: { enters: safe, mechanism: executor } }\n      q:\n        trigger: { input: [a] }\n        output: [o]\n        max_latency: { duration: 9ms, source: { measured: { max: 7ms, margin: 0.2 } } }\n      t:\n        trigger: { timer: { rate: { value: 10Hz, source: allocated } } }\n        output: [o]\n";
         let m = super::parse_manifest_str(yaml).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(
-            m.policy,
-            Some(Policy {
-                unsupervised_measured: Some(PolicySeverity::Error)
-            })
-        );
-        let sv = m.supervision.as_ref().unwrap();
-        assert_eq!(sv.tick.map(|d| d.as_millis_f64()), Some(1.0));
-        assert_eq!(sv.switch.map(|d| d.as_millis_f64()), Some(0.05));
+        for (old, needle) in [
+            ("policy: { unsupervised_measured: error }\n", "--deny"),
+            (
+                "supervision: { tick: 1ms, switch: 0.05ms }\n",
+                "platform file",
+            ),
+        ] {
+            let e = super::parse_manifest_str(&format!("{old}{yaml}"))
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("since v0.3.27") && e.contains(needle), "{e}");
+        }
         let paths = &m.nodes["n"].paths;
         let p = paths["p"].max_latency.as_ref().unwrap();
         assert_eq!(
@@ -7619,10 +7587,10 @@ nodes:
         assert_eq!(v["supervise"]["enters"], "safe");
         let back = serde_json::to_string(&m).unwrap();
         let back: serde_json::Value = serde_json::from_str(&back).unwrap();
-        assert_eq!(back["policy"]["unsupervised_measured"], "error");
+        assert!(back.get("policy").is_none());
         // The bare rate stays a number and states no source.
         let m = super::parse_manifest_str(
-            "nodes:\n  n:\n    paths:\n      t:\n        trigger: { timer: { rate_hz: 10 } }\n        output: [o]\n",
+            "nodes:\n  n:\n    paths:\n      t:\n        trigger: { timer: { rate: 10Hz } }\n        output: [o]\n",
         )
         .unwrap();
         assert_eq!(m.nodes["n"].paths["t"].timer_rate_source, None);
@@ -7679,20 +7647,8 @@ nodes:
         .unwrap_err()
         .to_string();
         assert!(e.contains("least time"), "{e}");
-        for (yaml, needle) in [
-            (
-                "policy: { unsupervised_measured: loud }\n",
-                "not a severity",
-            ),
-            ("policy: error\n", "unsupervised_measured"),
-            ("supervision: { tick: 0ms }\n", "positive"),
-            ("supervision: { tik: 1ms }\n", "did you mean `tick`"),
-        ] {
-            let e = super::parse_manifest_str(yaml).unwrap_err().to_string();
-            assert!(e.contains(needle), "{yaml}: {e}");
-        }
         let e = super::parse_manifest_str(
-            "nodes:\n  n:\n    paths:\n      t:\n        trigger: { timer: { rate_hz: { source: allocated } } }\n",
+            "nodes:\n  n:\n    paths:\n      t:\n        trigger: { timer: { rate: { source: allocated } } }\n",
         )
         .unwrap_err()
         .to_string();
@@ -7704,7 +7660,7 @@ nodes:
     #[test]
     fn a_settle_is_supervised_whole() {
         let m = super::parse_manifest_str(
-            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            decel: d\n            jerk: j\n            response: { duration: 943ms, source: { measured: { max: 785.43ms, n: 3, margin: 0.2 } } }\n            supervise: { enters: emergency_stop, mechanism: timer, observes: h/kinematic_state }\n      lit:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state: { emits: o, settle: { duration: 2s, supervise: { reaction: operate, mechanism: executor } } }\n",
+            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state:\n          emits: o\n          settle:\n            decel: d\n            jerk: j\n            response: { duration: 943ms, source: { measured: { max: 785.43ms, n: 3, margin: 0.2 } } }\n            supervise: { enters: emergency_stop, mechanism: timer, observes: { input: h/kinematic_state } }\n      lit:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state: { emits: o, settle: { duration: 2s, supervise: { reaction: operate, mechanism: executor } } }\n",
         )
         .unwrap();
         let ss = m.nodes["op"].paths["operate"].safe_state.as_ref().unwrap();
@@ -7756,7 +7712,7 @@ nodes:
                 "only a settle's",
             ),
             (
-                "        safe_state: { emits: o, settle: { decel: d, jerk: j, supervise: { reaction: r, mechanism: timer, observes: kinematic_state } } }\n",
+                "        safe_state: { emits: o, settle: { decel: d, jerk: j, supervise: { reaction: r, mechanism: timer, observes: { input: kinematic_state } } } }\n",
                 "not `<node>/<subscriber>`",
             ),
         ] {
@@ -7867,7 +7823,7 @@ nodes:
             (settle("{ within: 1000, decrease: 0.1 m/s }"), "no unit"),
             (settle("{ within: 1s, decrease: 0.1 }"), "no unit"),
             (settle("{ within: 1s, decrease: -1 m/s }"), "positive"),
-            (settle("{ within: 1s, decrease: 1 m/s, drop: 1 m/s }"), "old spelling"),
+            (settle("{ within: 1s, decrease: 1 m/s, drop: 1 m/s }"), "refused since v0.3.27"),
             (settle("{ within: 1s, decrease: 1 m/s, at: x }"), "at"),
         ] {
             let e = node(&extra).unwrap_err();
@@ -7875,21 +7831,34 @@ nodes:
         }
     }
 
-    /// v0.3.25: the old spellings, `observes: <node>/<sub>` and
-    /// `early.drop`, read for one release, noted for the consumer.
+    /// v0.3.27: the old spellings, `observes: <node>/<sub>` and
+    /// `early.drop` (read for one release from v0.3.25), are refused, each
+    /// naming its replacement.
     #[test]
-    fn a_string_observes_and_drop_read_as_the_map_and_decrease() {
-        let m = super::parse_manifest_str(
-            "nodes:\n  op:\n    paths:\n      operate:\n        trigger: { input: [a] }\n        output: [o]\n        safe_state: { emits: o, settle: { decel: d, jerk: j, supervise: { reaction: r, mechanism: timer, observes: h/kinematic_state, early: { within: 1s, drop: 0.15 m/s } } } }\n",
-        )
-        .unwrap();
-        let sv = m.nodes["op"].paths["operate"].safe_state.as_ref().unwrap();
-        let sv = sv.settle_supervise.as_ref().unwrap();
-        assert_eq!(sv.observes.as_ref().unwrap().input, "h/kinematic_state");
-        assert!(sv.observes.as_ref().unwrap().reached.is_none());
-        assert!((sv.early.as_ref().unwrap().speed_mps().unwrap() - 0.15).abs() < 1e-12);
-        let olds: Vec<&str> = m.deprecated_spellings.iter().map(|d| d.old).collect();
-        assert_eq!(olds, ["observes", "drop"], "{:?}", m.deprecated_spellings);
+    fn a_string_observes_and_drop_are_refused() {
+        let settle = |sv: &str| {
+            format!(
+                "nodes:\n  op:\n    paths:\n      operate:\n        trigger: {{ input: [a] }}\n        output: [o]\n        safe_state: {{ emits: o, settle: {{ decel: d, jerk: j, supervise: {{ reaction: r, mechanism: timer, {sv} }} }} }}\n"
+            )
+        };
+        for (sv, needle) in [
+            (
+                "observes: h/kinematic_state",
+                "write `observes: { input: h/kinematic_state }`",
+            ),
+            (
+                "observes: { input: h/k }, early: { within: 1s, drop: 0.15 m/s }",
+                "Renamed `decrease:`",
+            ),
+        ] {
+            let e = super::parse_manifest_str(&settle(sv))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                e.contains("refused since v0.3.27") && e.contains(needle),
+                "{sv}: {e}"
+            );
+        }
     }
 
     fn qos_err(qos: &str, args: &str) -> String {

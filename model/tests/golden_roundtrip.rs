@@ -175,7 +175,7 @@ fn contracts_layer_numbers() {
         c.node_paths["/perception/detection/detector/main"].max_latency_ms,
         Some(30.0)
     );
-    let e2e = &c.scope_paths["/perception/e2e"];
+    let e2e = &c.event_chains["/perception/e2e"];
     assert_eq!(e2e.max_latency_ms, Some(85.0));
     assert_eq!(e2e.drop.as_ref().unwrap().max_drop_rate, Some(0.08));
     // topic channel contract
@@ -238,7 +238,7 @@ fn contracts_carry_the_checker_facts_a_scheduler_reads() {
     assert_eq!(sync.timeout_ms, None);
 
     // Scope paths are not triggered by anything a node schedules.
-    assert!(c.scope_paths["/perception/e2e"].trigger.is_none());
+    assert!(c.event_chains["/perception/e2e"].trigger.is_none());
 
     // A `state: true` subscriber says how it holds data between takes.
     let state = &c.sub_endpoints["/perception/tracker/input"];

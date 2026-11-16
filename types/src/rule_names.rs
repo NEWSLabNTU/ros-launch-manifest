@@ -128,18 +128,19 @@ pub const RENAMED_RULES: &[RenamedRule] = &[
         stage: Stage::Retired,
     },
     // S3 (v0.3.19): a hazard's `enters:` is `leaves:`, and its two rules
-    // are named for the key.
+    // are named for the key. Retired in v0.3.27: R+1 and R+2 ship in one
+    // release (play_launch phase 104), so an old id reads as `ack-stale`.
     RenamedRule {
         old: "enters-unknown-mode",
         new: "leaves-unknown-mode",
         since: "0.3.19",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
     RenamedRule {
         old: "enters-not-removed",
         new: "leaves-not-removed",
         since: "0.3.19",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
 ];
 
@@ -187,18 +188,19 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         new: "monitors",
         stage: Stage::Retired,
     },
-    // S3 (v0.3.19).
+    // S3 (v0.3.19 to v0.3.21), retired in v0.3.27 with the rule ids above:
+    // each old key is a `removed` row of the field table.
     RenamedKey {
         section: "",
         old: "functions",
         new: "capabilities",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
     RenamedKey {
         section: "hazards",
         old: "enters",
         new: "leaves",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
     // S3 (v0.3.20): a manifest level's `paths:` is `event_chains:` (a
     // node's `paths` is not at a manifest level, so it does not match).
@@ -206,7 +208,7 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         section: "",
         old: "paths",
         new: "event_chains",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
     // S3 (v0.3.21): the rate keys lose `_hz`. `*` matches the key at any
     // depth: each name is a rate wherever it appears.
@@ -214,19 +216,19 @@ pub const RENAMED_KEYS: &[RenamedKey] = &[
         section: "*",
         old: "min_rate_hz",
         new: "min_rate",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
     RenamedKey {
         section: "*",
         old: "max_rate_hz",
         new: "max_rate",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
     RenamedKey {
         section: "*",
         old: "rate_hz",
         new: "rate",
-        stage: Stage::Accepted,
+        stage: Stage::Retired,
     },
 ];
 

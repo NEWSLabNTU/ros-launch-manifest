@@ -64,10 +64,8 @@ impl Manifest {
 /// precedence, the model, the walk -- reads a link's number without knowing
 /// links exist. A link is visible to the manifest that declares it and to
 /// its inline includes (an include's own link of the same name shadows).
-/// Refused: a name no visible link has, a `link` beside a written
-/// `max_transport` (two numbers for one hop), and since v0.3.17 a
-/// `max_transport` written on the subscriber at all (deprecated in v0.3.16;
-/// a transport is a platform fact, stated once on a link with its source).
+/// Refused: a name no visible link has. A client names one too (v0.3.24):
+/// its request leg's transport.
 pub(crate) fn apply_links(
     m: &mut Manifest,
     outer: &BTreeMap<String, LinkDecl>,
@@ -90,39 +88,17 @@ pub(crate) fn apply_links(
                 ),
             })
     };
-    let both = |at: String| ParseError::Field {
-        path: at,
-        message: "`link` and `max_transport` both state this hop's transport -- keep the \
-                  link (its `max_transport` is the one number) and delete this key"
-            .to_string(),
-    };
+    // An endpoint writes no transport of its own (refused by the field
+    // table, a subscriber's since v0.3.17 and a client's since v0.3.27): a
+    // subscriber's hop and a client's request leg take the link's.
     for (n, node) in &mut m.nodes {
         for (ep, props) in &mut node.subscribers {
             if let Some(name) = &props.link {
-                if props.max_transport.is_some() {
-                    return Err(both(format!("nodes.{n}.sub.{ep}.max_transport")));
-                }
                 props.max_transport = Some(find(format!("nodes.{n}.sub.{ep}.link"), name)?);
-            } else if props.max_transport.is_some() {
-                return Err(ParseError::Field {
-                    path: format!("nodes.{n}.sub.{ep}.max_transport"),
-                    message: "Removed in v0.3.17 (deprecated since v0.3.16): a subscriber's \
-                              transport is stated on the link its hop crosses. Write \
-                              `links.<name>: { max_transport: <d> }` and `link: <name>` here; \
-                              `play_launch migrate <contract> --write` does it"
-                        .to_string(),
-                });
             }
         }
-    }
-    // rlm v0.3.24 (S3, T3): a client names the link its request leg
-    // crosses. A client's own `max_transport` (deprecated) still reads.
-    for (n, node) in &mut m.nodes {
         for (ep, props) in &mut node.cli {
             if let Some(name) = &props.link {
-                if props.max_transport.is_some() {
-                    return Err(both(format!("nodes.{n}.cli.{ep}.max_transport")));
-                }
                 props.max_transport = Some(find(format!("nodes.{n}.cli.{ep}.link"), name)?);
             }
         }

@@ -68,14 +68,6 @@ pub struct Manifest {
     /// reaction's route; the FTTI is physics and belongs to the hazard.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub hazards: BTreeMap<String, HazardDecl>,
-    /// The integrity scale `hazards.<h>.integrity` is drawn from, ascending
-    /// (ASILs, SILs, DALs: the level a HARA assigns, not ISO 26262's S0-S3
-    /// severity class, which is one of its inputs). Declared rather than
-    /// baked in, so a team working to IEC 61508 or DO-178C names its own;
-    /// absent means ISO 26262's `[QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]`. The
-    /// first entry is "no safety requirement" and derives no criticality.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub integrity_levels: Vec<String>,
     /// Named guard groups (phase 75). A function is what a set of topics
     /// together provide; a mode requires functions, and a hazard may guard
     /// one by name instead of repeating its members.
@@ -91,15 +83,6 @@ pub struct Manifest {
     /// In the order written.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub independence: Vec<IndependenceDecl>,
-    /// Project policy (phase 93): how the consumer treats a measured budget
-    /// nothing supervises. `None` when the file states none (the default:
-    /// a warning).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub policy: Option<Policy>,
-    /// The platform terms of a supervision's detection delay (phase 93),
-    /// stated once per contract. `None` when the file states none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub supervision: Option<SupervisionPlatform>,
     /// Findings the author has read and keeps (play_launch phase 85 D8), in
     /// the order written: `acknowledged: [{ rule, at, reason }]`. Only at a
     /// contract's root. The consumer reports a matching warning or info as
@@ -425,26 +408,8 @@ pub struct AckDecl {
     pub reason: String,
 }
 
-/// `policy:` (phase 93): project policy for the consumer's rules.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct Policy {
-    /// The severity of a measured budget nothing supervises
-    /// (`measured-unsupervised`). `None`: the default, a warning.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unsupervised_measured: Option<PolicySeverity>,
-}
-
-/// A severity a policy sets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PolicySeverity {
-    #[default]
-    Warn,
-    Error,
-}
-
-/// `supervision:` (phase 93): the platform terms of a supervision's
-/// detection delay, until platform profiles carry them.
+/// `supervision:` in a platform file (since v0.3.22): the platform terms
+/// of a supervision's detection delay.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SupervisionPlatform {
     /// The period the monitor's clock is read at: the executor's tick, the
@@ -1505,10 +1470,9 @@ pub struct EndpointProps {
     /// not declared here inherit from the topic.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub qos: Option<QosDecl>,
-    /// Sub endpoint: per-subscriber transport latency override (ms).
-    /// Used as the edge weight from publisher to this subscriber in
-    /// scope-path critical-path computation. Inherits topic-level
-    /// `max_transport_ms` when not declared.
+    /// The transport of this endpoint's hop (a subscriber) or request leg
+    /// (a client): the value of the link it names (`link:`), filled by
+    /// `transport::apply_links`. Never written on the endpoint (v0.3.27).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_transport: Option<crate::bound::Bound>,
     /// Sub endpoint: the link this subscriber's hop crosses (phase 97).
@@ -1876,11 +1840,6 @@ pub struct ServiceDecl {
     /// or to leave the service out of the contract entirely.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalEndpointSide>,
-    /// The request leg's worst-case transport for every client of this
-    /// service that states none of its own (since v0.2.5): the counterpart of
-    /// a client's `cli.<e>.max_transport`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_transport: Option<crate::bound::Bound>,
 }
 
 /// Action declaration.

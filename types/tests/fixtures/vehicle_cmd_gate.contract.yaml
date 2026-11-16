@@ -18,7 +18,7 @@ nodes:
     sub:
       # ~/input/auto/control_cmd → /control/trajectory_follower/control_cmd
       auto_control_cmd:
-        min_rate_hz: 30                          # driven by controller (30 Hz)
+        min_rate: 30Hz                          # driven by controller (30 Hz)
       # ~/input/auto/turn_indicators_cmd → /planning/turn_indicators_cmd (polling)
       auto_turn_indicators_cmd:
         state: true
@@ -73,7 +73,7 @@ nodes:
     pub:
       # ~/output/control_cmd → /control/command/control_cmd — QoS(1).transient_local()
       control_cmd:
-        min_rate_hz: 30                          # gated/filtered controller stream
+        min_rate: 30Hz                          # gated/filtered controller stream
       # ~/output/gear_cmd → /control/command/gear_cmd — QoS(1).transient_local()
       gear_cmd: {}
       # ~/output/turn_indicators_cmd → /control/command/turn_indicators_cmd — QoS(1).transient_local()
@@ -116,7 +116,7 @@ topics:
   /control/command/control_cmd:
     type: autoware_control_msgs/msg/Control
     pub: [vehicle_cmd_gate/control_cmd]
-    rate_hz: 30
+    rate: 30Hz
     qos:
       reliability: reliable
       durability: transient_local

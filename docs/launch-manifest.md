@@ -1296,10 +1296,9 @@ complete top-level vocabulary, and nothing else, is:
 | `topics` | [Topics](#topics) |
 | `services`, `actions` | [Services and Actions](#services-and-actions) |
 | `includes` | [Includes](#includes) |
-| `paths` | [Paths](#paths) — event chains |
+| `event_chains` | [Paths](#paths) — event chains (`paths:` before v0.3.20) |
 | `external_topics` | [External Topics](#external-topics) |
 | `hazards` | [Fault detection and reaction](#fault-detection-and-reaction) |
-| `integrity_levels` (deprecated) | [Integrity scale](#integrity-scale) |
 | `capabilities`, `modes` | [Operational modes](#operational-modes) |
 | `acknowledged` | [Acknowledged findings](#acknowledged-findings) |
 
@@ -1439,7 +1438,8 @@ reports `derivable-criticality` when it agrees with the derivation and
 `criticality-mismatch` when it does not, and the fix is the same, delete
 it. See
 [Fault detection and reaction](#fault-detection-and-reaction)
-for `hazards:`, and the `integrity_levels:` scale they draw from.
+for `hazards:`, and the integrity scale they draw from (a profile named
+by `use:`).
 
 **Subscriber properties:**
 
@@ -2329,9 +2329,9 @@ produce.
 use: { iec61508: "^1" }
 ```
 
-`integrity_levels:` (an inline list) is deprecated since v0.3.24: a scale
-is a profile, and a profile is named by `use:`, so one form remains. It
-still reads for one release; `migrate` writes the `use:` entry when the
+`integrity_levels:` (an inline list) was deprecated in v0.3.24 and is <!-- terms: allow -->
+refused since v0.3.27: a scale is a profile, and a profile is named by
+`use:`, so one form remains. `migrate` writes the `use:` entry when the
 list is a reference profile's scale.
 
 ### Criticality is derived
@@ -2398,8 +2398,9 @@ failed call falls to, `supervise.enters` and a client's `enters:`).
 
 Before v0.3.19 a hazard's `leaves:` was spelled `enters:`, the word
 `supervise.enters` uses in the opposite direction, and a client's mode was
-written `reaction: <mode>`. Both still parse for one release with
-`deprecated-spelling` (warning), and `play_launch migrate` rewrites them;
+written `reaction: <mode>`. The hazard's `enters:` read for one release
+and is refused since v0.3.27, naming `leaves:`; `play_launch migrate`
+rewrites both;
 the client's case is told from an event chain by the checker's lookup (a
 mode of the scope first). Before v0.1.59 a hazard wrote its mode as
 `reaction: <mode>`, refused since v0.3.15. `leaves:` naming something that

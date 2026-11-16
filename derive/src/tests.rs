@@ -165,7 +165,7 @@ impl Model {
         outputs: &[&str],
         ms: Option<f64>,
     ) -> Self {
-        self.0.contracts.scope_paths.insert(
+        self.0.contracts.event_chains.insert(
             format!("{scope}/{name}"),
             PathContract {
                 input: inputs.iter().map(|t| s(t)).collect(),
@@ -594,7 +594,7 @@ fn a_once_loader_is_neither_a_timer_nor_a_boundary() {
     let loader = node_of(&input, "/map_loader");
     assert_eq!(
         loader.rate_hz, None,
-        "min_rate_hz: 1 on its output is a promise, not a timer"
+        "`min_rate: 1Hz` on its output is a promise, not a timer"
     );
     assert_eq!(
         path_of(&input, "/map_loader", "load").effective_trigger,

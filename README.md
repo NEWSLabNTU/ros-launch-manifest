@@ -77,8 +77,8 @@ topics, a total latency, a downstream rate, a node's criticality. The
 `kind` column of the format reference marks which is which.
 
 Top-level blocks: `version`, `args`, `nodes`, `topics`, `services`,
-`actions`, `includes`, `paths` (event chains: two topics and a budget),
-`external_topics`, `hazards`, `functions`, `modes`, `integrity_levels`.
+`actions`, `includes`, `event_chains` (two topics and a budget),
+`hazards`, `capabilities`, `modes`, `links`, `use`.
 
 Retired spellings are parse errors that name their replacement —
 `chains:`/`segments:` (state an event chain, the route is derived),

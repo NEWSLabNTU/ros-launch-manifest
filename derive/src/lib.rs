@@ -132,7 +132,7 @@ pub enum ChainSkip {
 /// One scope path that produced no chain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkippedChain {
-    /// The `contracts.scope_paths` key, `"<scope id>/<path name>"`.
+    /// The `contracts.event_chains` key, `"<scope id>/<path name>"`.
     pub scope_path: String,
     pub reason: ChainSkip,
 }
@@ -317,7 +317,7 @@ fn chains_from_view(
 ) -> Vec<ResolvedChain> {
     let graph = graph::build_global_graph(view);
     let mut out = Vec::new();
-    for sp in &view.scope_paths {
+    for sp in &view.event_chains {
         let mut skip = |reason| {
             report.chains_skipped.push(SkippedChain {
                 scope_path: sp.key.clone(),

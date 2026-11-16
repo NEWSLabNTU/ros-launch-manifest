@@ -116,14 +116,14 @@ nodes:
       out: {}
     paths:
       predict:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [out]
 topics:
   twist:
     type: t
     pub: [x/twist]
     sub: [ekf/twist]
-    rate_hz: 100
+    rate: 100Hz
 "#;
         let warnings = run(yaml);
         assert_eq!(warnings.len(), 1, "got: {warnings:?}");
@@ -143,14 +143,14 @@ nodes:
       out: {}
     paths:
       predict:
-        trigger: { timer: { rate_hz: 200 } }
+        trigger: { timer: { rate: 200Hz } }
         output: [out]
 topics:
   twist:
     type: t
     pub: [x/twist]
     sub: [ekf/twist]
-    rate_hz: 100
+    rate: 100Hz
 "#;
         assert!(run(yaml).is_empty());
     }
@@ -168,14 +168,14 @@ nodes:
       out: {}
     paths:
       predict:
-        trigger: { timer: { rate_hz: 1 } }
+        trigger: { timer: { rate: 1Hz } }
         output: [out]
 topics:
   twist:
     type: t
     pub: [x/twist]
     sub: [n/twist]
-    rate_hz: 100
+    rate: 100Hz
 "#;
         assert!(run(yaml).is_empty());
     }
@@ -194,7 +194,7 @@ nodes:
       out: {}
     paths:
       predict:
-        trigger: { timer: { rate_hz: 1 } }
+        trigger: { timer: { rate: 1Hz } }
         output: [out]
 topics:
   twist:
@@ -227,7 +227,7 @@ topics:
     type: t
     pub: [x/twist]
     sub: [n/twist]
-    rate_hz: 100
+    rate: 100Hz
 "#;
         assert!(run(yaml).is_empty());
     }
@@ -249,14 +249,14 @@ nodes:
       out: {}
     paths:
       predict:
-        trigger: { timer: { rate_hz: $(param rate) Hz } }
+        trigger: { timer: { rate: $(param rate) Hz } }
         output: [out]
 topics:
   twist:
     type: t
     pub: [x/twist]
     sub: [ekf/twist]
-    rate_hz: 100
+    rate: 100Hz
 "#;
         let diags = run(yaml);
         assert_eq!(diags.len(), 1, "got: {diags:?}");

@@ -23,7 +23,7 @@ nodes:
         state: true
     pub:
       no_ground_pointcloud:                     # ~/output → /perception/obstacle_segmentation/pointcloud
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [input] }
@@ -41,7 +41,7 @@ topics:
   /perception/obstacle_segmentation/pointcloud:
     type: sensor_msgs/msg/PointCloud2
     pub: [scan_ground_filter/no_ground_pointcloud]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: reliable
       durability: transient_local

@@ -126,10 +126,6 @@ pub enum Context {
     SuperviseObserves,
     /// `links.<name>` (play_launch phase 97).
     Link,
-    /// `policy:` at a manifest's top (phase 93).
-    Policy,
-    /// `supervision:` at a manifest's top (phase 93).
-    Supervision,
     /// The map form of a timer's `rate_hz` (phase 93).
     TimerRate,
     /// One entry of `acknowledged:` at a contract's root (play_launch
@@ -196,8 +192,6 @@ impl Context {
             Context::SuperviseResume => "<budget>.supervise.resume",
             Context::SuperviseObserves => "safe_state.settle.supervise.observes",
             Context::Link => "links.<name>",
-            Context::Policy => "policy",
-            Context::Supervision => "supervision",
             Context::TimerRate => "trigger.timer.rate (map form)",
             Context::Acknowledged => "acknowledged[]",
             Context::OnTimeout => "cli.<endpoint>.on_timeout",
@@ -391,7 +385,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Child scopes, each an inline manifest (the file-reference form was removed in v0.1.59).",
     ),
-    alias("paths", Context::Manifest, "event_chains"),
+    removed(
+        "paths",
+        Context::Manifest,
+        "Renamed `event_chains:` in v0.3.20 and refused since v0.3.27 (phase 104 S3): a manifest level's end-to-end requirement is an event chain (AUTOSAR TIMEX's `TimingDescriptionEventChain`); a node's internal `paths:` keep the word. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "event_chains",
         Context::Manifest,
@@ -404,7 +402,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Hazards: what is watched, how long the system has, and which path reaches the safe state.",
     ),
-    alias("functions", Context::Manifest, "capabilities"),
+    removed(
+        "functions",
+        Context::Manifest,
+        "Renamed `capabilities:` in v0.3.19 and refused since v0.3.27 (phase 104 S3): it is a monitored capability, not IEC 61508's safety function. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "capabilities",
         Context::Manifest,
@@ -428,11 +430,10 @@ pub const FIELDS: &[Field] = &[
         Context::Manifest,
         "Renamed `integrity_levels:` in v0.3.3 (phase 98): an ASIL, SIL or DAL is an integrity level, and ISO 26262's severity is the S0-S3 class it is derived from. `play_launch migrate <contract> --write` rewrites it.",
     ),
-    deprecated(
+    removed(
         "integrity_levels",
         Context::Manifest,
-        "`use:` of the profile whose scale it is",
-        "Deprecated since v0.3.24: the integrity scale hazards draw from, ascending. A scale is a profile (its levels and the criticality each derives), and a profile is named by `use:`, so one form remains: `use: { iso26262: \"^1\" }` for `[QM, ASIL_A..ASIL_D]`, `iec61508` for `[none, SIL_1..SIL_4]`, or a local `<name>.profile.yaml` for another scale. Still reads for one release; `migrate` writes the `use:` entry when the list is a reference profile's scale.",
+        "Deprecated in v0.3.24 and refused since v0.3.27 (phase 104 S3): a scale is a profile, named by `use:`: `use: { iso26262: \"^1\" }` for `[QM, ASIL_A..ASIL_D]`, `iec61508` for `[none, SIL_1..SIL_4]`, or a local `<name>.profile.yaml` for another scale. `play_launch migrate <contract> --write` writes the `use:` entry when the list is a reference profile's scale.",
     ),
     removed(
         "external_topics",
@@ -456,11 +457,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Only on an INLINE `includes:` entry: include this child unless the condition holds. Refused at the root of a standalone manifest.",
     ),
-    deprecated(
+    removed(
         "policy",
         Context::Manifest,
-        "the checker's `--deny <rule>`",
-        "Deprecated since v0.3.24: a rule's severity is project policy for the tool, not a fact or a requirement of the system, so it moves to the checker's command line (`check --deny measured-unsupervised`, as clippy's `-D <lint>` keeps lint levels out of the source). `{ unsupervised_measured: error }` still reads for one release, as `--deny` of `measured-unsupervised` and `supervised-executor-long-callback`.",
+        "Deprecated in v0.3.24 and refused since v0.3.27 (phase 104 S3): a rule's severity is project policy for the tool, not a fact of the system. Pass `check --deny <rule>` instead (`--deny measured-unsupervised` for `unsupervised_measured: error`).",
     ),
     live(
         "links",
@@ -468,11 +468,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Named links (play_launch phase 97): `<name>: { max_transport, clock }`, one transport stated once, with its source. A subscriber names the link its hop crosses (`sub.<ep>.link`). Visible to this manifest and its inline includes.",
     ),
-    deprecated(
+    removed(
         "supervision",
         Context::Manifest,
-        "the platform file's `supervision:`",
-        "Deprecated since v0.3.22: the platform terms of a supervised budget's detection delay, `{ tick, switch }`, are facts of the processor and its scheduler (AADL's processor timing properties, AUTOSAR's `WdgMSupervisionCycle`), so they move to the per-target platform file (`<stem>.system.<target>.yaml`, `supervision: { tick, switch }`). A contract's copy still reads for one release when no platform file states them.",
+        "Moved to the per-target platform file in v0.3.22 and refused here since v0.3.27 (phase 104 S3): the tick and switch time are facts of the processor and its scheduler, so state them in `<stem>.system.<target>.yaml` as `supervision: { tick, switch }`.",
     ),
     live(
         "acknowledged",
@@ -554,19 +553,27 @@ pub const FIELDS: &[Field] = &[
         "Parameters this node declares, keyed by name, each `{ type: <ROS 2 type> }`. Names and types only: a string or array capacity is a board fact, not a contract one. `params: {}` means the node declares no parameters; a missing `params:` means not stated. The two stay distinct in the model: `{}` becomes an empty `contracts.node_params` entry, a missing key none.",
     ),
     // ── pub/sub/cli.<endpoint> ──
-    alias("min_rate_hz", Context::Endpoint, "min_rate"),
+    removed(
+        "min_rate_hz",
+        Context::Endpoint,
+        "Renamed `min_rate:` in v0.3.21 and refused since v0.3.27 (phase 104 S3): a rate is a value with its unit (`min_rate: 100Hz`). `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "min_rate",
         Context::Endpoint,
         Kind::ByEndpoint,
-        "Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `min_rate_hz: <number of Hz>` before v0.3.21.",
+        "Lower bound on this endpoint's rate. A REQUIREMENT, not a mechanism: nothing fires when a period passes. A fault is detected only by a mechanism that does -- a QoS `lease_duration` or `deadline`, or a `max_age` someone evaluates (`on_violation.mechanism`) -- so `min_rate` never counts as a hazard's detector. A publisher that promises no rate states `aperiodic: true` instead of leaving this out. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `min_rate_hz` (a number of Hz) before v0.3.21.",
     ),
-    alias("max_rate_hz", Context::Endpoint, "max_rate"),
+    removed(
+        "max_rate_hz",
+        Context::Endpoint,
+        "Renamed `max_rate:` in v0.3.21 and refused since v0.3.27 (phase 104 S3): a rate is a value with its unit (`max_rate: 100Hz`). `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "max_rate",
         Context::Endpoint,
         Kind::ByEndpoint,
-        "Upper bound on this endpoint's rate. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `max_rate_hz: <number of Hz>` before v0.3.21.",
+        "Upper bound on this endpoint's rate. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `max_rate_hz` (a number of Hz) before v0.3.21.",
     ),
     live(
         "max_age",
@@ -597,11 +604,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "QoS overrides for this endpoint.",
     ),
-    live(
+    removed(
         "max_transport",
         Context::Endpoint,
-        Kind::Requirement,
-        "Client (since v0.2.5): the request leg's worst-case transport; charged on a reaction route's success branch through the call. Deprecated on a client since v0.3.24: the client names a link (`link:`), as a subscriber does; it still reads for one release and `migrate` writes the link. Subscriber: the worst-case transport into THIS subscriber (one topic does not have one cost: in-process, another process, another machine). Not written on the subscriber since v0.3.17 (deprecated in v0.3.16): the subscriber names a link (`link:`), which states the number once with its source, and the link's value is the subscriber's; `migrate` writes the link. Charged in path and chain latencies, and in a hazard's reaction route on the GUARD EDGE (the hop into the subscriber that detects the fault), but not after a dwell's deadline, which the dwelling level's owner reads on its own clock. A declaration on no guard edge changes no hazard's numbers (`declared-not-charged`).",
+        "Refused on an endpoint since v0.3.27 (a subscriber's since v0.3.17, a client's deprecated in v0.3.24; phase 104 S3): a transport is the hop of one endpoint, stated once with its source on a link the endpoint names (`link: <l>`, `links.<l>.max_transport`). The link's value is the endpoint's: charged in path and chain latencies, in a hazard's reaction route on the guard edge, and on a call's request leg. `play_launch migrate <contract> --write` writes the link.",
     ),
     live(
         "link",
@@ -779,12 +785,16 @@ pub const FIELDS: &[Field] = &[
         Kind::Fact,
         "Topic-level QoS, overridable per endpoint.",
     ),
-    alias("rate_hz", Context::Topic, "rate"),
+    removed(
+        "rate_hz",
+        Context::Topic,
+        "Renamed `rate:` in v0.3.21 and refused since v0.3.27 (phase 104 S3): a rate is a value with its unit (`rate: 100Hz`). `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "rate",
         Context::Topic,
         Kind::Consequence,
-        "Publication rate. Derivable from the timers that drive it — see `derivable-rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz: <number of Hz>` before v0.3.21.",
+        "Publication rate. Derivable from the timers that drive it — see `derivable-rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz` (a number of Hz) before v0.3.21.",
     ),
     removed(
         "max_transport",
@@ -840,11 +850,10 @@ pub const FIELDS: &[Field] = &[
         Kind::Meta,
         "Mark one side of this service as provided by an external system: server | client | both.",
     ),
-    deprecated(
+    removed(
         "max_transport",
         Context::Service,
-        "a link on each client (`cli.<e>.link`)",
-        "Deprecated since v0.3.24: the request leg's worst-case transport for every client of this service that states none of its own. A transport is the hop of ONE endpoint (one service can be called in-process and across a network), stated on a link the client names, as for topics since v0.3.15. Still reads for one release.",
+        "Deprecated in v0.3.24 and refused since v0.3.27 (phase 104 S3): a transport is the hop of one endpoint, stated on a link the client names (`cli.<e>.link: <l>`, `links.<l>.max_transport`). `play_launch migrate <contract> --write` rewrites it.",
     ),
     // ── actions.<name> ──
     live(
@@ -1014,12 +1023,16 @@ pub const FIELDS: &[Field] = &[
         "Output caused by these input endpoints or topics.",
     ),
     // ── trigger.timer ──
-    alias("rate_hz", Context::TriggerTimer, "rate"),
+    removed(
+        "rate_hz",
+        Context::TriggerTimer,
+        "Renamed `rate:` in v0.3.21 and refused since v0.3.27 (phase 104 S3): a rate is a value with its unit (`trigger: { timer: { rate: 100Hz } }`). `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "rate",
         Context::TriggerTimer,
         Kind::Fact,
-        "Timer rate. Required, and must be greater than zero. A frequency with its unit (`10Hz`; a bare number is refused), or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. A reference the checker cannot evaluate (`$(param rate) Hz` with no launch tree) still makes the path timer-triggered; only the period is unknown, and a rule that needs it says the comparison was not made. `rate_hz: <number of Hz>` before v0.3.21.",
+        "Timer rate. Required, and must be greater than zero. A frequency with its unit (`10Hz`; a bare number is refused), or the map form `{ value, source }` (since v0.1.61) to say where the rate comes from: `source: allocated` lets the consumer refuse a period outside the range it derives. A reference the checker cannot evaluate (`$(param rate) Hz` with no launch tree) still makes the path timer-triggered; only the period is unknown, and a rule that needs it says the comparison was not made. `rate_hz` (a number of Hz) before v0.3.21.",
     ),
     live(
         "jitter",
@@ -1210,7 +1223,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "Fault-tolerant time interval: fault to hazardous event, absent reaction. Checked by `fault-reaction-time`.",
     ),
-    alias("enters", Context::Hazard, "leaves"),
+    removed(
+        "enters",
+        Context::Hazard,
+        "Renamed `leaves:` in v0.3.19 and refused since v0.3.27 (phase 104 S3): it names the mode the fault takes away, while `supervise.enters` names the level a miss enters. `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "leaves",
         Context::Hazard,
@@ -1356,12 +1373,16 @@ pub const FIELDS: &[Field] = &[
         "Where the runtime observer reads the violation: qos (default) | diagnostics | application.",
     ),
     // ── ingress ──
-    alias("rate_hz", Context::ArrivalCurve, "rate"),
+    removed(
+        "rate_hz",
+        Context::ArrivalCurve,
+        "Renamed `rate:` in v0.3.21 and refused since v0.3.27 (phase 104 S3): a rate is a value with its unit (`rate: 100Hz`). `play_launch migrate <contract> --write` rewrites it.",
+    ),
     live(
         "rate",
         Context::ArrivalCurve,
         Kind::Requirement,
-        "Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz: <number of Hz>` before v0.3.21.",
+        "Sustained messages per second the subscriber absorbs. Finite and > 0, and not below the endpoint's own `min_rate`. A frequency with its unit (`100Hz`, `1.5kHz`, `$(param rate) Hz`); a bare number is refused, so a rate cannot be read as a period. `rate_hz` (a number of Hz) before v0.3.21.",
     ),
     live(
         "burst",
@@ -1698,7 +1719,11 @@ pub const FIELDS: &[Field] = &[
         Kind::Requirement,
         "The least the observed field must have decreased by `within`, against the value the platform saw when it armed: a quantity with its unit, in the field's dimension (`0.25 m/s` for a speed), positive. The consumer refuses a `decrease` above what the nominal profile changes the field by `within` (an extension's `derive settle.speed_lost`, as `vehicle.braking` 1.1 states, for a speed), which would call a nominal stop a fault. Required.",
     ),
-    alias("drop", Context::SuperviseEarly, "decrease"),
+    removed(
+        "drop",
+        Context::SuperviseEarly,
+        "Renamed `decrease:` in v0.3.25 and refused since v0.3.27 (phase 104 S3): the response check measures the observed field, which need not be a speed (`decrease: 0.15 m/s`). `play_launch migrate <contract> --write` rewrites it.",
+    ),
     // -- safe_state.settle.supervise.observes (v0.3.25) --
     live(
         "input",
@@ -1824,26 +1849,6 @@ pub const FIELDS: &[Field] = &[
         Context::Independence,
         Kind::Requirement,
         "The deployment facts no two of them share: process | container | cpus. At least one. A host is not one: one resolved model runs on one host.",
-    ),
-    // -- policy (phase 93) --
-    live(
-        "unsupervised_measured",
-        Context::Policy,
-        Kind::Requirement,
-        "The severity of a measured budget nothing supervises (`measured-unsupervised`): `warn` (the default) or `error`.",
-    ),
-    // -- supervision (phase 93) --
-    live(
-        "tick",
-        Context::Supervision,
-        Kind::Fact,
-        "The period the monitor's clock is read at: the executor's tick, the supervision timer's resolution (a duration, positive). Part of every supervised budget's detection delay.",
-    ),
-    live(
-        "switch",
-        Context::Supervision,
-        Kind::Fact,
-        "The interrupt plus the thread switch before a `timer` mechanism's reaction runs (a duration). Required by a `mechanism: timer` supervision.",
     ),
     // -- trigger.timer.rate_hz, map form (phase 93) --
     live(
@@ -2022,38 +2027,14 @@ fn render_bounds() -> String {
 /// stays deprecated past its schedule (`rule_names::overdue`): the five
 /// aliases v0.3.15 removed had been "removed in the next grammar release"
 /// since v0.1.59 and v0.1.60.
-pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[
-    (Context::Manifest, "functions", "0.3.19"),
-    (Context::Hazard, "enters", "0.3.19"),
-    (Context::Manifest, "paths", "0.3.20"),
-    (Context::Endpoint, "min_rate_hz", "0.3.21"),
-    (Context::Endpoint, "max_rate_hz", "0.3.21"),
-    (Context::Topic, "rate_hz", "0.3.21"),
-    (Context::TriggerTimer, "rate_hz", "0.3.21"),
-    (Context::ArrivalCurve, "rate_hz", "0.3.21"),
-    (Context::Manifest, "supervision", "0.3.22"),
-    (Context::Manifest, "policy", "0.3.24"),
-    (Context::Service, "max_transport", "0.3.24"),
-    (Context::Manifest, "integrity_levels", "0.3.24"),
-    (Context::SuperviseEarly, "drop", "0.3.25"),
-];
+pub const DEPRECATED_IN: &[(Context, &str, &str)] = &[];
 
 /// Deprecations no row can carry, because the key stays live in another use
 /// (play_launch phase 104 S1: value- and rule-level deprecations are where
 /// the retirement debt hid). `(what, release)`; the same test holds them to
 /// the schedule. A subscriber's `max_transport` is deprecated while a
 /// client's is not, and both are the `Endpoint` row.
-pub const DEPRECATED_USES: &[(&str, &str)] = &[
-    (
-        "a mode under a client's `on_timeout`/`then`/`on_rejected` `reaction:`",
-        "0.3.19",
-    ),
-    (
-        "a client's own `max_transport:` (`cli.<e>.max_transport`)",
-        "0.3.24",
-    ),
-    ("a settle's `observes:` written as a string", "0.3.25"),
-];
+pub const DEPRECATED_USES: &[(&str, &str)] = &[];
 
 /// Keys added since v0.1.49, with the release that added each: what the
 /// format reference prints beside them. A column on
@@ -2115,11 +2096,7 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Link, "max_transport", "0.3.4"),
     (Context::Link, "clock", "0.3.4"),
     (Context::Link, "monitor", "0.3.4"),
-    (Context::Manifest, "integrity_levels", "0.3.3"),
     (Context::Mode, "min_dwell", "0.3.3"),
-    (Context::Policy, "unsupervised_measured", "0.1.61"),
-    (Context::Supervision, "tick", "0.1.61"),
-    (Context::Supervision, "switch", "0.1.61"),
     (Context::TimerRate, "value", "0.1.61"),
     (Context::TimerRate, "source", "0.1.61"),
     (Context::Endpoint, "call", "0.1.69"),
@@ -2135,7 +2112,6 @@ pub const SINCE: &[(Context, &str, &str)] = &[
     (Context::Endpoint, "on_rejected", "0.2.5"),
     (Context::SrvEndpoint, "idempotent", "0.2.5"),
     (Context::SrvEndpoint, "stale_after", "0.2.5"),
-    (Context::Service, "max_transport", "0.2.5"),
     (Context::OnTimeout, "reaction", "0.2.5"),
     (Context::OnTimeout, "retry", "0.2.5"),
     (Context::OnTimeout, "then", "0.2.5"),

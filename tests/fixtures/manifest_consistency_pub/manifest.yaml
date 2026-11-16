@@ -1,5 +1,5 @@
 # Publisher side of a cross-scope topic.
-# Declares full contract (type + rate_hz).
+# Declares full contract (type + rate).
 version: 1
 
 nodes:

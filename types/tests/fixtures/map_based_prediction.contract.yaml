@@ -23,7 +23,7 @@ nodes:
   map_based_prediction:
     sub:
       tracked_objects:              # ~/input/objects ← /perception/.../tracking/objects — QoS(1)
-        min_rate_hz: 10             # from multi_object_tracker
+        min_rate: 10Hz             # from multi_object_tracker
       vector_map:                   # /vector_map ← /map/vector_map — QoS(1).transient_local()
         state: true
         required: true
@@ -31,7 +31,7 @@ nodes:
         state: true
     pub:
       predicted_objects:            # ~/output/objects — QoS(1)
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         trigger: { input: [tracked_objects] }
@@ -65,7 +65,7 @@ topics:
   /perception/object_recognition/objects:
     type: autoware_perception_msgs/msg/PredictedObjects
     pub: [map_based_prediction/predicted_objects]
-    rate_hz: 10
+    rate: 10Hz
     qos:
       reliability: reliable           # QoS(1)
       depth: 1

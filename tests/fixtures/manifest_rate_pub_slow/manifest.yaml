@@ -1,4 +1,4 @@
-# Publisher with min_rate_hz LOWER than topic rate_hz.
+# Publisher with min_rate LOWER than topic rate.
 # When merged with manifest_rate_sub_demand at the same topic,
 # rate-hierarchy should error: pub can't sustain channel rate.
 version: 1

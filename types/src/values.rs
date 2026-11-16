@@ -1326,7 +1326,7 @@ mod tests {
     fn a_predicate_value_reads_a_let_or_a_parameter() {
         use crate::types::PredicateValue as V;
         let src = "let:\n  v_odd: 60 km/h\n\
-                   functions:\n  f: { of: [/a], when: { field: x, gt: $(param h update_rate) } }\n\
+                   capabilities:\n  f: { of: [/a], when: { field: x, gt: $(param h update_rate) } }\n\
                    modes:\n  m:\n    commands:\n      /cmd:\n\
                    \x20       - { field: longitudinal.velocity, le: $(let v_odd) }\n\
                    \x20       - { field: y, lt: $(var lidar_hz) Hz }\n";
@@ -1344,8 +1344,8 @@ mod tests {
         // With the launch tree every one is a number.
         let src = src.replace("$(param h update_rate)", "$(param update_rate)");
         let src = src.replace(
-            "functions:\n  f:",
-            "nodes:\n  h:\n    paths: {}\nfunctions:\n  f:",
+            "capabilities:\n  f:",
+            "nodes:\n  h:\n    paths: {}\ncapabilities:\n  f:",
         );
         let (pr, res) = resolve_manifest_str(&src, &Tree).unwrap();
         let cmds = &pr.manifest.modes["m"].commands["/cmd"];
@@ -1353,7 +1353,7 @@ mod tests {
         assert!(
             res.errors
                 .iter()
-                .any(|e| e.path.starts_with("functions.f.when")),
+                .any(|e| e.path.starts_with("capabilities.f.when")),
             "a one-argument $(param) outside a node has no node: {:?}",
             res.errors
         );
@@ -1388,7 +1388,7 @@ mod tests {
         let m = manifest(
             "let:\n  rate: $(var lidar_hz) Hz\n  odd: 8.33 m/s\n\
              nodes:\n  h:\n    pub:\n      o: {}\n    sub:\n      i: { max_age: 3 / $(let rate) }\n\
-             \x20   paths:\n      t:\n        trigger: { timer: { rate_hz: $(param update_rate) Hz } }\n\
+             \x20   paths:\n      t:\n        trigger: { timer: { rate: $(param update_rate) Hz } }\n\
              \x20       output: [o]\n",
         );
         let r = m.resolve_values(&Tree);
@@ -1405,7 +1405,7 @@ mod tests {
                 .iter()
                 .any(|x| matches!(&x.kind, ReadKind::Let { name } if name == "rate"))
         );
-        let rate = &r.values["nodes.h.paths.t.trigger.timer.rate_hz"];
+        let rate = &r.values["nodes.h.paths.t.trigger.timer.rate"];
         assert_eq!(rate.si, 10.0);
         assert_eq!(rate.reads[0].at, "h.param.yaml");
         assert_eq!(rate.reads[0].value, "10 Hz");

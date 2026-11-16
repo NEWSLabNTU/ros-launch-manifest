@@ -132,12 +132,12 @@ topics:
     type: t
     pub: [x/a]
     sub: [fuse/a]
-    rate_hz: 10
+    rate: 10Hz
   tb:
     type: t
     pub: [x/b]
     sub: [fuse/b]
-    rate_hz: 2
+    rate: 2Hz
 "#;
         // slowest input is 2Hz -> 500ms period, window 5ms is way too small
         let warnings = run(yaml);
@@ -167,12 +167,12 @@ topics:
     type: t
     pub: [x/a]
     sub: [fuse/a]
-    rate_hz: 10
+    rate: 10Hz
   tb:
     type: t
     pub: [x/b]
     sub: [fuse/b]
-    rate_hz: 2
+    rate: 2Hz
 "#;
         assert!(run(yaml).is_empty());
     }
@@ -200,12 +200,12 @@ topics:
     type: t
     pub: [x/a]
     sub: [fuse/a]
-    rate_hz: 10
+    rate: 10Hz
   tb:
     type: t
     pub: [x/b]
     sub: [fuse/b]
-    rate_hz: 2
+    rate: 2Hz
 "#;
         assert_eq!(run(yaml).len(), 1);
     }

@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # (pattern, the word to use instead). Case-insensitive, whole words.
 RETIRED: list[tuple[str, str]] = [
-    (r"severity_levels", "integrity_levels"),
+    (r"severity_levels", "a profile named by `use:`"),
     (r"severity_scale", "integrity_scale"),
     (r"severity:\s*(?:ASIL|QM|SIL|DAL)", "integrity: <level>"),
     (r"\brungs?\b", "degradation level"),
@@ -72,12 +72,21 @@ RETIRED: list[tuple[str, str]] = [
     # them out (a digit or `_` after the word is no word boundary, and the
     # lookahead skips the name), so no file is excluded for carrying them.
     (r"\btiers?\b(?![ \t]+IV\b)", "task"),
+    # Phase 104 S3, refused since v0.3.27 (R+1 and R+2 in one release).
+    (r"\b(?:min_|max_)?rate_hz:", "min_rate / max_rate / rate with a unit (`rate: 100Hz`)"),
+    (r"\bintegrity_levels\b", "`use:` of a profile (`use: { iso26262: \"^1\" }`)"),
+    (r"\bearly\.drop\b", "early.decrease"),
 ]
 # Markdown only: a mode's `window:` key in an example block.
 MD_ONLY: list[tuple[str, str]] = [
     (r"^\s+window:", "min_dwell:"),
     # Phase 98 N6 keys in an example block (refused since v0.3.9).
     (r"^\s*-?\s*(?:guards|ingress|on_demand|mapper):", "monitors / arrival_curve / aperiodic / priority_assignment"),
+    # Phase 104 S3 root keys in an example block (refused since v0.3.27).
+    (r"^functions:", "capabilities:"),
+    (r"^paths:", "event_chains:"),
+    (r"^policy:", "check --deny <rule>"),
+    (r"\bobserves:\s*[A-Za-z~/]", "observes: { input: <node>/<sub> }"),
 ]
 
 COMPILED = [(re.compile(p, re.IGNORECASE), new) for p, new in RETIRED]
@@ -277,6 +286,12 @@ def self_test() -> int:
         "docs/t4.md": (
             "The tiers are bound.\n",
             "`tier4_system_launch` and `tier4_*` are TIER IV's; TIER IV ships them.\n",
+        ),
+        # Phase 104 S3 (refused since v0.3.27).
+        "docs/s3.md": ("functions:\n  f: [/a]\n", "capabilities:\n  f: [/a]\n"),
+        "types/src/s3.rs": (
+            'const M: &str = "write `min_rate_hz: 10`";\n',
+            'const M: &str = "write `min_rate: 10Hz`";\n',
         ),
         "check/src/b.rs": (
             'const M: &str = r#"the ladder ends"#;\n',

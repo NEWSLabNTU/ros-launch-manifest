@@ -6,8 +6,8 @@
 //! (the legacy `input:` list that used to derive an input trigger was
 //! removed in v0.3.15).
 //!
-//! A timer whose `rate_hz` is a reference not evaluated at check time
-//! (`rate_hz: $(param rate) Hz` with no launch tree) IS an explicit timer
+//! A timer whose `rate` is a reference not evaluated at check time
+//! (`rate: $(param rate) Hz` with no launch tree) IS an explicit timer
 //! trigger: only its period is unknown (`PathDecl::timer_rate_unread`), so
 //! this rule stays quiet on it (rlm#9). A rule that needs the period reports
 //! the unknown value where it would have used it (`queue-drain-rate`).
@@ -129,7 +129,7 @@ nodes:
     fn scope_path_without_trigger_infos() {
         let yaml = r#"
 version: 1
-paths:
+event_chains:
   e2e:
     output: [b]
 "#;
@@ -151,7 +151,7 @@ nodes:
       out: {}
     paths:
       tick:
-        trigger: { timer: { rate_hz: $(param rate) Hz } }
+        trigger: { timer: { rate: $(param rate) Hz } }
         output: [out]
 "#;
         let manifest = parse_manifest_str(yaml).unwrap();
@@ -173,7 +173,7 @@ nodes:
       out: {}
     paths:
       tick:
-        trigger: { timer: { rate_hz: { value: $(param rate) Hz } } }
+        trigger: { timer: { rate: { value: $(param rate) Hz } } }
         output: [out]
 "#;
         assert!(run(yaml).is_empty(), "got: {:?}", run(yaml));

@@ -186,9 +186,9 @@ impl TopicView {
     }
 }
 
-/// One `contracts.scope_paths` entry: the requirement a chain is derived for.
+/// One `contracts.event_chains` entry: the requirement a chain is derived for.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ScopePathView {
+pub(crate) struct EventChainView {
     /// The model key, `"<scope id>/<name>"`.
     pub key: String,
     pub scope: String,
@@ -211,7 +211,7 @@ pub(crate) struct ModelView {
     /// Scope id -> parent scope id (`None` at a root).
     pub scope_parent: BTreeMap<String, Option<String>>,
     /// In model key order.
-    pub scope_paths: Vec<ScopePathView>,
+    pub event_chains: Vec<EventChainView>,
 }
 
 impl ModelView {
@@ -297,13 +297,13 @@ impl ModelView {
             .map(|(id, info)| (id.clone(), info.parent.clone()))
             .collect();
 
-        let scope_paths = model
+        let event_chains = model
             .contracts
-            .scope_paths
+            .event_chains
             .iter()
             .filter_map(|(key, pc)| {
                 let (scope, name) = key.rsplit_once('/')?;
-                Some(ScopePathView {
+                Some(EventChainView {
                     key: key.clone(),
                     scope: scope.to_string(),
                     name: name.to_string(),
@@ -319,7 +319,7 @@ impl ModelView {
             topics,
             state_subs,
             scope_parent,
-            scope_paths,
+            event_chains,
         }
     }
 }

@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_emit_rate_hierarchy_has_span() {
-        let yaml = "version: 1\nnodes:\n  driver:\n    pub:\n      pointcloud:\n        min_rate_hz: 5\ntopics:\n  pointcloud:\n    type: PointCloud2\n    pub: [driver/pointcloud]\n    rate_hz: 10\n";
+        let yaml = "version: 1\nnodes:\n  driver:\n    pub:\n      pointcloud:\n        min_rate: 5Hz\ntopics:\n  pointcloud:\n    type: PointCloud2\n    pub: [driver/pointcloud]\n    rate: 10Hz\n";
         let parsed = parse_manifest_str_with_spans(yaml).unwrap();
         let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
 

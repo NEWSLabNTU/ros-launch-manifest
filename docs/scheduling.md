@@ -42,7 +42,7 @@ contract keys behind those facts are in
 | Fact | Rule (`derive/src/lib.rs`) |
 |------|----------------------------|
 | effective trigger | the model's per-path `trigger`; a path carrying none is `Unclassified`, **never** a timer (listed in `DeriveReport::paths_without_trigger`) |
-| `rate_hz` | the fastest `Timer` trigger among the node's paths, and nothing else — authored `topics.<t>.rate_hz` and `pub.<ep>.min_rate_hz` are runtime promises no mapper reads |
+| `rate_hz` | the fastest `Timer` trigger among the node's paths, and nothing else — authored `topics.<t>.rate` and `pub.<ep>.min_rate` are runtime promises no mapper reads |
 | `deadline_us` / `path_budget_ms` | min over the node's paths' `max_latency` and its services' `max_response` |
 | `criticality` | the model's effective (hazard-derived, phase 72) value when it carries one, else the advisory `high`/`medium`/`low` label |
 | `claims_concurrency` | declared `concurrency.exclusive` sets sharing a member merge; concurrency is claimed unless one merged group covers every declared path (`exclusive: []` claims it; an absent declaration, or a single path, does not) |
@@ -127,6 +127,7 @@ A platform file of any target may also state the terms of a supervised
 budget's detection delay (since v0.3.22), which belong to the processor and
 its scheduler rather than to the software:
 
+<!-- yaml-check: skip — a fragment of a platform file, which needs its `target:` and scheduling keys -->
 ```yaml
 supervision:
   tick: 1ms       # the period the monitor's clock is read at (positive)
@@ -134,8 +135,7 @@ supervision:
 ```
 
 A contract stated them as a root `supervision:` before v0.3.22; that copy
-still reads for one release, deprecated, when the platform file states
-none. One contract checked for two targets takes each target's terms from
+read for one release, deprecated, and is refused since v0.3.27. One contract checked for two targets takes each target's terms from
 that target's file.
 
 - **`posix` `resources`** (`PosixResources`, `deny_unknown_fields`):
@@ -233,7 +233,7 @@ pub trait SchedMapper {
   pub struct MapperNode {
       pub name: String,                    // FQN
       pub scope: String,                   // namespace / event chain
-      pub rate_hz: Option<f64>,
+      pub rate_hz: Option<f64>,            // terms: allow (a model field, Hz)
       pub deadline_us: Option<u64>,
       pub criticality: Option<Criticality>, // Low < Medium < High
       pub path_budget_ms: Option<f64>,     // filled by `derive`; read by no built-in mapper

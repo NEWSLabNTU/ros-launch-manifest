@@ -6,6 +6,46 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.27 - 2026-11-16
+
+The S3 old spellings are refused (play_launch phase 104 S3, R+1 and R+2 in
+one release, by decision). GRAMMAR_VERSION 0.3.27; model schema 6;
+workspace version 0.11.0 (API: fields and types removed).
+
+- **Every S3 old spelling is a parse error** naming its replacement and
+  `play_launch migrate <contract> --write`, which still rewrites each: a
+  manifest-level `functions:` (`capabilities:`), a hazard's `enters:`
+  (`leaves:`), a manifest-level `paths:` and a mode override's `paths.`
+  target (`event_chains:`), `min_rate_hz`/`max_rate_hz`/`rate_hz` and an
+  override target ending `_hz` (`min_rate`/`max_rate`/`rate` with a unit),
+  a contract's `supervision:` (the platform file's), `policy:` (the
+  checker's `--deny <rule>`), `integrity_levels:` (`use:` of a profile),
+  `max_transport` written on any endpoint or on a service (a link the
+  endpoint names), `observes:` as a string (`{ input }`) and `early.drop`
+  (`early.decrease`). Each old key is a `removed` row of the field table;
+  `DEPRECATED_IN` and `DEPRECATED_USES` are empty.
+- **Removed from the API:** `Manifest::policy`, `Manifest::supervision`,
+  `Manifest::integrity_levels`, `Policy`, `PolicySeverity`,
+  `ServiceDecl::max_transport`, the field-table contexts `Policy` and
+  `Supervision`, and the service's `max_transport` bound key.
+  `SupervisionPlatform` stays: the platform file reads it.
+  `EndpointProps::max_transport` stays, filled only from a link
+  (`transport::apply_links`, for a subscriber and a client).
+- **The S3 renames are `Retired`** in `rule_names`: `enters-unknown-mode`
+  and `enters-not-removed` in `acknowledged:` match nothing (`ack-stale`),
+  and so does a path through `functions`, `enters`, a manifest-level
+  `paths` or a `_hz` rate key. `migrate` maps every one.
+- **Model schema 6:** `Contracts::scope_paths` is `event_chains` and
+  `OverrideTable::ScopePaths` is `EventChains`; the old names are read
+  through serde aliases, for good. `EarlyCheckContract::drop_mps` is gone:
+  `SystemModel::from_yaml_str` reads a model's `drop_mps` as the decrease
+  when it states none. A reader before v0.3.27 refuses a schema-6 model.
+- **Fixed:** a refused or unknown key of a timer is reported at
+  `...trigger.timer.<key>`, and one of a service or an action at
+  `services.<name>.<key>` / `actions.<name>.<key>`; both used to name a
+  path that does not exist.
+- `check_terms.py` lists the S3 old words as retired.
+
 ## v0.3.26 - 2026-11-16
 
 QoS enum values are checked (play_launch issue #0083). GRAMMAR_VERSION

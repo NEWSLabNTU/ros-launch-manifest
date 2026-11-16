@@ -15,7 +15,7 @@ fn err(src: &str) -> String {
 #[test]
 fn a_literal_parses_as_before() {
     let m = parse_manifest_str(
-        "nodes:\n  n:\n    sub:\n      a: { max_age: 500ms, min_rate_hz: 10 }\n      \
+        "nodes:\n  n:\n    sub:\n      a: { max_age: 500ms, min_rate: 10Hz }\n      \
          b: { max_age: { duration: 500ms, source: requirement } }\n",
     )
     .unwrap();
@@ -31,9 +31,9 @@ fn a_literal_parses_as_before() {
 #[test]
 fn a_reference_alone_is_unknown() {
     let m = parse_manifest_str(
-        "nodes:\n  n:\n    pub:\n      o: { min_rate_hz: $(param rate) Hz }\n    \
+        "nodes:\n  n:\n    pub:\n      o: { min_rate: $(param rate) Hz }\n    \
          sub:\n      i: { max_age: { duration: $(param t) s, param: t } }\n    \
-         paths:\n      p:\n        trigger: { timer: { rate_hz: $(param rate) Hz } }\n        \
+         paths:\n      p:\n        trigger: { timer: { rate: $(param rate) Hz } }\n        \
          output: [o]\n",
     )
     .unwrap();
@@ -46,9 +46,9 @@ fn a_reference_alone_is_unknown() {
     assert_eq!(
         paths,
         [
-            "nodes.n.pub.o.min_rate_hz",
+            "nodes.n.pub.o.min_rate",
             "nodes.n.sub.i.max_age.duration",
-            "nodes.n.paths.p.trigger.timer.rate_hz",
+            "nodes.n.paths.p.trigger.timer.rate",
         ]
     );
     assert!(m.value_refs.iter().all(|r| r.node.as_deref() == Some("n")));
@@ -128,7 +128,7 @@ fn every_parse_time_refusal() {
             "source-on-reference",
         ),
         (
-            "nodes:\n  n:\n    pub:\n      o: {}\n    paths:\n      p:\n        trigger: { timer: { rate_hz: { value: $(param r) Hz, source: allocated } } }\n        output: [o]\n",
+            "nodes:\n  n:\n    pub:\n      o: {}\n    paths:\n      p:\n        trigger: { timer: { rate: { value: $(param r) Hz, source: allocated } } }\n        output: [o]\n",
             "source-on-reference",
         ),
         // A default that is not a number for a number type.
@@ -198,10 +198,10 @@ impl Lookup for Tree {
 #[test]
 fn the_launch_tree_fills_the_values() {
     let src = "let:\n  lidar_rate: $(var lidar_hz) Hz\n\
-               nodes:\n  lidar:\n    pub:\n      scan: { min_rate_hz: $(let lidar_rate) }\n    \
-               paths:\n      sample:\n        trigger: { timer: { rate_hz: $(param rate_hz) Hz } }\n        \
+               nodes:\n  lidar:\n    pub:\n      scan: { min_rate: $(let lidar_rate) }\n    \
+               paths:\n      sample:\n        trigger: { timer: { rate: $(param rate_hz) Hz } }\n        \
                output: [scan]\n  \
-               det:\n    sub:\n      scan:\n        min_rate_hz: $(let lidar_rate)\n        \
+               det:\n    sub:\n      scan:\n        min_rate: $(let lidar_rate)\n        \
                qos: { liveliness: manual_by_topic, lease_duration: $(param watchdog_ms) ms }\n        \
                max_age: 3 / $(let lidar_rate)\n";
     let (pr, res) = resolve_manifest_str(src, &Tree).unwrap();

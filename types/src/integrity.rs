@@ -54,11 +54,11 @@ pub fn render_markdown() -> String {
     out.push_str(
         "A node a hazard reaches (it feeds, detects for, reacts for, or commands for \
          the hazard) takes a scheduling criticality from the hazard's `integrity`, the MAX over \
-         every hazard that reaches it. The first entry of `integrity_levels` is \"no \
+         every hazard that reaches it. The first entry of the scale is \"no \
          safety requirement\" and derives nothing; the other `n` entries split into \
          three buckets by `ceil(3 rank / n)` (1 low, 2 medium, 3 high). A written \
          `criticality` on such a node is an error; on a node no hazard reaches it \
-         stands. The default scale (no `integrity_levels` declared):\n\n",
+         stands. The default scale (no profile named by `use:`):\n\n",
     );
     out.push_str("| integrity | criticality |\n|---|---|\n");
     for (level, crit) in criticality_map(&DEFAULT_INTEGRITY_LEVELS) {
@@ -69,7 +69,7 @@ pub fn render_markdown() -> String {
         "A contract that uses a profile (phase 91 E6; `use: { iec61508: \"^1\" }`) draws \
          integrity levels from the profile's `integrity_scale` and takes each level's criticality \
          from the profile's `criticality` map, stated level by level, instead of the split \
-         above; it may not also write `integrity_levels:`. Reference profiles ship with the \
+         above. Reference profiles ship with the \
          checker: ",
     );
     let names: Vec<String> = crate::profile::reference()

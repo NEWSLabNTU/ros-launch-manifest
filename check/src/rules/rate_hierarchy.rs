@@ -208,7 +208,7 @@ mod max_rate_tests {
     /// can drain was accepted in silence.
     #[test]
     fn a_topic_faster_than_a_subscriber_can_drain_is_an_error() {
-        let yaml = "version: 1\nnodes:\n  src:\n    pub:\n      out: {}\n  ekf:\n    sub:\n      in:\n        max_rate_hz: 20\ntopics:\n  data:\n    type: T\n    rate_hz: 50\n    pub: [src/out]\n    sub: [ekf/in]\n";
+        let yaml = "version: 1\nnodes:\n  src:\n    pub:\n      out: {}\n  ekf:\n    sub:\n      in:\n        max_rate: 20Hz\ntopics:\n  data:\n    type: T\n    rate: 50Hz\n    pub: [src/out]\n    sub: [ekf/in]\n";
         let errs = errors(yaml);
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(errs[0].contains("max_rate (20 Hz)"), "{errs:?}");
@@ -216,7 +216,7 @@ mod max_rate_tests {
 
     #[test]
     fn a_topic_faster_than_its_publisher_can_publish_is_an_error() {
-        let yaml = "version: 1\nnodes:\n  src:\n    pub:\n      out:\n        max_rate_hz: 10\ntopics:\n  data:\n    type: T\n    rate_hz: 50\n    pub: [src/out]\n";
+        let yaml = "version: 1\nnodes:\n  src:\n    pub:\n      out:\n        max_rate: 10Hz\ntopics:\n  data:\n    type: T\n    rate: 50Hz\n    pub: [src/out]\n";
         let errs = errors(yaml);
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(
@@ -233,14 +233,14 @@ mod max_rate_tests {
         // Nobody requires a rate: clean.
         assert!(errors(&base.replace("SUB", "{}")).is_empty());
         // A read-latest subscriber requires none either.
-        assert!(errors(&base.replace("SUB", "{ min_rate_hz: 10, state: true }")).is_empty());
-        let errs = errors(&base.replace("SUB", "{ min_rate_hz: 10 }"));
+        assert!(errors(&base.replace("SUB", "{ min_rate: 10Hz, state: true }")).is_empty());
+        let errs = errors(&base.replace("SUB", "{ min_rate: 10Hz }"));
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(
             errs[0].contains("subscriber 'planner/limit' requires min_rate (10 Hz)"),
             "{errs:?}"
         );
-        let errs = errors(&format!("{}    rate_hz: 10\n", base.replace("SUB", "{}")));
+        let errs = errors(&format!("{}    rate: 10Hz\n", base.replace("SUB", "{}")));
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(
             errs[0].contains("beside aperiodic publisher 'op/limit'"),
@@ -250,7 +250,7 @@ mod max_rate_tests {
 
     #[test]
     fn a_topic_within_both_bounds_is_clean() {
-        let yaml = "version: 1\nnodes:\n  src:\n    pub:\n      out:\n        min_rate_hz: 50\n        max_rate_hz: 100\n  ekf:\n    sub:\n      in:\n        min_rate_hz: 10\n        max_rate_hz: 60\ntopics:\n  data:\n    type: T\n    rate_hz: 50\n    pub: [src/out]\n    sub: [ekf/in]\n";
+        let yaml = "version: 1\nnodes:\n  src:\n    pub:\n      out:\n        min_rate: 50Hz\n        max_rate: 100Hz\n  ekf:\n    sub:\n      in:\n        min_rate: 10Hz\n        max_rate: 60Hz\ntopics:\n  data:\n    type: T\n    rate: 50Hz\n    pub: [src/out]\n    sub: [ekf/in]\n";
         assert!(errors(yaml).is_empty());
     }
 }
