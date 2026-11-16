@@ -6,6 +6,38 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## v0.3.26 - 2026-11-16
+
+QoS enum values are checked (play_launch issue #0083). GRAMMAR_VERSION
+0.3.26.
+
+- **A QoS enum value outside its ROS 2 set is a parse error** naming the
+  key, the value and the set: `reliability` (`reliable`, `best_effort`,
+  `system_default`, `best_available`), `durability` (`volatile`,
+  `transient_local`, `system_default`, `best_available`), `history`
+  (`keep_last`, `keep_all`, `system_default`), `liveliness` (`automatic`,
+  `manual_by_topic`, `system_default`, `best_available`). Any string used to
+  parse, so a typo (`transient-local`) reached the match. `system_default`
+  and `best_available`, which `qos-compat` refused, are values.
+- **`$(var <arg>)` in a QoS enum is evaluated.** The value may be exactly
+  `$(var <arg>)` naming an arg of `args:`; the parser refuses an undeclared
+  arg, a `type: bool` arg, and a `choices:` entry outside the set, so every
+  launch configuration is checked at parse time. `substitute_manifest` now
+  substitutes the QoS enum fields (topic and endpoint blocks; it skipped
+  them, so the reference reached the match as the literal) and refuses a
+  free-string arg that evaluates outside the set
+  (`SubstError::InvalidQosValue`, with `SubstError::path()`). Any other
+  reference (`$(param ...)`, `$(var x @n)`) is refused.
+- **The match refuses what it does not know.** `qos-match` takes
+  `qos::compatible`: an unknown value is an error, never compatible (the
+  table ended in `_ => true`); `best_available` matches; `system_default`
+  on either side is the RMW's value and draws a warning that the pair is
+  not checked. `qos-compat` names the allowed set, and warns on a
+  `$(var ...)` read without a launch scope.
+- **API:** new module `qos` (`QosField`, the value sets, `classify`,
+  `compatible`, `Match`); `SubstError::InvalidQosValue`. Workspace version
+  0.10.0.
+
 ## v0.3.25 - 2026-11-15
 
 S3, T4's last relocation: a supervised settle's observation and response

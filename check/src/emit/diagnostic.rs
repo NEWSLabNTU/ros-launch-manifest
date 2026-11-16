@@ -86,10 +86,18 @@ mod tests {
     use crate::check::run_checks_with_spans;
     use ros_launch_manifest_types::parse_manifest_str_with_spans;
 
+    fn set_reliability(m: &mut ros_launch_manifest_types::Manifest, topic: &str, v: &str) {
+        let q = m.topics.get_mut(topic).unwrap().qos.as_mut().unwrap();
+        q.reliability = Some(v.to_string());
+    }
+
     #[test]
     fn test_emit_qos_violation_has_line_number() {
-        let yaml = "version: 1\ntopics:\n  pointcloud:\n    type: PointCloud2\n    qos:\n      reliability: maybe\n";
-        let parsed = parse_manifest_str_with_spans(yaml).unwrap();
+        // The parser refuses `maybe` (play_launch issue #0083): write it into
+        // the parsed manifest, at the key the span index knows.
+        let yaml = "version: 1\ntopics:\n  pointcloud:\n    type: PointCloud2\n    qos:\n      reliability: reliable\n";
+        let mut parsed = parse_manifest_str_with_spans(yaml).unwrap();
+        set_reliability(&mut parsed.manifest, "pointcloud", "maybe");
         let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
 
         assert!(result.has_errors());
@@ -125,8 +133,9 @@ mod tests {
     #[test]
     fn test_emit_no_span_fallback() {
         // Use run_checks (no spans) — diagnostics should still render
-        let yaml = "version: 1\ntopics:\n  pc:\n    type: PointCloud2\n    qos:\n      reliability: maybe\n";
-        let m = ros_launch_manifest_types::parse_manifest_str(yaml).unwrap();
+        let yaml = "version: 1\ntopics:\n  pc:\n    type: PointCloud2\n    qos:\n      reliability: reliable\n";
+        let mut m = ros_launch_manifest_types::parse_manifest_str(yaml).unwrap();
+        set_reliability(&mut m, "pc", "maybe");
         let result = crate::check::run_checks(&m);
 
         let output = emit_diagnostics_to_string(&result, "test.yaml", yaml);

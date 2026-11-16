@@ -162,10 +162,13 @@ topics:
     qos:
       reliability: maybe
 "#;
-    let errs = errors(yaml);
+    // A parse error since play_launch issue #0083, naming the set.
+    let e = parse_manifest_str(yaml).unwrap_err().to_string();
     assert!(
-        errs.iter().any(|e| e.contains("invalid reliability")),
-        "expected QoS error: {errs:?}"
+        e.contains("topics.pointcloud.qos.reliability")
+            && e.contains("`reliability: maybe`")
+            && e.contains("accepted: reliable, best_effort"),
+        "expected QoS parse error: {e}"
     );
 }
 
@@ -629,7 +632,7 @@ topics:
   pointcloud:
     type: PointCloud2
     qos:
-      reliability: maybe
+      depth: 0
 "#;
     let parsed = parse_manifest_str_with_spans(yaml).unwrap();
     let result = run_checks_with_spans(&parsed.manifest, parsed.spans);
@@ -637,7 +640,7 @@ topics:
     let qos_errs: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.rule_id == "qos-compat" && d.severity == Severity::Error)
+        .filter(|d| d.rule_id == "qos-match" && d.severity == Severity::Error)
         .collect();
     assert!(!qos_errs.is_empty());
 
@@ -732,7 +735,7 @@ topics:
   pc:
     type: PointCloud2
     qos:
-      reliability: maybe
+      depth: 0
 "#;
     let m = parse_manifest_str(yaml).unwrap();
     let result = run_checks(&m);

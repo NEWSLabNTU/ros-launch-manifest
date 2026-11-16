@@ -77,7 +77,7 @@ topics:
     rate: 10Hz
     qos:
       reliability: best_effort
-      durability: persistent
+      depth: 0
 
   a_to_b:
     type: std_msgs/msg/String

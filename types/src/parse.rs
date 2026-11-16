@@ -608,6 +608,7 @@ fn parse_manifest_yaml(doc: &Yaml, ctx: &str) -> Result<Manifest, ParseError> {
         supervision: parse_supervision_platform(doc, ctx)?,
         acknowledged: parse_acknowledged(doc, ctx)?,
     };
+    check_qos_args(&manifest, ctx)?;
     Ok(manifest)
 }
 
@@ -4415,16 +4416,121 @@ fn parse_qos(doc: &Yaml, ctx: &str) -> Result<Option<QosDecl>, ParseError> {
     // Nested block: diagnostics name the block, not its parent.
     let ctx = &format_path(ctx, "qos");
     reject_unknown_keys(section, ctx, Context::Qos)?;
+    let field = |f: crate::qos::QosField| qos_enum(section, f, ctx);
     Ok(Some(QosDecl {
-        reliability: yaml_string(section, "reliability", ctx)?,
-        durability: yaml_string(section, "durability", ctx)?,
+        reliability: field(crate::qos::QosField::Reliability)?,
+        durability: field(crate::qos::QosField::Durability)?,
         depth: yaml_u32(section, "depth", ctx)?,
-        history: yaml_string(section, "history", ctx)?,
+        history: field(crate::qos::QosField::History)?,
         lifespan: yaml_duration_at(section, "lifespan", ctx, false)?,
-        liveliness: yaml_string(section, "liveliness", ctx)?,
+        liveliness: field(crate::qos::QosField::Liveliness)?,
         deadline: yaml_duration_at(section, "deadline", ctx, false)?,
         lease_duration: yaml_duration_at(section, "lease_duration", ctx, false)?,
     }))
+}
+
+/// A QoS enum value (issue #0083): a literal from the ROS 2 set, or exactly
+/// `$(var <arg>)`. The arg is tested against `args:` once the whole file is
+/// read ([`check_qos_args`]); any other reference is refused here, since the
+/// launch tree's `$(param)` and `@<node>` reads evaluate to numbers only.
+fn qos_enum(
+    section: &Yaml,
+    field: crate::qos::QosField,
+    ctx: &str,
+) -> Result<Option<String>, ParseError> {
+    use crate::qos::{Written, classify};
+    let Some(v) = yaml_string(section, field.key(), ctx)? else {
+        return Ok(None);
+    };
+    match classify(&v) {
+        Written::Literal(l) => field
+            .check(l)
+            .map_err(|m| field_err(ctx, field.key(), &m))?,
+        Written::Var(_) => {}
+        Written::Other => {
+            return Err(field_err(
+                ctx,
+                field.key(),
+                &format!(
+                    "`{}: {v}` is not evaluated: a QoS enum takes a literal ({}) or exactly \
+                     `$(var <arg>)` naming an arg of this contract's `args:` (with `choices:` \
+                     from that set, so every launch configuration is checked)",
+                    field.key(),
+                    field.allowed_list()
+                ),
+            ));
+        }
+    }
+    Ok(Some(v))
+}
+
+/// Every `$(var <arg>)` in a QoS enum names an arg of `args:`; an arg with
+/// `choices:` offers only values of the field's set, so the reference is
+/// checked for every launch configuration at parse time. A free-string arg
+/// is tested when `substitute_manifest` evaluates it; a `type: bool` arg can
+/// never be a QoS value.
+fn check_qos_args(m: &Manifest, ctx: &str) -> Result<(), ParseError> {
+    use crate::qos::{QosField, Written, classify};
+    let mut blocks: Vec<(String, &QosDecl)> = Vec::new();
+    for (name, t) in &m.topics {
+        if let Some(q) = &t.qos {
+            blocks.push((format!("topics.{name}.qos"), q));
+        }
+    }
+    for (n, node) in &m.nodes {
+        for (kind, eps) in [
+            ("pub", &node.publishers),
+            ("sub", &node.subscribers),
+            ("cli", &node.cli),
+        ] {
+            for (e, props) in eps {
+                if let Some(q) = &props.qos {
+                    blocks.push((format!("nodes.{n}.{kind}.{e}.qos"), q));
+                }
+            }
+        }
+    }
+    for (path, q) in blocks {
+        let path = format_path(ctx, &path);
+        for f in QosField::ALL {
+            let Some(v) = f.get(q) else { continue };
+            let Written::Var(arg) = classify(v) else {
+                continue;
+            };
+            let err = |msg: String| Err(field_err(&path, f.key(), &msg));
+            match m.args.get(arg) {
+                None => {
+                    return err(format!(
+                        "`{}: {v}` reads `{arg}`, which is not an arg of this contract: \
+                         declare it under `args:` with `choices:` from {}",
+                        f.key(),
+                        f.allowed_list()
+                    ));
+                }
+                Some(ArgDecl::Bool) => {
+                    return err(format!(
+                        "`{}: {v}` reads `{arg}`, a `type: bool` arg; its values \
+                         `true`/`false` are not QoS values (accepted: {})",
+                        f.key(),
+                        f.allowed_list()
+                    ));
+                }
+                Some(ArgDecl::Choices(cs)) => {
+                    if let Some(bad) = cs.iter().find(|c| !f.is_allowed(c)) {
+                        return err(format!(
+                            "`{}: {v}` reads `{arg}`, whose choice `{bad}` is not a ROS 2 {} \
+                             value; accepted: {}",
+                            f.key(),
+                            f.key(),
+                            f.allowed_list()
+                        ));
+                    }
+                }
+                Some(ArgDecl::String) => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── YAML helpers ──
@@ -7784,5 +7890,66 @@ nodes:
         assert!((sv.early.as_ref().unwrap().speed_mps().unwrap() - 0.15).abs() < 1e-12);
         let olds: Vec<&str> = m.deprecated_spellings.iter().map(|d| d.old).collect();
         assert_eq!(olds, ["observes", "drop"], "{:?}", m.deprecated_spellings);
+    }
+
+    fn qos_err(qos: &str, args: &str) -> String {
+        let yaml = format!("version: 1\n{args}topics:\n  /t:\n    type: T\n    qos: {{ {qos} }}\n");
+        match parse_manifest_str(&yaml) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("`{qos}` parsed"),
+        }
+    }
+
+    #[test]
+    fn a_qos_enum_typo_is_refused() {
+        // Issue #0083: any string used to parse, and the match passed it.
+        let e = qos_err("durability: transient-local", "");
+        assert!(e.contains("topics./t.qos.durability"), "{e}");
+        assert!(e.contains("`durability: transient-local`"), "{e}");
+        assert!(
+            e.contains("accepted: volatile, transient_local, system_default, best_available"),
+            "{e}"
+        );
+        for (q, needle) in [
+            ("reliability: reliabel", "reliable, best_effort"),
+            ("history: keep_some", "keep_last, keep_all, system_default"),
+            ("liveliness: manual_by_node", "automatic, manual_by_topic"),
+        ] {
+            let e = qos_err(q, "");
+            assert!(e.contains(needle), "{q}: {e}");
+        }
+        // The ROS 2 defaults are values.
+        let yaml = "version: 1\ntopics:\n  /t:\n    type: T\n    qos: { reliability: system_default, durability: best_available, history: system_default, liveliness: best_available }\n";
+        assert!(parse_manifest_str(yaml).is_ok());
+    }
+
+    #[test]
+    fn a_qos_enum_reference_must_name_a_checked_arg() {
+        // Anything but `$(var <arg>)` is refused.
+        let e = qos_err("durability: $(param durability)", "");
+        assert!(
+            e.contains("is not evaluated") && e.contains("`$(var <arg>)`"),
+            "{e}"
+        );
+        // The arg must be declared.
+        let e = qos_err("durability: $(var d)", "");
+        assert!(e.contains("not an arg of this contract"), "{e}");
+        // A bool arg is never a QoS value.
+        let e = qos_err("durability: $(var d)", "args:\n  d: { type: bool }\n");
+        assert!(e.contains("`type: bool`"), "{e}");
+        // Every choice must be a value of the field.
+        let e = qos_err(
+            "durability: $(var d)",
+            "args:\n  d: { choices: [volatile, transient-local] }\n",
+        );
+        assert!(e.contains("choice `transient-local`"), "{e}");
+        assert!(e.contains("topics./t.qos.durability"), "{e}");
+        // On an endpoint, the path names the endpoint.
+        let yaml = "version: 1\nnodes:\n  n:\n    sub:\n      s:\n        qos: { reliability: $(var r) }\n";
+        let e = parse_manifest_str(yaml).unwrap_err().to_string();
+        assert!(e.contains("nodes.n.sub.s.qos.reliability"), "{e}");
+        // Choices from the set parse.
+        let yaml = "version: 1\nargs:\n  d: { choices: [volatile, transient_local] }\ntopics:\n  /t:\n    type: T\n    qos: { durability: $(var d) }\n";
+        assert!(parse_manifest_str(yaml).is_ok());
     }
 }

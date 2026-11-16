@@ -21,6 +21,59 @@ pub enum SubstError {
     },
     #[error("malformed substitution: {expr}")]
     Malformed { expr: String },
+    /// A QoS enum's `$(var <arg>)` evaluated to a value outside the field's
+    /// ROS 2 set (issue #0083). `path` is the key's dotted contract path.
+    #[error(
+        "at '{path}': `{written}` evaluated to '{value}', which is not a ROS 2 {field} value; accepted: {allowed}"
+    )]
+    InvalidQosValue {
+        path: String,
+        field: &'static str,
+        written: String,
+        value: String,
+        allowed: String,
+    },
+}
+
+impl SubstError {
+    /// The dotted contract path the error is at, when it names one.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            SubstError::InvalidQosValue { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+}
+
+/// Evaluate the QoS enum values of one block and test what they produced
+/// against the field's set (issue #0083).
+fn substitute_qos(
+    qos: &mut Option<crate::types::QosDecl>,
+    path: &str,
+    args: &HashMap<String, String>,
+) -> Result<(), SubstError> {
+    let Some(q) = qos else { return Ok(()) };
+    for f in crate::qos::QosField::ALL {
+        let slot = f.get_mut(q);
+        let Some(written) = slot.clone() else {
+            continue;
+        };
+        if !written.contains("$(") {
+            continue;
+        }
+        let value = substitute_str(&written, args)?;
+        if !f.is_allowed(&value) {
+            return Err(SubstError::InvalidQosValue {
+                path: format!("{path}.{}", f.key()),
+                field: f.key(),
+                written,
+                value,
+                allowed: f.allowed_list(),
+            });
+        }
+        *slot = Some(value);
+    }
+    Ok(())
 }
 
 /// Resolve manifest args from caller-provided scope args.
@@ -129,7 +182,20 @@ pub fn substitute_manifest(
     let mut m = manifest.clone();
 
     // Nodes: conditions
-    for node in m.nodes.values_mut() {
+    for (node_name, node) in m.nodes.iter_mut() {
+        for (kind, eps) in [
+            ("pub", &mut node.publishers),
+            ("sub", &mut node.subscribers),
+            ("cli", &mut node.cli),
+        ] {
+            for (e, props) in eps.iter_mut() {
+                substitute_qos(
+                    &mut props.qos,
+                    &format!("nodes.{node_name}.{kind}.{e}.qos"),
+                    args,
+                )?;
+            }
+        }
         node.if_condition = substitute_opt(&node.if_condition, args)?;
         node.unless_condition = substitute_opt(&node.unless_condition, args)?;
         // Node-level paths: conditions + fields
@@ -142,7 +208,8 @@ pub fn substitute_manifest(
     }
 
     // Topics: conditions + fields
-    for topic in m.topics.values_mut() {
+    for (topic_name, topic) in m.topics.iter_mut() {
+        substitute_qos(&mut topic.qos, &format!("topics.{topic_name}.qos"), args)?;
         topic.if_condition = substitute_opt(&topic.if_condition, args)?;
         topic.unless_condition = substitute_opt(&topic.unless_condition, args)?;
         topic.msg_type = substitute_str(&topic.msg_type, args)?;
@@ -373,5 +440,81 @@ version: 1
             ArgDecl::Choices(v) => assert_eq!(v, &vec!["ndt", "eagleye", "gnss"]),
             _ => panic!("expected Choices"),
         }
+    }
+
+    const QOS_VAR: &str = r#"
+version: 1
+args:
+  operation_mode_durability:
+    choices: [volatile, transient_local]
+nodes:
+  controller:
+    sub:
+      operation_mode:
+        qos: { durability: $(var operation_mode_durability) }
+  bridge:
+    pub: [operation_mode]
+topics:
+  /system/operation_mode/state:
+    type: T
+    pub: [bridge/operation_mode]
+    sub: [controller/operation_mode]
+    qos: { durability: $(var operation_mode_durability), reliability: reliable }
+"#;
+
+    #[test]
+    fn a_qos_var_is_evaluated_per_arg_value() {
+        // Issue #0083: the reference reached the match as the literal
+        // `$(var ...)` and passed.
+        let m = crate::parse_manifest_str(QOS_VAR).unwrap();
+        for value in ["volatile", "transient_local"] {
+            let mut caller = HashMap::new();
+            caller.insert("operation_mode_durability".to_string(), value.to_string());
+            let args = resolve_args(&m.args, &caller).unwrap();
+            let s = substitute_manifest(&m, &args).unwrap();
+            let t = &s.topics["/system/operation_mode/state"];
+            assert_eq!(t.qos.as_ref().unwrap().durability.as_deref(), Some(value));
+            assert_eq!(
+                t.qos.as_ref().unwrap().reliability.as_deref(),
+                Some("reliable")
+            );
+            let ep = &s.nodes["controller"].subscribers["operation_mode"];
+            assert_eq!(ep.qos.as_ref().unwrap().durability.as_deref(), Some(value));
+        }
+        // A value outside `choices:` is refused before substitution.
+        let mut caller = HashMap::new();
+        caller.insert(
+            "operation_mode_durability".to_string(),
+            "transient".to_string(),
+        );
+        assert!(matches!(
+            resolve_args(&m.args, &caller),
+            Err(SubstError::InvalidArgValue { .. })
+        ));
+    }
+
+    #[test]
+    fn a_free_string_qos_var_is_tested_once_evaluated() {
+        let yaml = QOS_VAR.replace("    choices: [volatile, transient_local]\n", "");
+        let m = crate::parse_manifest_str(&yaml).unwrap();
+        let mut caller = HashMap::new();
+        caller.insert(
+            "operation_mode_durability".to_string(),
+            "transient-local".to_string(),
+        );
+        let args = resolve_args(&m.args, &caller).unwrap();
+        let e = substitute_manifest(&m, &args).unwrap_err();
+        let msg = e.to_string();
+        assert_eq!(
+            e.path(),
+            Some("nodes.controller.sub.operation_mode.qos.durability"),
+            "{msg}"
+        );
+        assert!(msg.contains("'transient-local'"), "{msg}");
+        assert!(msg.contains("$(var operation_mode_durability)"), "{msg}");
+        assert!(
+            msg.contains("accepted: volatile, transient_local, system_default, best_available"),
+            "{msg}"
+        );
     }
 }

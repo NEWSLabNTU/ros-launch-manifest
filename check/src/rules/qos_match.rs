@@ -213,50 +213,45 @@ fn check_compat_pair(
 ) {
     let path = format!("topics.{topic_name}");
 
-    if let (Some(pub_rel), Some(sub_rel)) = (
-        pub_qos.reliability.as_deref(),
-        sub_qos.reliability.as_deref(),
-    ) && !reliability_compatible(pub_rel, sub_rel)
-    {
-        ctx.error(
-            rule_id,
-            &path,
-            format!(
-                "incompatible QoS on topic '{topic_name}' field 'reliability': pub \
-                 '{pub_node}/{pub_ep}' offers '{pub_rel}', sub '{sub_node}/{sub_ep}' \
-                 requests '{sub_rel}'"
+    use ros_launch_manifest_types::qos::{Match, QosField, compatible};
+    for f in [
+        QosField::Reliability,
+        QosField::Durability,
+        QosField::Liveliness,
+    ] {
+        let (Some(pv), Some(sv)) = (f.get(pub_qos), f.get(sub_qos)) else {
+            continue;
+        };
+        let key = f.key();
+        match compatible(f, pv, sv) {
+            Ok(Match::Compatible) => {}
+            Ok(Match::Incompatible) => ctx.error(
+                rule_id,
+                &path,
+                format!(
+                    "incompatible QoS on topic '{topic_name}' field '{key}': pub \
+                     '{pub_node}/{pub_ep}' offers '{pv}', sub '{sub_node}/{sub_ep}' \
+                     requests '{sv}'"
+                ),
             ),
-        );
-    }
-
-    if let (Some(pub_dur), Some(sub_dur)) =
-        (pub_qos.durability.as_deref(), sub_qos.durability.as_deref())
-        && !durability_compatible(pub_dur, sub_dur)
-    {
-        ctx.error(
-            rule_id,
-            &path,
-            format!(
-                "incompatible QoS on topic '{topic_name}' field 'durability': pub \
-                 '{pub_node}/{pub_ep}' offers '{pub_dur}', sub '{sub_node}/{sub_ep}' \
-                 requests '{sub_dur}'"
+            Ok(Match::RmwDefined(why)) => ctx.warning(
+                rule_id,
+                &path,
+                format!(
+                    "QoS on topic '{topic_name}', pub '{pub_node}/{pub_ep}' and sub \
+                     '{sub_node}/{sub_ep}': {why}"
+                ),
             ),
-        );
-    }
-
-    if let (Some(pub_live), Some(sub_live)) =
-        (pub_qos.liveliness.as_deref(), sub_qos.liveliness.as_deref())
-        && !liveliness_compatible(pub_live, sub_live)
-    {
-        ctx.error(
-            rule_id,
-            &path,
-            format!(
-                "incompatible QoS on topic '{topic_name}' field 'liveliness': pub \
-                 '{pub_node}/{pub_ep}' offers '{pub_live}', sub '{sub_node}/{sub_ep}' \
-                 requests '{sub_live}'"
+            // An unknown value is never compatible (issue #0083).
+            Err(why) => ctx.error(
+                rule_id,
+                &path,
+                format!(
+                    "QoS on topic '{topic_name}' field '{key}', pub '{pub_node}/{pub_ep}' \
+                     and sub '{sub_node}/{sub_ep}': {why}"
+                ),
             ),
-        );
+        }
     }
 
     // The lease is the fault-detection interval: the subscriber declares how
@@ -279,37 +274,6 @@ fn check_compat_pair(
                 sub_lease.as_millis_f64()
             ),
         );
-    }
-}
-
-/// DDS liveliness compatibility: offered must be at least as strict as
-/// requested. `manual_by_topic` ≥ `automatic`. Unknown values pass.
-fn liveliness_compatible(pub_v: &str, sub_v: &str) -> bool {
-    !matches!((pub_v, sub_v), ("automatic", "manual_by_topic"))
-}
-
-/// DDS reliability compatibility: offered must be at least as strong as
-/// requested. `reliable` ≥ `best_effort`. Unknown values are accepted —
-/// `qos-compat` reports invalid value tokens separately.
-fn reliability_compatible(pub_v: &str, sub_v: &str) -> bool {
-    match (pub_v, sub_v) {
-        ("reliable", "reliable") => true,
-        ("reliable", "best_effort") => true,
-        ("best_effort", "reliable") => false,
-        ("best_effort", "best_effort") => true,
-        _ => true,
-    }
-}
-
-/// DDS durability compatibility: offered must be at least as strong as
-/// requested. `transient_local` ≥ `volatile`. Unknown values pass.
-fn durability_compatible(pub_v: &str, sub_v: &str) -> bool {
-    match (pub_v, sub_v) {
-        ("transient_local", "transient_local") => true,
-        ("transient_local", "volatile") => true,
-        ("volatile", "transient_local") => false,
-        ("volatile", "volatile") => true,
-        _ => true,
     }
 }
 
@@ -558,5 +522,59 @@ mod liveliness_tests {
     fn a_shorter_lease_and_a_stricter_kind_are_clean() {
         let yaml = "version: 1\nnodes:\n  p:\n    pub:\n      out:\n        qos: { liveliness: manual_by_topic, lease_duration: 100ms }\n  s:\n    sub:\n      in:\n        qos: { liveliness: automatic, lease_duration: 200ms }\ntopics:\n  t:\n    type: T\n    pub: [p/out]\n    sub: [s/in]\n";
         assert!(errors(yaml).is_empty());
+    }
+
+    fn pair(pub_dur: &str, sub_dur: &str) -> String {
+        format!(
+            "version: 1\nnodes:\n  p:\n    pub:\n      out:\n        qos: {{ durability: {pub_dur} }}\n  s:\n    sub:\n      in:\n        qos: {{ durability: {sub_dur} }}\ntopics:\n  t:\n    type: T\n    pub: [p/out]\n    sub: [s/in]\n"
+        )
+    }
+
+    #[test]
+    fn an_unknown_durability_is_not_compatible() {
+        // Issue #0083: the parser refuses `transient-local`, so write it into
+        // a parsed manifest, as a manifest built in code could hold it. The
+        // match used to answer `true` for any pair it did not know.
+        let mut m = parse_manifest_str(&pair("transient_local", "volatile")).unwrap();
+        let q = m.nodes.get_mut("p").unwrap();
+        q.publishers
+            .get_mut("out")
+            .unwrap()
+            .qos
+            .as_mut()
+            .unwrap()
+            .durability = Some("transient-local".into());
+        let graph = DataflowGraph::build(&m);
+        let mut ctx = CheckContext::new();
+        QosMatchRule.check(&m, &graph, &mut ctx);
+        let errs: Vec<_> = ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == crate::Severity::Error)
+            .collect();
+        assert_eq!(errs.len(), 1, "got: {:?}", ctx.diagnostics);
+        assert!(
+            errs[0]
+                .message
+                .contains("'transient-local' is not a ROS 2 value")
+        );
+        assert!(
+            errs[0]
+                .message
+                .contains("accepted: volatile, transient_local")
+        );
+    }
+
+    #[test]
+    fn best_available_matches_and_system_default_is_reported() {
+        assert!(errors(&pair("best_available", "transient_local")).is_empty());
+        let m = parse_manifest_str(&pair("system_default", "transient_local")).unwrap();
+        let graph = DataflowGraph::build(&m);
+        let mut ctx = CheckContext::new();
+        QosMatchRule.check(&m, &graph, &mut ctx);
+        let d = ctx.diagnostics;
+        assert_eq!(d.len(), 1, "got: {d:?}");
+        assert_eq!(d[0].severity, crate::Severity::Warning);
+        assert!(d[0].message.contains("RMW's value"));
     }
 }

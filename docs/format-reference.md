@@ -215,13 +215,13 @@ The **kind** column is the rule of `contract-primitives.md` as data: a *fact* is
 
 | key | kind | status | meaning |
 |---|---|---|---|
-| `reliability` | fact |  | reliable | best_effort. |
-| `durability` | fact |  | volatile | transient_local. |
+| `reliability` | fact |  | reliable | best_effort | system_default | best_available, or `$(var <arg>)` naming an arg whose `choices:` are among them. |
+| `durability` | fact |  | volatile | transient_local | system_default | best_available, or `$(var <arg>)` naming an arg whose `choices:` are among them. |
 | `depth` | fact |  | History depth. |
-| `history` | fact |  | keep_last | keep_all. |
+| `history` | fact |  | keep_last | keep_all | system_default, or `$(var <arg>)` naming an arg whose `choices:` are among them. |
 | `lifespan` | fact |  | How long a message stays valid after publication. |
 | `lifespan_ms` |  | **removed** | Removed in phase 70 — write `lifespan: <n>ms` (or ns/us/s). The unit in a NAME is what lets a value be 1000x wrong and still parse. |
-| `liveliness` | fact |  | automatic | manual_by_topic. |
+| `liveliness` | fact |  | automatic | manual_by_topic | system_default | best_available, or `$(var <arg>)` naming an arg whose `choices:` are among them. |
 | `deadline` | fact |  | QoS deadline between consecutive messages. |
 | `lease_duration` | fact |  | Liveliness lease: how often a publisher must assert it is alive. Checked pub against sub by `qos-match`. |
 

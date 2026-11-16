@@ -191,12 +191,11 @@ fn fixture_violations_qos_error() {
     let qos_errs: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.rule_id == "qos-compat" && d.severity == Severity::Error)
+        .filter(|d| d.rule_id == "qos-match" && d.severity == Severity::Error)
         .collect();
-    assert!(
-        !qos_errs.is_empty(),
-        "expected QoS error for 'persistent' durability"
-    );
+    // The fixture used `durability: persistent`, which the parser now refuses
+    // (play_launch issue #0083); `depth: 0` is the QoS violation instead.
+    assert!(!qos_errs.is_empty(), "expected QoS error for depth 0");
 }
 
 #[test]

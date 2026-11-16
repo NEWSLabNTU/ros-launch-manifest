@@ -820,12 +820,12 @@ QoS can be declared at two levels:
 
 | Field            | Allowed values                 | Meaning |
 |------------------|--------------------------------|---------|
-| `reliability`    | `reliable`, `best_effort`      | Delivery guarantee |
-| `durability`     | `volatile`, `transient_local`  | What a late joiner receives |
+| `reliability`    | `reliable`, `best_effort`, `system_default`, `best_available`      | Delivery guarantee |
+| `durability`     | `volatile`, `transient_local`, `system_default`, `best_available`  | What a late joiner receives |
 | `depth`          | integer                        | History depth |
-| `history`        | `keep_last`, `keep_all`        | History kind |
+| `history`        | `keep_last`, `keep_all`, `system_default`                          | History kind |
 | `lifespan`       | duration (`500ms`, `2s`, …)    | How long a message stays valid after publication |
-| `liveliness`     | `automatic`, `manual_by_topic` | Who asserts the publisher is alive |
+| `liveliness`     | `automatic`, `manual_by_topic`, `system_default`, `best_available` | Who asserts the publisher is alive |
 | `deadline`       | duration                       | Maximum time DDS allows between consecutive messages before reporting a violation |
 | `lease_duration` | duration                       | Liveliness lease: how often a publisher must assert it is alive |
 
@@ -836,7 +836,34 @@ differ — an assumed default would be a claim the manifest never made.
 What the *middleware* then uses is the profile the node picked in its
 own source, which the manifest does not see.
 
-The `qos-compat` rule errors on invalid values like `reliability: maybe`.
+The sets are the ROS 2 (rmw) policy values, `UNKNOWN` and the deprecated
+`manual_by_node` excepted (`types/src/qos.rs`). A value outside its set is a
+**parse error** naming the key, the value and the set, so a typo
+(`durability: transient-local`) never reaches a check.
+
+An enum field may instead read a contract arg, written exactly
+`$(var <arg>)`, for a launch file that picks the policy from an argument:
+
+```yaml
+args:
+  operation_mode_durability:
+    choices: [volatile, transient_local]
+topics:
+  /system/operation_mode/state:
+    type: autoware_adapi_v1_msgs/msg/OperationModeState
+    qos: { durability: $(var operation_mode_durability) }
+```
+
+The parser refuses a reference to an undeclared arg, to a `type: bool` arg,
+or to an arg with a choice outside the set, so every launch configuration is
+checked at parse time. The consumer evaluates the reference per scope, from
+the arg the launch file passes (`substitute_manifest`), before any rule runs;
+a free-string arg is tested once evaluated, and a value outside the set is an
+error at the key's path. Any other reference (`$(param …)`, `$(var x @n)`,
+text around a reference) is refused: the launch-tree reads of contract
+values evaluate to numbers. The `qos-compat` rule still errors on an invalid
+value in a manifest built in code, and warns on a `$(var …)` read alone
+(no launch scope passes the arg).
 
 **Override semantics (field-level):**
 
@@ -881,6 +908,12 @@ compatibility for every (pub, sub) pair. The compatibility rule is
 | `liveliness`  | `manual_by_topic`  | `manual_by_topic`  | yes |
 | `liveliness`  | `automatic`        | `automatic`        | yes |
 | `liveliness`  | `automatic`        | `manual_by_topic`  | **no** |
+
+`best_available` on either side matches (the endpoint takes the strictest
+value the other side still matches). `system_default` on either side is the
+middleware's value, not the contract's: the pair is not checked, and the
+rule warns so (state the value to have it checked). A value outside the set
+is never compatible: the pair is an error naming the value and the set.
 
 `lease_duration` is checked as a number rather than a token, on the same
 offered ≥ requested principle: the publisher's lease is how often it

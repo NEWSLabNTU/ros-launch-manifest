@@ -1086,16 +1086,21 @@ pub const FIELDS: &[Field] = &[
         "reliability",
         Context::Qos,
         Kind::Fact,
-        "reliable | best_effort.",
+        "reliable | best_effort | system_default | best_available, or `$(var <arg>)` naming an arg whose `choices:` are among them.",
     ),
     live(
         "durability",
         Context::Qos,
         Kind::Fact,
-        "volatile | transient_local.",
+        "volatile | transient_local | system_default | best_available, or `$(var <arg>)` naming an arg whose `choices:` are among them.",
     ),
     live("depth", Context::Qos, Kind::Fact, "History depth."),
-    live("history", Context::Qos, Kind::Fact, "keep_last | keep_all."),
+    live(
+        "history",
+        Context::Qos,
+        Kind::Fact,
+        "keep_last | keep_all | system_default, or `$(var <arg>)` naming an arg whose `choices:` are among them.",
+    ),
     live(
         "lifespan",
         Context::Qos,
@@ -1111,7 +1116,7 @@ pub const FIELDS: &[Field] = &[
         "liveliness",
         Context::Qos,
         Kind::Fact,
-        "automatic | manual_by_topic.",
+        "automatic | manual_by_topic | system_default | best_available, or `$(var <arg>)` naming an arg whose `choices:` are among them.",
     ),
     live(
         "deadline",

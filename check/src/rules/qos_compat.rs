@@ -53,47 +53,34 @@ fn check_node_endpoints(
 }
 
 fn check_qos_values(rule_id: &str, path: &str, qos: &QosDecl, ctx: &mut CheckContext) {
-    if let Some(rel) = &qos.reliability
-        && rel != "reliable"
-        && rel != "best_effort"
-    {
-        ctx.error(
-            rule_id,
-            &format!("{path}.reliability"),
-            format!("invalid reliability value '{rel}', expected 'reliable' or 'best_effort'"),
-        );
-    }
-    if let Some(dur) = &qos.durability
-        && dur != "volatile"
-        && dur != "transient_local"
-    {
-        ctx.error(
-            rule_id,
-            &format!("{path}.durability"),
-            format!("invalid durability value '{dur}', expected 'volatile' or 'transient_local'"),
-        );
-    }
-    if let Some(history) = &qos.history
-        && history != "keep_last"
-        && history != "keep_all"
-    {
-        ctx.error(
-            rule_id,
-            &format!("{path}.history"),
-            format!("invalid history value '{history}', expected 'keep_last' or 'keep_all'"),
-        );
-    }
-    if let Some(liveliness) = &qos.liveliness
-        && liveliness != "automatic"
-        && liveliness != "manual_by_topic"
-    {
-        ctx.error(
-            rule_id,
-            &format!("{path}.liveliness"),
-            format!(
-                "invalid liveliness value '{liveliness}', expected 'automatic' or 'manual_by_topic'"
+    use ros_launch_manifest_types::qos::{QosField, Written, classify};
+    for f in QosField::ALL {
+        let Some(v) = f.get(qos) else { continue };
+        let at = format!("{path}.{}", f.key());
+        match classify(v) {
+            Written::Literal(l) if f.is_allowed(l) => {}
+            // The parser admits exactly `$(var <arg>)`; the consumer evaluates
+            // it per scope (`substitute_manifest`). Read alone, the contract
+            // has no value for it: say so rather than pass it.
+            Written::Var(arg) => ctx.warning(
+                rule_id,
+                &at,
+                format!(
+                    "{} '{v}' is not evaluated here (no launch scope passes `{arg}`); it is \
+                     checked when a launch file passes the arg",
+                    f.key()
+                ),
             ),
-        );
+            _ => ctx.error(
+                rule_id,
+                &at,
+                format!(
+                    "invalid {} value '{v}'; accepted: {}",
+                    f.key(),
+                    f.allowed_list()
+                ),
+            ),
+        }
     }
 }
 
@@ -104,7 +91,15 @@ mod tests {
     use ros_launch_manifest_types::parse::parse_manifest_str;
 
     fn run(yaml: &str) -> Vec<crate::Diagnostic> {
-        let manifest = parse_manifest_str(yaml).unwrap();
+        run_set(yaml, |_| {})
+    }
+
+    /// The parser refuses an invalid value (issue #0083), so a test of the
+    /// rule writes one into a parsed manifest: the rule is still the last
+    /// line for a manifest built in code.
+    fn run_set(yaml: &str, set: impl FnOnce(&mut Manifest)) -> Vec<crate::Diagnostic> {
+        let mut manifest = parse_manifest_str(yaml).unwrap();
+        set(&mut manifest);
         let graph = DataflowGraph::build(&manifest);
         let mut ctx = CheckContext::new();
         QosCompatRule.check(&manifest, &graph, &mut ctx);
@@ -119,12 +114,20 @@ topics:
   /foo:
     type: std_msgs/msg/String
     qos:
-      reliability: maybe
+      reliability: reliable
 "#;
-        let errs: Vec<_> = run(yaml)
-            .into_iter()
-            .filter(|d| d.severity == crate::Severity::Error)
-            .collect();
+        let errs: Vec<_> = run_set(yaml, |m| {
+            m.topics
+                .get_mut("/foo")
+                .unwrap()
+                .qos
+                .as_mut()
+                .unwrap()
+                .reliability = Some("maybe".into())
+        })
+        .into_iter()
+        .filter(|d| d.severity == crate::Severity::Error)
+        .collect();
         assert_eq!(errs.len(), 1);
         assert!(errs[0].message.contains("maybe"));
         assert!(errs[0].path.ends_with("reliability"));
@@ -138,12 +141,16 @@ nodes:
   pub_node:
     pub:
       data:
-        qos: { reliability: kinda_reliable }
+        qos: { reliability: reliable }
 "#;
-        let errs: Vec<_> = run(yaml)
-            .into_iter()
-            .filter(|d| d.severity == crate::Severity::Error)
-            .collect();
+        let errs: Vec<_> = run_set(yaml, |m| {
+            let ep = m.nodes.get_mut("pub_node").unwrap();
+            let q = ep.publishers.get_mut("data").unwrap().qos.as_mut().unwrap();
+            q.reliability = Some("kinda_reliable".into());
+        })
+        .into_iter()
+        .filter(|d| d.severity == crate::Severity::Error)
+        .collect();
         assert_eq!(errs.len(), 1, "got: {errs:?}");
         assert!(errs[0].path.contains("pub_node.pub.data.qos.reliability"));
         assert!(errs[0].message.contains("kinda_reliable"));
@@ -157,12 +164,22 @@ nodes:
   sub_node:
     sub:
       data:
-        qos: { durability: maybe }
+        qos: { durability: volatile }
 "#;
-        let errs: Vec<_> = run(yaml)
-            .into_iter()
-            .filter(|d| d.severity == crate::Severity::Error)
-            .collect();
+        let errs: Vec<_> = run_set(yaml, |m| {
+            let ep = m.nodes.get_mut("sub_node").unwrap();
+            let q = ep
+                .subscribers
+                .get_mut("data")
+                .unwrap()
+                .qos
+                .as_mut()
+                .unwrap();
+            q.durability = Some("maybe".into());
+        })
+        .into_iter()
+        .filter(|d| d.severity == crate::Severity::Error)
+        .collect();
         assert_eq!(errs.len(), 1);
         assert!(errs[0].path.contains("sub_node.sub.data.qos.durability"));
     }
@@ -174,12 +191,20 @@ version: 1
 topics:
   /foo:
     type: std_msgs/msg/String
-    qos: { history: keep_some }
+    qos: { history: keep_last }
 "#;
-        let errs: Vec<_> = run(yaml)
-            .into_iter()
-            .filter(|d| d.severity == crate::Severity::Error)
-            .collect();
+        let errs: Vec<_> = run_set(yaml, |m| {
+            m.topics
+                .get_mut("/foo")
+                .unwrap()
+                .qos
+                .as_mut()
+                .unwrap()
+                .history = Some("keep_some".into())
+        })
+        .into_iter()
+        .filter(|d| d.severity == crate::Severity::Error)
+        .collect();
         assert_eq!(errs.len(), 1);
         assert!(errs[0].message.contains("keep_some"));
     }
@@ -191,12 +216,20 @@ version: 1
 topics:
   /foo:
     type: std_msgs/msg/String
-    qos: { liveliness: best_effort }
+    qos: { liveliness: automatic }
 "#;
-        let errs: Vec<_> = run(yaml)
-            .into_iter()
-            .filter(|d| d.severity == crate::Severity::Error)
-            .collect();
+        let errs: Vec<_> = run_set(yaml, |m| {
+            m.topics
+                .get_mut("/foo")
+                .unwrap()
+                .qos
+                .as_mut()
+                .unwrap()
+                .liveliness = Some("best_effort".into())
+        })
+        .into_iter()
+        .filter(|d| d.severity == crate::Severity::Error)
+        .collect();
         assert_eq!(errs.len(), 1);
         assert!(errs[0].path.ends_with("liveliness"));
     }
@@ -230,5 +263,61 @@ topics:
             .filter(|d| d.severity == crate::Severity::Error)
             .collect();
         assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    }
+
+    #[test]
+    fn ros_2_defaults_are_valid_values() {
+        let yaml = r#"
+version: 1
+topics:
+  /foo:
+    type: std_msgs/msg/String
+    qos:
+      reliability: best_available
+      durability: system_default
+      history: system_default
+      liveliness: best_available
+"#;
+        assert!(run(yaml).is_empty());
+    }
+
+    #[test]
+    fn an_unevaluated_var_is_reported_not_passed() {
+        let yaml = r#"
+version: 1
+args:
+  dur:
+    choices: [volatile, transient_local]
+topics:
+  /foo:
+    type: std_msgs/msg/String
+    qos: { durability: $(var dur) }
+"#;
+        let d = run(yaml);
+        assert_eq!(d.len(), 1, "got: {d:?}");
+        assert_eq!(d[0].severity, crate::Severity::Warning);
+        assert!(d[0].message.contains("not evaluated"));
+        assert!(d[0].path.ends_with("qos.durability"));
+    }
+
+    #[test]
+    fn the_error_names_the_allowed_set() {
+        let yaml = "version: 1\ntopics:\n  /foo:\n    type: T\n    qos: { durability: volatile }\n";
+        let d = run_set(yaml, |m| {
+            m.topics
+                .get_mut("/foo")
+                .unwrap()
+                .qos
+                .as_mut()
+                .unwrap()
+                .durability = Some("transient-local".into())
+        });
+        assert_eq!(d.len(), 1);
+        assert!(
+            d[0].message
+                .contains("accepted: volatile, transient_local, system_default, best_available"),
+            "{}",
+            d[0].message
+        );
     }
 }
