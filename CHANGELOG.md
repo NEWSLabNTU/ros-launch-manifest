@@ -6,6 +6,29 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
+## Unreleased
+
+How a process ends reaches the model (play_launch issues #0084 and
+#0090). The contract grammar is unchanged; nothing is versioned here (the
+tag, `GRAMMAR_VERSION` and the workspace version are the releaser's), but
+fields were added to `NodeInstance`, so a struct literal without
+`..Default::default()` breaks: the workspace version wants a bump.
+
+- **`NodeInstance::sigterm_timeout`, `NodeInstance::sigkill_timeout`**:
+  launch's per-action shutdown timeouts in seconds (the action's own, else
+  the launch configuration of the same name), from the shutdown's SIGINT
+  to a SIGTERM and from that to a SIGKILL. `None` is launch's 5.
+- **`NodeInstance::shutdown_on_exit_codes`** and the type **`ExitCodes`**:
+  the exit codes on which a process's exit ends the launch, from an
+  `on_exit` (or `OnProcessExit` handler) that is a function of the exit
+  event and the producer evaluated for every code. A code is launch's
+  `returncode`: the status, or `-N` for signal N. Written as a plain map,
+  `only: [...]` or `except: [...]`, whichever is shorter (an untagged
+  enum: serde_yaml writes a tagged one as a YAML tag, which
+  `yaml.safe_load` refuses). `on_exit: shutdown` is every code and wins.
+- All three are additive (`serde(default)`), so an older model reads
+  unchanged; an older reader drops them, which is the behaviour it had.
+
 ## v0.3.28 - 2026-11-17
 
 What a process starts in and under reaches the model (play_launch issues

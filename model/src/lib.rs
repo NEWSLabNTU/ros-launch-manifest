@@ -421,6 +421,35 @@ pub enum OnExit {
     Shutdown,
 }
 
+/// The exit codes on which a process's exit ends the launch
+/// (`NodeInstance::shutdown_on_exit_codes`), in `launch`'s terms: a normal
+/// exit is its status, 0 to 255, and a death by signal N is `-N`.
+///
+/// Written whichever way is shorter: `only: [2]` for a handler that shuts
+/// down on one code, `except: [0]` for one that shuts down on any failure.
+/// Each list is sorted and holds each code once.
+///
+/// A plain map (`only:` or `except:`), not a tagged enum: serde_yaml writes
+/// an enum variant as a YAML tag, which `yaml.safe_load` refuses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExitCodes {
+    /// These codes, and no other.
+    Only { only: Vec<i32> },
+    /// Every code but these.
+    Except { except: Vec<i32> },
+}
+
+impl ExitCodes {
+    /// Whether an exit with `code` ends the launch.
+    pub fn contains(&self, code: i32) -> bool {
+        match self {
+            ExitCodes::Only { only } => only.contains(&code),
+            ExitCodes::Except { except } => !except.contains(&code),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NodeInstance {
     /// Owning scope id.
@@ -510,6 +539,26 @@ pub struct NodeInstance {
     /// from the model alone could not honour it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_exit: Option<OnExit>,
+    /// The exit codes on which this process's exit ends the launch, when
+    /// that depends on the code: an `OnProcessExit` handler (or an
+    /// `on_exit=`) that is a FUNCTION of the exit event and returns a
+    /// shutdown for some codes only. The producer evaluates the function
+    /// for every code a process can exit with and records the codes it
+    /// shut down on. `None` = no such handler. A handler that shuts down on
+    /// every code is [`Self::on_exit`] instead, and `on_exit` wins when both
+    /// are present. Nodes/containers only (play_launch issue #0090).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown_on_exit_codes: Option<ExitCodes>,
+    /// Seconds between the shutdown's SIGINT and a SIGTERM, for a process
+    /// still running: launch's `sigterm_timeout` (the action's own, else the
+    /// `sigterm_timeout` launch configuration). `None` = launch's default,
+    /// 5. Nodes/containers only (play_launch issue #0084).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigterm_timeout: Option<f64>,
+    /// Seconds between that SIGTERM and a SIGKILL: launch's
+    /// `sigkill_timeout`, likewise. `None` = 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigkill_timeout: Option<f64>,
     /// Launch-declared environment variables (`<env name= value=/>`), in
     /// declaration order — a `Vec` (not `BTreeMap`) because launch env lists
     /// may legitimately repeat a name (last one spawn-time wins) and order
@@ -3279,6 +3328,59 @@ mod tests {
 
         let reparsed: NodeInstance = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(node, reparsed);
+    }
+
+    /// How a process is stopped and which exits end the launch (play_launch
+    /// #0084, #0090) round-trip, and an older model without them reads with
+    /// each absent.
+    #[test]
+    fn node_instance_shutdown_fields_roundtrip() {
+        let node = NodeInstance {
+            scope: "/".into(),
+            exec: Some("keeper".into()),
+            sigterm_timeout: Some(90.0),
+            sigkill_timeout: Some(20.0),
+            shutdown_on_exit_codes: Some(ExitCodes::Only { only: vec![2] }),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&node).unwrap();
+        assert!(yaml.contains("sigterm_timeout: 90.0"), "{yaml}");
+        assert!(yaml.contains("sigkill_timeout: 20.0"), "{yaml}");
+        assert!(
+            yaml.contains("shutdown_on_exit_codes:\n  only:\n  - 2"),
+            "{yaml}"
+        );
+        assert_eq!(
+            serde_yaml_ng::from_str::<NodeInstance>(&yaml).unwrap(),
+            node
+        );
+
+        let except = NodeInstance {
+            shutdown_on_exit_codes: Some(ExitCodes::Except { except: vec![0] }),
+            ..Default::default()
+        };
+        let yaml = serde_yaml_ng::to_string(&except).unwrap();
+        assert_eq!(
+            serde_yaml_ng::from_str::<NodeInstance>(&yaml).unwrap(),
+            except
+        );
+
+        let old: NodeInstance = serde_yaml_ng::from_str("scope: /\nexec: keeper\n").unwrap();
+        assert_eq!(old.sigterm_timeout, None);
+        assert_eq!(old.sigkill_timeout, None);
+        assert_eq!(old.shutdown_on_exit_codes, None);
+        let re = serde_yaml_ng::to_string(&old).unwrap();
+        assert!(!re.contains("sig") && !re.contains("shutdown_on"), "{re}");
+    }
+
+    #[test]
+    fn exit_codes_contains() {
+        let only = ExitCodes::Only { only: vec![-15, 2] };
+        assert!(only.contains(2) && only.contains(-15));
+        assert!(!only.contains(0) && !only.contains(1));
+        let except = ExitCodes::Except { except: vec![0] };
+        assert!(!except.contains(0));
+        assert!(except.contains(1) && except.contains(255) && except.contains(-9));
     }
 
     /// Backward-compat: a `NodeInstance` with none of the Phase 46.1b launch
