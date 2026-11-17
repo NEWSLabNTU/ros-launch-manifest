@@ -6,13 +6,12 @@ workspace's Cargo version moves only when a crate's API breaks. Tags before
 `v0.1.37` are lightweight and their notes are their commit messages
 (`git show v0.1.36`).
 
-## Unreleased
+## v0.3.29 - 2026-11-17
 
 How a process ends reaches the model (play_launch issues #0084 and
-#0090). The contract grammar is unchanged; nothing is versioned here (the
-tag, `GRAMMAR_VERSION` and the workspace version are the releaser's), but
-fields were added to `NodeInstance`, so a struct literal without
-`..Default::default()` breaks: the workspace version wants a bump.
+#0090). GRAMMAR_VERSION 0.3.29; workspace version 0.13.0 (API: fields
+added to `NodeInstance`, and the type `ExitCodes`). The contract grammar
+is unchanged.
 
 - **`NodeInstance::sigterm_timeout`, `NodeInstance::sigkill_timeout`**:
   launch's per-action shutdown timeouts in seconds (the action's own, else
