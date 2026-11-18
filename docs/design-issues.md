@@ -32,11 +32,10 @@ Status lines were last reconciled against the code on **2026-09-23**
 (19 rules in `check/src/rules/mod.rs::default_rules()`, five workspace
 members, format reference as generated).
 
-**Roll-up.** Issues 1–51, #53 and #54 are resolved — of those, #29,
+**Roll-up.** Issues 1–59 are resolved — of those, #29,
 #31, #32, #45, #48 and #50 have since been superseded, and #50 was
-*reversed* (see its status line). #52 is open on the consumer side only: the four
-units it planned for this repository all landed and shipped as
-`v0.1.37`.
+*reversed* (see its status line). #52 and #55–#59 were reconciled
+against the code and both consumers on 2026-11-18.
 
 ## Resolved Issues
 
@@ -792,7 +791,14 @@ warnings on a fully-migrated tree without losing the rule's safety net.
 
 ---
 
-## 52. Two Consumers, Two Derivations of the Same Mapper Input — Open (consumer side)
+## ~~52. Two Consumers, Two Derivations of the Same Mapper Input~~ — Done
+
+**Status (2026-11-18): done.** Both consumers derive the mapper input
+through this repository's `derive` crate: play_launch since its phase 78
+(`sched_derive::mapper_input_via_model`), and nano-ros through
+`nros_orchestration_ir::mapper_input`, which calls
+`ros_launch_manifest_derive::mapper_input_from_model`. Neither keeps a
+copy of the derivation.
 
 **Status (2026-09-23): this repository's four units all landed and
 shipped; the issue stays open because the CONSUMERS have not migrated.**
@@ -1303,7 +1309,15 @@ Tests: `test_dangling_topic_external_pub_is_accepted`,
 
 ---
 
-## 55. Transport Is a Consequence of Placement, and Only Sometimes a Guarantee — Decided, staged
+## ~~55. Transport Is a Consequence of Placement, and Only Sometimes a Guarantee~~ — Done
+
+**Status (2026-11-18): done** as refined by `docs/design/links.md`. Step 1
+(one transport reader) is play_launch #0042, resolved; a transport is
+stated on a link (`links:`, v0.3.4), and since v0.3.17 a link is the one
+spelling. Step 2's per-class platform figures stay dropped. Step 3 is
+`measure` proposals and `check --against` (`transport-exceeded`,
+`link-unmeasured`), play_launch phase 97 P3/P4. Guaranteed-link
+extensions (TSN, CAN schedule) wait for a consumer that has one.
 
 **Status (2026-09-24):** decided; step 1 is play_launch issue #0042, steps 2
 and 3 are not started.
@@ -1407,7 +1421,10 @@ converges on the same source. It should, or the standalone check and the
 merged one keep disagreeing by construction — but that is a separate change
 with its own migration.
 
-## 56. An Include Carries a Condition, Because the Contract Mirrors the Launch File — Decided
+## ~~56. An Include Carries a Condition, Because the Contract Mirrors the Launch File~~ — Done
+
+**Status (2026-11-18): done** in v0.1.41: `IncludeDecl` carries `if:` and
+`unless:`, evaluated for inline includes too (play_launch #0043).
 
 **Status (2026-09-24):** decided; implementation in progress.
 
@@ -1460,7 +1477,13 @@ External includes are not loaded by the checker
 (`scope_budget.rs:56`), so a condition on one selects an entry the checker
 cannot look inside either way.
 
-## 57. The Vocabulary Takes the Standards' Words — Decided, staged
+## ~~57. The Vocabulary Takes the Standards' Words~~ — Done
+
+**Status (2026-11-18): done.** S1-S5 and M1-M6 went through their
+deprecation, refusal and retirement releases (v0.3.3 to v0.3.9, with the
+model's schema 4), and `tier` became `task` (v0.3.10 to v0.3.12,
+play_launch phase 99). The old words are listed by `check-terms`;
+`migrate` still rewrites them. play_launch phase 98.
 
 **Status (2026-11-03):** decided in principle; design of record
 `docs/design/standard-names.md`; implementation is play_launch phase 98.
@@ -1497,7 +1520,12 @@ ingress, on_demand, tier) when their area is next touched.
 - nano-ros mirrors the model's level and tier types, so each model rename
   ships with a nano-ros pull request.
 
-## 58. A Safety Function Ends at a Final Element — Proposed
+## ~~58. A Safety Function Ends at a Final Element~~ — Done
+
+**Status (2026-11-18): done.** Built in v0.3.13 and play_launch phase 102
+(M0-M4: `modes.<m>.commands`, `hazards.<h>.requirement`, the static
+rules and the runtime checks) and evaluated there (M5,
+`docs/reports/safety-model/` in play_launch).
 
 **Status (2026-11-07):** proposed, revised three times the same day;
 design of record `docs/design/safety-functions.md`; implementation is
@@ -1532,7 +1560,12 @@ robot's protective stop is a reference extension on `deadline_by`.
 - Proving a node's code is not the contract's job; `requirement.source`
   can name it.
 
-## 59. Most of the System Is Safety Critical — Proposed
+## ~~59. Most of the System Is Safety Critical~~ — Done
+
+**Status (2026-11-18): done.** Built in v0.3.13 and play_launch phase 102
+(`m` on a group, `independence:`, `external.on_silence`, the three
+`on:` classes, restart credit from `check --against`) and evaluated
+there (M5).
 
 **Status (2026-11-07):** proposed, revised the same day to the primitives
 rule; design of record `docs/design/fault-tolerance.md`; implementation is
@@ -1569,10 +1602,9 @@ levels were considered as the whole model and not adopted.
 
 ## Summary
 
-Design issues 1–51, #53 (equal periods, equal priorities) and #54 (the
-checker's escape hatches) are resolved. #52 (one shared derivation of
-the mapper input) is open **on the consumer side only** — its four
-units in this repository landed on 2026-09-21 and shipped as `v0.1.37`.
+Design issues 1–59 are resolved. #52 (one shared derivation of the
+mapper input) closed once nano-ros, like play_launch, called the
+`derive` crate; #55–#59 shipped through play_launch phases 97 to 102.
 
 Four resolved entries have since been overtaken, and their status lines
 say so:
